@@ -89,7 +89,8 @@ The 0.0 default allows graceful handling of edge cases in algorithms.
 -/
 def get (M : ConcreteMatrix) (i j : Nat) : Float :=
   if i < M.numRows ∧ j < M.numCols then
-    M.data.getD (i * M.numCols + j) 0.0
+    -- Index is in-bounds by `size_eq` and the guard above.
+    M.data[i * M.numCols + j]!
   else 0.0
 
 /-- Create a zero matrix of given dimensions. -/
@@ -125,8 +126,15 @@ def matmul (A B : ConcreteMatrix) : ConcreteMatrix :=
         let i := idx.val / B.numCols
         let j := idx.val % B.numCols
         let mut acc : Float := 0.0
+        let aRowBase := i * A.numCols
         for k in [:A.numCols] do
-          acc := acc + A.get i k * B.get k j
+          -- SAFETY: within this branch `i < A.numRows` and `k < A.numCols`,
+          -- and `A.size_eq` implies `aRowBase + k < A.data.size`.
+          let a := A.data[aRowBase + k]!
+          -- SAFETY: within this branch `k < B.numRows` and `j < B.numCols`,
+          -- and `B.size_eq` implies `k * B.numCols + j < B.data.size`.
+          let b := B.data[k * B.numCols + j]!
+          acc := acc + a * b
         return acc
       size_eq := Array.size_ofFn
     }
@@ -1073,7 +1081,8 @@ namespace ConcreteAttentionWeights
 /-- Access A[q, k]. -/
 def get (A : ConcreteAttentionWeights) (q k : Nat) : Float :=
   if q < A.seqLen ∧ k < A.seqLen then
-    A.weights.getD (q * A.seqLen + k) 0.0
+    -- Index is in-bounds by `size_eq` and the guard above.
+    A.weights[q * A.seqLen + k]!
   else 0.0
 
 /-- Convert attention weights to a `ConcreteMatrix` for use with matrix multiplication. -/
@@ -1086,31 +1095,53 @@ def toMatrix (A : ConcreteAttentionWeights) : ConcreteMatrix where
 
 /-- Compute softmax for a row of logits. -/
 def softmaxRow (logits : Array Float) : Array Float :=
-  let maxVal := logits.foldl max (-1e30)
-  let expVals := logits.map fun x => Float.exp (x - maxVal)
-  let sumExp := expVals.foldl (· + ·) 0.0
-  if sumExp > 0.0 then expVals.map (· / sumExp) else expVals
+  Id.run do
+    -- Keep the same evaluation order as the `foldl/map/foldl/map` implementation,
+    -- but avoid allocating intermediate arrays.
+    let maxVal := logits.foldl max (-1e30)
+    let mut expVals : Array Float := Array.replicate logits.size 0.0
+    let mut sumExp : Float := 0.0
+    for i in [:logits.size] do
+      let v := Float.exp (logits[i]! - maxVal)
+      expVals := expVals.set! i v
+      sumExp := sumExp + v
+    if sumExp > 0.0 then
+      for i in [:expVals.size] do
+        expVals := expVals.set! i (expVals[i]! / sumExp)
+    return expVals
 
 /-- Compute attention weights given queries, keys, and scaling. -/
 def compute (queries keys : ConcreteMatrix) (scale : Float)
     (seqLen : Nat)
     (causal : Bool := true) : ConcreteAttentionWeights where
   seqLen := seqLen
-  weights := .ofFn fun idx : Fin (seqLen * seqLen) =>
-    let q := idx.val / seqLen
-    let k := idx.val % seqLen
-    -- Compute softmax over the row
-    let rowScores : Array Float := .ofFn fun j : Fin seqLen =>
-      if causal && j.val > q then -1e30
-      else if q < queries.numRows ∧ j.val < keys.numRows then Id.run do
-        let mut dotProd : Float := 0.0
-        for d in [:queries.numCols] do
-          dotProd := dotProd + queries.get q d * keys.get j.val d
-        return dotProd / scale
-      else -1e30
-    let softmaxed := softmaxRow rowScores
-    if causal && k > q then 0.0
-    else softmaxed.getD k 0.0
+  weights :=
+    -- PERFORMANCE: compute each softmax row once (O(seqLen²·d) total), then reuse it
+    -- when populating the flattened (q,k) weights array.
+    let rows : Array (Array Float) := .ofFn fun qFin : Fin seqLen =>
+      let q := qFin.val
+      let rowScores : Array Float := .ofFn fun jFin : Fin seqLen =>
+        let j := jFin.val
+        if causal && j > q then -1e30
+        else if q < queries.numRows ∧ j < keys.numRows then Id.run do
+          let cols := min queries.numCols keys.numCols
+          let mut dotProd : Float := 0.0
+          let qBase := q * queries.numCols
+          let jBase := j * keys.numCols
+          for d in [:cols] do
+            -- SAFETY: `d < cols ≤ queries.numCols/keys.numCols`,
+            -- and `q/j` are in-bounds by the guard above.
+            dotProd := dotProd + queries.data[qBase + d]! * keys.data[jBase + d]!
+          return dotProd / scale
+        else -1e30
+      softmaxRow rowScores
+    .ofFn fun idx : Fin (seqLen * seqLen) =>
+      let q := idx.val / seqLen
+      let k := idx.val % seqLen
+      if causal && k > q then 0.0
+      else
+        let row := rows[q]!
+        row[k]!
   size_eq := Array.size_ofFn
 
 end ConcreteAttentionWeights
