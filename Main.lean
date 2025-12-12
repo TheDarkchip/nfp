@@ -93,6 +93,46 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
 
     return 0
 
+/-- Run the induction command - discover induction heads with certified effectiveness. -/
+def runInduction (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let correct := p.flag? "correct" |>.map (·.as! Nat) |>.getD 0
+  let incorrect := p.flag? "incorrect" |>.map (·.as! Nat) |>.getD 1
+  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
+  let some threshold := Nfp.parseFloat thresholdStr
+    | do
+      IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
+      return 1
+
+  IO.println "Loading model..."
+  let loadResult ← loadModel ⟨modelPath⟩
+
+  match loadResult with
+  | .error msg =>
+    IO.eprintln s!"Error loading model: {msg}"
+    return 1
+  | .ok model _embeddings =>
+    match model.unembedding with
+    | none =>
+      IO.eprintln "Error: Model is missing unembedding matrix (needed for logit directions)."
+      return 1
+    | some W_U =>
+      let target := TargetDirection.fromLogitDiff W_U correct incorrect
+      IO.println s!"Target: {target.description}"
+      IO.println s!"Searching for heads with effect > {threshold}..."
+
+      let heads := findCertifiedInductionHeads model target threshold
+      IO.println s!"Certified Induction Heads (δ > {threshold})"
+      IO.println s!"Found {heads.size} certified heads:"
+
+      for h in heads do
+        let c := h.candidate
+        IO.println <|
+          s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
+            s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError}"
+
+      return 0
+
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
@@ -108,13 +148,28 @@ def analyzeCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The induction subcommand. -/
+def inductionCmd : Cmd := `[Cli|
+  induction VIA runInduction;
+  "Discover induction head pairs with certified virtual-head effectiveness."
+
+  FLAGS:
+    c, correct : Nat; "Correct token ID (default: 0)"
+    i, incorrect : Nat; "Incorrect token ID (default: 1)"
+    t, threshold : String; "Effectiveness threshold (default: 0.5)"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
   "NFP: Neural Feature Pathway verification toolkit"
 
   SUBCOMMANDS:
-    analyzeCmd
+    analyzeCmd;
+    inductionCmd
 ]
 
 /-- Main entry point. -/

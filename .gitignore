@@ -1,4 +1,4 @@
 /.lake
 models
+*.nfpt
 .DS_Store
-*nfpt

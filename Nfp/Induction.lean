@@ -2,6 +2,7 @@ import Mathlib.Data.Real.Basic
 import Mathlib.Data.Real.Sqrt
 import Mathlib.Analysis.InnerProductSpace.Basic
 import Mathlib.Algebra.BigOperators.Ring.Finset
+import Mathlib.Algebra.Order.BigOperators.Ring.Finset
 import Nfp.Linearization
 import Nfp.SignedMixer
 
@@ -154,5 +155,189 @@ theorem true_induction_head_is_genuine
     (inner_product ((VirtualHead h.pattern.layer2 h.pattern.layer1).apply h.input)
       h.target_logit_diff ≥ h.delta) := by
   exact ⟨⟨h.pattern.layer1, h.pattern.layer2, rfl, rfl⟩, h.faithful, h.effective⟩
+
+/-! ## Helper inequality: Frobenius norm bounds application -/
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- For any signed mixer `M` and vector `v`, the output L² norm is bounded by the Frobenius
+norm of `M` times the input L² norm. -/
+lemma norm_apply_le (M : SignedMixer (n × d) (n × d)) (v : (n × d) → ℝ) :
+    l2_norm (M.apply v) ≤ frobeniusNorm (n := n) (d := d) M * l2_norm v := by
+  classical
+  set A : ℝ := ∑ i : n × d, (v i) ^ 2
+  set C : ℝ := ∑ i : n × d, ∑ j : n × d, (M.w i j) ^ 2
+  have hA : 0 ≤ A := by
+    simpa [A] using (Finset.sum_nonneg (fun i _hi => sq_nonneg (v i)))
+  have hC : 0 ≤ C := by
+    -- two nested sums of squares
+    have : 0 ≤ ∑ i : n × d, ∑ j : n × d, (M.w i j) ^ 2 := by
+      refine Finset.sum_nonneg ?_
+      intro i _hi
+      refine Finset.sum_nonneg ?_
+      intro j _hj
+      exact sq_nonneg (M.w i j)
+    simpa [C] using this
+  have hpoint :
+      ∀ j : n × d, (M.apply v j) ^ 2 ≤ A * (∑ i : n × d, (M.w i j) ^ 2) := by
+    intro j
+    -- Cauchy–Schwarz (squared form) on the dot product defining `(M.apply v) j`.
+    simpa [SignedMixer.apply_def, A] using
+      (Finset.sum_mul_sq_le_sq_mul_sq (s := (Finset.univ : Finset (n × d)))
+        (f := v) (g := fun i : n × d => M.w i j))
+  have hsum :
+      (∑ j : n × d, (M.apply v j) ^ 2) ≤ ∑ j : n × d, A * (∑ i : n × d, (M.w i j) ^ 2) := by
+    refine Finset.sum_le_sum ?_
+    intro j _hj
+    exact hpoint j
+  have hsum' :
+      (∑ j : n × d, (M.apply v j) ^ 2) ≤ A * (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) := by
+    have hfac :
+        A * (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) =
+          ∑ j : n × d, A * (∑ i : n × d, (M.w i j) ^ 2) := by
+      simpa using (Finset.mul_sum (s := (Finset.univ : Finset (n × d))) (a := A)
+        (f := fun j : n × d => ∑ i : n × d, (M.w i j) ^ 2))
+    calc
+      (∑ j : n × d, (M.apply v j) ^ 2)
+          ≤ ∑ j : n × d, A * (∑ i : n × d, (M.w i j) ^ 2) := hsum
+      _ = A * (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) := by
+          simp [hfac]
+  have hsum'' :
+      (∑ j : n × d, (M.apply v j) ^ 2) ≤ A * C := by
+    have hswap :
+        (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) =
+          ∑ i : n × d, ∑ j : n × d, (M.w i j) ^ 2 := by
+      simpa using (Finset.sum_comm :
+        (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) =
+          ∑ i : n × d, ∑ j : n × d, (M.w i j) ^ 2)
+    calc
+      (∑ j : n × d, (M.apply v j) ^ 2)
+          ≤ A * (∑ j : n × d, ∑ i : n × d, (M.w i j) ^ 2) := hsum'
+      _ = A * C := by
+          simp [C, hswap]
+  -- take square roots and unfold definitions
+  calc
+    l2_norm (M.apply v)
+        = Real.sqrt (∑ j : n × d, (M.apply v j) ^ 2) := rfl
+    _ ≤ Real.sqrt (A * C) := by
+        exact Real.sqrt_le_sqrt hsum''
+    _ = Real.sqrt A * Real.sqrt C := by
+        simpa using (Real.sqrt_mul hA C)
+    _ = frobeniusNorm (n := n) (d := d) M * l2_norm v := by
+        simp [frobeniusNorm, l2_norm, C, A, mul_comm]
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Finite-dimensional Cauchy–Schwarz for the `inner_product`/`l2_norm` defined in this file. -/
+lemma abs_inner_product_le_l2 (u v : (n × d) → ℝ) :
+    |inner_product u v| ≤ l2_norm u * l2_norm v := by
+  classical
+  have hcs :
+      (inner_product u v) ^ 2 ≤ (∑ i : n × d, (u i) ^ 2) * (∑ i : n × d, (v i) ^ 2) := by
+    simpa [inner_product] using
+      (Finset.sum_mul_sq_le_sq_mul_sq (s := (Finset.univ : Finset (n × d))) (f := u) (g := v))
+  have hu : 0 ≤ ∑ i : n × d, (u i) ^ 2 := by
+    simpa using (Finset.sum_nonneg (fun i _hi => sq_nonneg (u i)))
+  have hv : 0 ≤ ∑ i : n × d, (v i) ^ 2 := by
+    simpa using (Finset.sum_nonneg (fun i _hi => sq_nonneg (v i)))
+  calc
+    |inner_product u v|
+        = Real.sqrt ((inner_product u v) ^ 2) := by
+            simpa using (Real.sqrt_sq_eq_abs (inner_product u v)).symm
+    _ ≤ Real.sqrt ((∑ i : n × d, (u i) ^ 2) * (∑ i : n × d, (v i) ^ 2)) := by
+        exact Real.sqrt_le_sqrt hcs
+    _ = Real.sqrt (∑ i : n × d, (u i) ^ 2) * Real.sqrt (∑ i : n × d, (v i) ^ 2) := by
+        simpa using (Real.sqrt_mul hu (∑ i : n × d, (v i) ^ 2))
+    _ = l2_norm u * l2_norm v := by
+        rfl
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- **Main verification theorem**: a `TrueInductionHead` lower-bounds the real model score
+on the target direction by `δ` minus the certified approximation error. -/
+theorem true_induction_head_predicts_logits
+    (h : TrueInductionHead (n := n) (d := d)) :
+    inner_product (h.composed_jacobian.apply h.input) h.target_logit_diff ≥
+      h.delta - (h.epsilon * l2_norm h.input * l2_norm h.target_logit_diff) := by
+  classical
+  let V : SignedMixer (n × d) (n × d) := VirtualHead h.pattern.layer2 h.pattern.layer1
+  let E : SignedMixer (n × d) (n × d) := h.composed_jacobian - V
+  have hE : frobeniusNorm (n := n) (d := d) E ≤ h.epsilon := by
+    simpa [E, V, isCertifiedVirtualHead] using h.faithful
+  have hV : h.delta ≤ inner_product (V.apply h.input) h.target_logit_diff := by
+    simpa [V] using h.effective
+
+  have happly_add : (V + E).apply h.input = V.apply h.input + E.apply h.input := by
+    ext j
+    simp [SignedMixer.apply_def, Finset.sum_add_distrib, mul_add]
+  have hJ_eq : h.composed_jacobian = V + E := by
+    ext i j
+    simp [E, V]
+  have hdecomp :
+      inner_product (h.composed_jacobian.apply h.input) h.target_logit_diff =
+        inner_product (V.apply h.input) h.target_logit_diff +
+          inner_product (E.apply h.input) h.target_logit_diff := by
+    have happly :
+        h.composed_jacobian.apply h.input = V.apply h.input + E.apply h.input := by
+      simpa [hJ_eq] using happly_add
+    have hinner_add (a b u : (n × d) → ℝ) :
+        inner_product (a + b) u = inner_product a u + inner_product b u := by
+      simp [inner_product, Finset.sum_add_distrib, add_mul]
+    calc
+      inner_product (h.composed_jacobian.apply h.input) h.target_logit_diff
+          = inner_product (V.apply h.input + E.apply h.input) h.target_logit_diff := by
+              simp [happly]
+      _ = inner_product (V.apply h.input) h.target_logit_diff +
+            inner_product (E.apply h.input) h.target_logit_diff := by
+              simpa using hinner_add (a := V.apply h.input) (b := E.apply h.input)
+                (u := h.target_logit_diff)
+
+  set bound : ℝ := h.epsilon * l2_norm h.input * l2_norm h.target_logit_diff
+  have hbound_nonneg : 0 ≤ bound := by
+    have hx : 0 ≤ l2_norm h.input := by simp [l2_norm]
+    have hu : 0 ≤ l2_norm h.target_logit_diff := by simp [l2_norm]
+    have : 0 ≤ h.epsilon * l2_norm h.input := mul_nonneg h.epsilon_nonneg hx
+    simpa [bound, mul_assoc] using mul_nonneg this hu
+
+  have herr_abs :
+      |inner_product (E.apply h.input) h.target_logit_diff| ≤ bound := by
+    have habs :
+        |inner_product (E.apply h.input) h.target_logit_diff| ≤
+          l2_norm (E.apply h.input) * l2_norm h.target_logit_diff := by
+      simpa using (abs_inner_product_le_l2 (n := n) (d := d) (u := E.apply h.input)
+        (v := h.target_logit_diff))
+    have hnormEx :
+        l2_norm (E.apply h.input) ≤ frobeniusNorm (n := n) (d := d) E * l2_norm h.input := by
+      simpa using (norm_apply_le (n := n) (d := d) E h.input)
+    have hu : 0 ≤ l2_norm h.target_logit_diff := by simp [l2_norm]
+    have hx : 0 ≤ l2_norm h.input := by simp [l2_norm]
+    have hstep1 :
+        l2_norm (E.apply h.input) * l2_norm h.target_logit_diff ≤
+          (frobeniusNorm (n := n) (d := d) E * l2_norm h.input) * l2_norm h.target_logit_diff :=
+      mul_le_mul_of_nonneg_right hnormEx hu
+    have hstep2 :
+        (frobeniusNorm (n := n) (d := d) E * l2_norm h.input) * l2_norm h.target_logit_diff ≤
+          (h.epsilon * l2_norm h.input) * l2_norm h.target_logit_diff := by
+      have : frobeniusNorm (n := n) (d := d) E * l2_norm h.input ≤ h.epsilon * l2_norm h.input :=
+        mul_le_mul_of_nonneg_right hE hx
+      exact mul_le_mul_of_nonneg_right this hu
+    have hchain := le_trans hstep1 hstep2
+    have hchain' :
+        l2_norm (E.apply h.input) * l2_norm h.target_logit_diff ≤ bound := by
+      simpa [bound, mul_assoc, mul_left_comm, mul_comm] using hchain
+    exact le_trans habs hchain'
+
+  have herr_lower : -bound ≤ inner_product (E.apply h.input) h.target_logit_diff := by
+    exact (abs_le.mp herr_abs).1
+
+  -- Combine: <Jx,u> = <Vx,u> + <Ex,u> ≥ δ + (-bound) = δ - bound
+  have hsum_le :
+      h.delta + (-bound) ≤
+        inner_product (V.apply h.input) h.target_logit_diff +
+          inner_product (E.apply h.input) h.target_logit_diff := by
+    exact add_le_add hV herr_lower
+  -- rewrite the goal via the decomposition
+  have :
+      h.delta - bound ≤
+        inner_product (h.composed_jacobian.apply h.input) h.target_logit_diff := by
+    simpa [sub_eq_add_neg, hdecomp] using hsum_le
+  exact this
 
 end Nfp

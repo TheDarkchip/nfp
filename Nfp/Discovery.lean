@@ -1076,6 +1076,14 @@ def get (A : ConcreteAttentionWeights) (q k : Nat) : Float :=
     A.weights.getD (q * A.seqLen + k) 0.0
   else 0.0
 
+/-- Convert attention weights to a `ConcreteMatrix` for use with matrix multiplication. -/
+def toMatrix (A : ConcreteAttentionWeights) : ConcreteMatrix where
+  numRows := A.seqLen
+  numCols := A.seqLen
+  data := A.weights
+  size_eq := by
+    simpa using A.size_eq
+
 /-- Compute softmax for a row of logits. -/
 def softmaxRow (logits : Array Float) : Array Float :=
   let maxVal := logits.foldl max (-1e30)
@@ -1358,6 +1366,15 @@ structure VerifiedInductionHead where
   threshold : Float
   /-- Combined error is below threshold (runtime-checked) -/
   errorChecked : Bool
+
+/-- An induction head candidate with an explicit effectiveness score `δ` on a target direction. -/
+structure CertifiedInductionHead where
+  /-- The discovered candidate pair (pattern-checked) -/
+  candidate : CandidateInductionHead
+  /-- Effectiveness score on the target direction -/
+  delta : Float
+  /-- Threshold used for δ -/
+  threshold : Float
 
 /-- Result of discovering a multi-layer circuit with N-layer error bounds.
 
@@ -1781,27 +1798,12 @@ def getHeadData (cache : PrecomputedCache) (layerIdx headIdx : Nat) :
 
 end PrecomputedCache
 
-/-- Search for induction heads using proper layer-wise residual stream computation.
-
-This method performs multi-layer analysis with correct forward pass:
-- Layer 1 attention is computed on the residual stream *after* layer 0
-- Layer 2 attention is computed on the residual stream *after* layers 0-1
-
-This enables detection of true induction heads where layer 2 attends to
-information created by layer 1's "previous-token" head.
-
-**Performance Note**: Uses `PrecomputedCache` to avoid O(L²H²) redundant attention
-computations, reducing to O(LH) for typical models.
--/
-def findInductionHeadCandidates (model : ConcreteModel)
-    (_threshold : Float)
+/-- Core induction head discovery that reuses a precomputed cache. -/
+def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
+  let model := cache.model
   let mut candidates : Array CandidateInductionHead := #[]
-
-  -- OPTIMIZATION: Precompute all attention patterns and projections once
-  -- This reduces O(L²H²) redundant computations to O(LH)
-  let cache := PrecomputedCache.build model
 
   for l1 in [:model.numLayers] do
     for l2 in [l1 + 1:model.numLayers] do
@@ -1842,6 +1844,25 @@ def findInductionHeadCandidates (model : ConcreteModel)
               | _, _ => pure ()
 
   candidates.qsort (·.combinedError < ·.combinedError)
+
+/-- Search for induction heads using proper layer-wise residual stream computation.
+
+This method performs multi-layer analysis with correct forward pass:
+- Layer 1 attention is computed on the residual stream *after* layer 0
+- Layer 2 attention is computed on the residual stream *after* layers 0-1
+
+This enables detection of true induction heads where layer 2 attends to
+information created by layer 1's "previous-token" head.
+
+**Performance Note**: Uses `PrecomputedCache` to avoid O(L²H²) redundant attention
+computations, reducing to O(LH) for typical models.
+-/
+def findInductionHeadCandidates (model : ConcreteModel)
+    (_threshold : Float)
+    (minPrevTokenStrength : Float := 0.1)
+    (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
+  let cache := PrecomputedCache.build model
+  findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
 
 /-- Filter candidates to only those meeting the threshold.
 
@@ -3293,6 +3314,65 @@ def normalize (t : TargetDirection) : TargetDirection :=
   else t
 
 end TargetDirection
+
+/-! ## Virtual-Head Effectiveness Verification -/
+
+/-- Compute the virtual-head effectiveness score `δ` for a candidate induction pair.
+
+This computes the concrete analogue of `(valueTerm L₁).comp (valueTerm L₂)` applied to an input:
+`Y = (A₂ · A₁) · X · (W₁ · W₂)`, then scores the last position against `target`.
+-/
+def computeInductionEffectiveness
+    (candidate : CandidateInductionHead)
+    (cache : PrecomputedCache)
+    (input : ConcreteMatrix)
+    (target : TargetDirection) : Float :=
+  match cache.getHeadData candidate.layer1Idx candidate.head1Idx,
+        cache.getHeadData candidate.layer2Idx candidate.head2Idx with
+  | some data1, some data2 =>
+      let A1 := data1.attention.toMatrix
+      let A2 := data2.attention.toMatrix
+      let Avirtual := A2.matmul A1
+
+      let W1 := data1.valueOutputProj
+      let W2 := data2.valueOutputProj
+      let Wvirtual := W1.matmul W2
+
+      let Y := (Avirtual.matmul input).matmul Wvirtual
+      if Y.numRows = 0 then 0.0
+      else
+        -- Next-token prediction: score the final sequence position.
+        let lastPos := Y.numRows - 1
+        let row := Y.getRow lastPos
+        let scoreMat := row.matmul target.direction
+        scoreMat.get 0 0
+  | _, _ => 0.0
+
+/-- Filter heuristic induction candidates by an explicit effectiveness threshold `δ`.
+
+Uses a `PrecomputedCache` so the attention patterns/projections are computed once.
+-/
+def findCertifiedInductionHeads (model : ConcreteModel)
+    (target : TargetDirection)
+    (deltaThreshold : Float)
+    (minPrevTokenStrength : Float := 0.1)
+    (minInductionScore : Float := 0.05) : Array CertifiedInductionHead := Id.run do
+  let cache := PrecomputedCache.build model
+  let candidates :=
+    findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
+  let mut certified : Array CertifiedInductionHead := #[]
+
+  for candidate in candidates do
+    let input := cache.forwardResult.getLayerInput candidate.layer1Idx
+    let delta := computeInductionEffectiveness candidate cache input target
+    if delta > deltaThreshold then
+      certified := certified.push {
+        candidate := candidate
+        delta := delta
+        threshold := deltaThreshold
+      }
+
+  certified.qsort (fun a b => b.delta < a.delta)
 
 /-- Target-aware importance metrics for a component.
 
