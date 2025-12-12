@@ -243,6 +243,10 @@ def maxAbsColSum (M : ConcreteMatrix) : Float := Id.run do
     maxSum := max maxSum colSum
   maxSum
 
+/-- Deterministic Schur bound on the spectral norm: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞). -/
+def schurNormBound (M : ConcreteMatrix) : Float :=
+  Float.sqrt (M.maxAbsRowSum * M.maxAbsColSum)
+
 /-- Transpose a matrix. -/
 def transpose (M : ConcreteMatrix) : ConcreteMatrix where
   numRows := M.numCols
@@ -1423,8 +1427,12 @@ structure PatternTermBoundInputs where
   attention : ConcreteAttentionWeights
   /-- W_Q · W_K^T alignment matrix -/
   queryKeyAlign : ConcreteMatrix
+  /-- Deterministic Schur bound on ‖W_Q · W_K^T‖₂. -/
+  queryKeyAlignSchurNorm : Float
   /-- W_V · W_O projection -/
   valueOutputProj : ConcreteMatrix
+  /-- Deterministic Schur bound on ‖W_V · W_O‖₂. -/
+  valueOutputProjSchurNorm : Float
   /-- Input embedding norm (‖X‖_F) -/
   inputNorm : Float
   /-- Scaling factor (√d_head) -/
@@ -1453,9 +1461,8 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
   let softmaxJacNorm := inputs.attention.softmaxJacobianFrobeniusNorm
   -- Add small safety margin (factor of 2) to account for approximation
   let softmaxBound := 2.0 * softmaxJacNorm
-  let qkNorm := inputs.queryKeyAlign.frobeniusNorm
-  let voNorm := inputs.valueOutputProj.frobeniusNorm
-  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm * qkNorm * voNorm
+  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
+    inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
 /-- Bound ‖patternTerm‖_F using the old pessimistic constant bound.
 
@@ -1464,9 +1471,8 @@ Prefer `computePatternTermBound` for tighter data-dependent bounds.
 -/
 def computePatternTermBoundPessimistic (inputs : PatternTermBoundInputs) : Float :=
   let softmaxBound : Float := 2.0  -- Worst-case softmax Jacobian bound
-  let qkNorm := inputs.queryKeyAlign.frobeniusNorm
-  let voNorm := inputs.valueOutputProj.frobeniusNorm
-  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm * qkNorm * voNorm
+  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
+    inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
 /-- Compute faithfulness ratio: ‖patternTerm‖_F / ‖valueTerm‖_F. -/
 def computeFaithfulnessRatio (inputs : PatternTermBoundInputs) : Float :=
@@ -1843,16 +1849,16 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
       if hh : hidx < heads.size then
         let head := heads[hidx]
         let voProj := head.valueOutputProjection
-        -- Use operator norm (spectral norm) via power iteration for tighter bound than Frobenius
-        totalNorm := totalNorm + ln1Bound * voProj.operatorNormBound 20
+        -- Deterministic Schur bound: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)
+        totalNorm := totalNorm + ln1Bound * voProj.schurNormBound
 
     -- Add MLP contribution if present
     if hm : layerIdx < model.mlps.size then
       let mlp := model.mlps[layerIdx]
       -- MLP Jacobian norm ≤ ‖W_out‖ · ‖∂activation‖ · ‖W_in‖
       -- For GeLU, ‖∂activation‖ ≤ 1.7 approximately
-      let winNorm := mlp.W_in.frobeniusNorm
-      let woutNorm := mlp.W_out.frobeniusNorm
+      let winNorm := mlp.W_in.schurNormBound
+      let woutNorm := mlp.W_out.schurNormBound
       let geluDerivBound : Float := 1.7
       totalNorm := totalNorm + ln2Bound * (winNorm * geluDerivBound * woutNorm)
 
@@ -1933,6 +1939,10 @@ structure PrecomputedHeadData where
   valueOutputProjNorm : Float
   /-- Cached Frobenius norm of Q·K^T -/
   queryKeyAlignNorm : Float
+  /-- Cached Schur bound on ‖V·W_O‖₂ -/
+  valueOutputProjSchurNorm : Float
+  /-- Cached Schur bound on ‖Q·K^T‖₂ -/
+  queryKeyAlignSchurNorm : Float
 
 namespace PrecomputedHeadData
 
@@ -1942,7 +1952,7 @@ def patternTermBound (data : PrecomputedHeadData) : Float :=
   let softmaxBound := 2.0 * softmaxJacNorm
   -- Pre-LN: sensitivity is scaled by ln_1's Jacobian.
   data.ln1OpBound * (softmaxBound / data.scaleFactor) * data.inputNorm *
-    data.queryKeyAlignNorm * data.valueOutputProjNorm
+    data.queryKeyAlignSchurNorm * data.valueOutputProjSchurNorm
 
 end PrecomputedHeadData
 
@@ -1994,6 +2004,9 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           -- Precompute norms
           let voNorm := voProj.frobeniusNorm
           let qkNorm := qkAlign.frobeniusNorm
+          -- Deterministic Schur bounds: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)
+          let voSchur := voProj.schurNormBound
+          let qkSchur := qkAlign.schurNormBound
 
           let data : PrecomputedHeadData := {
             layerIdx := l
@@ -2006,6 +2019,8 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
             scaleFactor := Float.sqrt head.headDim.toFloat
             valueOutputProjNorm := voNorm
             queryKeyAlignNorm := qkNorm
+            valueOutputProjSchurNorm := voSchur
+            queryKeyAlignSchurNorm := qkSchur
           }
 
           layerHeadData := layerHeadData.push data
@@ -2831,7 +2846,9 @@ private def computeHeadMetricsForSAE
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
+        queryKeyAlignSchurNorm := qkAlign.schurNormBound
         valueOutputProj := voProj
+        valueOutputProjSchurNorm := voProj.schurNormBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -3410,7 +3427,9 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
+        queryKeyAlignSchurNorm := qkAlign.schurNormBound
         valueOutputProj := voProj
+        valueOutputProjSchurNorm := voProj.schurNormBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -3760,7 +3779,9 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
+        queryKeyAlignSchurNorm := qkAlign.schurNormBound
         valueOutputProj := voProj
+        valueOutputProjSchurNorm := voProj.schurNormBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -3978,7 +3999,9 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
           let inputs : PatternTermBoundInputs := {
             attention := attn
             queryKeyAlign := head.queryKeyAlignment
+            queryKeyAlignSchurNorm := head.queryKeyAlignment.schurNormBound
             valueOutputProj := head.valueOutputProjection
+            valueOutputProjSchurNorm := head.valueOutputProjection.schurNormBound
             inputNorm := inputNorm
             scaleFactor := Float.sqrt head.headDim.toFloat
           }
