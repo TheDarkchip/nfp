@@ -99,6 +99,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
+  let verbose := p.hasFlag "verbose"
   let some threshold := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
@@ -153,9 +154,15 @@ def runInduction (p : Parsed) : IO UInt32 := do
 
       for h in heads do
         let c := h.candidate
-        IO.println <|
-          s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-            s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError}"
+        if verbose then
+          IO.println <|
+            s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
+              s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError} " ++
+              s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
+        else
+          IO.println <|
+            s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
+              s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError}"
 
       return 0
 
@@ -183,6 +190,7 @@ def inductionCmd : Cmd := `[Cli|
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
     t, threshold : String; "Effectiveness threshold (default: 0.5)"
+    v, verbose; "Enable verbose output"
 
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"

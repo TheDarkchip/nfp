@@ -365,7 +365,20 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
 /-- Conservative operator-norm bound for the Jacobian of row-wise LayerNorm.
 
 We bound the **global** operator norm on the block-diagonal Jacobian (one block per row)
-by the maximum over rows of an L∞ row-sum bound, scaled by `max |γ|`.
+by the maximum over rows of a **tight spectral-norm bound**.
+
+For a single row `x : ℝ^d` (ignoring β), LayerNorm is:
+`LN(x) = γ ⊙ ((x - μ) / σ)` with `σ = sqrt(var + eps)`.
+Its Jacobian has the closed form:
+
+`J = diag(γ) * (1/σ) * (I - (1/d)11ᵀ - (1/d)vvᵀ)`
+
+where `v` is the centered vector scaled by `1/σ`. The symmetric matrix in parentheses
+has eigenvalues `{0, 1, eps/(var+eps)}` so its spectral norm is exactly `1`.
+Therefore `‖J‖₂ ≤ max |γ| / σ`.
+
+This avoids the previous row-sum bound which could overestimate by orders of magnitude
+and made downstream certification thresholds unusable.
 -/
 def layerNormRowwiseOpBound (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float := Id.run do
   if X.numRows = 0 || X.numCols = 0 then return 0.0
@@ -377,7 +390,8 @@ def layerNormRowwiseOpBound (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Floa
     let g := Float.abs (γ.get 0 c)
     if g > gammaMaxAbs then gammaMaxAbs := g
 
-  let mut maxBound : Float := 0.0
+  -- max_r (1/σ_r)
+  let mut maxInvStd : Float := 0.0
   for r in [:X.numRows] do
     -- Mean
     let mut sum : Float := 0.0
@@ -385,25 +399,19 @@ def layerNormRowwiseOpBound (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Floa
       sum := sum + X.get r c
     let μ := sum / X.numCols.toFloat
 
-    -- Variance + max |x - μ|
+    -- Variance
     let mut varSum : Float := 0.0
-    let mut maxCenteredAbs : Float := 0.0
     for c in [:X.numCols] do
       let centered := X.get r c - μ
       varSum := varSum + centered * centered
-      let a := Float.abs centered
-      if a > maxCenteredAbs then maxCenteredAbs := a
     let var := varSum / X.numCols.toFloat
     let σ := Float.sqrt (var + eps)
 
     if σ > 0.0 then
-      -- From the closed form: entries are O(1/σ) with dense corrections.
-      -- Row-sum bound: (1/σ) * (2 + (maxCenteredAbs/σ)^2), then scale by max|γ|.
-      let ratio := maxCenteredAbs / σ
-      let rowBound := gammaMaxAbs * (1.0 / σ) * (2.0 + ratio * ratio)
-      if rowBound > maxBound then maxBound := rowBound
+      let invσ := 1.0 / σ
+      if invσ > maxInvStd then maxInvStd := invσ
 
-  return maxBound
+  return gammaMaxAbs * maxInvStd
 
 /-- Get column j as a vector (stored as numRows×1 matrix). -/
 def getCol (M : ConcreteMatrix) (j : Nat) : ConcreteMatrix :=
@@ -1323,6 +1331,33 @@ def ConcreteAttentionWeights.maxSoftmaxJacobianNorm (A : ConcreteAttentionWeight
       maxNorm := max maxNorm rowNorm
     maxNorm
 
+/-- Upper bound on the operator norm ‖J‖₂ of the softmax Jacobian for each row, then maxed.
+
+For a probability row `p`, the softmax Jacobian is:
+`J = diag(p) - p pᵀ`.
+It is positive semidefinite and satisfies:
+- `J ≤ diag(p)` so `‖J‖₂ ≤ maxᵢ pᵢ`
+- `‖J‖₂ ≤ tr(J) = 1 - Σᵢ pᵢ²`
+
+We take the tighter bound `min(maxᵢ pᵢ, 1 - Σᵢ pᵢ²)` for each row, and then take the
+maximum over rows. This is especially sharp for nearly one-hot or nearly uniform rows.
+-/
+def ConcreteAttentionWeights.softmaxJacobianOpBound (A : ConcreteAttentionWeights) : Float :=
+  if A.seqLen = 0 then 0.0
+  else Id.run do
+    let mut maxBound : Float := 0.0
+    for q in [:A.seqLen] do
+      let mut sumSq : Float := 0.0
+      let mut maxP : Float := 0.0
+      for k in [:A.seqLen] do
+        let p := A.get q k
+        sumSq := sumSq + p * p
+        if p > maxP then maxP := p
+      let traceBound := max 0.0 (1.0 - sumSq)
+      let rowBound := min maxP traceBound
+      if rowBound > maxBound then maxBound := rowBound
+    maxBound
+
 /-- Compute the overall Frobenius norm of the softmax Jacobian across all rows.
 
 This is `sqrt(Σ_q (1 - Σ_k A[q,k]²))`, which gives the total "softness" of attention.
@@ -1448,29 +1483,29 @@ the "softness" of the attention distribution. For sparse (one-hot) attention,
 the softmax Jacobian is nearly zero, giving much tighter bounds.
 
 **Sparsity-aware bound**:
-  ‖patternTerm‖_F ≤ (‖J_softmax‖_F / scale) · ‖X‖_F · ‖W_Q·W_K^T‖_F · ‖W_V·W_O‖_F
+  ‖patternTerm‖_F ≤ (‖J_softmax‖₂ / scale) · ‖X‖_F · ‖W_Q·W_K^T‖₂ · ‖W_V·W_O‖₂
 
-where ‖J_softmax‖_F = sqrt(Σ_q (1 - Σ_k A[q,k]²)) captures attention sharpness.
+We use a tight, data-dependent bound on `‖J_softmax‖₂` per row of attention:
+for a probability row `p`, `J = diag(p) - p pᵀ` and
+`‖J‖₂ ≤ min(maxᵢ pᵢ, 1 - Σᵢ pᵢ²)`.
 
-- For perfectly one-hot attention: ‖J_softmax‖_F → 0
-- For uniform attention over n: ‖J_softmax‖_F → sqrt(n · (n-1)/n) = sqrt(n-1)
-- Worst case (old bound): 2.0 * sqrt(seqLen)
+- Perfectly one-hot rows give `‖J‖₂ = 0`.
+- Uniform rows give `‖J‖₂ = 1/n`.
+- Worst-case (all n): `‖J‖₂ ≤ 0.5`.
 -/
 def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
-  -- Compute data-dependent softmax Jacobian bound
-  let softmaxJacNorm := inputs.attention.softmaxJacobianFrobeniusNorm
-  -- Add small safety margin (factor of 2) to account for approximation
-  let softmaxBound := 2.0 * softmaxJacNorm
+  -- Data-dependent bound on the softmax Jacobian operator norm.
+  let softmaxBound := inputs.attention.softmaxJacobianOpBound
   (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
     inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
 /-- Bound ‖patternTerm‖_F using the old pessimistic constant bound.
 
-This uses the worst-case softmax Jacobian bound of 2.0, which is valid but loose.
+This uses the worst-case softmax Jacobian spectral-norm bound of 0.5, which is valid but loose.
 Prefer `computePatternTermBound` for tighter data-dependent bounds.
 -/
 def computePatternTermBoundPessimistic (inputs : PatternTermBoundInputs) : Float :=
-  let softmaxBound : Float := 2.0  -- Worst-case softmax Jacobian bound
+  let softmaxBound : Float := 0.5  -- Worst-case softmax Jacobian spectral norm
   (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
     inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
@@ -1492,11 +1527,11 @@ structure CandidateInductionHead where
   head1Idx : Nat
   /-- Head index within layer 2 -/
   head2Idx : Nat
-  /-- Computed pattern term bound for L1 -/
+  /-- Faithfulness ratio ε₁ for L1: ‖PatternTerm‖_F / ‖ValueTerm‖_F -/
   patternBound1 : Float
-  /-- Computed pattern term bound for L2 -/
+  /-- Faithfulness ratio ε₂ for L2: ‖PatternTerm‖_F / ‖ValueTerm‖_F -/
   patternBound2 : Float
-  /-- Combined error bound: ε₁ + ε₂ + ε₁·ε₂ -/
+  /-- Combined relative error: (1+ε₁)(1+ε₂) - 1 = ε₁ + ε₂ + ε₁·ε₂ -/
   combinedError : Float
   /-- Previous-token strength: avg A₁[i, i-1] -/
   prevTokenStrength : Float
@@ -1849,16 +1884,16 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
       if hh : hidx < heads.size then
         let head := heads[hidx]
         let voProj := head.valueOutputProjection
-        -- Deterministic Schur bound: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)
-        totalNorm := totalNorm + ln1Bound * voProj.schurNormBound
+        -- Power iteration estimate of ‖M‖₂ (deterministic, fixed iterations).
+        totalNorm := totalNorm + ln1Bound * voProj.operatorNormBound 20
 
     -- Add MLP contribution if present
     if hm : layerIdx < model.mlps.size then
       let mlp := model.mlps[layerIdx]
       -- MLP Jacobian norm ≤ ‖W_out‖ · ‖∂activation‖ · ‖W_in‖
       -- For GeLU, ‖∂activation‖ ≤ 1.7 approximately
-      let winNorm := mlp.W_in.schurNormBound
-      let woutNorm := mlp.W_out.schurNormBound
+      let winNorm := mlp.W_in.operatorNormBound 20
+      let woutNorm := mlp.W_out.operatorNormBound 20
       let geluDerivBound : Float := 1.7
       totalNorm := totalNorm + ln2Bound * (winNorm * geluDerivBound * woutNorm)
 
@@ -1948,11 +1983,29 @@ namespace PrecomputedHeadData
 
 /-- Precomputed pattern term bound for a head (cached computation). -/
 def patternTermBound (data : PrecomputedHeadData) : Float :=
-  let softmaxJacNorm := data.attention.softmaxJacobianFrobeniusNorm
-  let softmaxBound := 2.0 * softmaxJacNorm
-  -- Pre-LN: sensitivity is scaled by ln_1's Jacobian.
-  data.ln1OpBound * (softmaxBound / data.scaleFactor) * data.inputNorm *
+  let softmaxBound := data.attention.softmaxJacobianOpBound
+  -- This bounds the Pattern Term of the attention layer linearization
+  -- with respect to the **LayerNormed** input seen by attention.
+  (softmaxBound / data.scaleFactor) * data.inputNorm *
     data.queryKeyAlignSchurNorm * data.valueOutputProjSchurNorm
+
+/-- Frobenius norm of the Value Term of this head's Jacobian.
+
+For the attention linearization, the Value Term factorizes as `A ⊗ (W_V·W_O)`,
+so `‖ValueTerm‖_F = ‖A‖_F · ‖W_V·W_O‖_F`.
+-/
+def valueTermNorm (data : PrecomputedHeadData) : Float :=
+  let attnNormSq := data.attention.weights.foldl (fun acc x => acc + x * x) 0.0
+  Float.sqrt attnNormSq * data.valueOutputProjNorm
+
+/-- Dimensionless faithfulness ratio: `‖PatternTerm‖_F / ‖ValueTerm‖_F`.
+
+This matches `relativeApproximationError` from `Nfp.Linearization` and is the
+quantity that should be compared to user-facing thresholds like `0.1`.
+-/
+def faithfulnessRatio (data : PrecomputedHeadData) : Float :=
+  let v := data.valueTermNorm
+  if v < 1e-10 then Float.inf else data.patternTermBound / v
 
 end PrecomputedHeadData
 
@@ -2004,9 +2057,21 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           -- Precompute norms
           let voNorm := voProj.frobeniusNorm
           let qkNorm := qkAlign.frobeniusNorm
-          -- Deterministic Schur bounds: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)
-          let voSchur := voProj.schurNormBound
-          let qkSchur := qkAlign.schurNormBound
+          -- Deterministic Schur bounds: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞).
+          --
+          -- For products like `W_V·W_O` and `W_Q·W_Kᵀ`, a much tighter bound is often
+          -- obtained from submultiplicativity: ‖AB‖₂ ≤ ‖A‖₂‖B‖₂, using Schur bounds
+          -- on the *factors* (smaller matrices) instead of the dense `d×d` product.
+          --
+          -- We take the minimum of two valid upper bounds to improve tightness
+          -- without sacrificing determinism.
+          let wqSchur := head.W_Q.schurNormBound
+          let wkSchur := head.W_K.schurNormBound
+          let wvSchur := head.W_V.schurNormBound
+          let woSchur := head.W_O.schurNormBound
+
+          let voSchur := min voProj.schurNormBound (wvSchur * woSchur)
+          let qkSchur := min qkAlign.schurNormBound (wqSchur * wkSchur)
 
           let data : PrecomputedHeadData := {
             layerIdx := l
@@ -2071,18 +2136,18 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
                 | some prevStrength =>
                   match checkInductionPattern data1.attention data2.attention minInductionScore with
                   | some _ =>
-                    -- OPTIMIZATION: Use precomputed bounds directly
-                    let bound1 := data1.patternTermBound
-                    let bound2 := data2.patternTermBound
-                    let combinedError := bound1 + bound2 + bound1 * bound2
+                    -- Use dimensionless faithfulness ratios (relative approximation errors).
+                    let ε1 := data1.faithfulnessRatio
+                    let ε2 := data2.faithfulnessRatio
+                    let combinedError := ε1 + ε2 + ε1 * ε2
 
                     let candidate : CandidateInductionHead := {
                       layer1Idx := l1
                       layer2Idx := l2
                       head1Idx := h1Idx
                       head2Idx := h2Idx
-                      patternBound1 := bound1
-                      patternBound2 := bound2
+                      patternBound1 := ε1
+                      patternBound2 := ε2
                       combinedError := combinedError
                       prevTokenStrength := prevStrength
                       description := s!"L{l1}H{h1Idx}->L{l2}H{h2Idx} (deep)"
