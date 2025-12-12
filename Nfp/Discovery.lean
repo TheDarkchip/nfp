@@ -3401,8 +3401,11 @@ end TargetDirection
 
 /-- Compute the virtual-head effectiveness score `δ` for a candidate induction pair.
 
-This computes the concrete analogue of `(valueTerm L₁).comp (valueTerm L₂)` applied to an input:
-`Y = (A₂ · A₁) · X · (W₁ · W₂)`, then scores the last position against `target`.
+This computes the concrete analogue of QK-composition for induction heads:
+the *addressing* path composes attentions `Avirtual = A₂ · A₁`, while the *value* path reads
+directly from the residual stream via the second head's value/output projection `W₂`.
+
+Concretely, we compute `Y = (A₂ · A₁) · X · W₂`, then score the last position against `target`.
 -/
 def computeInductionEffectiveness
     (candidate : CandidateInductionHead)
@@ -3416,9 +3419,8 @@ def computeInductionEffectiveness
       let A2 := data2.attention.toMatrix
       let Avirtual := A2.matmul A1
 
-      let W1 := data1.valueOutputProj
       let W2 := data2.valueOutputProj
-      let Wvirtual := W1.matmul W2
+      let Wvirtual := W2
 
       let Y := (Avirtual.matmul input).matmul Wvirtual
       if Y.numRows = 0 then 0.0
