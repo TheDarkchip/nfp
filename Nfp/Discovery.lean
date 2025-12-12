@@ -3657,24 +3657,24 @@ This computes the concrete analogue of QK-composition for induction heads:
 the *addressing* path composes attentions `Avirtual = A₂ · A₁`, while the *value* path reads
 directly from the residual stream via the second head's value/output projection `W₂`.
 
-Concretely, we compute `Y = (A₂ · A₁) · X · W₂`, then score the last position against `target`.
+Concretely, for the **value/copy** path we use the second head directly:
+`Y = A₂ · X₂ · W₂`, then score the last position against `target`.
 -/
 def computeInductionEffectiveness
     (candidate : CandidateInductionHead)
     (cache : PrecomputedCache)
-    (input : ConcreteMatrix)
+    (layer2Input : ConcreteMatrix)
     (target : TargetDirection) : Float :=
   match cache.getHeadData candidate.layer1Idx candidate.head1Idx,
         cache.getHeadData candidate.layer2Idx candidate.head2Idx with
   | some data1, some data2 =>
       let A1 := data1.attention.toMatrix
       let A2 := data2.attention.toMatrix
-      let Avirtual := A2.matmul A1
-
       let W2 := data2.valueOutputProj
-      let Wvirtual := W2
+      let _Avirtual := A2.matmul A1  -- addressing check lives in candidate selection
 
-      let Y := (Avirtual.matmul input).matmul Wvirtual
+      -- Value/copy path: read values directly from Layer 2 residual stream.
+      let Y := (A2.matmul layer2Input).matmul W2
       if Y.numRows = 0 then 0.0
       else
         -- Next-token prediction: score the final sequence position.
@@ -3699,8 +3699,8 @@ def findCertifiedInductionHeads (model : ConcreteModel)
   let mut certified : Array CertifiedInductionHead := #[]
 
   for candidate in candidates do
-    let input := cache.forwardResult.getLayerInput candidate.layer1Idx
-    let delta := computeInductionEffectiveness candidate cache input target
+    let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
+    let delta := computeInductionEffectiveness candidate cache layer2Input target
     if delta > deltaThreshold then
       certified := certified.push {
         candidate := candidate
