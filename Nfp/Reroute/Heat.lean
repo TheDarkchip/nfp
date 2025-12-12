@@ -10,6 +10,8 @@ import Mathlib.Algebra.Field.Defs
 import Nfp.Prob
 import Nfp.Reroute.Partition
 
+namespace Nfp
+
 namespace List
 
 lemma mem_left_of_zip {α β : Type*} :
@@ -68,8 +70,6 @@ alignment invariants required to distribute each weight over the incremental
 masks.  `rerouteHeat` sums the per-block shares, normalizes by the total drop,
 and produces a `ProbVec` on `S`.
 -/
-
-namespace Nfp
 
 open scoped BigOperators
 open Finset

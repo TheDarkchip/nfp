@@ -50,7 +50,7 @@ This file collects the statements used to mirror the Appendix A results:
   (`normalizeOn_outside`, `normalizeOn_inside`, `normalizeOn_sum_one`), and the
   uniqueness theorem `proportional_row_unique`.
 
-All proofs are constructive in mathlib and avoid `sorry`.
+All proofs avoid `sorry`. Some results use classical reasoning (`classical`).
 -/
 
 section PCC

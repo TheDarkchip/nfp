@@ -234,7 +234,7 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 #print axioms Nfp.SignedMixer.totalInfluenceOn
 #print axioms Nfp.SignedMixer.apply
 #print axioms Nfp.SignedMixer.apply_comp
-#print axioms Nfp.SignedMixer.gradient_is_weight
+#print axioms Nfp.SignedMixer.jacobianEntry_eq_weight
 
 -- AffineMixer (linear + bias)
 #print axioms Nfp.AffineMixer

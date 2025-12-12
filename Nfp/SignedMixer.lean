@@ -332,12 +332,12 @@ end AffineMixer
 
 /-! ## Gradient-based attribution compatibility -/
 
-/-- For a signed mixer M applied at input x, the gradient ∂(Mx)_j/∂x_i = M.w i j.
-This connects our framework to gradient-based attribution methods.
+/-- A purely algebraic compatibility lemma: for a linear map encoded by a `SignedMixer`,
+the “Jacobian entry” is *by definition* the weight `M.w i j`.
 
-Note: In a more sophisticated setup with Lean's analysis library,
-we could prove the actual calculus statement. Here we state it as an axiom-free identity. -/
-theorem SignedMixer.gradient_is_weight (M : SignedMixer S T) (i : S) (j : T) :
+This does **not** assert a differentiability statement in Lean's analysis library; it is
+the convention used by downstream (external) gradient-based interpretations. -/
+theorem SignedMixer.jacobianEntry_eq_weight (M : SignedMixer S T) (i : S) (j : T) :
     M.w i j = M.w i j := rfl
 
 /-- **Integrated Gradients correspondence**: For a linear map M,
