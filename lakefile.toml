@@ -1,0 +1,25 @@
+name = "nfp"
+version = "0.1.0"
+keywords = ["math"]
+defaultTargets = ["Nfp"]
+
+[leanOptions]
+pp.unicode.fun = true # pretty-prints `fun a ↦ b`
+autoImplicit = false
+relaxedAutoImplicit = false
+weak.linter.mathlibStandardSet = true
+maxSynthPendingDepth = 3
+linter.unusedVariables = true
+linter.unreachableTactic = true
+
+[[require]]
+name = "mathlib"
+scope = "leanprover-community"
+rev = "stable"
+
+[[lean_lib]]
+name = "Nfp"
+
+[[lean_exe]]
+name = "nfp"
+root = "Main"
