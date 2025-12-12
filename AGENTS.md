@@ -166,6 +166,8 @@ but you **must** update this list in the same commit.
   - Neural-network layer operations modeled as mixers; attribution/ablation/reachability laws.
 - `Attribution.lean`
   - Interpretability axioms and bridges from tracer-based notions.
+- `Induction.lean`
+  - True induction head definitions and certification theorems (pattern + faithfulness + functional effect).
 - `SignedMixer.lean`
   - Signed/real-weight generalization (negative weights, affine maps, etc.).
 - `Linearization.lean`
