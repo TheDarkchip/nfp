@@ -1473,6 +1473,13 @@ structure ConcreteModel where
   mlps : Array ConcreteMLPLayer
   /-- Sequence length for analysis -/
   seqLen : Nat
+  /-- Optional ground-truth input token IDs for the prompt being analyzed.
+
+  When present, this enables **self-supervised induction targeting** by choosing the
+  correct next-token prediction target from sequence history (see
+  `TargetDirection.fromInductionHistory`).
+  -/
+  inputTokens : Option (Array Nat) := none
   /-- Input embeddings (seqLen × modelDim) -/
   inputEmbeddings : ConcreteMatrix
   /-- Unembedding (decoder) matrix (modelDim × vocabSize) for logit computation.
@@ -3312,6 +3319,50 @@ def normalize (t : TargetDirection) : TargetDirection :=
   if norm > 1e-10 then
     { t with direction := t.direction.scale (1.0 / norm) }
   else t
+
+/-- Construct a next-token logit-difference direction from the model's input token history.
+
+This is the **self-supervised induction target**:
+let `T` be the ground-truth token sequence, and let `t_curr = T[last]`.
+If `t_curr` appeared before at index `k`, the "induction target" is `t_next = T[k+1]`.
+
+Returns `none` if:
+- the model has no `inputTokens`,
+- the sequence has no previous occurrence of `t_curr`,
+- or the model is missing an `unembedding` matrix.
+-/
+def fromInductionHistory (model : ConcreteModel) : Option TargetDirection := do
+  let tokens ← model.inputTokens
+  if tokens.size = 0 then none else
+    let lastIdx := tokens.size - 1
+    let tCurr := tokens[lastIdx]!
+    let mut foundIdx : Option Nat := none
+    for offset in [:lastIdx] do
+      if foundIdx.isNone then
+        let idx := lastIdx - 1 - offset
+        if tokens[idx]! = tCurr then
+          foundIdx := some idx
+
+    let k ← foundIdx
+    let tNext := tokens[k + 1]!
+
+    let W_U ← model.unembedding
+    let vocabSize := W_U.numCols
+    if vocabSize < 2 then none
+    else if tNext ≥ vocabSize then none
+    else
+      let incorrect : Nat :=
+        if tCurr < vocabSize ∧ tCurr ≠ tNext then tCurr
+        else
+          let cand1 := (tNext + 1) % vocabSize
+          if cand1 ≠ tNext then cand1 else (tNext + 2) % vocabSize
+      if incorrect = tNext then none
+      else
+        let base := TargetDirection.fromLogitDiff W_U tNext incorrect
+        some { base with
+          description := s!"induction_history(curr={tCurr}, prev={k}, \
+            next={tNext}, neg={incorrect})"
+        }
 
 end TargetDirection
 

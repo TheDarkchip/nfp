@@ -29,6 +29,9 @@ hidden_dim=3072
 vocab_size=50257
 seq_len=1024
 
+TOKENS
+<space-separated integers (token IDs), length = seq_len>
+
 EMBEDDINGS
 <space-separated floats, row-major>
 
@@ -84,6 +87,13 @@ def parseFloat (s : String) : Option Float := do
 def parseFloatLine (line : String) : Array Float :=
   let parts := line.splitOn " " |>.filter (· ≠ "")
   parts.toArray.filterMap parseFloat
+
+/-! ## Nat Parsing Utilities -/
+
+/-- Parse a line of space-separated natural numbers. -/
+def parseNatLine (line : String) : Array Nat :=
+  let parts := line.splitOn " " |>.filter (· ≠ "")
+  parts.toArray.filterMap (·.trim.toNat?)
 
 /-! ## Matrix Construction for IO
 
@@ -216,7 +226,9 @@ def loadFromText (content : String) : IO LoadResult := do
   let mut seqLen : Nat := 0
 
   let mut i := 1
-  while i < lines.size && !lines[i]!.startsWith "EMBEDDINGS" do
+  while i < lines.size &&
+        lines[i]!.trim != "TOKENS" &&
+        !lines[i]!.startsWith "EMBEDDINGS" do
     -- SAFETY: i < lines.size guaranteed by while condition
     let line := lines[i]!
     if line.startsWith "num_layers=" then
@@ -239,6 +251,21 @@ def loadFromText (content : String) : IO LoadResult := do
   if modelDim = 0 || numLayers = 0 || numHeads = 0 then
     return .error s!"Invalid header: modelDim={modelDim}, \
       numLayers={numLayers}, numHeads={numHeads} (all must be > 0)"
+
+  -- Optional TOKENS section (ground-truth token IDs for the analyzed prompt)
+  while i < lines.size && lines[i]!.trim.isEmpty do
+    i := i + 1
+
+  let mut inputTokens : Option (Array Nat) := none
+  if i < lines.size && lines[i]!.trim = "TOKENS" then
+    i := i + 1
+    let mut toks : Array Nat := #[]
+    while i < lines.size && lines[i]!.trim != "EMBEDDINGS" do
+      toks := toks ++ parseNatLine lines[i]!
+      i := i + 1
+    if toks.size != seqLen then
+      return .error s!"TOKENS length mismatch: expected {seqLen}, got {toks.size}"
+    inputTokens := some toks
 
   IO.println s!"[2/5] Loading input embeddings (seq_len={seqLen}, model_dim={modelDim})..."
 
@@ -381,6 +408,7 @@ def loadFromText (content : String) : IO LoadResult := do
     layers := layers
     mlps := mlps
     seqLen := seqLen
+    inputTokens := inputTokens
     inputEmbeddings := inputEmbeddings
     unembedding := some unembedding
   }
@@ -465,7 +493,7 @@ def ConcreteModel.withInputTokens (model : ConcreteModel)
     (embeddings : ConcreteMatrix) (tokenIds : Array Nat)
     (padId : Nat := 0) : ConcreteModel :=
   let inputEmb := lookupEmbeddings embeddings tokenIds model.seqLen padId
-  { model with inputEmbeddings := inputEmb }
+  { model with inputEmbeddings := inputEmb, inputTokens := some tokenIds }
 
 /-! ## Analysis Report Generation -/
 

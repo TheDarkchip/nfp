@@ -92,6 +92,13 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
         # This is what GPT-2 computes: x_0 = token_emb + pos_emb
         sample_embeddings = wte[sample_tokens] + wpe[:seq_len]  # (seq_len, model_dim)
 
+        # Ground-truth token sequence for self-supervised induction targeting.
+        # This is used by the Lean pipeline to choose the correct induction target
+        # algorithmically from the sequence history.
+        f.write("TOKENS\n")
+        write_tokens(f, sample_tokens)
+        f.write("\n")
+
         f.write("EMBEDDINGS\n")
         write_matrix(f, sample_embeddings)
 
@@ -197,6 +204,12 @@ def write_vector(f, vector: np.ndarray, precision: int = 8):
     """Write a 1D vector as a single row."""
     row_str = " ".join(f"{x:.{precision}g}" for x in vector)
     f.write(row_str + "\n")
+
+def write_tokens(f, tokens: np.ndarray, per_line: int = 64):
+    """Write integer token IDs as space-separated lines."""
+    toks = [str(int(t)) for t in tokens.tolist()]
+    for i in range(0, len(toks), per_line):
+        f.write(" ".join(toks[i : i + per_line]) + "\n")
 
 
 if __name__ == "__main__":

@@ -96,8 +96,8 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
 /-- Run the induction command - discover induction heads with certified effectiveness. -/
 def runInduction (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
-  let correct := p.flag? "correct" |>.map (·.as! Nat) |>.getD 0
-  let incorrect := p.flag? "incorrect" |>.map (·.as! Nat) |>.getD 1
+  let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
+  let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
   let some threshold := Nfp.parseFloat thresholdStr
     | do
@@ -117,7 +117,33 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.eprintln "Error: Model is missing unembedding matrix (needed for logit directions)."
       return 1
     | some W_U =>
-      let target := TargetDirection.fromLogitDiff W_U correct incorrect
+      let target? : Option TargetDirection :=
+        match correctOpt, incorrectOpt with
+        | some correct, some incorrect =>
+            some (TargetDirection.fromLogitDiff W_U correct incorrect)
+        | some _, none | none, some _ =>
+            none
+        | none, none =>
+            match model.inputTokens with
+            | some _ => TargetDirection.fromInductionHistory model
+            | none => some (TargetDirection.fromLogitDiff W_U 0 1)
+
+      let some target := target?
+        | do
+          if correctOpt.isSome ∨ incorrectOpt.isSome then
+            IO.eprintln "Error: Use both --correct and --incorrect (or neither to auto-detect)."
+            return 1
+          else
+            IO.eprintln "No valid induction target could be derived from TOKENS \
+              (no prior repetition of last token)."
+            IO.eprintln "Hint: pass --correct/--incorrect to override, or export a prompt \
+              where the last token repeats."
+            return 2
+
+      if correctOpt.isNone ∧ incorrectOpt.isNone ∧ model.inputTokens.isNone then
+        IO.println "Warning: No TOKENS section found; using default target logit_diff(0-1)."
+        IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
+
       IO.println s!"Target: {target.description}"
       IO.println s!"Searching for heads with effect > {threshold}..."
 
@@ -154,8 +180,8 @@ def inductionCmd : Cmd := `[Cli|
   "Discover induction head pairs with certified virtual-head effectiveness."
 
   FLAGS:
-    c, correct : Nat; "Correct token ID (default: 0)"
-    i, incorrect : Nat; "Incorrect token ID (default: 1)"
+    c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
+    i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
     t, threshold : String; "Effectiveness threshold (default: 0.5)"
 
   ARGS:
