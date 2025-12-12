@@ -248,6 +248,20 @@ noncomputable def layerNormJacobian (x : n → ℝ) : SignedMixer n n where
     let diagonal := if i = j then 1 else 0
     (1 / σ) * (diagonal - n_inv - centered_j * centered_i / (Fintype.card n * σ^2))
 
+/-- Diagonal linear map as a `SignedMixer`: (diag d) · x. -/
+noncomputable def diagMixer (d : n → ℝ) : SignedMixer n n where
+  w := fun i j => if i = j then d j else 0
+
+/-- Jacobian of LayerNorm with learnable scale γ (bias β has no effect on Jacobian). -/
+noncomputable def layerNormFullJacobian (γ : n → ℝ) (x : n → ℝ) : SignedMixer n n :=
+  (layerNormJacobian x).comp (diagMixer γ)
+
+/-- LayerNorm-with-affine linearization at a specific input. -/
+noncomputable def layerNormFullLinearization (γ β : n → ℝ) (x : n → ℝ) : Linearization n n where
+  input := x
+  output := layerNormFull γ β x
+  jacobian := layerNormFullJacobian γ x
+
 /-- LayerNorm linearization at a specific input. -/
 noncomputable def layerNormLinearization (x : n → ℝ) : Linearization n n where
   input := x
@@ -283,6 +297,26 @@ theorem layerNorm_translation_invariant [Nonempty n] (x : n → ℝ) (c : ℝ) :
   simp only [hcentered]
 
 end LayerNorm
+
+/-! ## Token-wise LayerNorm on the Residual Stream -/
+
+section TokenwiseLayerNorm
+
+variable {pos d : Type*} [Fintype pos] [DecidableEq pos] [Fintype d] [DecidableEq d]
+
+/-- Lift a per-token LayerNorm Jacobian to the full residual stream `(pos × d)`.
+
+This is block-diagonal across positions: coordinates at different positions do not mix.
+-/
+noncomputable def tokenwiseLayerNormFullJacobian (γ : d → ℝ) (x : pos × d → ℝ) :
+    SignedMixer (pos × d) (pos × d) where
+  w := fun i j =>
+    if i.1 = j.1 then
+      let p : pos := i.1
+      (layerNormFullJacobian (n := d) γ (fun k => x (p, k))).w i.2 j.2
+    else 0
+
+end TokenwiseLayerNorm
 
 /-! ## Softmax Linearization -/
 
@@ -997,16 +1031,23 @@ structure DeepLinearization where
   numLayers : ℕ
   /-- Per-layer attention linearizations -/
   layers : Fin numLayers → AttentionLinearization n d
+  /-- Per-layer LayerNorm Jacobians before attention (ln_1). -/
+  ln1Jacobians : Fin numLayers → SignedMixer (n × d) (n × d)
   /-- Per-layer MLP Jacobians -/
   mlpJacobians : Fin numLayers → SignedMixer (n × d) (n × d)
+  /-- Per-layer LayerNorm Jacobians before MLP (ln_2). -/
+  ln2Jacobians : Fin numLayers → SignedMixer (n × d) (n × d)
+  /-- Final LayerNorm Jacobian (ln_f) applied after the last layer. -/
+  lnFJacobian : SignedMixer (n × d) (n × d) := SignedMixer.identity
   /-- The composed end-to-end Jacobian -/
   composedJacobian : SignedMixer (n × d) (n × d)
 
 /-- Get the full Jacobian of a specific layer (including residual). -/
 noncomputable def DeepLinearization.layerJacobian (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers) : SignedMixer (n × d) (n × d) :=
-  (SignedMixer.identity + (D.layers i).fullJacobian).comp
-  (SignedMixer.identity + D.mlpJacobians i)
+  let attnJac := (D.ln1Jacobians i).comp (D.layers i).fullJacobian
+  let mlpJac := (D.ln2Jacobians i).comp (D.mlpJacobians i)
+  (SignedMixer.identity + attnJac).comp (SignedMixer.identity + mlpJac)
 
 /-- The composed Jacobian from layer `start` to layer `stop` (exclusive). -/
 noncomputable def DeepLinearization.rangeJacobian (D : DeepLinearization (n := n) (d := d))
@@ -1074,16 +1115,20 @@ and composing them through layers. It's the first-order approximation that
 ignores how attention patterns shift. -/
 noncomputable def DeepValueTerm (D : DeepLinearization (n := n) (d := d)) :
     SignedMixer (n × d) (n × d) :=
-  if _h : 0 < D.numLayers then
-    (List.range D.numLayers).foldl
-      (fun acc i =>
-        if hi : i < D.numLayers then
-          -- Compose: (I + V_layer) where V = valueTerm
-          -- This approximates (I + fullJacobian) by (I + valueTerm)
-          acc.comp (SignedMixer.identity + valueTerm (D.layers ⟨i, hi⟩))
-        else acc)
-      SignedMixer.identity
-  else SignedMixer.identity
+  let core :=
+    if _h : 0 < D.numLayers then
+      (List.range D.numLayers).foldl
+        (fun acc i =>
+          if hi : i < D.numLayers then
+            let L := D.layers ⟨i, hi⟩
+            let ln := D.ln1Jacobians ⟨i, hi⟩
+            -- Pre-LN: absorb ln_1 linearization into the value path.
+            acc.comp (SignedMixer.identity + ln.comp (valueTerm L))
+          else acc)
+        SignedMixer.identity
+    else SignedMixer.identity
+  -- Final normalization is applied after all blocks.
+  core.comp D.lnFJacobian
 
 /-! ### Deep Pattern Term (Error) -/
 
@@ -1262,7 +1307,12 @@ theorem suffixAmplification_nonneg (D : DeepLinearization (n := n) (d := d))
       linarith [hNorm ⟨start + x, hi⟩]
     · exact ih init hinit
 
-omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
+/-
+These lemmas don't need the `[Nonempty _]` section variables (they are in scope
+for other theorems in this section), so we explicitly omit them to satisfy the
+unused-section-vars linter.
+-/
+omit [Nonempty n] [Nonempty d] in
 /-- Layer faithfulness is nonnegative (Frobenius norm is nonneg). -/
 theorem layerFaithfulness_nonneg (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers) : 0 ≤ layerFaithfulness D i := by
@@ -1549,7 +1599,7 @@ all constituent layers have small pattern terms. -/
 def isDeepGenuineMechanism (D : DeepLinearization (n := n) (d := d)) (threshold : ℝ) : Prop :=
   ∀ i : Fin D.numLayers, isGenuineMechanism (D.layers i) threshold
 
-omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
+omit [Nonempty n] [Nonempty d] in
 /-- If all layers are genuine, the deep pattern term is bounded. -/
 theorem deep_genuine_implies_bounded (D : DeepLinearization (n := n) (d := d))
     (threshold : ℝ)

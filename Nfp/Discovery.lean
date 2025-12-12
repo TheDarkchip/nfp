@@ -100,6 +100,13 @@ def zeros (rows cols : Nat) : ConcreteMatrix where
   data := .ofFn fun _ : Fin (rows * cols) => (0.0 : Float)
   size_eq := Array.size_ofFn
 
+/-- Create an all-ones matrix of given dimensions. -/
+def ones (rows cols : Nat) : ConcreteMatrix where
+  numRows := rows
+  numCols := cols
+  data := .ofFn fun _ : Fin (rows * cols) => (1.0 : Float)
+  size_eq := Array.size_ofFn
+
 /-- Create an identity matrix. -/
 def identity (n : Nat) : ConcreteMatrix where
   numRows := n
@@ -310,6 +317,90 @@ def addBias (M : ConcreteMatrix) (bias : ConcreteMatrix) : ConcreteMatrix :=
     }
   else M
 
+/-- Row-wise LayerNorm with learnable scale γ and bias β (both 1×numCols).
+
+This implements the Pre-LN transformer normalization convention: each token (row)
+is normalized across model dimension (columns), then scaled and shifted.
+-/
+def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : ConcreteMatrix := Id.run do
+  if X.numRows = 0 || X.numCols = 0 then
+    return ConcreteMatrix.zeros X.numRows X.numCols
+  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols ∧ β.numRows = 1 ∧ β.numCols = X.numCols) then
+    return X
+
+  -- Per-row mean and inverse stddev (compute once for speed).
+  let mut means : Array Float := #[]
+  let mut invStds : Array Float := #[]
+  for r in [:X.numRows] do
+    let mut sum : Float := 0.0
+    for c in [:X.numCols] do
+      sum := sum + X.get r c
+    let μ := sum / X.numCols.toFloat
+    let mut varSum : Float := 0.0
+    for c in [:X.numCols] do
+      let d := X.get r c - μ
+      varSum := varSum + d * d
+    let var := varSum / X.numCols.toFloat
+    let invσ := 1.0 / Float.sqrt (var + eps)
+    means := means.push μ
+    invStds := invStds.push invσ
+
+  return {
+    numRows := X.numRows
+    numCols := X.numCols
+    data := .ofFn fun idx : Fin (X.numRows * X.numCols) =>
+      let r := idx.val / X.numCols
+      let c := idx.val % X.numCols
+      let μ := means.getD r 0.0
+      let invσ := invStds.getD r 0.0
+      let normalized := (X.get r c - μ) * invσ
+      (γ.get 0 c) * normalized + (β.get 0 c)
+    size_eq := Array.size_ofFn
+  }
+
+/-- Conservative operator-norm bound for the Jacobian of row-wise LayerNorm.
+
+We bound the **global** operator norm on the block-diagonal Jacobian (one block per row)
+by the maximum over rows of an L∞ row-sum bound, scaled by `max |γ|`.
+-/
+def layerNormRowwiseOpBound (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float := Id.run do
+  if X.numRows = 0 || X.numCols = 0 then return 0.0
+  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols) then return 0.0
+
+  -- max |γ|
+  let mut gammaMaxAbs : Float := 0.0
+  for c in [:X.numCols] do
+    let g := Float.abs (γ.get 0 c)
+    if g > gammaMaxAbs then gammaMaxAbs := g
+
+  let mut maxBound : Float := 0.0
+  for r in [:X.numRows] do
+    -- Mean
+    let mut sum : Float := 0.0
+    for c in [:X.numCols] do
+      sum := sum + X.get r c
+    let μ := sum / X.numCols.toFloat
+
+    -- Variance + max |x - μ|
+    let mut varSum : Float := 0.0
+    let mut maxCenteredAbs : Float := 0.0
+    for c in [:X.numCols] do
+      let centered := X.get r c - μ
+      varSum := varSum + centered * centered
+      let a := Float.abs centered
+      if a > maxCenteredAbs then maxCenteredAbs := a
+    let var := varSum / X.numCols.toFloat
+    let σ := Float.sqrt (var + eps)
+
+    if σ > 0.0 then
+      -- From the closed form: entries are O(1/σ) with dense corrections.
+      -- Row-sum bound: (1/σ) * (2 + (maxCenteredAbs/σ)^2), then scale by max|γ|.
+      let ratio := maxCenteredAbs / σ
+      let rowBound := gammaMaxAbs * (1.0 / σ) * (2.0 + ratio * ratio)
+      if rowBound > maxBound then maxBound := rowBound
+
+  return maxBound
+
 /-- Get column j as a vector (stored as numRows×1 matrix). -/
 def getCol (M : ConcreteMatrix) (j : Nat) : ConcreteMatrix :=
   if j < M.numCols then
@@ -364,6 +455,23 @@ def vecSub (v1 v2 : ConcreteMatrix) : ConcreteMatrix :=
   else zeros v1.numRows 1
 
 end ConcreteMatrix
+
+/-! ## Concrete LayerNorm Parameters -/
+
+/-- Concrete LayerNorm parameters for Pre-LN transformers (scale γ and bias β). -/
+structure ConcreteLayerNormParams where
+  /-- Scale γ (1×modelDim) -/
+  gamma : ConcreteMatrix
+  /-- Bias β (1×modelDim) -/
+  beta : ConcreteMatrix
+
+namespace ConcreteLayerNormParams
+
+/-- Identity LayerNorm affine parameters: γ=1, β=0. -/
+def identity (modelDim : Nat) : ConcreteLayerNormParams :=
+  { gamma := ConcreteMatrix.ones 1 modelDim, beta := ConcreteMatrix.zeros 1 modelDim }
+
+end ConcreteLayerNormParams
 
 /-! ## Concrete Attention Layer -/
 
@@ -1502,6 +1610,12 @@ structure ConcreteModel where
   layers : Array (Array ConcreteAttentionLayer)
   /-- MLP layers: mlps[l] is the MLP in layer l (one per layer) -/
   mlps : Array ConcreteMLPLayer
+  /-- Pre-LN LayerNorm parameters before attention (ln_1), one per layer. -/
+  ln1 : Array ConcreteLayerNormParams := #[]
+  /-- Pre-LN LayerNorm parameters before MLP (ln_2), one per layer. -/
+  ln2 : Array ConcreteLayerNormParams := #[]
+  /-- Final LayerNorm parameters (ln_f) before unembedding. -/
+  lnf : ConcreteLayerNormParams := ConcreteLayerNormParams.identity 0
   /-- Sequence length for analysis -/
   seqLen : Nat
   /-- Optional ground-truth input token IDs for the prompt being analyzed.
@@ -1518,6 +1632,46 @@ structure ConcreteModel where
       Optional: if not provided, target-aware analysis is unavailable. -/
   unembedding : Option ConcreteMatrix := none
 
+namespace ConcreteModel
+
+/-- Model dimension (d), inferred from input embeddings. -/
+def modelDim (model : ConcreteModel) : Nat :=
+  model.inputEmbeddings.numCols
+
+/-- Get ln_1 parameters for a layer, defaulting to identity. -/
+def ln1Params (model : ConcreteModel) (layerIdx : Nat) : ConcreteLayerNormParams :=
+  model.ln1.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+
+/-- Get ln_2 parameters for a layer, defaulting to identity. -/
+def ln2Params (model : ConcreteModel) (layerIdx : Nat) : ConcreteLayerNormParams :=
+  model.ln2.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+
+/-- Apply ln_1 to a residual stream (row-wise, per token). -/
+def applyLn1 (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : ConcreteMatrix :=
+  let p := model.ln1Params layerIdx
+  ConcreteMatrix.layerNormRowwise X p.gamma p.beta
+
+/-- Apply ln_2 to a residual stream (row-wise, per token). -/
+def applyLn2 (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : ConcreteMatrix :=
+  let p := model.ln2Params layerIdx
+  ConcreteMatrix.layerNormRowwise X p.gamma p.beta
+
+/-- Apply final ln_f to a residual stream (row-wise, per token). -/
+def applyLnf (model : ConcreteModel) (X : ConcreteMatrix) : ConcreteMatrix :=
+  ConcreteMatrix.layerNormRowwise X model.lnf.gamma model.lnf.beta
+
+/-- Conservative operator-norm bound for ln_1 Jacobian at a specific activation. -/
+def ln1OpBound (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
+  let p := model.ln1Params layerIdx
+  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+
+/-- Conservative operator-norm bound for ln_2 Jacobian at a specific activation. -/
+def ln2OpBound (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
+  let p := model.ln2Params layerIdx
+  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+
+end ConcreteModel
+
 /-- Get the number of neurons in the MLP at a given layer. -/
 def ConcreteModel.numNeuronsAtLayer (model : ConcreteModel) (layerIdx : Nat) : Nat :=
   if h : layerIdx < model.mlps.size then
@@ -1528,7 +1682,7 @@ def ConcreteModel.numNeuronsAtLayer (model : ConcreteModel) (layerIdx : Nat) : N
 
 `layerInputs[l]` is the input to layer l (the accumulated residual stream).
 `layerInputs[0]` = inputEmbeddings (initial token embeddings)
-`layerInputs[l+1]` = layerInputs[l] + attention_output[l] + mlp_output[l]
+`layerInputs[l+1]` = x_{l+1} in the Pre-LN recurrence.
 -/
 structure ForwardPassResult where
   /-- Input to each layer. layerInputs[l] is what layer l receives. -/
@@ -1537,7 +1691,7 @@ structure ForwardPassResult where
   attnOutputs : Array (Array ConcreteMatrix)
   /-- MLP outputs per layer: mlpOutputs[l] = output of MLP at layer l -/
   mlpOutputs : Array ConcreteMatrix
-  /-- Final output after all layers -/
+  /-- Final output after all layers (after ln_f, i.e. what goes into unembedding). -/
   finalOutput : ConcreteMatrix
 
 /-- Run a full forward pass through the model, computing the residual stream at each layer.
@@ -1545,11 +1699,13 @@ structure ForwardPassResult where
 This is the key function that enables deep circuit analysis: layer N sees the accumulated
 output of layers 0..N-1, not just the raw embeddings.
 
-For each layer l:
-1. Compute attention: attn_out = Σₕ AttentionHead[l,h].forward(residual)
-2. Add attention residual: residual' = residual + attn_out
-3. Compute MLP: mlp_out = MLP[l].forward(residual')
-4. Add MLP residual: residual'' = residual' + mlp_out
+ For each layer l (Pre-LN, GPT-2 style):
+ 1. u = ln_1(x_l)
+ 2. y_l = x_l + Σₕ AttentionHead[l,h].forward(u)
+ 3. v = ln_2(y_l)
+ 4. x_{l+1} = y_l + MLP[l].forward(v)
+
+ After all layers: output = ln_f(x_L)
 -/
 def ConcreteModel.runForward (model : ConcreteModel)
     (causal : Bool := true) : ForwardPassResult := Id.run do
@@ -1559,6 +1715,8 @@ def ConcreteModel.runForward (model : ConcreteModel)
   let mut residual := model.inputEmbeddings
 
   for l in [:model.numLayers] do
+    -- Pre-LN: attention sees ln_1(residual)
+    let attnInput := model.applyLn1 l residual
     -- Compute attention outputs for all heads in this layer
     let mut layerAttnOutputs : Array ConcreteMatrix := #[]
     let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
@@ -1568,7 +1726,7 @@ def ConcreteModel.runForward (model : ConcreteModel)
       for h in [:layerHeads.size] do
         if hh : h < layerHeads.size then
           let head := layerHeads[h]'hh
-          let headOutput := head.forward residual causal
+          let headOutput := head.forward attnInput causal
           layerAttnOutputs := layerAttnOutputs.push headOutput
           attnSum := attnSum.add headOutput
 
@@ -1578,9 +1736,11 @@ def ConcreteModel.runForward (model : ConcreteModel)
     let residualAfterAttn := residual.add attnSum
 
     -- Compute MLP output
+    -- Pre-LN: MLP sees ln_2(residualAfterAttn)
+    let mlpInput := model.applyLn2 l residualAfterAttn
     let mlpOut :=
       if hm : l < model.mlps.size then
-        model.mlps[l].forward residualAfterAttn
+        model.mlps[l].forward mlpInput
       else ConcreteMatrix.zeros residual.numRows residual.numCols
 
     mlpOutputs := mlpOutputs.push mlpOut
@@ -1591,11 +1751,12 @@ def ConcreteModel.runForward (model : ConcreteModel)
     -- Store input for next layer
     layerInputs := layerInputs.push residual
 
+  let finalOutput := model.applyLnf residual
   {
     layerInputs := layerInputs
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
-    finalOutput := residual
+    finalOutput := finalOutput
   }
 
 /-- Get the input to a specific layer from a forward pass result. -/
@@ -1604,6 +1765,23 @@ def ForwardPassResult.getLayerInput (result : ForwardPassResult)
   if h : layerIdx < result.layerInputs.size then
     result.layerInputs[layerIdx]
   else ConcreteMatrix.zeros 0 0
+
+/-- Get the post-attention residual `y_l = x_l + attn_sum` for a layer.
+
+This is the input to `ln_2` in a Pre-LN transformer block.
+-/
+def ForwardPassResult.getPostAttnResidual (result : ForwardPassResult)
+    (layerIdx : Nat) : ConcreteMatrix := Id.run do
+  let x := result.getLayerInput layerIdx
+  if h : layerIdx < result.attnOutputs.size then
+    let heads := result.attnOutputs[layerIdx]
+    let mut sum := ConcreteMatrix.zeros x.numRows x.numCols
+    for hidx in [:heads.size] do
+      if hh : hidx < heads.size then
+        sum := sum.add (heads[hidx]'hh)
+    return x.add sum
+  else
+    return x
 
 /-! ## N-Layer Error Amplification Computation
 
@@ -1648,11 +1826,17 @@ and the value projection. We estimate:
 
 For simplicity, we use Frobenius norms as upper bounds.
 -/
-def estimateAttentionLayerNorm (model : ConcreteModel) (_fwdResult : ForwardPassResult)
+def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassResult)
     (layerIdx : Nat) : Float := Id.run do
   if h : layerIdx < model.layers.size then
     let heads := model.layers[layerIdx]
     let mut totalNorm : Float := 0.0
+
+    -- Pre-LN: attention and MLP see normalized activations; account for LN Jacobian scaling.
+    let x := fwdResult.getLayerInput layerIdx
+    let y := fwdResult.getPostAttnResidual layerIdx
+    let ln1Bound := model.ln1OpBound layerIdx x
+    let ln2Bound := model.ln2OpBound layerIdx y
 
     -- Sum contributions from all heads in this layer
     for hidx in [:heads.size] do
@@ -1660,7 +1844,7 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (_fwdResult : ForwardPass
         let head := heads[hidx]
         let voProj := head.valueOutputProjection
         -- Use operator norm (spectral norm) via power iteration for tighter bound than Frobenius
-        totalNorm := totalNorm + voProj.operatorNormBound 20
+        totalNorm := totalNorm + ln1Bound * voProj.operatorNormBound 20
 
     -- Add MLP contribution if present
     if hm : layerIdx < model.mlps.size then
@@ -1670,7 +1854,7 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (_fwdResult : ForwardPass
       let winNorm := mlp.W_in.frobeniusNorm
       let woutNorm := mlp.W_out.frobeniusNorm
       let geluDerivBound : Float := 1.7
-      totalNorm := totalNorm + winNorm * geluDerivBound * woutNorm
+      totalNorm := totalNorm + ln2Bound * (winNorm * geluDerivBound * woutNorm)
 
     totalNorm
   else
@@ -1686,11 +1870,17 @@ def ConcreteModel.computeAttentionWithInput (model : ConcreteModel)
     let layerHeads := model.layers[layerIdx]
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]'h2
-      some (head.computeAttentionWeights input)
+      -- Pre-LN: attention weights are computed from ln_1(input).
+      let attnInput := model.applyLn1 layerIdx input
+      some (head.computeAttentionWeights attnInput)
     else none
   else none
 
-/-- Compute attention weights for a given layer and head. -/
+/-- Compute attention weights for a given layer and head.
+
+This is a legacy helper that only uses the model's `inputEmbeddings`.
+Prefer `computeAttentionWithInput` for Pre-LN-correct layer inputs.
+-/
 def ConcreteModel.computeAttention (model : ConcreteModel)
     (layerIdx headIdx : Nat) : Option ConcreteAttentionWeights :=
   if h1 : layerIdx < model.layers.size then
@@ -1698,8 +1888,9 @@ def ConcreteModel.computeAttention (model : ConcreteModel)
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]
       let scale := Float.sqrt head.headDim.toFloat
-      let queries := model.inputEmbeddings.matmul head.W_Q
-      let keys := model.inputEmbeddings.matmul head.W_K
+      let attnInput := model.applyLn1 layerIdx model.inputEmbeddings
+      let queries := attnInput.matmul head.W_Q
+      let keys := attnInput.matmul head.W_K
       some (ConcreteAttentionWeights.compute queries keys scale model.seqLen)
     else none
   else none
@@ -1734,6 +1925,8 @@ structure PrecomputedHeadData where
   queryKeyAlign : ConcreteMatrix
   /-- Input norm ‖X‖_F for this layer -/
   inputNorm : Float
+  /-- Operator-norm bound for ln_1 Jacobian at this layer input. -/
+  ln1OpBound : Float
   /-- Scaling factor √d_head -/
   scaleFactor : Float
   /-- Cached Frobenius norm of V·W_O -/
@@ -1747,7 +1940,8 @@ namespace PrecomputedHeadData
 def patternTermBound (data : PrecomputedHeadData) : Float :=
   let softmaxJacNorm := data.attention.softmaxJacobianFrobeniusNorm
   let softmaxBound := 2.0 * softmaxJacNorm
-  (softmaxBound / data.scaleFactor) * data.inputNorm *
+  -- Pre-LN: sensitivity is scaled by ln_1's Jacobian.
+  data.ln1OpBound * (softmaxBound / data.scaleFactor) * data.inputNorm *
     data.queryKeyAlignNorm * data.valueOutputProjNorm
 
 end PrecomputedHeadData
@@ -1780,7 +1974,9 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
   for l in [:model.numLayers] do
     let mut layerHeadData : Array PrecomputedHeadData := #[]
     let layerInput := fwdResult.getLayerInput l
-    let inputNorm := computeInputNorm layerInput
+    let attnInput := model.applyLn1 l layerInput
+    let inputNorm := computeInputNorm attnInput
+    let ln1Bound := model.ln1OpBound l layerInput
 
     if h : l < model.layers.size then
       let heads := model.layers[l]'h
@@ -1789,7 +1985,7 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           let head := heads[h_idx]'hh
 
           -- Precompute attention weights
-          let attn := head.computeAttentionWeights layerInput causal
+          let attn := head.computeAttentionWeights attnInput causal
 
           -- Precompute projections
           let voProj := head.valueOutputProjection
@@ -1806,6 +2002,7 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
             valueOutputProj := voProj
             queryKeyAlign := qkAlign
             inputNorm := inputNorm
+            ln1OpBound := ln1Bound
             scaleFactor := Float.sqrt head.headDim.toFloat
             valueOutputProjNorm := voNorm
             queryKeyAlignNorm := qkNorm
@@ -2450,6 +2647,12 @@ structure SAEEnhancedModel where
   numLayers : Nat
   /-- Attention layers with their heads -/
   layers : Array (Array ConcreteAttentionLayer)
+  /-- Pre-LN LayerNorm parameters before attention (ln_1), one per layer. -/
+  ln1 : Array ConcreteLayerNormParams := #[]
+  /-- Pre-LN LayerNorm parameters before SAE/MLP (ln_2), one per layer. -/
+  ln2 : Array ConcreteLayerNormParams := #[]
+  /-- Final LayerNorm parameters (ln_f) before unembedding. -/
+  lnf : ConcreteLayerNormParams := ConcreteLayerNormParams.identity 0
   /-- SAEs for MLP analysis: saes[l] is the SAE for layer l's MLP -/
   saes : Array ConcreteSAE
   /-- Sequence length -/
@@ -2461,12 +2664,42 @@ structure SAEEnhancedModel where
 
 namespace SAEEnhancedModel
 
+/-- Model dimension (d), inferred from input embeddings. -/
+def modelDim (model : SAEEnhancedModel) : Nat :=
+  model.inputEmbeddings.numCols
+
+/-- Get ln_1 parameters for a layer, defaulting to identity. -/
+def ln1Params (model : SAEEnhancedModel) (layerIdx : Nat) : ConcreteLayerNormParams :=
+  model.ln1.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+
+/-- Get ln_2 parameters for a layer, defaulting to identity. -/
+def ln2Params (model : SAEEnhancedModel) (layerIdx : Nat) : ConcreteLayerNormParams :=
+  model.ln2.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+
+/-- Apply ln_1 to a residual stream (row-wise, per token). -/
+def applyLn1 (model : SAEEnhancedModel) (layerIdx : Nat) (X : ConcreteMatrix) : ConcreteMatrix :=
+  let p := model.ln1Params layerIdx
+  ConcreteMatrix.layerNormRowwise X p.gamma p.beta
+
+/-- Apply ln_2 to a residual stream (row-wise, per token). -/
+def applyLn2 (model : SAEEnhancedModel) (layerIdx : Nat) (X : ConcreteMatrix) : ConcreteMatrix :=
+  let p := model.ln2Params layerIdx
+  ConcreteMatrix.layerNormRowwise X p.gamma p.beta
+
+/-- Conservative operator-norm bound for ln_1 Jacobian at a specific activation. -/
+def ln1OpBound (model : SAEEnhancedModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
+  let p := model.ln1Params layerIdx
+  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+
 /-- Create from ConcreteModel with externally trained SAEs. -/
 def fromModel (model : ConcreteModel) (saes : Array ConcreteSAE) : Option SAEEnhancedModel :=
   if saes.size = model.numLayers then
     some {
       numLayers := model.numLayers
       layers := model.layers
+      ln1 := model.ln1
+      ln2 := model.ln2
+      lnf := model.lnf
       saes := saes
       seqLen := model.seqLen
       inputEmbeddings := model.inputEmbeddings
@@ -2581,18 +2814,20 @@ end SAECircuitError
 Inline version used before computeHeadImportance is defined.
 Works with both ConcreteModel and SAEEnhancedModel (via their shared fields). -/
 private def computeHeadMetricsForSAE
-    (layers : Array (Array ConcreteAttentionLayer))
-    (inputEmbeddings : ConcreteMatrix)
-    (layerIdx headIdx : Nat) (inputNorm : Float) : Option (Float × Float) :=
-  if h1 : layerIdx < layers.size then
-    let layerHeads := layers[layerIdx]
+    (model : SAEEnhancedModel)
+    (layerIdx headIdx : Nat) (layerInput : ConcreteMatrix) : Option (Float × Float) :=
+  if h1 : layerIdx < model.layers.size then
+    let layerHeads := model.layers[layerIdx]
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]
-      let attn := head.computeAttentionWeights inputEmbeddings false
+      let attnInput := model.applyLn1 layerIdx layerInput
+      let attn := head.computeAttentionWeights attnInput false
+      let inputNorm := computeInputNorm attnInput
+      let ln1Bound := model.ln1OpBound layerIdx layerInput
       let voProj := head.valueOutputProjection
       let qkAlign := head.queryKeyAlignment
 
-      let valueNorm := computeValueTermNorm attn voProj
+      let valueNorm := ln1Bound * computeValueTermNorm attn voProj
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
@@ -2600,7 +2835,7 @@ private def computeHeadMetricsForSAE
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
-      let patternBound := computePatternTermBound inputs
+      let patternBound := ln1Bound * computePatternTermBound inputs
       some (valueNorm, patternBound)
     else none
   else none
@@ -2617,20 +2852,19 @@ Total Error = Σ(included) patternBound + Σ(excluded) valueNorm + reconstructio
 -/
 def estimateSAECircuitFaithfulness (model : SAEEnhancedModel)
     (circuit : SAECircuit) (_causal : Bool := true) : SAECircuitError := Id.run do
-  let inputNorm := computeInputNorm model.inputEmbeddings
-
   -- Simplified forward pass (just attention)
   let mut residual := model.inputEmbeddings
   let mut layerInputs : Array ConcreteMatrix := #[model.inputEmbeddings]
 
   for l in [:model.numLayers] do
+    let attnInput := model.applyLn1 l residual
     let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
       for h in [:layerHeads.size] do
         if hh : h < layerHeads.size then
           let head := layerHeads[h]'hh
-          let headOutput := head.forward residual true
+          let headOutput := head.forward attnInput true
           attnSum := attnSum.add headOutput
     residual := residual.add attnSum
     layerInputs := layerInputs.push residual
@@ -2649,7 +2883,9 @@ def estimateSAECircuitFaithfulness (model : SAEEnhancedModel)
       let layerHeads := model.layers[l]
       for h_idx in [:layerHeads.size] do
         let included := circuit.isHeadIncluded l h_idx
-        match computeHeadMetricsForSAE model.layers model.inputEmbeddings l h_idx inputNorm with
+        let layerInput :=
+          if hl2 : l < layerInputs.size then layerInputs[l]'hl2 else model.inputEmbeddings
+        match computeHeadMetricsForSAE model l h_idx layerInput with
         | some (valueNorm, patternBound) =>
           if included then
             patternError := patternError + patternBound
@@ -2664,7 +2900,10 @@ def estimateSAECircuitFaithfulness (model : SAEEnhancedModel)
   for l in [:model.numLayers] do
     if hl : l < model.saes.size then
       let sae := model.saes[l]
-      let layerInput := if hl2 : l < layerInputs.size then layerInputs[l] else model.inputEmbeddings
+      -- Pre-LN: SAE/MLP sees ln_2(y_l) where y_l is post-attention residual.
+      let postAttn :=
+        if hpost : l + 1 < layerInputs.size then layerInputs[l + 1]'hpost else residual
+      let layerInput := model.applyLn2 l postAttn
 
       -- Add reconstruction error for this layer
       let layerRecon := sae.reconstructionErrorMatrix layerInput
@@ -2717,7 +2956,6 @@ structure SAERankedComponent where
 
 /-- Compute all component importances for an SAE-enhanced model. -/
 def computeAllSAEImportance (model : SAEEnhancedModel) : Array SAERankedComponent := Id.run do
-  let inputNorm := computeInputNorm model.inputEmbeddings
   let mut result : Array SAERankedComponent := #[]
 
   -- Simplified forward pass
@@ -2725,13 +2963,14 @@ def computeAllSAEImportance (model : SAEEnhancedModel) : Array SAERankedComponen
   let mut layerInputs : Array ConcreteMatrix := #[model.inputEmbeddings]
 
   for l in [:model.numLayers] do
+    let attnInput := model.applyLn1 l residual
     let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
       for h in [:layerHeads.size] do
         if hh : h < layerHeads.size then
           let head := layerHeads[h]'hh
-          let headOutput := head.forward residual true
+          let headOutput := head.forward attnInput true
           attnSum := attnSum.add headOutput
     residual := residual.add attnSum
     layerInputs := layerInputs.push residual
@@ -2741,7 +2980,9 @@ def computeAllSAEImportance (model : SAEEnhancedModel) : Array SAERankedComponen
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
       for h_idx in [:layerHeads.size] do
-        match computeHeadMetricsForSAE model.layers model.inputEmbeddings l h_idx inputNorm with
+        let layerInput :=
+          if hl2 : l < layerInputs.size then layerInputs[l]'hl2 else model.inputEmbeddings
+        match computeHeadMetricsForSAE model l h_idx layerInput with
         | some (valueNorm, patternBound) =>
           result := result.push {
             component := ComponentId.head l h_idx
@@ -2754,7 +2995,9 @@ def computeAllSAEImportance (model : SAEEnhancedModel) : Array SAERankedComponen
   for l in [:model.numLayers] do
     if hl : l < model.saes.size then
       let sae := model.saes[l]
-      let layerInput := if hl2 : l < layerInputs.size then layerInputs[l] else model.inputEmbeddings
+      let postAttn :=
+        if hpost : l + 1 < layerInputs.size then layerInputs[l + 1]'hpost else residual
+      let layerInput := model.applyLn2 l postAttn
       for f_idx in [:sae.numFeatures] do
         match computeSAEFeatureImportance sae l f_idx layerInput 0.0 with
         | some imp =>
@@ -2907,6 +3150,8 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
   let mut residual := model.inputEmbeddings
 
   for l in [:model.numLayers] do
+    -- Pre-LN: attention sees ln_1(residual)
+    let attnInput := model.applyLn1 l residual
     -- Compute attention outputs for included heads only
     let mut layerAttnOutputs : Array ConcreteMatrix := #[]
     let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
@@ -2918,7 +3163,7 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
           let head := layerHeads[h]'hh
           -- Only compute output if head is included in the circuit
           if circuit.isHeadIncluded l h then
-            let headOutput := head.forward residual causal
+            let headOutput := head.forward attnInput causal
             layerAttnOutputs := layerAttnOutputs.push headOutput
             attnSum := attnSum.add headOutput
           else
@@ -2932,11 +3177,13 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
     let residualAfterAttn := residual.add attnSum
 
     -- Compute MLP output with neuron-level ablation
+    -- Pre-LN: MLP sees ln_2(residualAfterAttn)
+    let mlpInput := model.applyLn2 l residualAfterAttn
     let mlpOut :=
       if hm : l < model.mlps.size then
         -- Get neuron mask for this layer
         let neuronMask := circuit.includedNeurons.getD l #[]
-        model.mlps[l].forwardAblated residualAfterAttn neuronMask
+        model.mlps[l].forwardAblated mlpInput neuronMask
       else ConcreteMatrix.zeros residual.numRows residual.numCols
 
     mlpOutputs := mlpOutputs.push mlpOut
@@ -2947,11 +3194,12 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
     -- Store input for next layer
     layerInputs := layerInputs.push residual
 
+  let finalOutput := model.applyLnf residual
   {
     layerInputs := layerInputs
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
-    finalOutput := residual
+    finalOutput := finalOutput
   }
 
 /-! ### Empirical Discrepancy and Verification
@@ -3145,16 +3393,20 @@ end ComponentImportance
 
 /-- Compute importance metrics for a single attention head. -/
 def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
-    (inputNorm : Float) : Option ComponentImportance := do
-  let attn ← model.computeAttention layerIdx headIdx
+    (layerInput : ConcreteMatrix) : Option ComponentImportance := do
   if h1 : layerIdx < model.layers.size then
     let layerHeads := model.layers[layerIdx]
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]
+      let attnInput := model.applyLn1 layerIdx layerInput
+      let attn := head.computeAttentionWeights attnInput
+      let inputNorm := attnInput.frobeniusNorm
+      let ln1Bound := model.ln1OpBound layerIdx layerInput
       let voProj := head.valueOutputProjection
       let qkAlign := head.queryKeyAlignment
 
-      let valueNorm := computeValueTermNorm attn voProj
+      -- Pre-LN: effective value path includes the LayerNorm Jacobian.
+      let valueNorm := ln1Bound * computeValueTermNorm attn voProj
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
@@ -3162,7 +3414,7 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
-      let patternBound := computePatternTermBound inputs
+      let patternBound := ln1Bound * computePatternTermBound inputs
       let ratio := if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
 
       return {
@@ -3264,7 +3516,7 @@ def computeAllImportance (model : ConcreteModel) : Array ComponentImportance := 
     if h : l < model.layers.size then
       let layerHeads := model.layers[l]
       for h_idx in [:layerHeads.size] do
-        match computeHeadImportance model l h_idx inputNorm with
+        match computeHeadImportance model l h_idx model.inputEmbeddings with
         | some imp => result := result.push imp
         | none => pure ()
 
@@ -3712,7 +3964,9 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
   if h : layerIdx < model.layers.size then
     let heads := model.layers[layerIdx]
     let layerInput := fwdResult.getLayerInput layerIdx
-    let inputNorm := layerInput.frobeniusNorm
+    let attnInput := model.applyLn1 layerIdx layerInput
+    let inputNorm := attnInput.frobeniusNorm
+    let ln1Bound := model.ln1OpBound layerIdx layerInput
     let mut totalBound : Float := 0.0
 
     for hidx in [:heads.size] do
@@ -3720,7 +3974,7 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
         -- Only count included heads
         if circuit.isHeadIncluded layerIdx hidx then
           let head := heads[hidx]
-          let attn := head.computeAttentionWeights layerInput
+          let attn := head.computeAttentionWeights attnInput
           let inputs : PatternTermBoundInputs := {
             attention := attn
             queryKeyAlign := head.queryKeyAlignment
@@ -3728,7 +3982,8 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
             inputNorm := inputNorm
             scaleFactor := Float.sqrt head.headDim.toFloat
           }
-          totalBound := totalBound + computePatternTermBound inputs
+          -- Pre-LN: pattern sensitivity is scaled by the LayerNorm Jacobian.
+          totalBound := totalBound + ln1Bound * computePatternTermBound inputs
 
     totalBound
   else
@@ -3738,7 +3993,6 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
 def estimateLayerAblationError (model : ConcreteModel) (fwdResult : ForwardPassResult)
     (layerIdx : Nat) (circuit : ConcreteCircuit) : Float := Id.run do
   let layerInput := fwdResult.getLayerInput layerIdx
-  let inputNorm := layerInput.frobeniusNorm
   let mut totalError : Float := 0.0
 
   -- Ablation error from excluded attention heads
@@ -3747,7 +4001,7 @@ def estimateLayerAblationError (model : ConcreteModel) (fwdResult : ForwardPassR
     for hidx in [:heads.size] do
       if hh : hidx < heads.size then
         if !circuit.isHeadIncluded layerIdx hidx then
-          match computeHeadImportance model layerIdx hidx inputNorm with
+          match computeHeadImportance model layerIdx hidx layerInput with
           | some imp => totalError := totalError + imp.valueTermNorm
           | none => pure ()
 
@@ -3756,7 +4010,7 @@ def estimateLayerAblationError (model : ConcreteModel) (fwdResult : ForwardPassR
     let mlp := model.mlps[layerIdx]
     for nidx in [:mlp.hiddenDim] do
       if !circuit.isNeuronIncluded layerIdx nidx then
-        match computeNeuronImportance model layerIdx nidx inputNorm with
+        match computeNeuronImportance model layerIdx nidx (layerInput.frobeniusNorm) with
         | some imp => totalError := totalError + imp.valueTermNorm
         | none => pure ()
 
@@ -3898,7 +4152,7 @@ def estimateCircuitFaithfulness (model : ConcreteModel)
       let layerHeads := model.layers[l]
       for h_idx in [:layerHeads.size] do
         let included := circuit.isHeadIncluded l h_idx
-        match computeHeadImportance model l h_idx inputNorm with
+        match computeHeadImportance model l h_idx model.inputEmbeddings with
         | some imp =>
           if included then
             patternError := patternError + imp.patternTermBound
@@ -4001,9 +4255,10 @@ def estimateCircuitFaithfulnessIBP (model : ConcreteModel)
     -- Process attention heads in this layer
     if h : l < model.layers.size then
       let layerHeads := model.layers[l]
+      let layerInput := fwd.getLayerInput l
       for h_idx in [:layerHeads.size] do
         let included := circuit.isHeadIncluded l h_idx
-        match computeHeadImportance model l h_idx inputNorm with
+        match computeHeadImportance model l h_idx layerInput with
         | some imp =>
           if included then
             patternError := patternError + imp.patternTermBound

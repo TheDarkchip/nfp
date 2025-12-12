@@ -68,7 +68,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
 
     with open(output_path, "w") as f:
         # Header
-        f.write("NFP_TEXT_V1\n")
+        f.write("NFP_TEXT_V2\n")
         f.write(f"num_layers={num_layers}\n")
         f.write(f"num_heads={num_heads}\n")
         f.write(f"model_dim={model_dim}\n")
@@ -177,6 +177,30 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             f.write("b_out\n")
             write_vector(f, mlp_c_proj_bias)  # (768,)
 
+            # LayerNorm parameters (Pre-LN)
+            # ln_1 is applied before attention; ln_2 is applied before MLP.
+            ln1_gamma = block.ln_1.weight.detach().numpy()  # (model_dim,)
+            ln1_beta = block.ln_1.bias.detach().numpy()  # (model_dim,)
+            ln2_gamma = block.ln_2.weight.detach().numpy()  # (model_dim,)
+            ln2_beta = block.ln_2.bias.detach().numpy()  # (model_dim,)
+
+            f.write("LN1_GAMMA\n")
+            write_vector(f, ln1_gamma)
+            f.write("LN1_BETA\n")
+            write_vector(f, ln1_beta)
+            f.write("LN2_GAMMA\n")
+            write_vector(f, ln2_gamma)
+            f.write("LN2_BETA\n")
+            write_vector(f, ln2_beta)
+
+        # Final LayerNorm (ln_f) before unembedding
+        ln_f_gamma = model.ln_f.weight.detach().numpy()  # (model_dim,)
+        ln_f_beta = model.ln_f.bias.detach().numpy()  # (model_dim,)
+        f.write("LN_F_GAMMA\n")
+        write_vector(f, ln_f_gamma)
+        f.write("LN_F_BETA\n")
+        write_vector(f, ln_f_beta)
+
         # Unembedding matrix
         # In GPT-2, the unembedding is tied to the embedding (same weights transposed)
         # We want (model_dim, vocab_size) for projecting hidden states to logits
@@ -192,7 +216,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
     print(f"  Output: {output_path}")
 
 
-def write_matrix(f, matrix: np.ndarray, precision: int = 8):
+def write_matrix(f, matrix: np.ndarray, precision: int = 9):
     """Write a 2D matrix to file in row-major order, space-separated."""
     for row in matrix:
         # Format each float with sufficient precision
@@ -200,7 +224,7 @@ def write_matrix(f, matrix: np.ndarray, precision: int = 8):
         f.write(row_str + "\n")
 
 
-def write_vector(f, vector: np.ndarray, precision: int = 8):
+def write_vector(f, vector: np.ndarray, precision: int = 9):
     """Write a 1D vector as a single row."""
     row_str = " ".join(f"{x:.{precision}g}" for x in vector)
     f.write(row_str + "\n")

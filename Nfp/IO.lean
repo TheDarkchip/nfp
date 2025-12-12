@@ -20,7 +20,7 @@ For high-performance computation, see `Discovery.lean` where hot paths are optim
 Human-readable text format for debugging and small models:
 
 ```
-NFP_TEXT_V1
+NFP_TEXT_V2
 num_layers=12
 num_heads=12
 model_dim=768
@@ -42,6 +42,33 @@ W_Q
 W_K
 <floats>
 ...
+
+MLP
+W_in
+<floats>
+W_out
+<floats>
+b_in
+<floats>
+b_out
+<floats>
+
+LN1_GAMMA
+<floats>  -- length = model_dim
+LN1_BETA
+<floats>  -- length = model_dim
+LN2_GAMMA
+<floats>  -- length = model_dim
+LN2_BETA
+<floats>  -- length = model_dim
+
+LN_F_GAMMA
+<floats>  -- length = model_dim
+LN_F_BETA
+<floats>  -- length = model_dim
+
+UNEMBEDDING
+<floats>  -- model_dim × vocab_size, row-major
 ```
 -/
 
@@ -63,25 +90,52 @@ def parseFloat (s : String) : Option Float := do
       else if s.startsWith "+" then (false, s.drop 1)
       else (false, s)
 
-    -- Split on decimal point
-    let parts := rest.splitOn "."
-    match parts with
-    | [intPart] =>
-      -- No decimal point - pure integer
-      let n := intPart.toNat?
-      n.map fun n => (if negative then -1.0 else 1.0) * n.toFloat
-    | [intPart, fracPart] =>
-      -- Has decimal point
-      let intN := if intPart.isEmpty then some 0 else intPart.toNat?
-      let fracN := if fracPart.isEmpty then some 0 else fracPart.toNat?
-      match intN, fracN with
-      | some iN, some fN =>
-        let fracLen := fracPart.length
-        let divisor := Float.pow 10.0 fracLen.toFloat
-        let value := iN.toFloat + fN.toFloat / divisor
-        some ((if negative then -1.0 else 1.0) * value)
-      | _, _ => none
-    | _ => none
+    -- Parse unsigned decimal without exponent.
+    let parseUnsignedNoExp (t : String) : Option Float := do
+      let parts := t.splitOn "."
+      match parts with
+      | [intPart] =>
+        let n := intPart.toNat?
+        n.map (·.toFloat)
+      | [intPart, fracPart] =>
+        let intN := if intPart.isEmpty then some 0 else intPart.toNat?
+        let fracN := if fracPart.isEmpty then some 0 else fracPart.toNat?
+        match intN, fracN with
+        | some iN, some fN =>
+          let fracLen := fracPart.length
+          let divisor := Float.pow 10.0 fracLen.toFloat
+          some (iN.toFloat + fN.toFloat / divisor)
+        | _, _ => none
+      | _ => none
+
+    -- Parse optional scientific exponent `e` / `E` (e.g. "1.2e-3").
+    let (mantissaStr, expStr?) : String × Option String :=
+      match rest.splitOn "e" with
+      | [m, e] => (m, some e)
+      | _ =>
+        match rest.splitOn "E" with
+        | [m, e] => (m, some e)
+        | _ => (rest, none)
+
+    let mantissa ← parseUnsignedNoExp mantissaStr
+    let value :=
+      match expStr? with
+      | none => mantissa
+      | some expStr =>
+        let expStr := expStr.trim
+        if expStr.isEmpty then mantissa
+        else
+          let (expNeg, expRest) :=
+            if expStr.startsWith "-" then (true, expStr.drop 1)
+            else if expStr.startsWith "+" then (false, expStr.drop 1)
+            else (false, expStr)
+          match expRest.toNat? with
+          | none => mantissa
+          | some eNat =>
+            let pow10 := Float.pow 10.0 eNat.toFloat
+            if expNeg then mantissa / pow10 else mantissa * pow10
+
+    some ((if negative then -1.0 else 1.0) * value)
 
 /-- Parse a line of space-separated floats. -/
 def parseFloatLine (line : String) : Array Float :=
@@ -211,8 +265,11 @@ def loadFromText (content : String) : IO LoadResult := do
   if lines.size = 0 then return .error "Empty file"
 
   -- Check magic - SAFETY: lines.size > 0 guaranteed above
-  if lines[0]! != "NFP_TEXT_V1" then
-    return .error "Invalid magic: expected NFP_TEXT_V1"
+  let magic := lines[0]!.trim
+  let isV1 := magic = "NFP_TEXT_V1"
+  let isV2 := magic = "NFP_TEXT_V2"
+  if !(isV1 || isV2) then
+    return .error "Invalid magic: expected NFP_TEXT_V1 or NFP_TEXT_V2"
 
   IO.println "[1/5] Parsing header..."
 
@@ -294,6 +351,8 @@ def loadFromText (content : String) : IO LoadResult := do
   -- Parse layers
   let mut layers : Array (Array ConcreteAttentionLayer) := #[]
   let mut mlps : Array ConcreteMLPLayer := #[]
+  let mut ln1 : Array ConcreteLayerNormParams := #[]
+  let mut ln2 : Array ConcreteLayerNormParams := #[]
 
   for l in [:numLayers] do
     IO.println s!"  Loading layer {l}/{numLayers}..."
@@ -360,37 +419,147 @@ def loadFromText (content : String) : IO LoadResult := do
       i := i + 1
     i := i + 1
     let mut winFloats : Array Float := #[]
-    while i < lines.size && !lines[i]!.startsWith "W_out" do
+    -- Support both MLP orderings:
+    -- (1) W_in, W_out, b_in, b_out  (legacy)
+    -- (2) W_in, b_in, W_out, b_out  (GPT-2 Conv1D export)
+    while i < lines.size &&
+          !lines[i]!.startsWith "W_out" &&
+          !lines[i]!.startsWith "b_in" do
       winFloats := winFloats ++ parseFloatLine lines[i]!
       i := i + 1
 
-    -- Parse W_out
-    i := i + 1
-    let mut woutFloats : Array Float := #[]
-    while i < lines.size && !lines[i]!.startsWith "b_in" do
-      woutFloats := woutFloats ++ parseFloatLine lines[i]!
-      i := i + 1
+    if i >= lines.size then
+      return .error s!"Layer {l}: incomplete MLP section after W_in"
 
-    -- Parse b_in
-    i := i + 1
+    let mut woutFloats : Array Float := #[]
     let mut binFloats : Array Float := #[]
-    while i < lines.size && !lines[i]!.startsWith "b_out" do
-      binFloats := binFloats ++ parseFloatLine lines[i]!
+
+    if lines[i]! = "b_in" then
+      -- Ordering (2): parse b_in then W_out.
       i := i + 1
+      while i < lines.size && !lines[i]!.startsWith "W_out" do
+        binFloats := binFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      if i >= lines.size then
+        return .error s!"Layer {l}: missing W_out after b_in"
+
+      i := i + 1
+      while i < lines.size && !lines[i]!.startsWith "b_out" do
+        woutFloats := woutFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+    else
+      -- Ordering (1): parse W_out then b_in.
+      if lines[i]! != "W_out" then
+        return .error s!"Layer {l}: expected W_out or b_in after W_in, got {lines[i]!}"
+
+      i := i + 1
+      while i < lines.size && !lines[i]!.startsWith "b_in" do
+        woutFloats := woutFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      if i >= lines.size then
+        return .error s!"Layer {l}: missing b_in after W_out"
+
+      i := i + 1
+      while i < lines.size && !lines[i]!.startsWith "b_out" do
+        binFloats := binFloats ++ parseFloatLine lines[i]!
+        i := i + 1
 
     -- Parse b_out
     i := i + 1
     let mut boutFloats : Array Float := #[]
     while i < lines.size &&
-          !lines[i]!.startsWith "LAYER" &&
-          !lines[i]!.startsWith "UNEMBEDDING" do
+          (if isV2 then !lines[i]!.startsWith "LN1_GAMMA"
+           else !lines[i]!.startsWith "LAYER" && !lines[i]!.startsWith "UNEMBEDDING") do
       boutFloats := boutFloats ++ parseFloatLine lines[i]!
       i := i + 1
 
     let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
     mlps := mlps.push mlp
 
+    -- Parse LayerNorm params (Pre-LN)
+    if isV2 then
+      while i < lines.size && lines[i]!.trim.isEmpty do
+        i := i + 1
+
+      -- LN1_GAMMA
+      while i < lines.size && lines[i]! != "LN1_GAMMA" do
+        i := i + 1
+      if i >= lines.size then
+        return .error s!"Layer {l}: missing LN1_GAMMA section"
+      i := i + 1
+      let mut ln1GammaFloats : Array Float := #[]
+      while i < lines.size && !lines[i]!.startsWith "LN1_BETA" do
+        ln1GammaFloats := ln1GammaFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      -- LN1_BETA
+      i := i + 1
+      let mut ln1BetaFloats : Array Float := #[]
+      while i < lines.size && !lines[i]!.startsWith "LN2_GAMMA" do
+        ln1BetaFloats := ln1BetaFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      -- LN2_GAMMA
+      i := i + 1
+      let mut ln2GammaFloats : Array Float := #[]
+      while i < lines.size && !lines[i]!.startsWith "LN2_BETA" do
+        ln2GammaFloats := ln2GammaFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      -- LN2_BETA
+      i := i + 1
+      let mut ln2BetaFloats : Array Float := #[]
+      while i < lines.size &&
+            !lines[i]!.startsWith "LAYER" &&
+            !lines[i]!.startsWith "LN_F_GAMMA" do
+        ln2BetaFloats := ln2BetaFloats ++ parseFloatLine lines[i]!
+        i := i + 1
+
+      let ln1Params : ConcreteLayerNormParams := {
+        gamma := buildMatrix 1 modelDim ln1GammaFloats
+        beta := buildMatrix 1 modelDim ln1BetaFloats
+      }
+      let ln2Params : ConcreteLayerNormParams := {
+        gamma := buildMatrix 1 modelDim ln2GammaFloats
+        beta := buildMatrix 1 modelDim ln2BetaFloats
+      }
+      ln1 := ln1.push ln1Params
+      ln2 := ln2.push ln2Params
+    else
+      -- V1: no LayerNorm params present; treat as identity.
+      ln1 := ln1.push (ConcreteLayerNormParams.identity modelDim)
+      ln2 := ln2.push (ConcreteLayerNormParams.identity modelDim)
+
   IO.println "[4/5] Loading unembedding matrix..."
+
+  let mut lnf : ConcreteLayerNormParams := ConcreteLayerNormParams.identity modelDim
+  if isV2 then
+    -- Parse final LayerNorm params (ln_f)
+    while i < lines.size && lines[i]!.trim.isEmpty do
+      i := i + 1
+
+    while i < lines.size && lines[i]! != "LN_F_GAMMA" do
+      i := i + 1
+    if i >= lines.size then
+      return .error "Missing LN_F_GAMMA section"
+    i := i + 1
+    let mut lnfGammaFloats : Array Float := #[]
+    while i < lines.size && !lines[i]!.startsWith "LN_F_BETA" do
+      lnfGammaFloats := lnfGammaFloats ++ parseFloatLine lines[i]!
+      i := i + 1
+
+    i := i + 1
+    let mut lnfBetaFloats : Array Float := #[]
+    while i < lines.size && !lines[i]!.startsWith "UNEMBEDDING" do
+      lnfBetaFloats := lnfBetaFloats ++ parseFloatLine lines[i]!
+      i := i + 1
+
+    lnf := {
+      gamma := buildMatrix 1 modelDim lnfGammaFloats
+      beta := buildMatrix 1 modelDim lnfBetaFloats
+    }
 
   -- Parse unembedding
   while i < lines.size && lines[i]! != "UNEMBEDDING" do
@@ -407,6 +576,9 @@ def loadFromText (content : String) : IO LoadResult := do
     numLayers := numLayers
     layers := layers
     mlps := mlps
+    ln1 := ln1
+    ln2 := ln2
+    lnf := lnf
     seqLen := seqLen
     inputTokens := inputTokens
     inputEmbeddings := inputEmbeddings

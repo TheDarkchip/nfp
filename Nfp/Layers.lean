@@ -240,8 +240,8 @@ variable {Pos : Type*} [Fintype Pos] [DecidableEq Pos]
 
 /-- A full transformer block conceptually: attention + feedforward with residuals.
 
-In a real transformer: `output = LayerNorm(x + Attention(x))` followed by
-`output = LayerNorm(y + FFN(y))`. We model this as composition of residual mixers.
+In a Pre-LN transformer (e.g. GPT-2): `y = x + Attention(LayerNorm(x))` followed by
+`output = y + FFN(LayerNorm(y))`. We model this as composition of residual mixers.
 
 The coefficients `c_attn` and `c_ff` control how much of the skip connection
 vs the transformed value flows through. -/
