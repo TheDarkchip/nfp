@@ -22,7 +22,7 @@ but keep the core invariants and the “no fake proofs” ethos.
 
 ### Run the CLI (preferred integration path)
 One of these typically works (depending on your Lake setup):
-- `lake exe nfp -- --help`
+- `lake exe nfp --help`
 - `./.lake/build/bin/nfp --help`
 
 If you add or change CLI behavior, validate at least:
