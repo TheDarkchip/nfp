@@ -98,7 +98,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
-  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
+  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
   let verbose := p.hasFlag "verbose"
   let some threshold := Nfp.parseFloat thresholdStr
     | do
@@ -146,10 +146,12 @@ def runInduction (p : Parsed) : IO UInt32 := do
         IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
 
       IO.println s!"Target: {target.description}"
-      IO.println s!"Searching for heads with effect > {threshold}..."
+      IO.println s!"Searching for heads with certified bound > {threshold}..."
 
-      let heads := findCertifiedInductionHeads model target threshold
-      IO.println s!"Certified Induction Heads (δ > {threshold})"
+      let heads :=
+        (findCertifiedInductionHeads model target threshold).qsort
+          (fun a b => b.certifiedLowerBound < a.certifiedLowerBound)
+      IO.println s!"Certified Induction Heads (LowerBound > {threshold})"
       IO.println s!"Found {heads.size} certified heads:"
 
       for h in heads do
@@ -157,12 +159,14 @@ def runInduction (p : Parsed) : IO UInt32 := do
         if verbose then
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError} " ++
+              s!"Virtual δ: {h.delta} | Max Error: {c.combinedError} | " ++
+              s!"Certified Bound: {h.certifiedLowerBound} " ++
               s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
         else
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Effectiveness (δ): {h.delta} | Error (ε): {c.combinedError}"
+              s!"Virtual δ: {h.delta} | Max Error: {c.combinedError} | " ++
+              s!"Certified Bound: {h.certifiedLowerBound}"
 
       return 0
 
@@ -189,7 +193,7 @@ def inductionCmd : Cmd := `[Cli|
   FLAGS:
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
-    t, threshold : String; "Effectiveness threshold (default: 0.5)"
+    t, threshold : String; "Certified lower-bound threshold (default: 0.0)"
     v, verbose; "Enable verbose output"
 
   ARGS:

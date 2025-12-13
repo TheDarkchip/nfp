@@ -1580,7 +1580,9 @@ structure CertifiedInductionHead where
   candidate : CandidateInductionHead
   /-- Effectiveness score on the target direction -/
   delta : Float
-  /-- Threshold used for δ -/
+  /-- Certified lower bound from `true_induction_head_predicts_logits`. -/
+  certifiedLowerBound : Float
+  /-- Threshold used for the certified lower bound -/
   threshold : Float
 
 /-- Result of discovering a multi-layer circuit with N-layer error bounds.
@@ -1638,6 +1640,46 @@ def checkPrevTokenPattern (attn : ConcreteAttentionWeights)
       return acc
     let avgStrength := sum / (attn.seqLen - 1).toFloat
     if avgStrength ≥ minStrength then some avgStrength else none
+
+/-- Check if a head exhibits a **content-addressable** attention pattern.
+
+We say a head is content-addressable on a prompt when, for many query positions `q`,
+it places substantial attention mass on *previous occurrences of the same token*:
+
+`score(q) = ∑_{k < q, tokens[k] = tokens[q]} A[q, k]`.
+
+The returned score is the average of `score(q)` over query positions that have at least
+one previous occurrence. This is variable-lag by construction (no fixed positional lag).
+-/
+def checkContentAddressablePattern (tokens : Array Nat) (attn : ConcreteAttentionWeights)
+    (minScore : Float := 0.1) : Option Float :=
+  if tokens.size ≠ attn.seqLen then none
+  else if attn.seqLen < 2 then none
+  else
+    let n := attn.seqLen
+    let w := attn.weights
+    let (sumScore, count) : (Float × Nat) := Id.run do
+      let mut sumScore : Float := 0.0
+      let mut count : Nat := 0
+      for q in [1:n] do
+        let tq := tokens[q]!
+        let rowBase := q * n
+        let mut hasPrev : Bool := false
+        let mut rowScore : Float := 0.0
+        for k in [:q] do
+          if tokens[k]! = tq then
+            hasPrev := true
+            -- SAFETY: `q < n` and `k < q ≤ n` by loop bounds.
+            rowScore := rowScore + w[rowBase + k]!
+        if hasPrev then
+          sumScore := sumScore + rowScore
+          count := count + 1
+      return (sumScore, count)
+
+    if count = 0 then none
+    else
+      let avgScore := sumScore / count.toFloat
+      if avgScore ≥ minScore then some avgScore else none
 
 /-- Compute composed attention score for induction pattern detection.
 
@@ -2274,6 +2316,7 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
   let model := cache.model
+  let tokens? := model.inputTokens
 
   let computeForLayer (l1 : Nat) : Array CandidateInductionHead := Id.run do
     let layer1Cache := cache.headData.getD l1 #[]
@@ -2285,8 +2328,15 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
       for data1 in layer1Cache do
         if data1.prevTokenStrength ≥ minPrevTokenStrength then
           for data2 in layer2Cache do
-            match checkInductionPattern data1.attention data2.attention minInductionScore with
-            | some _ =>
+            let passesPattern : Bool :=
+              match tokens? with
+              | some tokens =>
+                  (checkContentAddressablePattern tokens data2.attention minInductionScore).isSome
+              | none =>
+                  -- If the prompt has no token IDs, we can't do token-aware filtering.
+                  -- Fall back to **no pattern filter** and rely on certification.
+                  true
+            if passesPattern then
               -- Use dimensionless faithfulness ratios (relative approximation errors).
               let ε1 := data1.faithfulnessRatio
               let ε2 := data2.faithfulnessRatio
@@ -2301,9 +2351,8 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
                 patternBound2 := ε2
                 combinedError := combinedError
                 prevTokenStrength := data1.prevTokenStrength
-                description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx} (deep)"
+                description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
               }
-            | none => pure ()
         else
           pure ()
 
@@ -3959,7 +4008,7 @@ the *addressing* path composes attentions `Avirtual = A₂ · A₁`, while the *
 directly from the residual stream via the second head's value/output projection `W₂`.
 
 Concretely, for the **value/copy** path we use the second head directly:
-`Y = A₂ · X₂ · W₂`, then score the last position against `target`.
+`Y = (A₂ · A₁) · X₂ · W₂`, then score the last position against `target`.
 -/
 def computeInductionEffectiveness
     (candidate : CandidateInductionHead)
@@ -3969,29 +4018,84 @@ def computeInductionEffectiveness
   match cache.getHeadData candidate.layer1Idx candidate.head1Idx,
         cache.getHeadData candidate.layer2Idx candidate.head2Idx with
   | some data1, some data2 =>
-      let A1 := data1.attention.toMatrix
-      let A2 := data2.attention.toMatrix
       let W2 := data2.valueOutputProj
-      let _Avirtual := A2.matmul A1  -- addressing check lives in candidate selection
+      let u := target.direction
 
-      -- Value/copy path: read values directly from Layer 2 residual stream.
-      let Y := (A2.matmul layer2Input).matmul W2
-      if Y.numRows = 0 then 0.0
+      -- Virtual head score: δ = ⟪(A₂ · A₁ · X₂ · W₂)[last], u⟫.
+      --
+      -- PERFORMANCE: compute this scalar without materializing any dense `d×d` products.
+      -- 1) v = W₂ · u
+      -- 2) xdot[k] = ⟪X₂[k], v⟫
+      -- 3) t[j] = (A₁ · xdot)[j]
+      -- 4) δ = ⟪A₂[last], t⟫
+      if u.numCols ≠ 1 then 0.0
+      else if layer2Input.numCols ≠ u.numRows then 0.0
+      else if data2.attention.seqLen = 0 then 0.0
+      else if layer2Input.numRows ≠ data2.attention.seqLen then 0.0
+      else if data1.attention.seqLen ≠ data2.attention.seqLen then 0.0
       else
-        -- Next-token prediction: score the final sequence position.
-        let lastPos := Y.numRows - 1
-        let row := Y.getRow lastPos
-        let scoreMat := row.matmul target.direction
-        scoreMat.get 0 0
+        let n := data2.attention.seqLen
+        let lastPos := n - 1
+
+        -- v = W2 · u
+        let v := W2.matVecMul u
+        if v.numRows = 0 then 0.0
+        else
+          -- xdot[k] = ⟪X₂[k], v⟫
+          let xdot : Array Float := .ofFn fun k : Fin n => Id.run do
+            let xBase := k.val * layer2Input.numCols
+            let mut acc : Float := 0.0
+            for c in [:layer2Input.numCols] do
+              -- SAFETY: `k < n = layer2Input.numRows` by construction and guard above.
+              let x := layer2Input.data[xBase + c]!
+              -- SAFETY: `v` is `modelDim×1` so `c < v.data.size`.
+              let vc := v.data[c]!
+              acc := acc + x * vc
+            return acc
+
+          -- t = A1 · xdot
+          let t : Array Float := .ofFn fun j : Fin n => Id.run do
+            let rowBase := j.val * n
+            let w1 := data1.attention.weights
+            let mut acc : Float := 0.0
+            for k in [:n] do
+              -- SAFETY: `w1` has size `n*n` and `rowBase + k < n*n`.
+              acc := acc + w1[rowBase + k]! * xdot[k]!
+            return acc
+
+          -- δ = ⟪A2[last], t⟫
+          Id.run do
+            let w2 := data2.attention.weights
+            let row2Base := lastPos * n
+            let mut score : Float := 0.0
+            for j in [:n] do
+              -- SAFETY: `w2` has size `n*n` and `row2Base + j < n*n`.
+              score := score + w2[row2Base + j]! * t[j]!
+            return score
   | _, _ => 0.0
 
-/-- Filter heuristic induction candidates by an explicit effectiveness threshold `δ`.
+/-- Compute the **certified lower bound** from `true_induction_head_predicts_logits`.
+
+`LowerBound = δ - (ε · ‖X‖_F · ‖u‖₂)` where:
+- `δ` is the virtual effectiveness score,
+- `ε` is `candidate.combinedError`,
+- `X` is the layer-2 input matrix,
+- `u` is the target direction.
+-/
+def computeCertifiedLowerBound
+    (delta : Float)
+    (candidate : CandidateInductionHead)
+    (layer2Input : ConcreteMatrix)
+    (target : TargetDirection) : Float :=
+  delta - (candidate.combinedError * layer2Input.frobeniusNorm * target.direction.vecNorm)
+
+/-- Score candidates by the exact certified lower bound from `true_induction_head_predicts_logits`.
 
 Uses a `PrecomputedCache` so the attention patterns/projections are computed once.
 -/
 def findCertifiedInductionHeads (model : ConcreteModel)
     (target : TargetDirection)
-    (deltaThreshold : Float)
+    (certifiedThreshold : Float := 0.0)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CertifiedInductionHead := Id.run do
   let cache := PrecomputedCache.build model
@@ -4002,14 +4106,17 @@ def findCertifiedInductionHeads (model : ConcreteModel)
   for candidate in candidates do
     let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
     let delta := computeInductionEffectiveness candidate cache layer2Input target
-    if delta > deltaThreshold then
+    let certifiedLowerBound :=
+      computeCertifiedLowerBound delta candidate layer2Input target
+    if certifiedLowerBound > certifiedThreshold then
       certified := certified.push {
         candidate := candidate
         delta := delta
-        threshold := deltaThreshold
+        certifiedLowerBound := certifiedLowerBound
+        threshold := certifiedThreshold
       }
 
-  certified.qsort (fun a b => b.delta < a.delta)
+  certified.qsort (fun a b => b.certifiedLowerBound < a.certifiedLowerBound)
 
 /-- Target-aware importance metrics for a component.
 
