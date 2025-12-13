@@ -749,19 +749,24 @@ def analyzeModel (model : ConcreteModel) (modelName : String)
   IO.println s!"Threshold: {threshold}"
   IO.println "═══════════════════════════════════════════════════════════\n"
 
-  IO.println "[1/2] Searching for induction head candidates..."
-  -- Find induction head candidates
-  let inductionHeads := findInductionHeadCandidates model threshold
+  IO.println "[1/2] Building precomputed cache..."
+  let cache := PrecomputedCache.build model
+
+  IO.println "[2/2] Searching for deep circuit candidates (shared scan)..."
+  -- Find deep circuit candidates (reuse cache)
+  let deepCircuits := findDeepCircuitCandidatesFromCache cache
+  let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
+  IO.println s!"  Found {verifiedDeep.size} verified deep circuits \
+    (of {deepCircuits.size} candidates)"
+
+  -- Derive induction-head candidates from the same scan to avoid repeating
+  -- the expensive `checkInductionPattern` computation.
+  let inductionHeads :=
+    (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
+      (·.combinedError < ·.combinedError)
   let verifiedHeads := inductionHeads.filter (·.combinedError ≤ threshold)
   IO.println s!"  Found {verifiedHeads.size} verified induction heads \
     (of {inductionHeads.size} candidates)\n"
-
-  IO.println "[2/2] Searching for deep circuit candidates..."
-  -- Find deep circuit candidates
-  let deepCircuits := findDeepCircuitCandidates model threshold
-  let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
-  IO.println s!"  Found {verifiedDeep.size} verified deep circuits \
-    (of {deepCircuits.size} candidates)\n"
 
   IO.println "Analysis complete!\n"
 

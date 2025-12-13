@@ -333,8 +333,8 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
     return X
 
   -- Per-row mean and inverse stddev (compute once for speed).
-  let mut means : Array Float := #[]
-  let mut invStds : Array Float := #[]
+  let mut means : Array Float := Array.mkEmpty X.numRows
+  let mut invStds : Array Float := Array.mkEmpty X.numRows
   for r in [:X.numRows] do
     let mut sum : Float := 0.0
     for c in [:X.numCols] do
@@ -1205,6 +1205,10 @@ def get (A : ConcreteAttentionWeights) (q k : Nat) : Float :=
     A.weights[q * A.seqLen + k]!
   else 0.0
 
+/-- Fast access to `A[q, k]` assuming `q < seqLen` and `k < seqLen`. -/
+@[inline] def getUnsafe (A : ConcreteAttentionWeights) (q k : Nat) : Float :=
+  A.weights[q * A.seqLen + k]!
+
 /-- Convert attention weights to a `ConcreteMatrix` for use with matrix multiplication. -/
 def toMatrix (A : ConcreteAttentionWeights) : ConcreteMatrix where
   numRows := A.seqLen
@@ -1216,13 +1220,16 @@ def toMatrix (A : ConcreteAttentionWeights) : ConcreteMatrix where
 /-- Compute softmax for a row of logits. -/
 def softmaxRow (logits : Array Float) : Array Float :=
   Id.run do
-    -- Keep the same evaluation order as the `foldl/map/foldl/map` implementation,
-    -- but avoid allocating intermediate arrays.
-    let maxVal := logits.foldl max (-1e30)
-    let mut expVals : Array Float := Array.replicate logits.size 0.0
+    -- PERFORMANCE: keep arrays linear to enable in-place updates
+    -- (see Lean Reference Manual: runtime reference counting + array performance).
+    let mut expVals : Array Float := logits
+    let mut maxVal : Float := -1e30
+    for i in [:expVals.size] do
+      let v := expVals[i]!
+      if v > maxVal then maxVal := v
     let mut sumExp : Float := 0.0
-    for i in [:logits.size] do
-      let v := Float.exp (logits[i]! - maxVal)
+    for i in [:expVals.size] do
+      let v := Float.exp (expVals[i]! - maxVal)
       expVals := expVals.set! i v
       sumExp := sumExp + v
     if sumExp > 0.0 then
@@ -1233,36 +1240,42 @@ def softmaxRow (logits : Array Float) : Array Float :=
 /-- Compute attention weights given queries, keys, and scaling. -/
 def compute (queries keys : ConcreteMatrix) (scale : Float)
     (seqLen : Nat)
-    (causal : Bool := true) : ConcreteAttentionWeights where
-  seqLen := seqLen
-  weights :=
-    -- PERFORMANCE: compute each softmax row once (O(seqLen²·d) total), then reuse it
-    -- when populating the flattened (q,k) weights array.
-    let rows : Array (Array Float) := .ofFn fun qFin : Fin seqLen =>
-      let q := qFin.val
-      let rowScores : Array Float := .ofFn fun jFin : Fin seqLen =>
-        let j := jFin.val
-        if causal && j > q then -1e30
-        else if q < queries.numRows ∧ j < keys.numRows then Id.run do
-          let cols := min queries.numCols keys.numCols
-          let mut dotProd : Float := 0.0
-          let qBase := q * queries.numCols
-          let jBase := j * keys.numCols
-          for d in [:cols] do
-            -- SAFETY: `d < cols ≤ queries.numCols/keys.numCols`,
-            -- and `q/j` are in-bounds by the guard above.
-            dotProd := dotProd + queries.data[qBase + d]! * keys.data[jBase + d]!
-          return dotProd / scale
-        else -1e30
-      softmaxRow rowScores
-    .ofFn fun idx : Fin (seqLen * seqLen) =>
-      let q := idx.val / seqLen
-      let k := idx.val % seqLen
-      if causal && k > q then 0.0
-      else
-        let row := rows[q]!
-        row[k]!
-  size_eq := Array.size_ofFn
+    (causal : Bool := true) : ConcreteAttentionWeights := Id.run do
+  -- PERFORMANCE: avoid allocating an `Array (Array Float)` of rows; write the flattened
+  -- weights row-by-row into a single mutable array.
+  let cols := min queries.numCols keys.numCols
+  let n := seqLen * seqLen
+  let mut weights : { w : Array Float // w.size = n } :=
+    ⟨Array.replicate n 0.0, by simp [n]⟩
+  for q in [:seqLen] do
+    -- Initialize to -∞ and only fill the causal prefix when `causal = true`.
+    let mut rowScores : Array Float := Array.replicate seqLen (-1e30)
+    let stop := if causal then min (q + 1) seqLen else seqLen
+    let qBase := q * queries.numCols
+    for j in [:stop] do
+      if q < queries.numRows ∧ j < keys.numRows then
+        let jBase := j * keys.numCols
+        let mut dotProd : Float := 0.0
+        for d in [:cols] do
+          -- SAFETY: within this branch `q < queries.numRows` and `j < keys.numRows`,
+          -- and `d < cols ≤ queries.numCols/keys.numCols`.
+          dotProd := dotProd + queries.data[qBase + d]! * keys.data[jBase + d]!
+        rowScores := rowScores.set! j (dotProd / scale)
+    let row := softmaxRow rowScores
+    let rowBase := q * seqLen
+    for k in [:stop] do
+      let weights' := weights.1.set! (rowBase + k) (row[k]!)
+      have weights'SizeEq : weights'.size = n := by
+        have hsize : weights'.size = weights.1.size := by
+          -- `set!` is `setIfInBounds`, which preserves size.
+          simp [weights']
+        exact hsize.trans weights.2
+      weights := ⟨weights', weights'SizeEq⟩
+  return {
+    seqLen := seqLen
+    weights := weights.1
+    size_eq := by simpa [n] using weights.2
+  }
 
 end ConcreteAttentionWeights
 
@@ -1306,8 +1319,10 @@ def ConcreteAttentionWeights.avgSoftmaxJacobianNorm (A : ConcreteAttentionWeight
     for q in [:A.seqLen] do
       -- Extract row q
       let mut sumSq : Float := 0.0
+      let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
-        let p := A.get q k
+        -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
+        let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
       -- Jacobian norm squared for this row is bounded by 1 - sumSq
       totalNormSq := totalNormSq + max 0.0 (1.0 - sumSq)
@@ -1324,8 +1339,10 @@ def ConcreteAttentionWeights.maxSoftmaxJacobianNorm (A : ConcreteAttentionWeight
     let mut maxNorm : Float := 0.0
     for q in [:A.seqLen] do
       let mut sumSq : Float := 0.0
+      let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
-        let p := A.get q k
+        -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
+        let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
       let rowNorm := Float.sqrt (max 0.0 (1.0 - sumSq))
       maxNorm := max maxNorm rowNorm
@@ -1349,8 +1366,10 @@ def ConcreteAttentionWeights.softmaxJacobianOpBound (A : ConcreteAttentionWeight
     for q in [:A.seqLen] do
       let mut sumSq : Float := 0.0
       let mut maxP : Float := 0.0
+      let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
-        let p := A.get q k
+        -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
+        let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
         if p > maxP then maxP := p
       let traceBound := max 0.0 (1.0 - sumSq)
@@ -1369,8 +1388,10 @@ def ConcreteAttentionWeights.softmaxJacobianFrobeniusNorm
     let mut totalNormSq : Float := 0.0
     for q in [:A.seqLen] do
       let mut sumSq : Float := 0.0
+      let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
-        let p := A.get q k
+        -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
+        let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
       totalNormSq := totalNormSq + max 0.0 (1.0 - sumSq)
     Float.sqrt totalNormSq
@@ -1411,8 +1432,14 @@ def ConcreteAttentionLayer.forward (layer : ConcreteAttentionLayer) (input : Con
       let q := idx.val / layer.headDim
       let d := idx.val % layer.headDim
       let mut acc : Float := 0.0
-      for k in [:input.numRows] do
-        acc := acc + attn.get q k * values.get k d
+      let n := input.numRows
+      let attnRowBase := q * n
+      for k in [:n] do
+        -- SAFETY: `q < n` and `k < n` by loop bounds, and `attn.seqLen = n`.
+        let a := attn.weights[attnRowBase + k]!
+        -- SAFETY: `k < values.numRows = n` and `d < values.numCols = headDim`.
+        let v := values.data[k * layer.headDim + d]!
+        acc := acc + a * v
       return acc
     size_eq := Array.size_ofFn
   }
@@ -1601,8 +1628,14 @@ def checkPrevTokenPattern (attn : ConcreteAttentionWeights)
     (minStrength : Float := 0.3) : Option Float :=
   if attn.seqLen < 2 then none
   else
-    let sum := (List.range (attn.seqLen - 1)).foldl
-      (fun acc i => acc + attn.get (i + 1) i) 0.0
+    let sum : Float := Id.run do
+      let n := attn.seqLen
+      let w := attn.weights
+      let mut acc : Float := 0.0
+      for i in [:n - 1] do
+        -- SAFETY: `i < n-1` implies `i+1 < n`, so `(i+1,i)` is in-bounds.
+        acc := acc + w[(i + 1) * n + i]!
+      return acc
     let avgStrength := sum / (attn.seqLen - 1).toFloat
     if avgStrength ≥ minStrength then some avgStrength else none
 
@@ -1623,23 +1656,37 @@ def checkInductionPattern (attn1 attn2 : ConcreteAttentionWeights)
     let n := attn1.seqLen
     let maxLag := n / 2
 
-    -- Try all possible lags and find the maximum induction score
-    let maxScore := (List.range (maxLag - 1)).foldl
-      (fun currentMax lagIdx =>
+    -- Try all possible lags and find the maximum induction score.
+    --
+    -- PERFORMANCE: this is called in an O(L²H²) search, so avoid `List.range.foldl`.
+    let maxScore : Float := Id.run do
+      let w1 := attn1.weights
+      let w2 := attn2.weights
+      let mut currentMax : Float := 0.0
+      for lagIdx in [:maxLag - 1] do
         let lag := lagIdx + 2  -- Start from lag=2
-        if lag >= n then currentMax
-        else
+        if lag < n then
           -- Compute average induction score for this lag
           let validPositions := n - lag
-          let composedSum := (List.range validPositions).foldl
-            (fun acc q =>
-              let q' := q + lag
-              let composedToQ := (List.range n).foldl
-                (fun acc' j => acc' + attn2.get q' j * attn1.get j q) 0.0
-              acc + composedToQ) 0.0
+          let mut composedSum : Float := 0.0
+          for q in [:validPositions] do
+            let q' := q + lag
+            let row2Base := q' * n
+            let mut composedToQ : Float := 0.0
+            -- Column access into `w1` is strided, so avoid repeated multiplications.
+            let mut col1Idx := q
+            for j in [:n] do
+              -- SAFETY: `q' < n` and `j < n` by loop bounds.
+              let a2 := w2[row2Base + j]!
+              -- SAFETY: `j < n` and `q < n` by loop bounds.
+              let a1 := w1[col1Idx]!
+              composedToQ := composedToQ + a2 * a1
+              col1Idx := col1Idx + n
+            composedSum := composedSum + composedToQ
           let avgScore := composedSum / validPositions.toFloat
-          if avgScore > currentMax then avgScore else currentMax
-      ) 0.0
+          if avgScore > currentMax then
+            currentMax := avgScore
+      return currentMax
 
     if maxScore ≥ minScore then some maxScore else none
 
@@ -1750,31 +1797,45 @@ output of layers 0..N-1, not just the raw embeddings.
 -/
 def ConcreteModel.runForward (model : ConcreteModel)
     (causal : Bool := true) : ForwardPassResult := Id.run do
-  let mut layerInputs : Array ConcreteMatrix := #[model.inputEmbeddings]
-  let mut attnOutputs : Array (Array ConcreteMatrix) := #[]
-  let mut mlpOutputs : Array ConcreteMatrix := #[]
+  let mut layerInputs : Array ConcreteMatrix := Array.mkEmpty (model.numLayers + 1)
+  let mut attnOutputs : Array (Array ConcreteMatrix) := Array.mkEmpty model.numLayers
+  let mut mlpOutputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut residual := model.inputEmbeddings
+  layerInputs := layerInputs.push residual
 
   for l in [:model.numLayers] do
     -- Pre-LN: attention sees ln_1(residual)
     let attnInput := model.applyLn1 l residual
     -- Compute attention outputs for all heads in this layer
     let mut layerAttnOutputs : Array ConcreteMatrix := #[]
-    let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
+    let rows := residual.numRows
+    let cols := residual.numCols
 
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
-      for h in [:layerHeads.size] do
-        if hh : h < layerHeads.size then
-          let head := layerHeads[h]'hh
-          let headOutput := head.forward attnInput causal
-          layerAttnOutputs := layerAttnOutputs.push headOutput
-          attnSum := attnSum.add headOutput
+      layerAttnOutputs := Array.mkEmpty layerHeads.size
+      for head in layerHeads do
+        let headOutput := head.forward attnInput causal
+        layerAttnOutputs := layerAttnOutputs.push headOutput
 
     attnOutputs := attnOutputs.push layerAttnOutputs
 
     -- Add attention residual
-    let residualAfterAttn := residual.add attnSum
+    let residualAfterAttn :=
+      if layerAttnOutputs.isEmpty then
+        residual
+      else
+        let attnSum : ConcreteMatrix := {
+          numRows := rows
+          numCols := cols
+          data := .ofFn fun idx : Fin (rows * cols) => Id.run do
+            let mut acc : Float := 0.0
+            for hOut in layerAttnOutputs do
+              acc := acc + hOut.data[idx.val]!
+            return acc
+          size_eq := Array.size_ofFn
+        }
+        residual.add attnSum
 
     -- Compute MLP output
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
@@ -1816,11 +1877,22 @@ def ForwardPassResult.getPostAttnResidual (result : ForwardPassResult)
   let x := result.getLayerInput layerIdx
   if h : layerIdx < result.attnOutputs.size then
     let heads := result.attnOutputs[layerIdx]
-    let mut sum := ConcreteMatrix.zeros x.numRows x.numCols
-    for hidx in [:heads.size] do
-      if hh : hidx < heads.size then
-        sum := sum.add (heads[hidx]'hh)
-    return x.add sum
+    if heads.isEmpty then
+      return x
+    else
+      let rows := x.numRows
+      let cols := x.numCols
+      let sum : ConcreteMatrix := {
+        numRows := rows
+        numCols := cols
+        data := .ofFn fun idx : Fin (rows * cols) => Id.run do
+          let mut acc : Float := 0.0
+          for hOut in heads do
+            acc := acc + hOut.data[idx.val]!
+          return acc
+        size_eq := Array.size_ofFn
+      }
+      return x.add sum
   else
     return x
 
@@ -1960,6 +2032,18 @@ structure PrecomputedHeadData where
   headIdx : Nat
   /-- Attention weights (A = softmax(QK^T/√d)) -/
   attention : ConcreteAttentionWeights
+  /-- Average previous-token attention strength: `(1/(n-1)) * Σᵢ A[i+1, i]`. -/
+  prevTokenStrength : Float
+  /-- Cached softmax Jacobian operator-norm bound for this head's attention rows. -/
+  softmaxJacobianOpBound : Float
+  /-- Cached Frobenius norm squared of the attention matrix: `‖A‖_F²`. -/
+  attentionFrobeniusNormSq : Float
+  /-- Cached pattern-term bound `‖PatternTerm‖_F` for this head at the cached input. -/
+  patternTermBoundCached : Float
+  /-- Cached value-term Frobenius norm `‖ValueTerm‖_F` for this head. -/
+  valueTermNormCached : Float
+  /-- Cached dimensionless faithfulness ratio `‖PatternTerm‖_F / ‖ValueTerm‖_F`. -/
+  faithfulnessRatioCached : Float
   /-- Value-output projection (V·W_O) -/
   valueOutputProj : ConcreteMatrix
   /-- Query-key alignment (Q·K^T) -/
@@ -1983,11 +2067,7 @@ namespace PrecomputedHeadData
 
 /-- Precomputed pattern term bound for a head (cached computation). -/
 def patternTermBound (data : PrecomputedHeadData) : Float :=
-  let softmaxBound := data.attention.softmaxJacobianOpBound
-  -- This bounds the Pattern Term of the attention layer linearization
-  -- with respect to the **LayerNormed** input seen by attention.
-  (softmaxBound / data.scaleFactor) * data.inputNorm *
-    data.queryKeyAlignSchurNorm * data.valueOutputProjSchurNorm
+  data.patternTermBoundCached
 
 /-- Frobenius norm of the Value Term of this head's Jacobian.
 
@@ -1995,8 +2075,7 @@ For the attention linearization, the Value Term factorizes as `A ⊗ (W_V·W_O)`
 so `‖ValueTerm‖_F = ‖A‖_F · ‖W_V·W_O‖_F`.
 -/
 def valueTermNorm (data : PrecomputedHeadData) : Float :=
-  let attnNormSq := data.attention.weights.foldl (fun acc x => acc + x * x) 0.0
-  Float.sqrt attnNormSq * data.valueOutputProjNorm
+  data.valueTermNormCached
 
 /-- Dimensionless faithfulness ratio: `‖PatternTerm‖_F / ‖ValueTerm‖_F`.
 
@@ -2004,8 +2083,7 @@ This matches `relativeApproximationError` from `Nfp.Linearization` and is the
 quantity that should be compared to user-facing thresholds like `0.1`.
 -/
 def faithfulnessRatio (data : PrecomputedHeadData) : Float :=
-  let v := data.valueTermNorm
-  if v < 1e-10 then Float.inf else data.patternTermBound / v
+  data.faithfulnessRatioCached
 
 end PrecomputedHeadData
 
@@ -2031,10 +2109,7 @@ This precomputes all attention patterns, projections, and norms once.
 -/
 def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := Id.run do
   let fwdResult := model.runForward causal
-  let mut headData : Array (Array PrecomputedHeadData) := #[]
-  let mut layerNormBounds : Array Float := #[]
-
-  for l in [:model.numLayers] do
+  let computeLayer (l : Nat) : (Array PrecomputedHeadData × Float) := Id.run do
     let mut layerHeadData : Array PrecomputedHeadData := #[]
     let layerInput := fwdResult.getLayerInput l
     let attnInput := model.applyLn1 l layerInput
@@ -2043,12 +2118,29 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
     if h : l < model.layers.size then
       let heads := model.layers[l]'h
+      layerHeadData := Array.mkEmpty heads.size
       for h_idx in [:heads.size] do
         if hh : h_idx < heads.size then
           let head := heads[h_idx]'hh
 
           -- Precompute attention weights
           let attn := head.computeAttentionWeights attnInput causal
+          let softmaxOpBound := attn.softmaxJacobianOpBound
+          let mut attnFrobNormSq : Float := 0.0
+          for x in attn.weights do
+            attnFrobNormSq := attnFrobNormSq + x * x
+
+          let prevTokenStrength : Float :=
+            if attn.seqLen < 2 then
+              0.0
+            else
+              Id.run do
+                let n := attn.seqLen
+                let w := attn.weights
+                let mut sum : Float := 0.0
+                for i in [:n - 1] do
+                  sum := sum + w[(i + 1) * n + i]!
+                return sum / (n - 1).toFloat
 
           -- Precompute projections
           let voProj := head.valueOutputProjection
@@ -2073,15 +2165,29 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           let voSchur := min voProj.schurNormBound (wvSchur * woSchur)
           let qkSchur := min qkAlign.schurNormBound (wqSchur * wkSchur)
 
+          let scaleFactor := Float.sqrt head.headDim.toFloat
+          let patternBound : Float :=
+            (softmaxOpBound / scaleFactor) * inputNorm * qkSchur * voSchur
+          let valueNorm : Float :=
+            Float.sqrt attnFrobNormSq * voNorm
+          let ratio : Float :=
+            if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
+
           let data : PrecomputedHeadData := {
             layerIdx := l
             headIdx := h_idx
             attention := attn
+            prevTokenStrength := prevTokenStrength
+            softmaxJacobianOpBound := softmaxOpBound
+            attentionFrobeniusNormSq := attnFrobNormSq
+            patternTermBoundCached := patternBound
+            valueTermNormCached := valueNorm
+            faithfulnessRatioCached := ratio
             valueOutputProj := voProj
             queryKeyAlign := qkAlign
             inputNorm := inputNorm
             ln1OpBound := ln1Bound
-            scaleFactor := Float.sqrt head.headDim.toFloat
+            scaleFactor := scaleFactor
             valueOutputProjNorm := voNorm
             queryKeyAlignNorm := qkNorm
             valueOutputProjSchurNorm := voSchur
@@ -2090,10 +2196,27 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
           layerHeadData := layerHeadData.push data
 
-    headData := headData.push layerHeadData
-
     -- OPTIMIZATION: Precompute operator norm bounds for each layer
     let norm := estimateAttentionLayerNorm model fwdResult l
+    return (layerHeadData, norm)
+
+  -- Pure parallelism via tasks: layer cache construction is independent once the
+  -- forward pass has produced all layer inputs.
+  let useParallel := model.numLayers >= 4
+  let layerResults : Array (Array PrecomputedHeadData × Float) :=
+    if useParallel then
+      let tasks : Array (Task (Array PrecomputedHeadData × Float)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeLayer i.val
+
+  let mut headData : Array (Array PrecomputedHeadData) := Array.mkEmpty model.numLayers
+  let mut layerNormBounds : Array Float := Array.mkEmpty model.numLayers
+  for (layerHeadData, norm) in layerResults do
+    headData := headData.push layerHeadData
     layerNormBounds := layerNormBounds.push norm
 
   { model := model
@@ -2113,50 +2236,97 @@ def getHeadData (cache : PrecomputedCache) (layerIdx headIdx : Nat) :
 
 end PrecomputedCache
 
+/-- Convert a 2-layer deep circuit candidate into an induction-head candidate.
+
+This is used to avoid re-running the expensive `checkInductionPattern` scan when both
+induction heads and deep circuits are requested from the same cache.
+-/
+def DeepCircuitCandidate.toInductionCandidate?
+    (c : DeepCircuitCandidate) (cache : PrecomputedCache) :
+    Option CandidateInductionHead :=
+  if c.layerIndices.size = 2 && c.headIndices.size = 2 then
+    let l1 := c.layerIndices[0]!
+    let l2 := c.layerIndices[1]!
+    let h1 := c.headIndices[0]!
+    let h2 := c.headIndices[1]!
+    match cache.getHeadData l1 h1, cache.getHeadData l2 h2 with
+    | some d1, some d2 =>
+      let ε1 := d1.faithfulnessRatio
+      let ε2 := d2.faithfulnessRatio
+      let combinedError := ε1 + ε2 + ε1 * ε2
+      some {
+        layer1Idx := l1
+        layer2Idx := l2
+        head1Idx := h1
+        head2Idx := h2
+        patternBound1 := ε1
+        patternBound2 := ε2
+        combinedError := combinedError
+        prevTokenStrength := d1.prevTokenStrength
+        description := s!"L{l1}H{h1}->L{l2}H{h2} (deep)"
+      }
+    | _, _ => none
+  else
+    none
+
 /-- Core induction head discovery that reuses a precomputed cache. -/
 def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
   let model := cache.model
-  let mut candidates : Array CandidateInductionHead := #[]
 
-  for l1 in [:model.numLayers] do
+  let computeForLayer (l1 : Nat) : Array CandidateInductionHead := Id.run do
+    let layer1Cache := cache.headData.getD l1 #[]
+    let mut layerCandidates : Array CandidateInductionHead := #[]
+
+    -- Preserve the original traversal order: l1, l2, head1, head2.
     for l2 in [l1 + 1:model.numLayers] do
-      if h1 : l1 < model.layers.size then
-        if h2 : l2 < model.layers.size then
-          let layer1Heads := model.layers[l1]
-          let layer2Heads := model.layers[l2]
+      let layer2Cache := cache.headData.getD l2 #[]
+      for data1 in layer1Cache do
+        if data1.prevTokenStrength ≥ minPrevTokenStrength then
+          for data2 in layer2Cache do
+            match checkInductionPattern data1.attention data2.attention minInductionScore with
+            | some _ =>
+              -- Use dimensionless faithfulness ratios (relative approximation errors).
+              let ε1 := data1.faithfulnessRatio
+              let ε2 := data2.faithfulnessRatio
+              let combinedError := ε1 + ε2 + ε1 * ε2
 
-          for h1Idx in [:layer1Heads.size] do
-            for h2Idx in [:layer2Heads.size] do
-              -- OPTIMIZATION: Retrieve precomputed data from cache
-              match cache.getHeadData l1 h1Idx, cache.getHeadData l2 h2Idx with
-              | some data1, some data2 =>
-                match checkPrevTokenPattern data1.attention minPrevTokenStrength with
-                | some prevStrength =>
-                  match checkInductionPattern data1.attention data2.attention minInductionScore with
-                  | some _ =>
-                    -- Use dimensionless faithfulness ratios (relative approximation errors).
-                    let ε1 := data1.faithfulnessRatio
-                    let ε2 := data2.faithfulnessRatio
-                    let combinedError := ε1 + ε2 + ε1 * ε2
+              layerCandidates := layerCandidates.push {
+                layer1Idx := l1
+                layer2Idx := l2
+                head1Idx := data1.headIdx
+                head2Idx := data2.headIdx
+                patternBound1 := ε1
+                patternBound2 := ε2
+                combinedError := combinedError
+                prevTokenStrength := data1.prevTokenStrength
+                description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx} (deep)"
+              }
+            | none => pure ()
+        else
+          pure ()
 
-                    let candidate : CandidateInductionHead := {
-                      layer1Idx := l1
-                      layer2Idx := l2
-                      head1Idx := h1Idx
-                      head2Idx := h2Idx
-                      patternBound1 := ε1
-                      patternBound2 := ε2
-                      combinedError := combinedError
-                      prevTokenStrength := prevStrength
-                      description := s!"L{l1}H{h1Idx}->L{l2}H{h2Idx} (deep)"
-                    }
+    return layerCandidates
 
-                    candidates := candidates.push candidate
-                  | none => pure ()
-                | none => pure ()
-              | _, _ => pure ()
+  -- Pure parallelism via tasks: layer-1 index computations are independent.
+  let useParallel := model.numLayers >= 4
+  let chunks : Array (Array CandidateInductionHead) :=
+    if useParallel then
+      let tasks : Array (Task (Array CandidateInductionHead)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeForLayer i.val
+
+  -- Join without quadratic copying.
+  let total := chunks.foldl (fun acc cs => acc + cs.size) 0
+  let mut candidates : Array CandidateInductionHead := Array.mkEmpty total
+  for cs in chunks do
+    for c in cs do
+      candidates := candidates.push c
 
   candidates.qsort (·.combinedError < ·.combinedError)
 
@@ -2211,70 +2381,95 @@ For a 2-layer induction head with layers l1 < l2:
 
 The amplification factors Cⱼ are estimated from the layer Jacobian norms.
 -/
-def findDeepCircuitCandidates (model : ConcreteModel)
-    (_threshold : Float)
+def findDeepCircuitCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array DeepCircuitCandidate := Id.run do
-  let mut candidates : Array DeepCircuitCandidate := #[]
-
-  -- OPTIMIZATION: Build precomputed cache once (includes forward pass + layer norms)
-  let cache := PrecomputedCache.build model
+  let model := cache.model
 
   -- OPTIMIZATION: Use cached operator norm bounds (already computed in cache.build)
   let allNormBounds := cache.layerNormBounds
 
-  for l1 in [:model.numLayers] do
+  -- OPTIMIZATION: precompute suffix amplification products:
+  -- `suffixAmp[i] = ∏_{j≥i} (1 + C_j)` and `suffixAmp[size] = 1`.
+  let suffixAmp : Array Float := Id.run do
+    let n := allNormBounds.size
+    let mut out : Array Float := Array.replicate (n + 1) 1.0
+    let mut prod : Float := 1.0
+    for offset in [:n] do
+      let i := n - 1 - offset
+      prod := prod * (1.0 + allNormBounds[i]!)
+      out := out.set! i prod
+    return out
+
+  let computeForLayer (l1 : Nat) : Array DeepCircuitCandidate := Id.run do
+    let layer1Cache := cache.headData.getD l1 #[]
+    let suffix1 := suffixAmp.getD (l1 + 1) 1.0
+    let totalAmpFactor := suffixAmp.getD l1 1.0
+    let mut layerCandidates : Array DeepCircuitCandidate := #[]
+
+    -- Preserve the original traversal order: l1, l2, head1, head2.
     for l2 in [l1 + 1:model.numLayers] do
-      if h1 : l1 < model.layers.size then
-        if h2 : l2 < model.layers.size then
-          let layer1Heads := model.layers[l1]
-          let layer2Heads := model.layers[l2]
+      let layer2Cache := cache.headData.getD l2 #[]
+      let suffix2 := suffixAmp.getD (l2 + 1) 1.0
+      let relevantNormBounds := allNormBounds.extract l1 (l2 + 1)
 
-          for h1Idx in [:layer1Heads.size] do
-            for h2Idx in [:layer2Heads.size] do
-              -- OPTIMIZATION: Retrieve precomputed data from cache
-              match cache.getHeadData l1 h1Idx, cache.getHeadData l2 h2Idx with
-              | some data1, some data2 =>
-                match checkPrevTokenPattern data1.attention minPrevTokenStrength with
-                | some _ =>
-                  match checkInductionPattern data1.attention data2.attention minInductionScore with
-                  | some _ =>
-                    -- OPTIMIZATION: Use precomputed bounds directly
-                    let bound1 := data1.patternTermBound
-                    let bound2 := data2.patternTermBound
+      for data1 in layer1Cache do
+        if data1.prevTokenStrength ≥ minPrevTokenStrength then
+          for data2 in layer2Cache do
+            match checkInductionPattern data1.attention data2.attention minInductionScore with
+            | some _ =>
+              let bound1 := data1.patternTermBound
+              let bound2 := data2.patternTermBound
+              let amplifiedError := bound1 * suffix1 + bound2 * suffix2
 
-                    -- Compute N-layer amplified error using cached norm bounds
-                    let patternBounds := #[bound1, bound2]
-                    let layerSpan := l2 - l1 + 1
-                    let relevantNormBounds := allNormBounds.extract l1 (l1 + layerSpan)
+              layerCandidates := layerCandidates.push {
+                layerIndices := #[l1, l2]
+                headIndices := #[data1.headIdx, data2.headIdx]
+                patternBounds := #[bound1, bound2]
+                operatorNormBounds := relevantNormBounds
+                simpleErrorSum := bound1 + bound2
+                amplifiedError := amplifiedError
+                amplificationFactor := totalAmpFactor
+                patternType := "induction"
+                description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
+              }
+            | none => pure ()
+        else
+          pure ()
 
-                    -- ε₁ amplified by all layers from l1+1 onward
-                    let suffix1 := computeSuffixAmplification allNormBounds (l1 + 1)
-                    -- ε₂ amplified by all layers from l2+1 onward
-                    let suffix2 := computeSuffixAmplification allNormBounds (l2 + 1)
+    return layerCandidates
 
-                    let amplifiedError := bound1 * suffix1 + bound2 * suffix2
-                    let simpleSum := bound1 + bound2
-                    let totalAmpFactor := computeSuffixAmplification allNormBounds l1
+  -- Pure parallelism via tasks: layer-1 index computations are independent.
+  let useParallel := model.numLayers >= 4
+  let chunks : Array (Array DeepCircuitCandidate) :=
+    if useParallel then
+      let tasks : Array (Task (Array DeepCircuitCandidate)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeForLayer i.val
 
-                    let candidate : DeepCircuitCandidate := {
-                      layerIndices := #[l1, l2]
-                      headIndices := #[h1Idx, h2Idx]
-                      patternBounds := patternBounds
-                      operatorNormBounds := relevantNormBounds
-                      simpleErrorSum := simpleSum
-                      amplifiedError := amplifiedError
-                      amplificationFactor := totalAmpFactor
-                      patternType := "induction"
-                      description := s!"L{l1}H{h1Idx}->L{l2}H{h2Idx}"
-                    }
-
-                    candidates := candidates.push candidate
-                  | none => pure ()
-                | none => pure ()
-              | _, _ => pure ()
+  -- Join without quadratic copying.
+  let total := chunks.foldl (fun acc cs => acc + cs.size) 0
+  let mut candidates : Array DeepCircuitCandidate := Array.mkEmpty total
+  for cs in chunks do
+    for c in cs do
+      candidates := candidates.push c
 
   candidates.qsort (·.amplifiedError < ·.amplifiedError)
+
+/-- Find deep circuit candidates with rigorous N-layer amplification bounds.
+
+This is a wrapper around `findDeepCircuitCandidatesFromCache` that builds the cache.
+-/
+def findDeepCircuitCandidates (model : ConcreteModel)
+    (_threshold : Float)
+    (minPrevTokenStrength : Float := 0.1)
+    (minInductionScore : Float := 0.05) : Array DeepCircuitCandidate := Id.run do
+  let cache := PrecomputedCache.build model
+  findDeepCircuitCandidatesFromCache cache minPrevTokenStrength minInductionScore
 
 /-- Filter deep circuit candidates by N-layer error threshold. -/
 def findVerifiedDeepCircuits (model : ConcreteModel)
@@ -2318,14 +2513,17 @@ structure DiscoverySummary where
 def computeDiscoverySummary (model : ConcreteModel) (threshold : Float) :
     DiscoverySummary := Id.run do
   let candidates := findInductionHeadCandidates model threshold
-  let verified := findVerifiedInductionHeads model threshold
+  let mut verifiedCount : Nat := 0
+  for c in candidates do
+    if c.combinedError ≤ threshold then
+      verifiedCount := verifiedCount + 1
 
   let bestErr := if candidates.isEmpty then Float.inf
     else candidates.foldl (fun acc c => min acc c.combinedError) Float.inf
 
   {
     candidateCount := candidates.size
-    verifiedCount := verified.size
+    verifiedCount := verifiedCount
     bestError := bestErr
   }
 
@@ -3226,20 +3424,26 @@ This enables **empirical validation** of theoretical circuit bounds:
 -/
 def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteCircuit)
     (causal : Bool := true) : ForwardPassResult := Id.run do
-  let mut layerInputs : Array ConcreteMatrix := #[model.inputEmbeddings]
-  let mut attnOutputs : Array (Array ConcreteMatrix) := #[]
-  let mut mlpOutputs : Array ConcreteMatrix := #[]
+  let mut layerInputs : Array ConcreteMatrix := Array.mkEmpty (model.numLayers + 1)
+  let mut attnOutputs : Array (Array ConcreteMatrix) := Array.mkEmpty model.numLayers
+  let mut mlpOutputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut residual := model.inputEmbeddings
+  layerInputs := layerInputs.push residual
 
   for l in [:model.numLayers] do
     -- Pre-LN: attention sees ln_1(residual)
     let attnInput := model.applyLn1 l residual
     -- Compute attention outputs for included heads only
     let mut layerAttnOutputs : Array ConcreteMatrix := #[]
-    let mut attnSum := ConcreteMatrix.zeros residual.numRows residual.numCols
+    let mut includedHeadOutputs : Array ConcreteMatrix := #[]
+    let rows := residual.numRows
+    let cols := residual.numCols
+    let zeroOutput := ConcreteMatrix.zeros rows cols
 
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
+      layerAttnOutputs := Array.mkEmpty layerHeads.size
+      includedHeadOutputs := Array.mkEmpty layerHeads.size
       for h in [:layerHeads.size] do
         if hh : h < layerHeads.size then
           let head := layerHeads[h]'hh
@@ -3247,16 +3451,29 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
           if circuit.isHeadIncluded l h then
             let headOutput := head.forward attnInput causal
             layerAttnOutputs := layerAttnOutputs.push headOutput
-            attnSum := attnSum.add headOutput
+            includedHeadOutputs := includedHeadOutputs.push headOutput
           else
-            -- Excluded head: output is zero
-            let zeroOutput := ConcreteMatrix.zeros residual.numRows residual.numCols
+            -- Excluded head: output is zero (share one per layer).
             layerAttnOutputs := layerAttnOutputs.push zeroOutput
 
     attnOutputs := attnOutputs.push layerAttnOutputs
 
     -- Add attention residual
-    let residualAfterAttn := residual.add attnSum
+    let residualAfterAttn :=
+      if includedHeadOutputs.isEmpty then
+        residual
+      else
+        let attnSum : ConcreteMatrix := {
+          numRows := rows
+          numCols := cols
+          data := .ofFn fun idx : Fin (rows * cols) => Id.run do
+            let mut acc : Float := 0.0
+            for hOut in includedHeadOutputs do
+              acc := acc + hOut.data[idx.val]!
+            return acc
+          size_eq := Array.size_ofFn
+        }
+        residual.add attnSum
 
     -- Compute MLP output with neuron-level ablation
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
