@@ -1,5 +1,6 @@
 import Cli
 import Nfp.IO
+import Nfp.Verification
 
 /-!
 # NFP CLI: Circuit Verification Command-Line Tool
@@ -99,6 +100,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
+  let verify := p.hasFlag "verify"
   let verbose := p.hasFlag "verbose"
   let some minEffect := Nfp.parseFloat thresholdStr
     | do
@@ -182,6 +184,60 @@ def runInduction (p : Parsed) : IO UInt32 := do
               s!"Error: {c.combinedError} | " ++
               s!"‖X₂‖_F: {h.layer2InputNorm}"
 
+      if verify then
+        IO.println ""
+        IO.println "Causal Verification (Head Ablation)"
+        IO.println "Metric: Δ = logit(target) - logit(top non-target) at last position"
+        IO.println "Impact = Δ_base - Δ_ablated"
+        IO.println ""
+
+        let targetToken? : Option Nat :=
+          match correctOpt with
+          | some t => some t
+          | none => inductionTargetTokenFromHistory model
+
+        let some targetToken := targetToken?
+          | do
+            IO.eprintln "Error: Cannot infer induction target token (need TOKENS or --correct)."
+            return 2
+
+        match VerificationContext.build model targetToken {} with
+        | .error msg =>
+            IO.eprintln s!"Error: {msg}"
+            return 2
+        | .ok ctx =>
+            let verifyTop := heads.take 10
+            IO.println s!"Top-{verifyTop.size} ablation checks (ranked by mechScore):"
+            IO.println s!"  target={ctx.targetToken} | neg={ctx.negativeToken}"
+            IO.println s!"  Δ_base={ctx.baseDelta}"
+            IO.println ""
+            IO.println "Rank | Candidate | Base Δ | Ablated Δ | Impact (Logits) | RelScore | \
+              Control Impact | Axioms Verified?"
+            IO.println "-----|-----------|--------|----------|----------------|----------|\
+              --------------|----------------"
+            let fmtOpt (x : Option Float) : String :=
+              match x with
+              | some v => toString v
+              | none => "undef"
+            let mut rank : Nat := 1
+            for h in verifyTop do
+              let c := h.candidate
+              let candHeads : Array HeadRef := #[
+                { layerIdx := c.layer1Idx, headIdx := c.head1Idx },
+                { layerIdx := c.layer2Idx, headIdx := c.head2Idx }
+              ]
+              let row := verifyCircuit ctx candHeads
+              let axiomsStr :=
+                if row.axioms.verified then
+                  "yes"
+                else
+                  let reasons := String.intercalate "; " row.axioms.failures.toList
+                  if reasons.isEmpty then "no" else s!"no ({reasons})"
+              IO.println s!"{rank} | {row.candidateLabel} | {row.baseDelta} | \
+                {fmtOpt row.ablatedDelta} | {fmtOpt row.impact} | {fmtOpt row.relScore} | \
+                {fmtOpt row.controlImpact} | {axiomsStr}"
+              rank := rank + 1
+
       return 0
 
 /-- The analyze subcommand. -/
@@ -208,6 +264,7 @@ def inductionCmd : Cmd := `[Cli|
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
     t, threshold : String; "Minimum normalized Effect threshold (default: 0.0)"
+    verify; "Run causal verification via head ablation on the top-10 candidates"
     v, verbose; "Enable verbose output"
 
   ARGS:

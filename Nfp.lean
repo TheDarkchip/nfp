@@ -14,6 +14,7 @@ import Nfp.Linearization
 import Nfp.Abstraction
 import Nfp.Induction
 import Nfp.Discovery
+import Nfp.Verification
 import Nfp.IO
 
 /-!

@@ -179,6 +179,8 @@ but you **must** update this list in the same commit.
 - `Discovery.lean`
   - Executable discovery + bound computations and verification pipeline.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
+- `Verification.lean`
+  - Executable **causal verification** via head ablation + runtime axiom checks (competence, control independence, energy matching).
 - `IO.lean`
   - Parsing/loading/tokenization/report formatting glue.
   - **IO-only principle:** no heavy proofs; keep it as a bridge to filesystem/CLI.
