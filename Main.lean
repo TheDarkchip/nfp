@@ -93,14 +93,14 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
 
     return 0
 
-/-- Run the induction command - discover induction heads with certified effectiveness. -/
+/-- Run the induction command - discover induction heads ranked by effectiveness. -/
 def runInduction (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
-  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
+  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
   let verbose := p.hasFlag "verbose"
-  let some threshold := Nfp.parseFloat thresholdStr
+  let some minEffect := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
       return 1
@@ -146,27 +146,25 @@ def runInduction (p : Parsed) : IO UInt32 := do
         IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
 
       IO.println s!"Target: {target.description}"
-      IO.println s!"Searching for heads with certified bound > {threshold}..."
+      IO.println s!"Searching for heads with Effect > {minEffect}..."
+      IO.println "Ranking: highest Effect (δ) first; tie-break by lowest Error"
 
       let heads :=
-        (findCertifiedInductionHeads model target threshold).qsort
-          (fun a b => b.certifiedLowerBound < a.certifiedLowerBound)
-      IO.println s!"Certified Induction Heads (LowerBound > {threshold})"
-      IO.println s!"Found {heads.size} certified heads:"
+        findCertifiedInductionHeads model target minEffect (minInductionScore := 0.01)
+      let top := heads.take 50
+      IO.println s!"Top Induction Heads by Effectiveness (top {top.size} of {heads.size})"
 
-      for h in heads do
+      for h in top do
         let c := h.candidate
         if verbose then
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Virtual δ: {h.delta} | Max Error: {c.combinedError} | " ++
-              s!"Certified Bound: {h.certifiedLowerBound} " ++
+              s!"Effect: {h.delta} | Error: {c.combinedError} | L2_Norm: {h.layer2InputNorm} " ++
               s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
         else
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Virtual δ: {h.delta} | Max Error: {c.combinedError} | " ++
-              s!"Certified Bound: {h.certifiedLowerBound}"
+              s!"Effect: {h.delta} | Error: {c.combinedError} | L2_Norm: {h.layer2InputNorm}"
 
       return 0
 
@@ -188,12 +186,12 @@ def analyzeCmd : Cmd := `[Cli|
 /-- The induction subcommand. -/
 def inductionCmd : Cmd := `[Cli|
   induction VIA runInduction;
-  "Discover induction head pairs with certified virtual-head effectiveness."
+  "Discover induction head pairs ranked by effectiveness (δ)."
 
   FLAGS:
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
-    t, threshold : String; "Certified lower-bound threshold (default: 0.0)"
+    t, threshold : String; "Minimum Effect threshold δ (default: 0.5)"
     v, verbose; "Enable verbose output"
 
   ARGS:

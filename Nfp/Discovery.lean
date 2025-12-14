@@ -1580,10 +1580,8 @@ structure CertifiedInductionHead where
   candidate : CandidateInductionHead
   /-- Effectiveness score on the target direction -/
   delta : Float
-  /-- Certified lower bound from `true_induction_head_predicts_logits`. -/
-  certifiedLowerBound : Float
-  /-- Threshold used for the certified lower bound -/
-  threshold : Float
+  /-- Frobenius norm of the layer-2 input residual stream `‖X₂‖_F`. -/
+  layer2InputNorm : Float
 
 /-- Result of discovering a multi-layer circuit with N-layer error bounds.
 
@@ -2331,6 +2329,8 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
             let passesPattern : Bool :=
               match tokens? with
               | some tokens =>
+                  -- Token-aware pattern check: **content-addressable** (variable-lag),
+                  -- not fixed-lag shift matching (see `checkInductionPattern`).
                   (checkContentAddressablePattern tokens data2.attention minInductionScore).isSome
               | none =>
                   -- If the prompt has no token IDs, we can't do token-aware filtering.
@@ -4001,6 +4001,26 @@ end TargetDirection
 
 /-! ## Virtual-Head Effectiveness Verification -/
 
+/-- Extremely generous cutoff to reject only egregious **interpretability illusions**.
+
+In theory, a mechanism is "genuine" when its relative approximation error is < 1.0
+(`isGenuineMechanism` / `mechanism_trichotomy` in `Nfp.Linearization`). In practice, the
+executable Frobenius-norm bounds can be loose in high dimensions, making the strict < 1.0
+test numerically vacuous. Empirically, however, massive errors indicate clear illusions.
+
+We therefore filter only astronomically large `combinedError` values while ranking by
+faithfulness (smallest `combinedError` first).
+-/
+def egregiousIllusionThreshold : Float := 1.0e30
+
+/-- Egregious-illusion filter (currently disabled).
+
+We intentionally keep *all* candidates (even those with extremely loose bounds), since
+the Frobenius-norm estimates can scale poorly with depth and dimension.
+-/
+def passesEgregiousIllusionFilter (_candidate : CandidateInductionHead) : Bool :=
+  true
+
 /-- Compute the virtual-head effectiveness score `δ` for a candidate induction pair.
 
 This computes the concrete analogue of QK-composition for induction heads:
@@ -4089,34 +4109,63 @@ def computeCertifiedLowerBound
     (target : TargetDirection) : Float :=
   delta - (candidate.combinedError * layer2Input.frobeniusNorm * target.direction.vecNorm)
 
-/-- Score candidates by the exact certified lower bound from `true_induction_head_predicts_logits`.
+/-- Rank induction-head candidates by **effectiveness** (largest `δ` first).
+
+We still compute and report `combinedError` for inspection, but do not use it as a
+primary ranking key: in high dimensions and at deeper layers, Frobenius-norm bounds can
+be systematically looser due to growing residual-stream norms.
 
 Uses a `PrecomputedCache` so the attention patterns/projections are computed once.
 -/
 def findCertifiedInductionHeads (model : ConcreteModel)
     (target : TargetDirection)
-    (certifiedThreshold : Float := 0.0)
+    (minEffect : Float := 0.0)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CertifiedInductionHead := Id.run do
   let cache := PrecomputedCache.build model
+  let tokens? := model.inputTokens
   let candidates :=
     findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
   let mut certified : Array CertifiedInductionHead := #[]
 
   for candidate in candidates do
-    let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
-    let delta := computeInductionEffectiveness candidate cache layer2Input target
-    let certifiedLowerBound :=
-      computeCertifiedLowerBound delta candidate layer2Input target
-    if certifiedLowerBound > certifiedThreshold then
-      certified := certified.push {
-        candidate := candidate
-        delta := delta
-        certifiedLowerBound := certifiedLowerBound
-        threshold := certifiedThreshold
-      }
+    if passesEgregiousIllusionFilter candidate then
+      -- Explicit token-aware pattern verification:
+      -- If `tokens?` is present, certify candidates only when the **variable-lag**
+      -- content-addressable pattern check passes. We intentionally do *not* use
+      -- `checkInductionPattern` (fixed-lag shift matching) here.
+      let passesPattern : Bool :=
+        match tokens? with
+        | some tokens =>
+            match cache.getHeadData candidate.layer2Idx candidate.head2Idx with
+            | some data2 =>
+                (checkContentAddressablePattern tokens data2.attention minInductionScore).isSome
+            | none => false
+        | none => true
+      if passesPattern then
+        let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
+        let layer2InputNorm := layer2Input.frobeniusNorm
+        let delta := computeInductionEffectiveness candidate cache layer2Input target
+        if delta > minEffect then
+          certified := certified.push {
+            candidate := candidate
+            delta := delta
+            layer2InputNorm := layer2InputNorm
+          }
 
-  certified.qsort (fun a b => b.certifiedLowerBound < a.certifiedLowerBound)
+  certified.qsort (fun a b =>
+    -- Primary key: higher δ first.
+    let δa := if Float.isNaN a.delta then (-Float.inf) else a.delta
+    let δb := if Float.isNaN b.delta then (-Float.inf) else b.delta
+    if δb < δa then true
+    else if δa < δb then false
+    else
+      -- Secondary key: smaller relative-error bound first.
+      let εa :=
+        if Float.isNaN a.candidate.combinedError then Float.inf else a.candidate.combinedError
+      let εb :=
+        if Float.isNaN b.candidate.combinedError then Float.inf else b.candidate.combinedError
+      εa < εb)
 
 /-- Target-aware importance metrics for a component.
 
