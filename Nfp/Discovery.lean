@@ -123,28 +123,106 @@ PERFORMANCE CRITICAL: This is the hottest path in circuit discovery.
 - Pre-allocates result array with `Array.ofFn` (no intermediate copies)
 - Direct `for k in [:A.numCols]` instead of `List.range.foldl` (10-50× faster)
 - Uses `Id.run do` to enable mutable accumulator in pure context
+- Uses deterministic task-parallelism for very large products (preserving evaluation order
+  *within* each dot product).
 -/
-def matmul (A B : ConcreteMatrix) : ConcreteMatrix :=
-  if A.numCols = B.numRows then
+private def matmulSeqCore (A B : ConcreteMatrix) : ConcreteMatrix :=
+  {
+    numRows := A.numRows
+    numCols := B.numCols
+    data := .ofFn fun idx : Fin (A.numRows * B.numCols) => Id.run do
+      let i := idx.val / B.numCols
+      let j := idx.val % B.numCols
+      let mut acc : Float := 0.0
+      let aRowBase := i * A.numCols
+      for k in [:A.numCols] do
+        -- SAFETY: within this branch `i < A.numRows` and `k < A.numCols`,
+        -- and `A.size_eq` implies `aRowBase + k < A.data.size`.
+        let a := A.data[aRowBase + k]!
+        -- SAFETY: within this branch `k < B.numRows` and `j < B.numCols`,
+        -- and `B.size_eq` implies `k * B.numCols + j < B.data.size`.
+        let b := B.data[k * B.numCols + j]!
+        acc := acc + a * b
+      return acc
+    size_eq := Array.size_ofFn
+  }
+
+private def matmulParFlopThreshold : Nat := 10_000_000
+private def matmulParMaxTasks : Nat := 16
+private def matmulParMinInnerDim : Nat := 256
+private def matmulParMinOutCols : Nat := 256
+private def matmulParMinRows : Nat := 2
+
+private def shouldUseMatmulPar (A B : ConcreteMatrix) : Bool :=
+  let flops := A.numRows * B.numCols * A.numCols
+  flops ≥ matmulParFlopThreshold &&
+    A.numCols ≥ matmulParMinInnerDim &&
+    B.numCols ≥ matmulParMinOutCols &&
+    A.numRows ≥ matmulParMinRows
+
+private def matmulPar (A B : ConcreteMatrix) : ConcreteMatrix :=
+  if A.numRows = 0 || B.numCols = 0 then
+    matmulSeqCore A B
+  else
+    let numTasks := min matmulParMaxTasks A.numRows
+    let q := A.numRows / numTasks
+    let r := A.numRows % numTasks
+
+    let tasks : Array (Task (Array Float)) :=
+      .ofFn fun t : Fin numTasks =>
+        Task.spawn (fun _ =>
+          let tid := t.val
+          let extra := if tid < r then 1 else 0
+          let rowsHere := q + extra
+          let startRow := tid * q + min tid r
+          let chunkSize := rowsHere * B.numCols
+          .ofFn fun idx : Fin chunkSize => Id.run do
+            let localRow := idx.val / B.numCols
+            let j := idx.val % B.numCols
+            let i := startRow + localRow
+            let mut acc : Float := 0.0
+            let aRowBase := i * A.numCols
+            for k in [:A.numCols] do
+              -- SAFETY: `i < A.numRows` by chunk construction and `k < A.numCols` by loop bound.
+              let a := A.data[aRowBase + k]!
+              -- SAFETY: `k < B.numRows` and `j < B.numCols` by loop bounds and chunk indexing.
+              let b := B.data[k * B.numCols + j]!
+              acc := acc + a * b
+            return acc)
+
+    -- Join in increasing task index order (deterministic).
+    let chunks := tasks.map Task.get
+    let cutoff := (q + 1) * r
+
     {
       numRows := A.numRows
       numCols := B.numCols
-      data := .ofFn fun idx : Fin (A.numRows * B.numCols) => Id.run do
-        let i := idx.val / B.numCols
-        let j := idx.val % B.numCols
-        let mut acc : Float := 0.0
-        let aRowBase := i * A.numCols
-        for k in [:A.numCols] do
-          -- SAFETY: within this branch `i < A.numRows` and `k < A.numCols`,
-          -- and `A.size_eq` implies `aRowBase + k < A.data.size`.
-          let a := A.data[aRowBase + k]!
-          -- SAFETY: within this branch `k < B.numRows` and `j < B.numCols`,
-          -- and `B.size_eq` implies `k * B.numCols + j < B.data.size`.
-          let b := B.data[k * B.numCols + j]!
-          acc := acc + a * b
-        return acc
+      data := .ofFn fun idx : Fin (A.numRows * B.numCols) =>
+        let row := idx.val / B.numCols
+        let col := idx.val % B.numCols
+        let taskIdx :=
+          if row < cutoff then
+            row / (q + 1)
+          else
+            r + (row - cutoff) / q
+        let localRow :=
+          if row < cutoff then
+            row % (q + 1)
+          else
+            (row - cutoff) % q
+        -- SAFETY: `taskIdx < numTasks` by construction; chunks are in task order.
+        let chunk := chunks[taskIdx]!
+        -- SAFETY: `localRow < rowsHere` for this chunk and `col < B.numCols`.
+        chunk[localRow * B.numCols + col]!
       size_eq := Array.size_ofFn
     }
+
+def matmul (A B : ConcreteMatrix) : ConcreteMatrix :=
+  if A.numCols = B.numRows then
+    if shouldUseMatmulPar A B then
+      matmulPar A B
+    else
+      matmulSeqCore A B
   else zeros 0 0
 
 /-- Compute Frobenius norm squared: Σᵢⱼ M[i,j]². -/
@@ -1941,10 +2019,19 @@ def ConcreteModel.runForward (model : ConcreteModel)
 
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
-      layerAttnOutputs := Array.mkEmpty layerHeads.size
-      for head in layerHeads do
-        let headOutput := head.forward attnInput causal
-        layerAttnOutputs := layerAttnOutputs.push headOutput
+      let useParallelHeads := layerHeads.size >= 4
+      layerAttnOutputs :=
+        if useParallelHeads then
+          let tasks : Array (Task ConcreteMatrix) :=
+            .ofFn fun i : Fin layerHeads.size =>
+              Task.spawn (fun _ => (layerHeads[i]).forward attnInput causal)
+          tasks.map Task.get
+        else
+          Id.run do
+            let mut outs : Array ConcreteMatrix := Array.mkEmpty layerHeads.size
+            for head in layerHeads do
+              outs := outs.push (head.forward attnInput causal)
+            return outs
 
     attnOutputs := attnOutputs.push layerAttnOutputs
 
@@ -3676,19 +3763,41 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
 
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
-      layerAttnOutputs := Array.mkEmpty layerHeads.size
-      includedHeadOutputs := Array.mkEmpty layerHeads.size
-      for h in [:layerHeads.size] do
-        if hh : h < layerHeads.size then
-          let head := layerHeads[h]'hh
-          -- Only compute output if head is included in the circuit
-          if circuit.isHeadIncluded l h then
-            let headOutput := head.forward attnInput causal
-            layerAttnOutputs := layerAttnOutputs.push headOutput
-            includedHeadOutputs := includedHeadOutputs.push headOutput
-          else
-            -- Excluded head: output is zero (share one per layer).
-            layerAttnOutputs := layerAttnOutputs.push zeroOutput
+      let includedMask := circuit.includedHeads.getD l #[]
+      let includedCount :=
+        includedMask.foldl (fun acc b => if b then acc + 1 else acc) 0
+      let useParallelHeads :=
+        layerHeads.size >= 4 && includedCount >= 4
+      layerAttnOutputs :=
+        if useParallelHeads then
+          let tasks : Array (Task ConcreteMatrix) :=
+            .ofFn fun i : Fin layerHeads.size =>
+              Task.spawn (fun _ =>
+                if circuit.isHeadIncluded l i.val then
+                  (layerHeads[i]).forward attnInput causal
+                else
+                  zeroOutput)
+          tasks.map Task.get
+        else
+          Id.run do
+            let mut outs : Array ConcreteMatrix := Array.mkEmpty layerHeads.size
+            for h in [:layerHeads.size] do
+              if hh : h < layerHeads.size then
+                let head := layerHeads[h]'hh
+                if circuit.isHeadIncluded l h then
+                  outs := outs.push (head.forward attnInput causal)
+                else
+                  outs := outs.push zeroOutput
+            return outs
+      -- Preserve the original summation order: increasing head index.
+      includedHeadOutputs :=
+        Id.run do
+          let mut outs : Array ConcreteMatrix := Array.mkEmpty includedCount
+          for h in [:layerAttnOutputs.size] do
+            if circuit.isHeadIncluded l h then
+              if hh : h < layerAttnOutputs.size then
+                outs := outs.push (layerAttnOutputs[h]'hh)
+          return outs
 
     attnOutputs := attnOutputs.push layerAttnOutputs
 
@@ -4043,27 +4152,63 @@ def computeNeuronImportanceIBP (model : ConcreteModel) (layerIdx neuronIdx : Nat
 
 /-- Compute importance metrics for all components in a model. -/
 def computeAllImportance (model : ConcreteModel) : Array ComponentImportance := Id.run do
-  let mut result : Array ComponentImportance := #[]
   let inputNorm := computeInputNorm model.inputEmbeddings
 
-  -- Attention heads
-  for l in [:model.numLayers] do
+  let computeHeadsForLayer (l : Nat) : Array ComponentImportance := Id.run do
     if h : l < model.layers.size then
       let layerHeads := model.layers[l]
+      let mut outs : Array ComponentImportance := Array.mkEmpty layerHeads.size
       for h_idx in [:layerHeads.size] do
         match computeHeadImportance model l h_idx model.inputEmbeddings with
-        | some imp => result := result.push imp
+        | some imp => outs := outs.push imp
         | none => pure ()
+      return outs
+    else
+      return #[]
 
-  -- MLP neurons
-  for l in [:model.numLayers] do
+  let computeNeuronsForLayer (l : Nat) : Array ComponentImportance := Id.run do
     if h : l < model.mlps.size then
       let mlp := model.mlps[l]
+      let mut outs : Array ComponentImportance := Array.mkEmpty mlp.hiddenDim
       for n_idx in [:mlp.hiddenDim] do
         match computeNeuronImportance model l n_idx inputNorm with
-        | some imp => result := result.push imp
+        | some imp => outs := outs.push imp
         | none => pure ()
+      return outs
+    else
+      return #[]
 
+  let useParallel := model.numLayers >= 4
+  let headChunks : Array (Array ComponentImportance) :=
+    if useParallel then
+      let tasks : Array (Task (Array ComponentImportance)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeHeadsForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeHeadsForLayer i.val
+
+  let neuronChunks : Array (Array ComponentImportance) :=
+    if useParallel then
+      let tasks : Array (Task (Array ComponentImportance)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeNeuronsForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeNeuronsForLayer i.val
+
+  -- Join in the same order as the original loop: heads then neurons, increasing layer index.
+  let totalHeads := headChunks.foldl (fun acc cs => acc + cs.size) 0
+  let totalNeurons := neuronChunks.foldl (fun acc cs => acc + cs.size) 0
+  let mut result : Array ComponentImportance := Array.mkEmpty (totalHeads + totalNeurons)
+  for cs in headChunks do
+    for c in cs do
+      result := result.push c
+  for cs in neuronChunks do
+    for c in cs do
+      result := result.push c
   result
 
 /-! ### Target-Aware Circuit Discovery (Logit Lens)
@@ -4530,27 +4675,63 @@ def computeNeuronTargetImportance (model : ConcreteModel) (layerIdx neuronIdx : 
 /-- Compute target-aware importance for all components in a model. -/
 def computeAllTargetImportance (model : ConcreteModel)
     (target : TargetDirection) : Array TargetAwareImportance := Id.run do
-  let mut result : Array TargetAwareImportance := #[]
   let inputNorm := computeInputNorm model.inputEmbeddings
 
-  -- Attention heads
-  for l in [:model.numLayers] do
+  let computeHeadsForLayer (l : Nat) : Array TargetAwareImportance := Id.run do
     if h : l < model.layers.size then
       let layerHeads := model.layers[l]
+      let mut outs : Array TargetAwareImportance := Array.mkEmpty layerHeads.size
       for h_idx in [:layerHeads.size] do
         match computeHeadTargetImportance model l h_idx inputNorm target with
-        | some imp => result := result.push imp
+        | some imp => outs := outs.push imp
         | none => pure ()
+      return outs
+    else
+      return #[]
 
-  -- MLP neurons
-  for l in [:model.numLayers] do
+  let computeNeuronsForLayer (l : Nat) : Array TargetAwareImportance := Id.run do
     if h : l < model.mlps.size then
       let mlp := model.mlps[l]
+      let mut outs : Array TargetAwareImportance := Array.mkEmpty mlp.hiddenDim
       for n_idx in [:mlp.hiddenDim] do
         match computeNeuronTargetImportance model l n_idx inputNorm target with
-        | some imp => result := result.push imp
+        | some imp => outs := outs.push imp
         | none => pure ()
+      return outs
+    else
+      return #[]
 
+  let useParallel := model.numLayers >= 4
+  let headChunks : Array (Array TargetAwareImportance) :=
+    if useParallel then
+      let tasks : Array (Task (Array TargetAwareImportance)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeHeadsForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeHeadsForLayer i.val
+
+  let neuronChunks : Array (Array TargetAwareImportance) :=
+    if useParallel then
+      let tasks : Array (Task (Array TargetAwareImportance)) :=
+        .ofFn fun i : Fin model.numLayers =>
+          Task.spawn (fun _ => computeNeuronsForLayer i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin model.numLayers =>
+        computeNeuronsForLayer i.val
+
+  -- Join in the same order as the original loop: heads then neurons, increasing layer index.
+  let totalHeads := headChunks.foldl (fun acc cs => acc + cs.size) 0
+  let totalNeurons := neuronChunks.foldl (fun acc cs => acc + cs.size) 0
+  let mut result : Array TargetAwareImportance := Array.mkEmpty (totalHeads + totalNeurons)
+  for cs in headChunks do
+    for c in cs do
+      result := result.push c
+  for cs in neuronChunks do
+    for c in cs do
+      result := result.push c
   result
 
 /-! ### Circuit Faithfulness Estimation -/
