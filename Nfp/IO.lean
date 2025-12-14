@@ -706,6 +706,8 @@ def toString (r : AnalysisReport) : String := Id.run do
       s := s ++ s!"  L{head.layer1Idx}H{head.head1Idx} → L{head.layer2Idx}H{head.head2Idx}\n"
       s := s ++ s!"    Combined Error: {head.combinedError}\n"
       s := s ++ s!"    Prev-Token Strength: {head.prevTokenStrength}\n"
+      s := s ++ s!"    Induction Score: {head.inductionScore}\n"
+      s := s ++ s!"    K-Composition: {head.kComp}\n"
       s := s ++ s!"    Faithfulness Ratios: ε₁={head.patternBound1}, ε₂={head.patternBound2}\n\n"
   else
     s := s ++ s!"No induction heads found above threshold.\n\n"

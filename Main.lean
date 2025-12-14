@@ -98,7 +98,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
-  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.5"
+  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
   let verbose := p.hasFlag "verbose"
   let some minEffect := Nfp.parseFloat thresholdStr
     | do
@@ -147,24 +147,40 @@ def runInduction (p : Parsed) : IO UInt32 := do
 
       IO.println s!"Target: {target.description}"
       IO.println s!"Searching for heads with Effect > {minEffect}..."
-      IO.println "Ranking: highest Effect (δ) first; tie-break by lowest Error"
+      IO.println "Ranking: highest mechScore (= kComp·indScore·prevTok) first"
+      IO.println "  Tie-break: Effect, kComp, δ, then lowest Error"
+      IO.println "  circuitScore = Effect · mechScore"
+      IO.println "  Effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)"
+      IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
+      IO.println "  kComp = kComp_raw - 1/√modelDim"
 
       let heads :=
         findCertifiedInductionHeads model target minEffect (minInductionScore := 0.01)
       let top := heads.take 50
-      IO.println s!"Top Induction Heads by Effectiveness (top {top.size} of {heads.size})"
+      IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
 
       for h in top do
         let c := h.candidate
+        let mechScore := c.kComp * c.inductionScore * c.prevTokenStrength
+        let circuitScore := h.effect * mechScore
         if verbose then
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Effect: {h.delta} | Error: {c.combinedError} | L2_Norm: {h.layer2InputNorm} " ++
+              s!"Mech: {mechScore} | Circuit: {circuitScore} | " ++
+              s!"Effect: {h.effect} | kComp: {c.kComp} | " ++
+              s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
+              s!"δ: {h.delta} | " ++
+              s!"Error: {c.combinedError} | " ++
+              s!"‖X₂‖_F: {h.layer2InputNorm} | ‖ln₁(X₂)‖_F: {h.layer2Ln1InputNorm} " ++
               s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
         else
           IO.println <|
             s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Effect: {h.delta} | Error: {c.combinedError} | L2_Norm: {h.layer2InputNorm}"
+              s!"Mech: {mechScore} | Effect: {h.effect} | " ++
+              s!"kComp: {c.kComp} | " ++
+              s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
+              s!"Error: {c.combinedError} | " ++
+              s!"‖X₂‖_F: {h.layer2InputNorm}"
 
       return 0
 
@@ -186,12 +202,12 @@ def analyzeCmd : Cmd := `[Cli|
 /-- The induction subcommand. -/
 def inductionCmd : Cmd := `[Cli|
   induction VIA runInduction;
-  "Discover induction head pairs ranked by effectiveness (δ)."
+  "Discover induction head pairs ranked by mechScore (kComp·indScore·prevTok)."
 
   FLAGS:
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
-    t, threshold : String; "Minimum Effect threshold δ (default: 0.5)"
+    t, threshold : String; "Minimum normalized Effect threshold (default: 0.0)"
     v, verbose; "Enable verbose output"
 
   ARGS:

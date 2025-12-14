@@ -155,6 +155,24 @@ def frobeniusNormSq (M : ConcreteMatrix) : Float :=
 def frobeniusNorm (M : ConcreteMatrix) : Float :=
   Float.sqrt M.frobeniusNormSq
 
+/-- Compute `trace(A · B)` without allocating the product.
+
+This uses `trace(A·B) = ∑_{i,j} A[i,j] · B[j,i]`.
+Returns 0.0 if the dimensions do not line up.
+-/
+def traceMul (A B : ConcreteMatrix) : Float := Id.run do
+  if A.numCols ≠ B.numRows then return 0.0
+  if A.numRows ≠ B.numCols then return 0.0
+  if A.numRows ≠ A.numCols then return 0.0
+  let n := A.numRows
+  let mut acc : Float := 0.0
+  for i in [:n] do
+    let aRowBase := i * A.numCols
+    for j in [:n] do
+      -- SAFETY: `i,j < n` and both matrices are `n×n`.
+      acc := acc + A.data[aRowBase + j]! * B.data[j * B.numCols + i]!
+  return acc
+
 /-- Estimate the operator norm (spectral norm) via power iteration.
 
 The operator norm ‖M‖₂ = max‖x‖=1 ‖Mx‖ is the largest singular value.
@@ -1562,6 +1580,20 @@ structure CandidateInductionHead where
   combinedError : Float
   /-- Previous-token strength: avg A₁[i, i-1] -/
   prevTokenStrength : Float
+  /-- Induction "copy-next" pattern score for head 2 (prompt-dependent). -/
+  inductionScore : Float
+  /-- K-composition score between head 1 and head 2, as in the circuits framework paper:
+
+  `kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)`,
+
+  then we subtract the random-baseline `1/√modelDim`:
+
+  `kComp = kComp_raw - 1/√modelDim`.
+
+  This measures how strongly head 1 can feed information into head 2's QK circuit,
+  i.e. whether head 1 plausibly acts as a **pattern enabler** for head 2.
+  -/
+  kComp : Float
   /-- Description of the discovered pattern -/
   description : String
 
@@ -1578,10 +1610,20 @@ structure VerifiedInductionHead where
 structure CertifiedInductionHead where
   /-- The discovered candidate pair (pattern-checked) -/
   candidate : CandidateInductionHead
-  /-- Effectiveness score on the target direction -/
+  /-- Raw effectiveness score `δ` on the target direction. -/
   delta : Float
+  /-- Scale-invariant effectiveness score:
+
+  `effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)`,
+
+  where `X₂` is the layer-2 input residual stream and `u` is the target direction.
+  This isolates the **mechanism** (virtual-head computation) from residual-stream energy.
+  -/
+  effect : Float
   /-- Frobenius norm of the layer-2 input residual stream `‖X₂‖_F`. -/
   layer2InputNorm : Float
+  /-- Frobenius norm of the Pre-LN attention input `‖ln₁(X₂)‖_F`. -/
+  layer2Ln1InputNorm : Float
 
 /-- Result of discovering a multi-layer circuit with N-layer error bounds.
 
@@ -1670,6 +1712,52 @@ def checkContentAddressablePattern (tokens : Array Nat) (attn : ConcreteAttentio
             -- SAFETY: `q < n` and `k < q ≤ n` by loop bounds.
             rowScore := rowScore + w[rowBase + k]!
         if hasPrev then
+          sumScore := sumScore + rowScore
+          count := count + 1
+      return (sumScore, count)
+
+    if count = 0 then none
+    else
+      let avgScore := sumScore / count.toFloat
+      if avgScore ≥ minScore then some avgScore else none
+
+/-- Check if a head exhibits an **induction** ("copy-next") attention pattern.
+
+We say a head is induction-like on a prompt when, for many query positions `q`, it places
+substantial attention mass on tokens *immediately after* previous occurrences of the same token:
+
+`score(q) = ∑_{k+1 < q, tokens[k] = tokens[q]} A[q, k+1]`.
+
+This is the token-level signature of the induction mechanism described in the transformer-circuits
+literature: when the current token repeats, attend to the successor of the previous occurrence so
+the head can **copy** that successor forward.
+
+The returned score is the average of `score(q)` over query positions that have at least one
+previous occurrence with an in-bounds successor (`k+1 < q`). This is variable-lag by construction.
+-/
+def checkInductionCopyNextPattern (tokens : Array Nat) (attn : ConcreteAttentionWeights)
+    (minScore : Float := 0.1) : Option Float :=
+  if tokens.size ≠ attn.seqLen then none
+  else if attn.seqLen < 3 then none
+  else
+    let n := attn.seqLen
+    let w := attn.weights
+    let (sumScore, count) : (Float × Nat) := Id.run do
+      let mut sumScore : Float := 0.0
+      let mut count : Nat := 0
+      -- Need `q ≥ 2` so there is room for a predecessor `k` with successor `k+1 < q`.
+      for q in [2:n] do
+        let tq := tokens[q]!
+        let rowBase := q * n
+        let mut hasPrevSucc : Bool := false
+        let mut rowScore : Float := 0.0
+        -- Scan all earlier positions `k` whose successor is still < q.
+        for k in [:q - 1] do
+          if tokens[k]! = tq then
+            hasPrevSucc := true
+            -- Attend to the *successor* position `k+1`.
+            rowScore := rowScore + w[rowBase + (k + 1)]!
+        if hasPrevSucc then
           sumScore := sumScore + rowScore
           count := count + 1
       return (sumScore, count)
@@ -2088,6 +2176,10 @@ structure PrecomputedHeadData where
   valueOutputProj : ConcreteMatrix
   /-- Query-key alignment (Q·K^T) -/
   queryKeyAlign : ConcreteMatrix
+  /-- Cached Gram matrix `W_Qᵀ · W_Q` (headDim × headDim). -/
+  wqGram : ConcreteMatrix
+  /-- Cached Gram matrix `W_Vᵀ · W_V` (headDim × headDim). -/
+  wvGram : ConcreteMatrix
   /-- Input norm ‖X‖_F for this layer -/
   inputNorm : Float
   /-- Operator-norm bound for ln_1 Jacobian at this layer input. -/
@@ -2136,6 +2228,8 @@ structure PrecomputedCache where
   model : ConcreteModel
   /-- Forward pass result with layer inputs -/
   forwardResult : ForwardPassResult
+  /-- Cached Pre-LN attention inputs `ln_1(x_l)` for each layer `l`. -/
+  ln1Inputs : Array ConcreteMatrix
   /-- Precomputed data: cache[layerIdx][headIdx] -/
   headData : Array (Array PrecomputedHeadData)
   /-- Precomputed operator norm bounds for each layer (for N-layer error amplification) -/
@@ -2149,7 +2243,7 @@ This precomputes all attention patterns, projections, and norms once.
 -/
 def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := Id.run do
   let fwdResult := model.runForward causal
-  let computeLayer (l : Nat) : (Array PrecomputedHeadData × Float) := Id.run do
+  let computeLayer (l : Nat) : (Array PrecomputedHeadData × (Float × ConcreteMatrix)) := Id.run do
     let mut layerHeadData : Array PrecomputedHeadData := #[]
     let layerInput := fwdResult.getLayerInput l
     let attnInput := model.applyLn1 l layerInput
@@ -2185,6 +2279,9 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           -- Precompute projections
           let voProj := head.valueOutputProjection
           let qkAlign := head.queryKeyAlignment
+          -- Low-rank Gram caches for composition scoring.
+          let wqGram := head.W_Q.transpose.matmul head.W_Q
+          let wvGram := head.W_V.transpose.matmul head.W_V
 
           -- Precompute norms
           let voNorm := voProj.frobeniusNorm
@@ -2225,6 +2322,8 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
             faithfulnessRatioCached := ratio
             valueOutputProj := voProj
             queryKeyAlign := qkAlign
+            wqGram := wqGram
+            wvGram := wvGram
             inputNorm := inputNorm
             ln1OpBound := ln1Bound
             scaleFactor := scaleFactor
@@ -2238,14 +2337,14 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
     -- OPTIMIZATION: Precompute operator norm bounds for each layer
     let norm := estimateAttentionLayerNorm model fwdResult l
-    return (layerHeadData, norm)
+    return (layerHeadData, (norm, attnInput))
 
   -- Pure parallelism via tasks: layer cache construction is independent once the
   -- forward pass has produced all layer inputs.
   let useParallel := model.numLayers >= 4
-  let layerResults : Array (Array PrecomputedHeadData × Float) :=
+  let layerResults : Array (Array PrecomputedHeadData × (Float × ConcreteMatrix)) :=
     if useParallel then
-      let tasks : Array (Task (Array PrecomputedHeadData × Float)) :=
+      let tasks : Array (Task (Array PrecomputedHeadData × (Float × ConcreteMatrix))) :=
         .ofFn fun i : Fin model.numLayers =>
           Task.spawn (fun _ => computeLayer i.val)
       tasks.map Task.get
@@ -2255,12 +2354,15 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
   let mut headData : Array (Array PrecomputedHeadData) := Array.mkEmpty model.numLayers
   let mut layerNormBounds : Array Float := Array.mkEmpty model.numLayers
-  for (layerHeadData, norm) in layerResults do
+  let mut ln1Inputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
+  for (layerHeadData, (norm, attnInput)) in layerResults do
     headData := headData.push layerHeadData
     layerNormBounds := layerNormBounds.push norm
+    ln1Inputs := ln1Inputs.push attnInput
 
   { model := model
     forwardResult := fwdResult
+    ln1Inputs := ln1Inputs
     headData := headData
     layerNormBounds := layerNormBounds }
 
@@ -2274,7 +2376,71 @@ def getHeadData (cache : PrecomputedCache) (layerIdx headIdx : Nat) :
     else none
   else none
 
+/-- Retrieve cached Pre-LN attention input `ln_1(x_l)` for a specific layer. -/
+def getLn1Input (cache : PrecomputedCache) (layerIdx : Nat) : ConcreteMatrix :=
+  if h : layerIdx < cache.ln1Inputs.size then
+    cache.ln1Inputs[layerIdx]
+  else
+    ConcreteMatrix.zeros 0 0
+
 end PrecomputedCache
+
+/-! ## Head Composition Metrics -/
+
+/-- Compute the **K-composition** score between two attention heads.
+
+This follows the definition in *"A Mathematical Framework for Transformer Circuits"*
+(see the "composition diagram caption"):
+
+`kComp(h₁→h₂) = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)`.
+
+In this codebase's row-vector convention, we store `W_QK = W_Q · W_Kᵀ` and
+`W_OV,row = W_V · W_O`. The paper's `W_OV` corresponds to `(W_OV,row)ᵀ`, but
+`‖W_OV‖_F = ‖W_OV,row‖_F` and we compute the numerator via low-rank factors without
+materializing any `modelDim×modelDim` products.
+
+By default (as in the paper), we subtract the expected composition of random matrices
+of shape `modelDim×modelDim`, which is approximately `1/√modelDim`.
+
+We return 0.0 on dimension mismatch or missing heads.
+-/
+def computeKCompositionScore
+    (model : ConcreteModel)
+    (data1 data2 : PrecomputedHeadData) : Float :=
+  if h1 : data1.layerIdx < model.layers.size then
+    let heads1 := model.layers[data1.layerIdx]'h1
+    if h2 : data2.layerIdx < model.layers.size then
+      let heads2 := model.layers[data2.layerIdx]'h2
+      if hh1 : data1.headIdx < heads1.size then
+        let head1 := heads1[data1.headIdx]'hh1
+        if hh2 : data2.headIdx < heads2.size then
+          let head2 := heads2[data2.headIdx]'hh2
+            let denom := data2.queryKeyAlignNorm * data1.valueOutputProjNorm
+            if denom < 1e-10 then 0.0
+            else
+            -- K-composition numerator:
+            -- ‖W_QK² · W_OV¹‖_F where W_QK² = W_Q²W_K²ᵀ and W_OV¹ = (W_V¹W_O¹)ᵀ.
+            -- Using low-rank factorization:
+            -- W_Q²W_K²ᵀ (W_V¹W_O¹)ᵀ = W_Q² (W_K²ᵀ W_O¹ᵀ) W_V¹ᵀ
+            -- and M := W_O¹ W_K² so W_K²ᵀ W_O¹ᵀ = Mᵀ.
+            let M := head1.W_O.matmul head2.W_K  -- (d_head × d_head)
+            let T := data1.wvGram.matmul M       -- (d_head × d_head)
+              let S := M.transpose.matmul T        -- Mᵀ · (W_V¹ᵀW_V¹) · M
+              let numeratorSq := ConcreteMatrix.traceMul S data2.wqGram
+              let numerator := Float.sqrt (max numeratorSq 0.0)
+              let raw := numerator / denom
+              let baseline : Float :=
+                if head1.modelDim = 0 then 0.0
+                else 1.0 / Float.sqrt head1.modelDim.toFloat
+              raw - baseline
+        else
+          0.0
+      else
+        0.0
+    else
+      0.0
+  else
+    0.0
 
 /-- Convert a 2-layer deep circuit candidate into an induction-head candidate.
 
@@ -2294,6 +2460,12 @@ def DeepCircuitCandidate.toInductionCandidate?
       let ε1 := d1.faithfulnessRatio
       let ε2 := d2.faithfulnessRatio
       let combinedError := ε1 + ε2 + ε1 * ε2
+      let inductionScore : Float :=
+        match cache.model.inputTokens with
+        | some tokens =>
+            (checkInductionCopyNextPattern tokens d2.attention (minScore := 0.0)).getD 0.0
+        | none => 1.0
+      let kComp := computeKCompositionScore cache.model d1 d2
       some {
         layer1Idx := l1
         layer2Idx := l2
@@ -2303,13 +2475,20 @@ def DeepCircuitCandidate.toInductionCandidate?
         patternBound2 := ε2
         combinedError := combinedError
         prevTokenStrength := d1.prevTokenStrength
+        inductionScore := inductionScore
+        kComp := kComp
         description := s!"L{l1}H{h1}->L{l2}H{h2} (deep)"
       }
     | _, _ => none
   else
     none
 
-/-- Core induction head discovery that reuses a precomputed cache. -/
+/-- Find candidate (L1, L2) induction-head pairs from a `PrecomputedCache`.
+
+This searches for the classic two-head induction circuit:
+- Layer 1 (L1): a strong **previous-token** head,
+- Layer 2 (L2): an **induction** head (token-level "copy-next" attention).
+-/
 def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
@@ -2325,36 +2504,41 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
       let layer2Cache := cache.headData.getD l2 #[]
       for data1 in layer1Cache do
         if data1.prevTokenStrength ≥ minPrevTokenStrength then
-          for data2 in layer2Cache do
-            let passesPattern : Bool :=
-              match tokens? with
-              | some tokens =>
-                  -- Token-aware pattern check: **content-addressable** (variable-lag),
-                  -- not fixed-lag shift matching (see `checkInductionPattern`).
-                  (checkContentAddressablePattern tokens data2.attention minInductionScore).isSome
-              | none =>
-                  -- If the prompt has no token IDs, we can't do token-aware filtering.
-                  -- Fall back to **no pattern filter** and rely on certification.
-                  true
-            if passesPattern then
-              -- Use dimensionless faithfulness ratios (relative approximation errors).
-              let ε1 := data1.faithfulnessRatio
-              let ε2 := data2.faithfulnessRatio
-              let combinedError := ε1 + ε2 + ε1 * ε2
+            for data2 in layer2Cache do
+              let inductionScore? : Option Float :=
+                match tokens? with
+                | some tokens =>
+                    -- Token-aware induction check: attend to the **successor** of a previous
+                    -- matching token (variable-lag, "copy-next"), not fixed-lag shift matching.
+                    checkInductionCopyNextPattern tokens data2.attention minInductionScore
+                | none =>
+                    -- If the prompt has no token IDs, we can't do token-aware filtering.
+                    -- Fall back to **no pattern filter** and rely on certification.
+                    some 1.0
+              match inductionScore? with
+              | some inductionScore =>
+                  -- Use dimensionless faithfulness ratios (relative approximation errors).
+                  let ε1 := data1.faithfulnessRatio
+                  let ε2 := data2.faithfulnessRatio
+                  let combinedError := ε1 + ε2 + ε1 * ε2
+                  let kComp := computeKCompositionScore model data1 data2
 
-              layerCandidates := layerCandidates.push {
-                layer1Idx := l1
-                layer2Idx := l2
-                head1Idx := data1.headIdx
-                head2Idx := data2.headIdx
-                patternBound1 := ε1
-                patternBound2 := ε2
-                combinedError := combinedError
-                prevTokenStrength := data1.prevTokenStrength
-                description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
-              }
-        else
-          pure ()
+                  layerCandidates := layerCandidates.push {
+                    layer1Idx := l1
+                    layer2Idx := l2
+                    head1Idx := data1.headIdx
+                    head2Idx := data2.headIdx
+                    patternBound1 := ε1
+                    patternBound2 := ε2
+                    combinedError := combinedError
+                    prevTokenStrength := data1.prevTokenStrength
+                    inductionScore := inductionScore
+                    kComp := kComp
+                    description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
+                  }
+              | none => pure ()
+          else
+            pure ()
 
     return layerCandidates
 
@@ -2537,7 +2721,8 @@ def findVerifiedDeepCircuits (model : ConcreteModel)
 /-- Pretty print a candidate induction head. -/
 def CandidateInductionHead.toString (c : CandidateInductionHead) : String :=
   s!"InductionHead L{c.layer1Idx}H{c.head1Idx}->L{c.layer2Idx}H{c.head2Idx} " ++
-  s!"(error={c.combinedError}, prev-token={c.prevTokenStrength})"
+  s!"(error={c.combinedError}, prev-token={c.prevTokenStrength}, " ++
+    s!"induction={c.inductionScore}, kComp={c.kComp})"
 
 instance : ToString CandidateInductionHead := ⟨CandidateInductionHead.toString⟩
 
@@ -4021,38 +4206,45 @@ the Frobenius-norm estimates can scale poorly with depth and dimension.
 def passesEgregiousIllusionFilter (_candidate : CandidateInductionHead) : Bool :=
   true
 
-/-- Compute the virtual-head effectiveness score `δ` for a candidate induction pair.
+/-- Compute the raw **direct** effectiveness score `δ` for an induction-head candidate.
 
-This computes the concrete analogue of QK-composition for induction heads:
-the *addressing* path composes attentions `Avirtual = A₂ · A₁`, while the *value* path reads
-directly from the residual stream via the second head's value/output projection `W₂`.
+Induction heads are primarily a **pattern** story (Q/K-composition): a "previous token" head
+enables the *induction head* to attend to the **successor** of a previous matching token.
+Once the induction head is attending to the right source positions, its functional effect is
+driven by the head's **OV circuit** applied to the residual stream at those source tokens.
 
-Concretely, for the **value/copy** path we use the second head directly:
-`Y = (A₂ · A₁) · X₂ · W₂`, then score the last position against `target`.
+Accordingly, we treat head 1 purely as a *pattern enabler* (enforced by the pattern filters)
+and score only the **direct value path** of head 2:
+
+For a **Pre-LayerNorm** transformer (GPT-2 style), attention reads from `ln₁(X₂)` (not `X₂`).
+We compute:
+
+`Y = A₂ · ln₁(X₂) · W₂`,
+
+then score the last position against `target.direction = u`:
+
+`δ = ⟪Y[last], u⟫`.
 -/
 def computeInductionEffectiveness
     (candidate : CandidateInductionHead)
     (cache : PrecomputedCache)
-    (layer2Input : ConcreteMatrix)
+    (layer2Ln1Input : ConcreteMatrix)
     (target : TargetDirection) : Float :=
-  match cache.getHeadData candidate.layer1Idx candidate.head1Idx,
-        cache.getHeadData candidate.layer2Idx candidate.head2Idx with
-  | some data1, some data2 =>
+  match cache.getHeadData candidate.layer2Idx candidate.head2Idx with
+  | some data2 =>
       let W2 := data2.valueOutputProj
       let u := target.direction
 
-      -- Virtual head score: δ = ⟪(A₂ · A₁ · X₂ · W₂)[last], u⟫.
+      -- Direct head score: δ = ⟪(A₂ · ln₁(X₂) · W₂)[last], u⟫.
       --
       -- PERFORMANCE: compute this scalar without materializing any dense `d×d` products.
       -- 1) v = W₂ · u
-      -- 2) xdot[k] = ⟪X₂[k], v⟫
-      -- 3) t[j] = (A₁ · xdot)[j]
-      -- 4) δ = ⟪A₂[last], t⟫
+      -- 2) xdot[k] = ⟪ln₁(X₂)[k], v⟫
+      -- 3) δ = ⟪A₂[last], xdot⟫
       if u.numCols ≠ 1 then 0.0
-      else if layer2Input.numCols ≠ u.numRows then 0.0
+      else if layer2Ln1Input.numCols ≠ u.numRows then 0.0
       else if data2.attention.seqLen = 0 then 0.0
-      else if layer2Input.numRows ≠ data2.attention.seqLen then 0.0
-      else if data1.attention.seqLen ≠ data2.attention.seqLen then 0.0
+      else if layer2Ln1Input.numRows ≠ data2.attention.seqLen then 0.0
       else
         let n := data2.attention.seqLen
         let lastPos := n - 1
@@ -4061,61 +4253,70 @@ def computeInductionEffectiveness
         let v := W2.matVecMul u
         if v.numRows = 0 then 0.0
         else
-          -- xdot[k] = ⟪X₂[k], v⟫
+          -- xdot[k] = ⟪ln₁(X₂)[k], v⟫
           let xdot : Array Float := .ofFn fun k : Fin n => Id.run do
-            let xBase := k.val * layer2Input.numCols
+            let xBase := k.val * layer2Ln1Input.numCols
             let mut acc : Float := 0.0
-            for c in [:layer2Input.numCols] do
-              -- SAFETY: `k < n = layer2Input.numRows` by construction and guard above.
-              let x := layer2Input.data[xBase + c]!
+            for c in [:layer2Ln1Input.numCols] do
+              -- SAFETY: `k < n = layer2Ln1Input.numRows` by construction and guard above.
+              let x := layer2Ln1Input.data[xBase + c]!
               -- SAFETY: `v` is `modelDim×1` so `c < v.data.size`.
               let vc := v.data[c]!
               acc := acc + x * vc
             return acc
 
-          -- t = A1 · xdot
-          let t : Array Float := .ofFn fun j : Fin n => Id.run do
-            let rowBase := j.val * n
-            let w1 := data1.attention.weights
-            let mut acc : Float := 0.0
-            for k in [:n] do
-              -- SAFETY: `w1` has size `n*n` and `rowBase + k < n*n`.
-              acc := acc + w1[rowBase + k]! * xdot[k]!
-            return acc
-
-          -- δ = ⟪A2[last], t⟫
+          -- δ = ⟪A2[last], xdot⟫
           Id.run do
             let w2 := data2.attention.weights
             let row2Base := lastPos * n
             let mut score : Float := 0.0
-            for j in [:n] do
-              -- SAFETY: `w2` has size `n*n` and `row2Base + j < n*n`.
-              score := score + w2[row2Base + j]! * t[j]!
+            for k in [:n] do
+              -- SAFETY: `w2` has size `n*n` and `row2Base + k < n*n`.
+              score := score + w2[row2Base + k]! * xdot[k]!
             return score
-  | _, _ => 0.0
+  | none => 0.0
 
 /-- Compute the **certified lower bound** from `true_induction_head_predicts_logits`.
 
 `LowerBound = δ - (ε · ‖X‖_F · ‖u‖₂)` where:
 - `δ` is the virtual effectiveness score,
 - `ε` is `candidate.combinedError`,
-- `X` is the layer-2 input matrix,
+- `X` is the layer-2 Pre-LN attention input matrix `ln₁(X₂)`,
 - `u` is the target direction.
 -/
 def computeCertifiedLowerBound
     (delta : Float)
     (candidate : CandidateInductionHead)
-    (layer2Input : ConcreteMatrix)
+    (layer2Ln1Input : ConcreteMatrix)
     (target : TargetDirection) : Float :=
-  delta - (candidate.combinedError * layer2Input.frobeniusNorm * target.direction.vecNorm)
+  delta - (candidate.combinedError * layer2Ln1Input.frobeniusNorm * target.direction.vecNorm)
 
-/-- Rank induction-head candidates by **effectiveness** (largest `δ` first).
+/-- Rank induction-head candidates by a **mechanism-first** score.
 
-We still compute and report `combinedError` for inspection, but do not use it as a
-primary ranking key: in high dimensions and at deeper layers, Frobenius-norm bounds can
-be systematically looser due to growing residual-stream norms.
+We compute the raw direct-effect score `δ`, normalize it to a scale-invariant `effect`,
+and also compute a prompt/weight-based mechanism score:
 
-Uses a `PrecomputedCache` so the attention patterns/projections are computed once.
+`mechScore = kComp · inductionScore · prevTokenStrength`,
+
+as well as the combined score:
+
+`circuitScore = effect · mechScore`.
+
+Here:
+- `effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)` removes the Pre-LN depth confounder where the residual
+  stream norm grows with depth, and
+- `kComp` (from the circuits framework paper) measures how strongly head 1 can feed into
+  head 2's **QK circuit**, i.e. whether head 1 plausibly acts as a *pattern enabler* for head 2.
+- `inductionScore` is the prompt-dependent "copy-next" attention score for head 2, and
+- `prevTokenStrength` is the prompt-dependent previous-token attention score for head 1.
+
+We rank primarily by `mechScore` (to identify the canonical induction mechanism) and use
+`effect` only as a secondary key.
+
+We still compute and report `combinedError` for inspection, but avoid using it as a primary
+ranking key since Frobenius-norm bounds can be systematically looser in high dimensions.
+
+Uses a `PrecomputedCache` so attention patterns/projections and layer inputs are computed once.
 -/
 def findCertifiedInductionHeads (model : ConcreteModel)
     (target : TargetDirection)
@@ -4124,6 +4325,7 @@ def findCertifiedInductionHeads (model : ConcreteModel)
     (minInductionScore : Float := 0.05) : Array CertifiedInductionHead := Id.run do
   let cache := PrecomputedCache.build model
   let tokens? := model.inputTokens
+  let targetNorm := target.direction.vecNorm
   let candidates :=
     findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
   let mut certified : Array CertifiedInductionHead := #[]
@@ -4132,40 +4334,79 @@ def findCertifiedInductionHeads (model : ConcreteModel)
     if passesEgregiousIllusionFilter candidate then
       -- Explicit token-aware pattern verification:
       -- If `tokens?` is present, certify candidates only when the **variable-lag**
-      -- content-addressable pattern check passes. We intentionally do *not* use
+      -- induction "copy-next" pattern check passes. We intentionally do *not* use
       -- `checkInductionPattern` (fixed-lag shift matching) here.
       let passesPattern : Bool :=
         match tokens? with
         | some tokens =>
             match cache.getHeadData candidate.layer2Idx candidate.head2Idx with
             | some data2 =>
-                (checkContentAddressablePattern tokens data2.attention minInductionScore).isSome
+                (checkInductionCopyNextPattern tokens data2.attention minInductionScore).isSome
             | none => false
         | none => true
       if passesPattern then
         let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
         let layer2InputNorm := layer2Input.frobeniusNorm
-        let delta := computeInductionEffectiveness candidate cache layer2Input target
-        if delta > minEffect then
+        let layer2Ln1Input := cache.getLn1Input candidate.layer2Idx
+        let layer2Ln1InputNorm := layer2Ln1Input.frobeniusNorm
+        let delta := computeInductionEffectiveness candidate cache layer2Ln1Input target
+        let denom := layer2Ln1InputNorm * targetNorm
+        let effect :=
+          if denom > 1e-10 then delta / denom else 0.0
+        if effect > minEffect then
           certified := certified.push {
             candidate := candidate
             delta := delta
+            effect := effect
             layer2InputNorm := layer2InputNorm
+            layer2Ln1InputNorm := layer2Ln1InputNorm
           }
 
   certified.qsort (fun a b =>
-    -- Primary key: higher δ first.
-    let δa := if Float.isNaN a.delta then (-Float.inf) else a.delta
-    let δb := if Float.isNaN b.delta then (-Float.inf) else b.delta
-    if δb < δa then true
-    else if δa < δb then false
+    -- Primary key: higher **mechanism score** first.
+    --
+    -- Induction heads are primarily defined by attention-pattern structure (copy-next)
+    -- plus K-composition with a previous-token head. Target-direction Effect is useful,
+    -- but prompt/target-dependent; we therefore use it only as a secondary key.
+    let sa :=
+      if Float.isNaN a.effect ∨ Float.isNaN a.candidate.kComp ∨
+          Float.isNaN a.candidate.inductionScore ∨ Float.isNaN a.candidate.prevTokenStrength then
+        (-Float.inf)
+      else
+        a.candidate.kComp * a.candidate.inductionScore * a.candidate.prevTokenStrength
+    let sb :=
+      if Float.isNaN b.effect ∨ Float.isNaN b.candidate.kComp ∨
+          Float.isNaN b.candidate.inductionScore ∨ Float.isNaN b.candidate.prevTokenStrength then
+        (-Float.inf)
+      else
+        b.candidate.kComp * b.candidate.inductionScore * b.candidate.prevTokenStrength
+    if sb < sa then true
+    else if sa < sb then false
     else
-      -- Secondary key: smaller relative-error bound first.
-      let εa :=
-        if Float.isNaN a.candidate.combinedError then Float.inf else a.candidate.combinedError
-      let εb :=
-        if Float.isNaN b.candidate.combinedError then Float.inf else b.candidate.combinedError
-      εa < εb)
+      -- Secondary key: higher normalized Effect first.
+      let ea := if Float.isNaN a.effect then (-Float.inf) else a.effect
+      let eb := if Float.isNaN b.effect then (-Float.inf) else b.effect
+      if eb < ea then true
+      else if ea < eb then false
+      else
+        -- Tertiary key: higher K-composition first.
+        let ka := if Float.isNaN a.candidate.kComp then (-Float.inf) else a.candidate.kComp
+        let kb := if Float.isNaN b.candidate.kComp then (-Float.inf) else b.candidate.kComp
+        if kb < ka then true
+        else if ka < kb then false
+        else
+          -- Next key: higher raw δ first.
+          let δa := if Float.isNaN a.delta then (-Float.inf) else a.delta
+          let δb := if Float.isNaN b.delta then (-Float.inf) else b.delta
+          if δb < δa then true
+          else if δa < δb then false
+          else
+            -- Final key: smaller relative-error bound first.
+            let εa :=
+              if Float.isNaN a.candidate.combinedError then Float.inf else a.candidate.combinedError
+            let εb :=
+              if Float.isNaN b.candidate.combinedError then Float.inf else b.candidate.combinedError
+            εa < εb)
 
 /-- Target-aware importance metrics for a component.
 
