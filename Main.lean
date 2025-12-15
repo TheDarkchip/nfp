@@ -1,6 +1,7 @@
 import Cli
 import Nfp.IO
 import Nfp.Verification
+import Nfp.Sound.IO
 
 /-!
 # NFP CLI: Circuit Verification Command-Line Tool
@@ -148,7 +149,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
         IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
 
       IO.println s!"Target: {target.description}"
-      IO.println s!"Searching for heads with Effect > {minEffect}..."
+      IO.println s!"Searching for heads with Effect > {minEffect}... (heuristic)"
       IO.println "Ranking: highest mechScore (= kComp·indScore·prevTok) first"
       IO.println "  Tie-break: Effect, kComp, δ, then lowest Error"
       IO.println "  circuitScore = Effect · mechScore"
@@ -157,7 +158,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println "  kComp = kComp_raw - 1/√modelDim"
 
       let heads :=
-        findCertifiedInductionHeads model target minEffect (minInductionScore := 0.01)
+        findHeuristicInductionHeads model target minEffect (minInductionScore := 0.01)
       let top := heads.take 50
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
 
@@ -240,6 +241,39 @@ def runInduction (p : Parsed) : IO UInt32 := do
 
       return 0
 
+/-- Run the certify command - compute conservative, exact bounds in sound mode. -/
+def runCertify (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
+  let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
+  let outputPath := p.flag? "output" |>.map (·.as! String)
+
+  let action : ExceptT String IO Nfp.Sound.ModelCert := do
+    let eps ←
+      match Nfp.Sound.parseRat epsStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --eps '{epsStr}': {e}"
+    let actDeriv ←
+      match Nfp.Sound.parseRat actDerivStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --actDeriv '{actDerivStr}': {e}"
+    let cert ← ExceptT.mk <| Nfp.Sound.certifyModelFile ⟨modelPath⟩ eps actDeriv
+    pure cert
+
+  match ← action.run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok cert =>
+    let s := toString cert
+    match outputPath with
+    | some path =>
+      IO.FS.writeFile ⟨path⟩ s
+      IO.println s!"Report written to {path}"
+    | none =>
+      IO.println s
+    return 0
+
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
@@ -271,6 +305,20 @@ def inductionCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The certify subcommand. -/
+def certifyCmd : Cmd := `[Cli|
+  certify VIA runCertify;
+  "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust)."
+
+  FLAGS:
+    eps : String; "LayerNorm epsilon (default: 1e-5)"
+    actDeriv : String; "Activation derivative bound (default: 2)"
+    o, output : String; "Write report to file instead of stdout"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
@@ -278,7 +326,8 @@ def nfpCmd : Cmd := `[Cli|
 
   SUBCOMMANDS:
     analyzeCmd;
-    inductionCmd
+    inductionCmd;
+    certifyCmd
 ]
 
 /-- Main entry point. -/

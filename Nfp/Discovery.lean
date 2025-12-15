@@ -251,20 +251,28 @@ def traceMul (A B : ConcreteMatrix) : Float := Id.run do
       acc := acc + A.data[aRowBase + j]! * B.data[j * B.numCols + i]!
   return acc
 
+/-! ### Float numerics (heuristics)
+
+The definitions in this section use `Float` arithmetic for speed.
+
+Important: these are **not** kernel-sound upper bounds in general.
+They are best-effort numerical estimates (rounding may under- or over-estimate).
+Sound certification lives in `Nfp.Sound.*`.
+-/
+
 /-- Estimate the operator norm (spectral norm) via power iteration.
 
 The operator norm ‖M‖₂ = max‖x‖=1 ‖Mx‖ is the largest singular value.
 We approximate it using power iteration on M^T M.
 
-This is an upper bound on how much M can stretch a vector, crucial for
-bounding error amplification through layers.
+This is a fast **heuristic estimate** of how much `M` can stretch a vector.
 
 PERFORMANCE: Power iteration is O(iterations × n²) but heavily optimized:
 - Pre-allocated vectors with `Array.ofFn` (no array copying)
 - Direct loops instead of `List.range.foldl` (10× faster)
 - Bounds-checked access `v[j]!` and `Mv[i]!` (compiler optimizes in loops)
 -/
-def operatorNormBound (M : ConcreteMatrix) (numIterations : Nat := 20) : Float := Id.run do
+def operatorNormEst (M : ConcreteMatrix) (numIterations : Nat := 20) : Float := Id.run do
   if M.numRows = 0 || M.numCols = 0 then return 0.0
 
   -- Initialize with a vector of ones
@@ -309,15 +317,16 @@ def operatorNormBound (M : ConcreteMatrix) (numIterations : Nat := 20) : Float :
     -- Normalize for next iteration
     v := MTMv.map (· / norm)
 
-  -- Add small safety margin for numerical errors
+  -- Heuristic safety margin for numerical errors
   sigma * 1.01
 
-/-- Compute maximum absolute row sum (L∞ operator norm).
 
-This is an upper bound on the operator norm: ‖M‖₂ ≤ ‖M‖∞ = maxᵢ Σⱼ |M[i,j]|
-Faster than power iteration, but less tight.
+/-- Estimate maximum absolute row sum (L∞ induced norm).
+
+Mathematically, the real-valued quantity `maxᵢ Σⱼ |M[i,j]|` is an induced matrix norm.
+This function computes a `Float` approximation and is therefore a heuristic estimate.
 -/
-def maxAbsRowSum (M : ConcreteMatrix) : Float := Id.run do
+def maxAbsRowSumEst (M : ConcreteMatrix) : Float := Id.run do
   let mut maxSum : Float := 0.0
   for i in [:M.numRows] do
     let mut rowSum : Float := 0.0
@@ -326,11 +335,13 @@ def maxAbsRowSum (M : ConcreteMatrix) : Float := Id.run do
     maxSum := max maxSum rowSum
   maxSum
 
-/-- Compute maximum absolute column sum (L1 operator norm).
 
-This is an upper bound on the operator norm: ‖M‖₂ ≤ ‖M‖₁ = maxⱼ Σᵢ |M[i,j]|
+/-- Estimate maximum absolute column sum (L1 induced norm).
+
+Mathematically, the real-valued quantity `maxⱼ Σᵢ |M[i,j]|` is an induced matrix norm.
+This function computes a `Float` approximation and is therefore a heuristic estimate.
 -/
-def maxAbsColSum (M : ConcreteMatrix) : Float := Id.run do
+def maxAbsColSumEst (M : ConcreteMatrix) : Float := Id.run do
   let mut maxSum : Float := 0.0
   for j in [:M.numCols] do
     let mut colSum : Float := 0.0
@@ -339,9 +350,13 @@ def maxAbsColSum (M : ConcreteMatrix) : Float := Id.run do
     maxSum := max maxSum colSum
   maxSum
 
-/-- Deterministic Schur bound on the spectral norm: ‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞). -/
-def schurNormBound (M : ConcreteMatrix) : Float :=
-  Float.sqrt (M.maxAbsRowSum * M.maxAbsColSum)
+/-- Heuristic Schur-type estimate: `sqrt(‖M‖₁ · ‖M‖∞)` computed in `Float`.
+
+In exact real arithmetic, `sqrt(‖M‖₁ · ‖M‖∞)` upper-bounds the spectral norm.
+This implementation uses `Float`, so it should be treated as an estimate.
+-/
+def schurNormEst (M : ConcreteMatrix) : Float :=
+  Float.sqrt (M.maxAbsRowSumEst * M.maxAbsColSumEst)
 
 /-- Transpose a matrix. -/
 def transpose (M : ConcreteMatrix) : ConcreteMatrix where
@@ -458,7 +473,7 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
     size_eq := Array.size_ofFn
   }
 
-/-- Conservative operator-norm bound for the Jacobian of row-wise LayerNorm.
+/-- Heuristic estimate for the operator norm of the Jacobian of row-wise LayerNorm.
 
 We bound the **global** operator norm on the block-diagonal Jacobian (one block per row)
 by the maximum over rows of a **tight spectral-norm bound**.
@@ -471,12 +486,12 @@ Its Jacobian has the closed form:
 
 where `v` is the centered vector scaled by `1/σ`. The symmetric matrix in parentheses
 has eigenvalues `{0, 1, eps/(var+eps)}` so its spectral norm is exactly `1`.
-Therefore `‖J‖₂ ≤ max |γ| / σ`.
+Therefore `‖J‖₂ ≤ max |γ| / σ` in exact real arithmetic.
 
 This avoids the previous row-sum bound which could overestimate by orders of magnitude
 and made downstream certification thresholds unusable.
 -/
-def layerNormRowwiseOpBound (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float := Id.run do
+def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float := Id.run do
   if X.numRows = 0 || X.numCols = 0 then return 0.0
   if !(γ.numRows = 1 ∧ γ.numCols = X.numCols) then return 0.0
 
@@ -1444,7 +1459,13 @@ def ConcreteAttentionWeights.maxSoftmaxJacobianNorm (A : ConcreteAttentionWeight
       maxNorm := max maxNorm rowNorm
     maxNorm
 
-/-- Upper bound on the operator norm ‖J‖₂ of the softmax Jacobian for each row, then maxed.
+/-! ### Attention Jacobian heuristics
+
+The following quantities are computed from `Float` attention weights produced by a `Float`
+softmax. They must be treated as **heuristic estimates**, not sound certificates.
+-/
+
+/-- Heuristic estimate of the softmax-Jacobian operator norm per row (then maxed).
 
 For a probability row `p`, the softmax Jacobian is:
 `J = diag(p) - p pᵀ`.
@@ -1455,7 +1476,7 @@ It is positive semidefinite and satisfies:
 We take the tighter bound `min(maxᵢ pᵢ, 1 - Σᵢ pᵢ²)` for each row, and then take the
 maximum over rows. This is especially sharp for nearly one-hot or nearly uniform rows.
 -/
-def ConcreteAttentionWeights.softmaxJacobianOpBound (A : ConcreteAttentionWeights) : Float :=
+def ConcreteAttentionWeights.softmaxJacobianOpEst (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
   else Id.run do
     let mut maxBound : Float := 0.0
@@ -1618,7 +1639,7 @@ for a probability row `p`, `J = diag(p) - p pᵀ` and
 -/
 def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
   -- Data-dependent bound on the softmax Jacobian operator norm.
-  let softmaxBound := inputs.attention.softmaxJacobianOpBound
+  let softmaxBound := inputs.attention.softmaxJacobianOpEst
   (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
     inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
@@ -1684,13 +1705,17 @@ structure VerifiedInductionHead where
   /-- Combined error is below threshold (runtime-checked) -/
   errorChecked : Bool
 
-/-- An induction head candidate with an explicit effectiveness score `δ` on a target direction. -/
-structure CertifiedInductionHead where
-  /-- The discovered candidate pair (pattern-checked) -/
+/-- An induction head candidate with an explicit effectiveness score `δ` on a target direction.
+
+This is produced by the Float-based discovery pipeline and should be interpreted as a
+**heuristic ranking**, not a proof-grade certification.
+-/
+structure HeuristicInductionHead where
+  /-- The discovered candidate pair (pattern-checked, heuristically) -/
   candidate : CandidateInductionHead
-  /-- Raw effectiveness score `δ` on the target direction. -/
+  /-- Raw effectiveness score `δ` on the target direction (Float). -/
   delta : Float
-  /-- Scale-invariant effectiveness score:
+  /-- Scale-invariant effectiveness score (Float):
 
   `effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)`,
 
@@ -1698,9 +1723,9 @@ structure CertifiedInductionHead where
   This isolates the **mechanism** (virtual-head computation) from residual-stream energy.
   -/
   effect : Float
-  /-- Frobenius norm of the layer-2 input residual stream `‖X₂‖_F`. -/
+  /-- Frobenius norm of the layer-2 input residual stream `‖X₂‖_F` (Float). -/
   layer2InputNorm : Float
-  /-- Frobenius norm of the Pre-LN attention input `‖ln₁(X₂)‖_F`. -/
+  /-- Frobenius norm of the Pre-LN attention input `‖ln₁(X₂)‖_F` (Float). -/
   layer2Ln1InputNorm : Float
 
 /-- Result of discovering a multi-layer circuit with N-layer error bounds.
@@ -1718,7 +1743,7 @@ structure DeepCircuitCandidate where
   /-- Per-layer pattern term bounds (εᵢ) -/
   patternBounds : Array Float
   /-- Per-layer operator norm bounds (Cᵢ) -/
-  operatorNormBounds : Array Float
+  operatorNormEsts : Array Float
   /-- Simple error sum: Σᵢ εᵢ (no amplification) -/
   simpleErrorSum : Float
   /-- N-layer amplified error: Σᵢ εᵢ · ∏_{j>i}(1+Cⱼ) -/
@@ -1954,15 +1979,15 @@ def applyLn2 (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : Con
 def applyLnf (model : ConcreteModel) (X : ConcreteMatrix) : ConcreteMatrix :=
   ConcreteMatrix.layerNormRowwise X model.lnf.gamma model.lnf.beta
 
-/-- Conservative operator-norm bound for ln_1 Jacobian at a specific activation. -/
+/-- Heuristic estimate for ln_1 Jacobian operator norm at a specific activation. -/
 def ln1OpBound (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
   let p := model.ln1Params layerIdx
-  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+  ConcreteMatrix.layerNormRowwiseOpEst X p.gamma
 
-/-- Conservative operator-norm bound for ln_2 Jacobian at a specific activation. -/
+/-- Heuristic estimate for ln_2 Jacobian operator norm at a specific activation. -/
 def ln2OpBound (model : ConcreteModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
   let p := model.ln2Params layerIdx
-  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+  ConcreteMatrix.layerNormRowwiseOpEst X p.gamma
 
 end ConcreteModel
 
@@ -2172,15 +2197,15 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
         let head := heads[hidx]
         let voProj := head.valueOutputProjection
         -- Power iteration estimate of ‖M‖₂ (deterministic, fixed iterations).
-        totalNorm := totalNorm + ln1Bound * voProj.operatorNormBound 20
+        totalNorm := totalNorm + ln1Bound * voProj.operatorNormEst 20
 
     -- Add MLP contribution if present
     if hm : layerIdx < model.mlps.size then
       let mlp := model.mlps[layerIdx]
       -- MLP Jacobian norm ≤ ‖W_out‖ · ‖∂activation‖ · ‖W_in‖
       -- For GeLU, ‖∂activation‖ ≤ 1.7 approximately
-      let winNorm := mlp.W_in.operatorNormBound 20
-      let woutNorm := mlp.W_out.operatorNormBound 20
+      let winNorm := mlp.W_in.operatorNormEst 20
+      let woutNorm := mlp.W_out.operatorNormEst 20
       let geluDerivBound : Float := 1.7
       totalNorm := totalNorm + ln2Bound * (winNorm * geluDerivBound * woutNorm)
 
@@ -2249,8 +2274,8 @@ structure PrecomputedHeadData where
   attention : ConcreteAttentionWeights
   /-- Average previous-token attention strength: `(1/(n-1)) * Σᵢ A[i+1, i]`. -/
   prevTokenStrength : Float
-  /-- Cached softmax Jacobian operator-norm bound for this head's attention rows. -/
-  softmaxJacobianOpBound : Float
+  /-- Cached softmax Jacobian operator-norm estimate for this head's attention rows. -/
+  softmaxJacobianOpEst : Float
   /-- Cached Frobenius norm squared of the attention matrix: `‖A‖_F²`. -/
   attentionFrobeniusNormSq : Float
   /-- Cached pattern-term bound `‖PatternTerm‖_F` for this head at the cached input. -/
@@ -2346,7 +2371,7 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
           -- Precompute attention weights
           let attn := head.computeAttentionWeights attnInput causal
-          let softmaxOpBound := attn.softmaxJacobianOpBound
+          let softmaxOpBound := attn.softmaxJacobianOpEst
           let mut attnFrobNormSq : Float := 0.0
           for x in attn.weights do
             attnFrobNormSq := attnFrobNormSq + x * x
@@ -2381,13 +2406,13 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           --
           -- We take the minimum of two valid upper bounds to improve tightness
           -- without sacrificing determinism.
-          let wqSchur := head.W_Q.schurNormBound
-          let wkSchur := head.W_K.schurNormBound
-          let wvSchur := head.W_V.schurNormBound
-          let woSchur := head.W_O.schurNormBound
+          let wqSchur := head.W_Q.schurNormEst
+          let wkSchur := head.W_K.schurNormEst
+          let wvSchur := head.W_V.schurNormEst
+          let woSchur := head.W_O.schurNormEst
 
-          let voSchur := min voProj.schurNormBound (wvSchur * woSchur)
-          let qkSchur := min qkAlign.schurNormBound (wqSchur * wkSchur)
+          let voSchur := min voProj.schurNormEst (wvSchur * woSchur)
+          let qkSchur := min qkAlign.schurNormEst (wqSchur * wkSchur)
 
           let scaleFactor := Float.sqrt head.headDim.toFloat
           let patternBound : Float :=
@@ -2402,7 +2427,7 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
             headIdx := h_idx
             attention := attn
             prevTokenStrength := prevTokenStrength
-            softmaxJacobianOpBound := softmaxOpBound
+            softmaxJacobianOpEst := softmaxOpBound
             attentionFrobeniusNormSq := attnFrobNormSq
             patternTermBoundCached := patternBound
             valueTermNormCached := valueNorm
@@ -2746,7 +2771,7 @@ def findDeepCircuitCandidatesFromCache (cache : PrecomputedCache)
                 layerIndices := #[l1, l2]
                 headIndices := #[data1.headIdx, data2.headIdx]
                 patternBounds := #[bound1, bound2]
-                operatorNormBounds := relevantNormBounds
+                operatorNormEsts := relevantNormBounds
                 simpleErrorSum := bound1 + bound2
                 amplifiedError := amplifiedError
                 amplificationFactor := totalAmpFactor
@@ -3288,7 +3313,7 @@ def applyLn2 (model : SAEEnhancedModel) (layerIdx : Nat) (X : ConcreteMatrix) : 
 /-- Conservative operator-norm bound for ln_1 Jacobian at a specific activation. -/
 def ln1OpBound (model : SAEEnhancedModel) (layerIdx : Nat) (X : ConcreteMatrix) : Float :=
   let p := model.ln1Params layerIdx
-  ConcreteMatrix.layerNormRowwiseOpBound X p.gamma
+  ConcreteMatrix.layerNormRowwiseOpEst X p.gamma
 
 /-- Create from ConcreteModel with externally trained SAEs. -/
 def fromModel (model : ConcreteModel) (saes : Array ConcreteSAE) : Option SAEEnhancedModel :=
@@ -3430,9 +3455,9 @@ private def computeHeadMetricsForSAE
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := qkAlign.schurNormBound
+        queryKeyAlignSchurNorm := qkAlign.schurNormEst
         valueOutputProj := voProj
-        valueOutputProjSchurNorm := voProj.schurNormBound
+        valueOutputProjSchurNorm := voProj.schurNormEst
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -4052,9 +4077,9 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := qkAlign.schurNormBound
+        queryKeyAlignSchurNorm := qkAlign.schurNormEst
         valueOutputProj := voProj
-        valueOutputProjSchurNorm := voProj.schurNormBound
+        valueOutputProjSchurNorm := voProj.schurNormEst
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -4463,17 +4488,17 @@ ranking key since Frobenius-norm bounds can be systematically looser in high dim
 
 Uses a `PrecomputedCache` so attention patterns/projections and layer inputs are computed once.
 -/
-def findCertifiedInductionHeads (model : ConcreteModel)
+def findHeuristicInductionHeads (model : ConcreteModel)
     (target : TargetDirection)
     (minEffect : Float := 0.0)
     (minPrevTokenStrength : Float := 0.1)
-    (minInductionScore : Float := 0.05) : Array CertifiedInductionHead := Id.run do
+    (minInductionScore : Float := 0.05) : Array HeuristicInductionHead := Id.run do
   let cache := PrecomputedCache.build model
   let tokens? := model.inputTokens
   let targetNorm := target.direction.vecNorm
   let candidates :=
     findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
-  let mut certified : Array CertifiedInductionHead := #[]
+  let mut certified : Array HeuristicInductionHead := #[]
 
   for candidate in candidates do
     if passesEgregiousIllusionFilter candidate then
@@ -4603,9 +4628,9 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := qkAlign.schurNormBound
+        queryKeyAlignSchurNorm := qkAlign.schurNormEst
         valueOutputProj := voProj
-        valueOutputProjSchurNorm := voProj.schurNormBound
+        valueOutputProjSchurNorm := voProj.schurNormEst
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -4787,8 +4812,8 @@ structure LayerErrorMetrics where
   layerIdx : Nat
   /-- Pattern term bound εᵢ (faithfulness error before amplification) -/
   patternTermBound : Float
-  /-- Operator norm bound Cᵢ for I + Jacobian (amplification factor) -/
-  operatorNormBound : Float
+  /-- Operator norm estimate Cᵢ for I + Jacobian (amplification factor) -/
+  operatorNormEst : Float
   /-- Suffix amplification: ∏_{j>i} (1 + Cⱼ) -/
   suffixAmplification : Float
   /-- Amplified error contribution: εᵢ · suffixAmplification(i+1) -/
@@ -4797,7 +4822,7 @@ structure LayerErrorMetrics where
 namespace LayerErrorMetrics
 
 def toString (m : LayerErrorMetrics) : String :=
-  s!"Layer {m.layerIdx}: ε={m.patternTermBound}, C={m.operatorNormBound}, " ++
+  s!"Layer {m.layerIdx}: ε={m.patternTermBound}, C_est={m.operatorNormEst}, " ++
   s!"amp={m.suffixAmplification}, contrib={m.amplifiedError}"
 
 instance : ToString LayerErrorMetrics := ⟨toString⟩
@@ -4859,9 +4884,9 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
           let inputs : PatternTermBoundInputs := {
             attention := attn
             queryKeyAlign := head.queryKeyAlignment
-            queryKeyAlignSchurNorm := head.queryKeyAlignment.schurNormBound
+            queryKeyAlignSchurNorm := head.queryKeyAlignment.schurNormEst
             valueOutputProj := head.valueOutputProjection
-            valueOutputProjSchurNorm := head.valueOutputProjection.schurNormBound
+            valueOutputProjSchurNorm := head.valueOutputProjection.schurNormEst
             inputNorm := inputNorm
             scaleFactor := Float.sqrt head.headDim.toFloat
           }
@@ -4952,7 +4977,7 @@ def verifyDeepCircuit (model : ConcreteModel)
       layerMetrics := layerMetrics.push {
         layerIdx := l
         patternTermBound := epsilon
-        operatorNormBound := normBound
+        operatorNormEst := normBound
         suffixAmplification := suffix
         amplifiedError := amplified
       }

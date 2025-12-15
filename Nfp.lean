@@ -16,6 +16,8 @@ import Nfp.Induction
 import Nfp.Discovery
 import Nfp.Verification
 import Nfp.IO
+import Nfp.Sound.IO
+import Nfp.Sound.Demo
 
 /-!
 Axioms used by key theorems/definitions

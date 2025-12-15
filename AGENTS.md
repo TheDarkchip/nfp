@@ -179,6 +179,16 @@ but you **must** update this list in the same commit.
 - `Discovery.lean`
   - Executable discovery + bound computations and verification pipeline.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
+- `Sound/Decimal.lean`
+  - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
+- `Sound/Bounds.lean`
+  - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
+- `Sound/Cert.lean`
+  - Certificate/report structures and pretty-printing for SOUND-mode output.
+- `Sound/IO.lean`
+  - Minimal `.nfpt` scanner for sound certification (parses only what is needed).
+- `Sound/Demo.lean`
+  - Tiny end-to-end lemma demo bridging to `Linearization.operatorNormBound`.
 - `Verification.lean`
   - Executable **causal verification** via head ablation + runtime axiom checks (competence, control independence, energy matching).
 - `IO.lean`
@@ -186,7 +196,7 @@ but you **must** update this list in the same commit.
   - **IO-only principle:** no heavy proofs; keep it as a bridge to filesystem/CLI.
 - `Main.lean`
   - CLI entrypoint and subcommand wiring. Keep it thin:
-    - argument parsing + calling into `Nfp.IO` / `Discovery` / reporting helpers,
+    - argument parsing + calling into `Nfp.IO` / `Discovery` / `Nfp.Sound.*` reporting helpers,
     - minimal logic, minimal proof content.
 - `Nfp.lean`
   - Top-level reexports and an axioms check (`#print axioms` / trust dashboard).
