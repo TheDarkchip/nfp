@@ -27,6 +27,8 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 
 -- From Nfp.Prob
 #print axioms Nfp.ProbVec.sum_mass
+#print axioms Nfp.ProbVec.pure
+#print axioms Nfp.ProbVec.mix
 
 -- From Nfp.PCC
 #print axioms Nfp.tracerOfContrib
@@ -82,6 +84,9 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 
 -- Forward mixers (Appendix A.1)
 #print axioms Nfp.Mixer.push
+#print axioms Nfp.Mixer.row
+#print axioms Nfp.Mixer.push_pure
+#print axioms Nfp.Mixer.push_mix
 #print axioms Nfp.Mixer.comp
 
 -- Appendix A.2 wrappers and packaged theorem
@@ -93,6 +98,7 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 
 -- From Nfp.Mixer (support restriction)
 #print axioms Nfp.Mixer.supported_comp
+#print axioms Nfp.Mixer.supp_push_subset_image
 
 -- From Nfp.Influence
 #print axioms Nfp.Mixer.ofInfluenceSpec

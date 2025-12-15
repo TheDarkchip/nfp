@@ -55,6 +55,31 @@ noncomputable def push (p : ProbVec S) : ProbVec T :=
                 simp [ProbVec.sum_mass (ι:=S) p]
       simp [this] }
 
+/-- The `i`-th row of a mixer as a probability vector on the target type. -/
+noncomputable def row (i : S) : ProbVec T :=
+  {
+    mass := fun j => M.w i j
+    norm_one := by
+      classical
+      simpa using M.row_sum_one i
+  }
+
+@[simp] lemma row_mass (i : S) (j : T) : (M.row i).mass j = M.w i j := rfl
+
+/-- Pushing a point-mass probability vector through a mixer selects the corresponding row. -/
+theorem push_pure (i : S) : M.push (ProbVec.pure (ι := S) i) = M.row i := by
+  ext j
+  classical
+  simp [Mixer.push, Mixer.row, ProbVec.pure, Finset.sum_ite_eq', Finset.mem_univ]
+
+/-- `push` is affine: it commutes with convex mixtures of probability vectors. -/
+theorem push_mix (c : NNReal) (hc : c ≤ 1) (p q : ProbVec S) :
+    M.push (ProbVec.mix (ι := S) c hc p q) =
+      ProbVec.mix (ι := T) c hc (M.push p) (M.push q) := by
+  ext j
+  classical
+  simp [Mixer.push, ProbVec.mix, Finset.sum_add_distrib, add_mul, mul_assoc, Finset.mul_sum]
+
 /-- Composition of mixers is again a mixer (closure under composition). -/
 noncomputable def comp (N : Mixer T U) : Mixer S U :=
   {
@@ -144,7 +169,27 @@ def supp (p : ProbVec S) : Set S := fun i => p.mass i ≠ 0
 /-- Image of a set of sources along a binary support relation. -/
 def image (R : S → T → Prop) (A : Set S) : Set T := fun k => ∃ i, A i ∧ R i k
 
--- (Optional helper): a pushforward support lemma can be added if needed.
+/-- Support propagation: if `M` is supported by `R`, then any nonzero pushed mass at `k`
+originates from some source `i` with nonzero mass and an allowed edge `R i k`. -/
+lemma supp_push_subset_image {M : Mixer S T} {R : S → T → Prop}
+    (hM : supported (S := S) (T := T) M R) (p : ProbVec S) :
+    supp (S := T) (M.push p) ⊆ image (S := S) (T := T) R (supp (S := S) p) := by
+  classical
+  intro k hk
+  have hk_mass : (M.push p).mass k ≠ 0 := hk
+  have hk' : (∑ i, p.mass i * M.w i k) ≠ 0 := by
+    simpa [Mixer.push] using hk_mass
+  obtain ⟨i, _hi, hne⟩ := Finset.exists_ne_zero_of_sum_ne_zero hk'
+  have hpi : p.mass i ≠ 0 := by
+    intro h0
+    exact hne (by simp [h0])
+  have hwi : M.w i k ≠ 0 := by
+    intro h0
+    exact hne (by simp [h0])
+  have hR : R i k := by
+    by_contra hR
+    exact hwi (hM i k hR)
+  exact ⟨i, ⟨hpi, hR⟩⟩
 
 end Mixer
 
