@@ -528,6 +528,45 @@ structure RectGramDiag where
   oneInfBound : Float
   deriving Repr
 
+/-- How much work to spend computing rigorous upper bounds.
+
+Higher-effort modes must be **monotone**: they may add additional rigorous candidates and then
+take the minimum, but they must never remove candidates. This guarantees that "upgrading"
+cannot increase the returned upper bound (up to tiny Float noise).
+-/
+structure BoundEffort where
+  /-- Maximum Gram dimension allowed for materializing a (signed) Gram matrix. -/
+  maxGramDim : Nat := 256
+  /-- Allow the absolute-Gram fallback (no materialized Gram). -/
+  enableAbsGram : Bool := true
+  /-- Allow materializing a signed Gram matrix when `gramDim ≤ maxGramDim`. -/
+  enableSignedGram : Bool := true
+  /-- Allow PSD moment bounds (when available). -/
+  enableMoment : Bool := true
+  deriving Repr, Inhabited
+
+namespace BoundEffort
+
+/-- Tier-0: cheap bounds only. -/
+def tier0 : BoundEffort :=
+  { maxGramDim := 0, enableAbsGram := false, enableSignedGram := false, enableMoment := false }
+
+/-- Tier-1: enable abs-Gram fallback; keep default signed-Gram cap. -/
+def tier1 : BoundEffort :=
+  { maxGramDim := 256, enableAbsGram := true, enableSignedGram := true, enableMoment := true }
+
+/-- Tier-2: allow larger signed-Gram (may be expensive). -/
+def tier2 : BoundEffort :=
+  { maxGramDim := 768, enableAbsGram := true, enableSignedGram := true, enableMoment := true }
+
+/-- Tier-3: placeholder for future rigorous tightenings (currently same as tier2). -/
+def tier3 : BoundEffort := tier2
+
+/-- Ordered list of effort tiers (monotone increasing compute). -/
+def tiers : Array BoundEffort := #[tier0, tier1, tier2, tier3]
+
+end BoundEffort
+
 /-- Brauer/Cassini upper bound on `λ_max(G)` for an explicit symmetric matrix `G`.
 
 This is the same Cassini-ovals formula used for Gram matrices, but computed from
@@ -716,28 +755,20 @@ def rectAbsGramLambdaUpperGershBrauer (A : ConcreteMatrix) : Float × Float := I
     let lambdaAbsBrauer := if bad then lambdaAbsGersh else maxPair
     return (lambdaAbsGersh, lambdaAbsBrauer)
 
-/-- Compute a rigorous operator-norm upper bound for a rectangular matrix via Gram reduction.
+/-- Effort-configurable variant of `opNormUpperBoundRectGramDiag`.
 
-Algorithm (exact real arithmetic):
-Let `G = A Aᵀ` if `m ≤ n`, otherwise `G = Aᵀ A`. Then
-`‖A‖₂² = λ_max(G)`.
-
-We upper-bound `λ_max(G)` using:
-- Brauer/Cassini (for PSD symmetric)
-- PSD moment bound from `trace(G)` and `‖G‖_F²`
-- Gershgorin / induced-∞: `λ_max(G) ≤ ‖G‖_∞`
-
-PERFORMANCE: forming `G` is `O(m n min(m,n))` and can be very expensive.
-We therefore size-cap the Gram dimension. Above the cap, we fall back to
-`min(‖A‖_F, sqrt(‖A‖₁‖A‖∞))`.
+This is the entrypoint used by the adaptive scheduler: it can add expensive-but-rigorous
+candidates while remaining monotone (the final `opBound` is always the minimum of enabled
+rigorous candidates).
 -/
-def opNormUpperBoundRectGramDiag (A : ConcreteMatrix) (maxGramDim : Nat := 256) : RectGramDiag :=
+def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffort) : RectGramDiag :=
   let frob := A.frobeniusNorm
   let oneInf := A.opNormUpperBoundOneInf
   let cheap := min frob oneInf
   let m := A.numRows
   let n := A.numCols
   let k := min m n
+
   if k = 0 then
     { usedGram := true
       usedAbsGram := false
@@ -751,59 +782,82 @@ def opNormUpperBoundRectGramDiag (A : ConcreteMatrix) (maxGramDim : Nat := 256) 
       opBound := 0.0
       frobBound := frob
       oneInfBound := oneInf }
-  else if k > maxGramDim then
-    let (lambdaAbsGersh, lambdaAbsBrauer) := rectAbsGramLambdaUpperGershBrauer A
-    let lambdaAbsUpper := min lambdaAbsGersh lambdaAbsBrauer
-    let opAbsRaw := Float.sqrt (max 0.0 lambdaAbsUpper)
-    let opAbs : Float :=
-      if Float.isNaN opAbsRaw || Float.isInf opAbsRaw then
-        Float.inf
+  else Id.run do
+    let mut bestOp : Float := cheap
+    let mut usedAbs : Bool := false
+    let mut usedGram : Bool := false
+    let mut lambdaAbsGersh : Float := 0.0
+    let mut lambdaAbsBrauer : Float := 0.0
+    let mut lambdaGersh : Float := 0.0
+    let mut lambdaBrauer : Float := 0.0
+    let mut lambdaMoment : Float := 0.0
+    let mut lambdaUsed : Float := max 0.0 (cheap * cheap)
+
+    if effort.enableAbsGram then
+      let (lG, lB) := rectAbsGramLambdaUpperGershBrauer A
+      lambdaAbsGersh := lG
+      lambdaAbsBrauer := lB
+      let lUpper := min lG lB
+      let opAbsRaw := Float.sqrt (max 0.0 lUpper)
+      let opAbs : Float :=
+        if Float.isNaN opAbsRaw || Float.isInf opAbsRaw then
+          Float.inf
+        else
+          opAbsRaw
+      if opAbs < bestOp then
+        bestOp := opAbs
+        lambdaUsed := max 0.0 lUpper
+        usedAbs := true
+        usedGram := false
+
+    if effort.enableSignedGram && k ≤ effort.maxGramDim then
+      let G : ConcreteMatrix :=
+        if m ≤ n then
+          A.matmul A.transpose
+        else
+          A.transpose.matmul A
+      lambdaGersh := G.infNormAbs
+      lambdaBrauer := symmLambdaMaxUpperBrauer G
+      let mut lUpper : Float := min lambdaGersh lambdaBrauer
+      if effort.enableMoment then
+        -- For Gram `G`, `trace(G) = ‖A‖_F²`.
+        let tr : Float := A.frobeniusNormSq
+        let f2 : Float := G.frobeniusNormSq
+        lambdaMoment := psdLambdaMaxUpperMoment k tr f2
+        lUpper := min lUpper lambdaMoment
       else
-        opAbsRaw
-    let opBound := min cheap opAbs
-    let lambdaUsed := min (max 0.0 (cheap * cheap)) (max 0.0 lambdaAbsUpper)
-    { usedGram := false
-      usedAbsGram := true
-      gramDim := k
-      lambdaBrauer := 0.0
-      lambdaMoment := 0.0
-      lambdaGersh := 0.0
-      lambdaAbsGersh := lambdaAbsGersh
-      lambdaAbsBrauer := lambdaAbsBrauer
-      lambdaUsed := lambdaUsed
-      opBound := opBound
-      frobBound := frob
-      oneInfBound := oneInf }
-  else
-    let G : ConcreteMatrix :=
-      if m ≤ n then
-        A.matmul A.transpose
-      else
-        A.transpose.matmul A
-    let lambdaGersh := G.infNormAbs
-    let lambdaBrauer := symmLambdaMaxUpperBrauer G
-    -- For Gram `G`, `trace(G) = ‖A‖_F²`.
-    let tr : Float := A.frobeniusNormSq
-    let f2 : Float := G.frobeniusNormSq
-    let lambdaMoment := psdLambdaMaxUpperMoment k tr f2
-    let lambdaUpper := min lambdaGersh (min lambdaBrauer lambdaMoment)
-    let op := Float.sqrt (max 0.0 lambdaUpper)
-    { usedGram := true
-      usedAbsGram := false
+        lambdaMoment := 0.0
+      let op := Float.sqrt (max 0.0 lUpper)
+      if op < bestOp then
+        bestOp := op
+        lambdaUsed := max 0.0 lUpper
+        usedAbs := false
+        usedGram := true
+
+    { usedGram := usedGram
+      usedAbsGram := usedAbs
       gramDim := k
       lambdaBrauer := lambdaBrauer
       lambdaMoment := lambdaMoment
       lambdaGersh := lambdaGersh
-      lambdaAbsGersh := 0.0
-      lambdaAbsBrauer := 0.0
-      lambdaUsed := lambdaUpper
-      opBound := min cheap op
+      lambdaAbsGersh := lambdaAbsGersh
+      lambdaAbsBrauer := lambdaAbsBrauer
+      lambdaUsed := lambdaUsed
+      opBound := min cheap bestOp
       frobBound := frob
       oneInfBound := oneInf }
+
+/-- Backwards-compatible wrapper around `opNormUpperBoundRectGramDiagEffort`. -/
+def opNormUpperBoundRectGramDiag (A : ConcreteMatrix) (maxGramDim : Nat := 256) : RectGramDiag :=
+  opNormUpperBoundRectGramDiagEffort A { maxGramDim := maxGramDim }
 
 /-- Rectangular Gram-based operator-norm bound (with a size-cap fallback). -/
 def opNormUpperBoundRectGram (A : ConcreteMatrix) (maxGramDim : Nat := 256) : Float :=
   (A.opNormUpperBoundRectGramDiag maxGramDim).opBound
+
+/-- Effort-configurable variant of `opNormUpperBoundRectGram`. -/
+def opNormUpperBoundRectGramEffort (A : ConcreteMatrix) (effort : BoundEffort) : Float :=
+  (A.opNormUpperBoundRectGramDiagEffort effort).opBound
 
 /-- Gram-matrix induced-∞ upper bound on the spectral norm.
 
@@ -3268,6 +3322,8 @@ structure PrecomputedHeadData where
   softmaxRowsFallback : Nat
   /-- Cached Frobenius norm squared of the attention matrix: `‖A‖_F²`. -/
   attentionFrobeniusNormSq : Float
+  /-- Cached `sqrt(‖A‖₁‖A‖∞)` upper bound on `‖A‖₂` (computed from max row/col sums). -/
+  attentionOneInfBound : Float
   /-- Cached pattern-term bound `‖PatternTerm‖_F` for this head at the cached input. -/
   patternTermBoundCached : Float
   /-- Cached value-term Frobenius norm `‖ValueTerm‖_F` for this head. -/
@@ -3377,14 +3433,63 @@ structure PrecomputedCache where
   headData : Array (Array PrecomputedHeadData)
   /-- Precomputed operator norm bounds for each layer (for N-layer error amplification) -/
   layerNormBounds : Array Float
+  /-- Whether `layerNormBounds` were computed (otherwise the array is a placeholder). -/
+  layerNormBoundsComputed : Bool
 
 namespace PrecomputedCache
+
+/-! ### Layer Jacobian-norm upper bounds (cached-head fast path) -/
+
+/-- Compute the per-layer residual Jacobian norm upper bound `C_l` using cached head data.
+
+This matches `estimateAttentionLayerNorm` but avoids recomputing attention weights and
+small-factor norms. The only tier-dependent cost is the MLP `W_in/W_out` operator bounds.
+-/
+def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
+    (effort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) : Float := Id.run do
+  let model := cache.model
+  let fwd := cache.forwardResult
+  let y := fwd.getPostAttnResidual layerIdx
+  let ln2Bound := model.ln2OpBound layerIdx y
+  let layerData := cache.headData.getD layerIdx #[]
+  let mut norm : Float := 0.0
+  for d in layerData do
+    let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+    let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+    let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+    let patternTermUb : Float :=
+      (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
+        d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+    norm := norm + d.ln1OpBound * (valueTermUb + patternTermUb)
+
+  if hm : layerIdx < model.mlps.size then
+    let mlp := model.mlps[layerIdx]'hm
+    let winUb := mlp.W_in.opNormUpperBoundRectGramEffort effort
+    let woutUb := mlp.W_out.opNormUpperBoundRectGramEffort effort
+    let geluDerivBound : Float :=
+      let d := fwd.mlpActDerivMax.getD layerIdx 1.7
+      if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
+    norm := norm + ln2Bound * (winUb * geluDerivBound * woutUb)
+
+  return norm
+
+/-- Compute all per-layer residual Jacobian upper bounds `C_l` under a uniform effort tier. -/
+def computeLayerNormBounds (cache : PrecomputedCache)
+    (effort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
+    Array Float := Id.run do
+  let mut out : Array Float := Array.mkEmpty cache.model.numLayers
+  for l in [:cache.model.numLayers] do
+    out := out.push (cache.layerNormBoundAt l effort)
+  out
 
 /-- Build a complete precomputed cache for a model.
 
 This precomputes all attention patterns, projections, and norms once.
 -/
-def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := Id.run do
+  def build (model : ConcreteModel) (causal : Bool := true)
+      (computeLayerNormBounds : Bool := true)
+      (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
+      PrecomputedCache := Id.run do
   let fwdResult := model.runForward causal
   let computeLayer (l : Nat) : (Array PrecomputedHeadData × (Float × ConcreteMatrix)) := Id.run do
     let mut layerHeadData : Array PrecomputedHeadData := #[]
@@ -3404,9 +3509,28 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
           let attn := head.computeAttentionWeights attnInput causal
           let softmaxDiag := attn.softmaxJacobianOpDiag
           let softmaxOpBound := min softmaxDiag.opBound 0.5
+          let n := attn.seqLen
           let mut attnFrobNormSq : Float := 0.0
-          for x in attn.weights do
-            attnFrobNormSq := attnFrobNormSq + x * x
+          let mut maxRowAbsSum : Float := 0.0
+          let mut colAbsSums : Array Float := Array.replicate n 0.0
+          for q in [:n] do
+            let rowBase := q * n
+            let mut rowAbsSum : Float := 0.0
+            for k in [:n] do
+              -- SAFETY: `q,k < n` by loop bounds.
+              let w := attn.weights[rowBase + k]!
+              attnFrobNormSq := attnFrobNormSq + w * w
+              let a := Float.abs w
+              rowAbsSum := rowAbsSum + a
+              colAbsSums := colAbsSums.set! k (colAbsSums[k]! + a)
+            if rowAbsSum > maxRowAbsSum then
+              maxRowAbsSum := rowAbsSum
+          let mut maxColAbsSum : Float := 0.0
+          for k in [:n] do
+            let s := colAbsSums[k]!
+            if s > maxColAbsSum then
+              maxColAbsSum := s
+          let attnOneInf : Float := Float.sqrt (max 0.0 (maxRowAbsSum * maxColAbsSum))
 
           let prevTokenStrength : Float :=
             if attn.seqLen < 2 then
@@ -3503,6 +3627,7 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
             softmaxRowBoundUsed := softmaxDiag.maxRowBoundUsed
             softmaxRowsFallback := softmaxDiag.numRowsFallback
             attentionFrobeniusNormSq := attnFrobNormSq
+            attentionOneInfBound := attnOneInf
             patternTermBoundCached := patternBound
             valueTermNormCached := valueNorm
             faithfulnessRatioCached := ratio
@@ -3542,8 +3667,35 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
 
           layerHeadData := layerHeadData.push data
 
-    -- OPTIMIZATION: Precompute operator norm bounds for each layer
-    let norm := estimateAttentionLayerNorm model fwdResult l causal
+    let norm : Float :=
+      if computeLayerNormBounds then
+        -- OPTIMIZATION: compute per-layer Jacobian upper bounds from cached head data,
+        -- avoiding recomputation of attention weights / projections.
+        Id.run do
+          let y := fwdResult.getPostAttnResidual l
+          let ln2Bound := model.ln2OpBound l y
+          let mut nrm : Float := 0.0
+          for d in layerHeadData do
+            let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+            let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+            let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+            let patternTermUb : Float :=
+              (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
+                d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+            nrm := nrm + d.ln1OpBound * (valueTermUb + patternTermUb)
+
+          if hm : l < model.mlps.size then
+            let mlp := model.mlps[l]'hm
+            let winNormUb := mlp.W_in.opNormUpperBoundRectGramEffort layerNormEffort
+            let woutNormUb := mlp.W_out.opNormUpperBoundRectGramEffort layerNormEffort
+            let geluDerivBound : Float :=
+              let d := fwdResult.mlpActDerivMax.getD l 1.7
+              if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
+            nrm := nrm + ln2Bound * (winNormUb * geluDerivBound * woutNormUb)
+          return nrm
+      else
+        0.0
+
     return (layerHeadData, (norm, attnInput))
 
   -- Pure parallelism via tasks: layer cache construction is independent once the
@@ -3571,7 +3723,8 @@ def build (model : ConcreteModel) (causal : Bool := true) : PrecomputedCache := 
     forwardResult := fwdResult
     ln1Inputs := ln1Inputs
     headData := headData
-    layerNormBounds := layerNormBounds }
+    layerNormBounds := layerNormBounds
+    layerNormBoundsComputed := computeLayerNormBounds }
 
 /-- Retrieve cached data for a specific head. -/
 def getHeadData (cache : PrecomputedCache) (layerIdx headIdx : Nat) :
@@ -3591,6 +3744,530 @@ def getLn1Input (cache : PrecomputedCache) (layerIdx : Nat) : ConcreteMatrix :=
     ConcreteMatrix.zeros 0 0
 
 end PrecomputedCache
+
+/-! ## Krylov-style rigorous lower bounds for layer residual Jacobians -/
+
+namespace ConcreteMatrix
+
+/-- A precomputed context for applying the Jacobian of row-wise LayerNorm to perturbations. -/
+structure LayerNormJacobianCtx where
+  numRows : Nat
+  numCols : Nat
+  gamma : ConcreteMatrix
+  invStds : Array Float
+  v : ConcreteMatrix
+
+/-- Build a `LayerNormJacobianCtx` for `layerNormRowwise X γ β`.
+
+We cache the per-row `invStd` and the centered+scaled `v = (x-μ)/σ` used in the Jacobian
+formula. (`β` does not affect the Jacobian.)
+-/
+def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : LayerNormJacobianCtx :=
+  Id.run do
+    let rows := X.numRows
+    let cols := X.numCols
+    if rows = 0 || cols = 0 then
+      return { numRows := rows, numCols := cols, gamma := γ, invStds := #[], v := X }
+    if !(γ.numRows = 1 ∧ γ.numCols = cols) then
+      return { numRows := rows, numCols := cols, gamma := γ, invStds := #[], v := X }
+
+    let mut means : Array Float := Array.mkEmpty rows
+    let mut invStds : Array Float := Array.mkEmpty rows
+    for r in [:rows] do
+      let mut sum : Float := 0.0
+      let rowBase := r * cols
+      for c in [:cols] do
+        sum := sum + X.data[rowBase + c]!
+      let μ := sum / cols.toFloat
+      let mut varSum : Float := 0.0
+      for c in [:cols] do
+        let d := X.data[rowBase + c]! - μ
+        varSum := varSum + d * d
+      let var := varSum / cols.toFloat
+      let invσ := 1.0 / Float.sqrt (var + eps)
+      means := means.push μ
+      invStds := invStds.push invσ
+
+    let v : ConcreteMatrix :=
+      { numRows := rows
+        numCols := cols
+        data := .ofFn fun idx : Fin (rows * cols) =>
+          let r := idx.val / cols
+          let c := idx.val % cols
+          let μ := means.getD r 0.0
+          let invσ := invStds.getD r 0.0
+          (X.get r c - μ) * invσ
+        size_eq := Array.size_ofFn }
+
+    return { numRows := rows, numCols := cols, gamma := γ, invStds := invStds, v := v }
+
+/-- Apply the LayerNorm Jacobian `J` at the cached row statistics: `δy = J δx`. -/
+def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix) : ConcreteMatrix :=
+  Id.run do
+    if dX.numRows ≠ ctx.numRows || dX.numCols ≠ ctx.numCols then
+      return ConcreteMatrix.zeros ctx.numRows ctx.numCols
+    let rows := ctx.numRows
+    let cols := ctx.numCols
+    if rows = 0 || cols = 0 then
+      return ConcreteMatrix.zeros rows cols
+    if ctx.invStds.size ≠ rows then
+      return ConcreteMatrix.zeros rows cols
+
+    -- Precompute per-row mean(dX) and v⋅dX.
+    let mut meanDx : Array Float := Array.replicate rows 0.0
+    let mut vDotDx : Array Float := Array.replicate rows 0.0
+    for r in [:rows] do
+      let rowBase := r * cols
+      let mut sumDx : Float := 0.0
+      let mut sumVDx : Float := 0.0
+      for c in [:cols] do
+        let dx := dX.data[rowBase + c]!
+        sumDx := sumDx + dx
+        sumVDx := sumVDx + (ctx.v.data[rowBase + c]! * dx)
+      meanDx := meanDx.set! r (sumDx / cols.toFloat)
+      vDotDx := vDotDx.set! r sumVDx
+
+    { numRows := rows
+      numCols := cols
+      data := .ofFn fun idx : Fin (rows * cols) =>
+        let r := idx.val / cols
+        let c := idx.val % cols
+        let invσ := ctx.invStds[r]!
+        let g := ctx.gamma.get 0 c
+        let dx := dX.get r c
+        let mdx := meanDx[r]!
+        let vdx := vDotDx[r]!
+        let vrc := ctx.v.get r c
+        g * invσ * (dx - mdx - (vrc * (vdx / cols.toFloat)))
+      size_eq := Array.size_ofFn }
+
+/-- Elementwise (Hadamard) product of two matrices with the same shape. -/
+def hadamard (A B : ConcreteMatrix) : ConcreteMatrix :=
+  if A.numRows = B.numRows ∧ A.numCols = B.numCols then
+    { numRows := A.numRows
+      numCols := A.numCols
+      data := .ofFn fun idx : Fin (A.numRows * A.numCols) =>
+        A.data[idx.val]! * B.data[idx.val]!
+      size_eq := Array.size_ofFn }
+  else
+    ConcreteMatrix.zeros 0 0
+
+end ConcreteMatrix
+
+namespace ConcreteAttentionWeights
+
+/-- Multiply an attention matrix `A` (as weights) by a matrix `V` (n×d), returning `A·V`. -/
+def mul (A : ConcreteAttentionWeights) (V : ConcreteMatrix) : ConcreteMatrix :=
+  if A.seqLen = 0 then
+    ConcreteMatrix.zeros 0 0
+  else if V.numRows ≠ A.seqLen then
+    ConcreteMatrix.zeros A.seqLen V.numCols
+  else
+    let n := A.seqLen
+    { numRows := n
+      numCols := V.numCols
+      data := .ofFn fun idx : Fin (n * V.numCols) => Id.run do
+        let q := idx.val / V.numCols
+        let d := idx.val % V.numCols
+        let mut acc : Float := 0.0
+        let rowBase := q * n
+        for k in [:n] do
+          let a := A.weights[rowBase + k]!
+          let v := V.data[k * V.numCols + d]!
+          acc := acc + a * v
+        return acc
+      size_eq := Array.size_ofFn }
+
+end ConcreteAttentionWeights
+
+/-- Cached data for applying a single-head attention Jacobian to perturbations. -/
+structure HeadJacobianCtx where
+  head : ConcreteAttentionLayer
+  attn : ConcreteAttentionWeights
+  input : ConcreteMatrix
+  Q : ConcreteMatrix
+  K : ConcreteMatrix
+  V : ConcreteMatrix
+  KT : ConcreteMatrix
+  AV : ConcreteMatrix
+  invScale : Float
+
+namespace HeadJacobianCtx
+
+def build (head : ConcreteAttentionLayer) (input : ConcreteMatrix) (attn : ConcreteAttentionWeights) :
+    HeadJacobianCtx :=
+  let Q := input.matmul head.W_Q
+  let K := input.matmul head.W_K
+  let V := input.matmul head.W_V
+  let KT := K.transpose
+  let AV := attn.mul V
+  let invScale := 1.0 / Float.sqrt head.headDim.toFloat
+  { head := head, attn := attn, input := input, Q := Q, K := K, V := V, KT := KT, AV := AV,
+    invScale := invScale }
+
+/-- Apply the attention-head Jacobian at the cached `(input, attn)` to a perturbation `dInput`. -/
+def apply (ctx : HeadJacobianCtx) (dInput : ConcreteMatrix) : ConcreteMatrix := Id.run do
+  let n := ctx.attn.seqLen
+  if n = 0 then
+    return ConcreteMatrix.zeros 0 0
+  if dInput.numRows ≠ n || dInput.numCols ≠ ctx.head.modelDim then
+    return ConcreteMatrix.zeros n ctx.head.modelDim
+
+  let dQ := dInput.matmul ctx.head.W_Q
+  let dK := dInput.matmul ctx.head.W_K
+  let dV := dInput.matmul ctx.head.W_V
+
+  -- Value term: A · dV
+  let dAV_value := ctx.attn.mul dV
+
+  -- Pattern term: (dA) · V where dA = J_softmax(S) dS.
+  let dS1 := dQ.matmul ctx.KT
+  let dS2 := ctx.Q.matmul dK.transpose
+  let dS := (ConcreteMatrix.scale ctx.invScale (dS1.add dS2))
+
+  -- cRow[q] = ⟨p_q, dS_q⟩
+  let mut cRow : Array Float := Array.replicate n 0.0
+  for q in [:n] do
+    let rowBase := q * n
+    let mut c : Float := 0.0
+    for k in [:n] do
+      let p := ctx.attn.weights[rowBase + k]!
+      let ds := dS.data[rowBase + k]!
+      c := c + p * ds
+    cRow := cRow.set! q c
+
+  let dAV_pattern : ConcreteMatrix :=
+    { numRows := n
+      numCols := ctx.head.headDim
+      data := .ofFn fun idx : Fin (n * ctx.head.headDim) => Id.run do
+        let q := idx.val / ctx.head.headDim
+        let d := idx.val % ctx.head.headDim
+        let rowBase := q * n
+        let c := cRow[q]!
+        let mut acc : Float := 0.0
+        for k in [:n] do
+          let p := ctx.attn.weights[rowBase + k]!
+          let ds := dS.data[rowBase + k]!
+          let alpha := p * (ds - c)
+          let v := ctx.V.data[k * ctx.head.headDim + d]!
+          acc := acc + alpha * v
+        return acc
+      size_eq := Array.size_ofFn }
+
+  let dAV := dAV_value.add dAV_pattern
+  -- Project back: (dAV) · W_O
+  return dAV.matmul ctx.head.W_O
+
+end HeadJacobianCtx
+
+/-- Cached data for applying an MLP Jacobian to perturbations. -/
+structure MLPJacobianCtx where
+  layer : ConcreteMLPLayer
+  input : ConcreteMatrix
+  geluDeriv : ConcreteMatrix
+
+namespace MLPJacobianCtx
+
+def build (layer : ConcreteMLPLayer) (input : ConcreteMatrix) : MLPJacobianCtx :=
+  let hidden := (input.matmul layer.W_in).addBias layer.b_in
+  let geluDeriv := hidden.map geluDerivFloat
+  { layer := layer, input := input, geluDeriv := geluDeriv }
+
+def apply (ctx : MLPJacobianCtx) (dInput : ConcreteMatrix) : ConcreteMatrix :=
+  let dHidden := dInput.matmul ctx.layer.W_in
+  let dHiddenAct := ConcreteMatrix.hadamard dHidden ctx.geluDeriv
+  dHiddenAct.matmul ctx.layer.W_out
+
+end MLPJacobianCtx
+
+/-- Cached context for applying the residual Jacobian of one transformer block (excluding identity). -/
+structure LayerResidualJacobianCtx where
+  ln1 : ConcreteMatrix.LayerNormJacobianCtx
+  ln2 : ConcreteMatrix.LayerNormJacobianCtx
+  heads : Array HeadJacobianCtx
+  mlp? : Option MLPJacobianCtx
+
+namespace LayerResidualJacobianCtx
+
+def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx := Id.run do
+  let model := cache.model
+  let fwd := cache.forwardResult
+  let x := fwd.getLayerInput layerIdx
+  let y := fwd.getPostAttnResidual layerIdx
+
+  let ln1p := model.ln1.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+  let ln2p := model.ln2.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+
+  let ln1Ctx := ConcreteMatrix.mkLayerNormJacobianCtx x ln1p.gamma
+  let ln2Ctx := ConcreteMatrix.mkLayerNormJacobianCtx y ln2p.gamma
+
+  let attnInput := model.applyLn1 layerIdx x
+  let layerHeads := model.layers.getD layerIdx #[]
+  let layerHeadData := cache.headData.getD layerIdx #[]
+  let mut headCtxs : Array HeadJacobianCtx := Array.mkEmpty layerHeads.size
+  for h in [:layerHeads.size] do
+    if hh : h < layerHeads.size then
+      let head := layerHeads[h]'hh
+      let attn :=
+        if hd : h < layerHeadData.size then
+          (layerHeadData[h]'hd).attention
+        else
+          head.computeAttentionWeights attnInput true
+      headCtxs := headCtxs.push (HeadJacobianCtx.build head attnInput attn)
+
+  let mlp? : Option MLPJacobianCtx :=
+    if hm : layerIdx < model.mlps.size then
+      let mlp := model.mlps[layerIdx]'hm
+      let mlpInput := model.applyLn2 layerIdx y
+      some (MLPJacobianCtx.build mlp mlpInput)
+    else
+      none
+
+  return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
+
+/-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`. -/
+def apply (ctx : LayerResidualJacobianCtx) (dX : ConcreteMatrix) : ConcreteMatrix := Id.run do
+  let dU := ctx.ln1.apply dX
+  let mut dAttnSum : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
+  for hctx in ctx.heads do
+    dAttnSum := dAttnSum.add (hctx.apply dU)
+  let dY := dX.add dAttnSum
+  let dV := ctx.ln2.apply dY
+  let dMlp :=
+    match ctx.mlp? with
+    | some m => m.apply dV
+    | none => ConcreteMatrix.zeros dX.numRows dX.numCols
+  return dAttnSum.add dMlp
+
+end LayerResidualJacobianCtx
+
+private def deterministicInitVec (rows cols layerIdx : Nat) : ConcreteMatrix :=
+  if rows = 0 || cols = 0 then
+    ConcreteMatrix.zeros rows cols
+  else
+    let n := rows * cols
+    let idx := ((layerIdx + 1) * 2654435761) % n
+    { numRows := rows
+      numCols := cols
+      data := .ofFn fun i : Fin n => if i.val = idx then 1.0 else 0.0
+      size_eq := Array.size_ofFn }
+
+private def normalizeFrob (X : ConcreteMatrix) : ConcreteMatrix :=
+  let n := X.frobeniusNorm
+  if n ≤ 0.0 || Float.isNaN n || Float.isInf n then
+    X
+  else
+    ConcreteMatrix.scale (1.0 / n) X
+
+/-- Rigorous (in exact real arithmetic) lower bound on `‖J_resid‖₂` from `k` Krylov steps. -/
+def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) (k : Nat := 4) :
+    Float := Id.run do
+  let x := cache.forwardResult.getLayerInput layerIdx
+  let rows := x.numRows
+  let cols := x.numCols
+  if rows = 0 || cols = 0 then
+    return 0.0
+
+  let ctx := LayerResidualJacobianCtx.build cache layerIdx
+  let mut v := deterministicInitVec rows cols layerIdx
+  let mut best : Float := 0.0
+  for _ in [:k] do
+    let vNorm := v.frobeniusNorm
+    if vNorm ≤ 0.0 || Float.isNaN vNorm || Float.isInf vNorm then
+      break
+    let w := ctx.apply v
+    let wNorm := w.frobeniusNorm
+    let r : Float := wNorm / vNorm
+    if r > best then
+      best := r
+    if wNorm ≤ 0.0 || Float.isNaN wNorm || Float.isInf wNorm then
+      break
+    v := normalizeFrob w
+  return best
+
+/-! ## Adaptive bound scheduler (rigorous upper bounds, deterministic) -/
+
+inductive AdaptiveScope where
+  | layernorm
+  | all
+  deriving Repr, BEq, Inhabited
+
+structure AdaptiveSchedulerConfig where
+  targetSlack : Float := 8.0
+  maxUpgrades : Nat := 200
+  minRelImprove : Float := 0.01
+  krylovSteps : Nat := 4
+  scope : AdaptiveScope := .layernorm
+  debugMonotone : Bool := false
+  deriving Repr
+
+structure AdaptiveSchedulerStep where
+  iter : Nat
+  layerIdx : Nat
+  tierFrom : Nat
+  tierTo : Nat
+  ubBefore : Float
+  ubAfter : Float
+  lb : Float
+  slackBefore : Float
+  slackAfter : Float
+  deriving Repr
+
+structure AdaptiveSchedulerResult where
+  /-- Final per-layer rigorous upper bounds. -/
+  ub : Array Float
+  /-- Per-layer rigorous lower bounds from Krylov steps. -/
+  lb : Array Float
+  /-- Final effort tier index per layer. -/
+  tier : Array Nat
+  /-- Upgrade log (one entry per accepted upgrade). -/
+  steps : Array AdaptiveSchedulerStep
+  deriving Repr
+
+private def safeSlack (ub lb : Float) : Float :=
+  if lb ≤ 0.0 || Float.isNaN lb || Float.isInf lb then
+    Float.inf
+  else
+    ub / lb
+
+/-- Run the adaptive scheduler for per-layer norm bounds.
+
+Correctness: every `ub[l]` returned is a minimum of **rigorous** upper bound candidates.
+The adaptive logic only changes which candidates are computed; it never relaxes the final bound.
+-/
+def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConfig) :
+    AdaptiveSchedulerResult := Id.run do
+  let model := cache.model
+  let tiers := ConcreteMatrix.BoundEffort.tiers
+  let startTier : Nat := 1  -- current default behavior corresponds to tier1
+
+  -- Precompute attention-only and MLP-only factors so recomputation is localized.
+  let mut attnPart : Array Float := Array.mkEmpty model.numLayers
+  let mut mlpFactor : Array Float := Array.mkEmpty model.numLayers
+  for l in [:model.numLayers] do
+    let layerData := cache.headData.getD l #[]
+    let mut a : Float := 0.0
+    for d in layerData do
+      let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+      let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+      let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+      let patternTermUb : Float :=
+        (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
+          d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+      a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
+    attnPart := attnPart.push a
+
+    let y := cache.forwardResult.getPostAttnResidual l
+    let ln2Bound := model.ln2OpBound l y
+    let geluDerivBound : Float :=
+      let d := cache.forwardResult.mlpActDerivMax.getD l 1.7
+      if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
+    mlpFactor := mlpFactor.push (ln2Bound * geluDerivBound)
+
+  let mut lb : Array Float := Array.mkEmpty model.numLayers
+  for l in [:model.numLayers] do
+    lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps)
+
+  let computeUbAt (layerIdx tierIdx : Nat) : Float :=
+    if layerIdx ≥ model.numLayers then
+      0.0
+    else
+      let eff := tiers.getD tierIdx ConcreteMatrix.BoundEffort.tier1
+      let base := attnPart.getD layerIdx 0.0
+      if hm : layerIdx < model.mlps.size then
+        let mlp := model.mlps[layerIdx]'hm
+        let win := mlp.W_in.opNormUpperBoundRectGramEffort eff
+        let wout := mlp.W_out.opNormUpperBoundRectGramEffort eff
+        let m := mlpFactor.getD layerIdx 0.0
+        base + m * (win * wout)
+      else
+        base
+
+  -- Initialize to current default (tier1) to ensure adaptive never worsens bounds.
+  let mut tier : Array Nat := Array.replicate model.numLayers startTier
+  let mut ub : Array Float := Array.mkEmpty model.numLayers
+  for l in [:model.numLayers] do
+    let baseUb : Float :=
+      if cache.layerNormBoundsComputed then
+        cache.layerNormBounds.getD l (computeUbAt l startTier)
+      else
+        computeUbAt l startTier
+    ub := ub.push baseUb
+
+  let mut steps : Array AdaptiveSchedulerStep := #[]
+  let mut stalled : Array Bool := Array.replicate model.numLayers false
+  let mut upgradesUsed : Nat := 0
+  let epsNoise : Float := 1e-6
+
+  while upgradesUsed < cfg.maxUpgrades do
+    -- Find worst slack among layers that can still be upgraded.
+    let mut bestLayer : Nat := 0
+    let mut bestSlack : Float := 0.0
+    let mut bestUb : Float := 0.0
+    let mut found : Bool := false
+    for l in [:model.numLayers] do
+      if stalled[l]! then
+        continue
+      let t := tier[l]!
+      if t + 1 ≥ tiers.size then
+        continue
+      let s := safeSlack (ub[l]!) (lb[l]!)
+      if (!found) || s > bestSlack || (s == bestSlack && ub[l]! > bestUb) then
+        found := true
+        bestLayer := l
+        bestSlack := s
+        bestUb := ub[l]!
+
+    if !found then
+      break
+    if bestSlack ≤ cfg.targetSlack then
+      break
+
+    let l := bestLayer
+    let fromTier := tier[l]!
+    let toTier := fromTier + 1
+    let oldUb := ub[l]!
+    let newUb := computeUbAt l toTier
+    if cfg.debugMonotone && newUb > oldUb + epsNoise then
+      panic! s!"Adaptive monotonicity violated at layer {l}: old={oldUb} new={newUb}"
+
+    let relImprove : Float :=
+      if oldUb ≤ 0.0 then 0.0 else (oldUb - newUb) / oldUb
+    let oldSlack := safeSlack oldUb (lb[l]!)
+    let newSlack := safeSlack newUb (lb[l]!)
+
+    if relImprove < cfg.minRelImprove then
+      stalled := stalled.set! l true
+      -- Still record the attempted upgrade if it was requested (verbose reporting).
+      steps := steps.push
+        { iter := upgradesUsed
+          layerIdx := l
+          tierFrom := fromTier
+          tierTo := toTier
+          ubBefore := oldUb
+          ubAfter := newUb
+          lb := lb[l]!
+          slackBefore := oldSlack
+          slackAfter := newSlack }
+      upgradesUsed := upgradesUsed + 1
+      continue
+
+    tier := tier.set! l toTier
+    ub := ub.set! l (min oldUb newUb)
+    steps := steps.push
+      { iter := upgradesUsed
+        layerIdx := l
+        tierFrom := fromTier
+        tierTo := toTier
+        ubBefore := oldUb
+        ubAfter := ub[l]!
+        lb := lb[l]!
+        slackBefore := oldSlack
+        slackAfter := safeSlack (ub[l]!) (lb[l]!) }
+    upgradesUsed := upgradesUsed + 1
+
+  return { ub := ub, lb := lb, tier := tier, steps := steps }
+
 
 /-! ## Head Composition Metrics -/
 
@@ -5588,9 +6265,13 @@ def findHeuristicInductionHeadsWithCache (model : ConcreteModel)
     (target : TargetDirection)
     (minEffect : Float := 0.0)
     (minPrevTokenStrength : Float := 0.1)
-    (minInductionScore : Float := 0.05) : (Array HeuristicInductionHead × PrecomputedCache) :=
+    (minInductionScore : Float := 0.05)
+    (buildLayerNormBounds : Bool := true)
+    (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
+    (Array HeuristicInductionHead × PrecomputedCache) :=
   Id.run do
-    let cache := PrecomputedCache.build model
+    let cache := PrecomputedCache.build model (computeLayerNormBounds := buildLayerNormBounds)
+      (layerNormEffort := layerNormEffort)
     let tokens? := model.inputTokens
     let targetNorm := target.direction.vecNorm
     let candidates :=
