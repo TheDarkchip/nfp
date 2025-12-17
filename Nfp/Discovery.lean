@@ -3477,10 +3477,18 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
 def computeLayerNormBounds (cache : PrecomputedCache)
     (effort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
     Array Float := Id.run do
-  let mut out : Array Float := Array.mkEmpty cache.model.numLayers
-  for l in [:cache.model.numLayers] do
-    out := out.push (cache.layerNormBoundAt l effort)
-  out
+  let n := cache.model.numLayers
+  let useParallel := n >= 4
+  if useParallel then
+    let tasks : Array (Task Float) :=
+      .ofFn fun i : Fin n =>
+        Task.spawn (fun _ => cache.layerNormBoundAt i.val effort)
+    tasks.map Task.get
+  else
+    let mut out : Array Float := Array.mkEmpty n
+    for l in [:n] do
+      out := out.push (cache.layerNormBoundAt l effort)
+    out
 
 /-- Build a complete precomputed cache for a model.
 
@@ -4138,9 +4146,9 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let startTier : Nat := 1  -- current default behavior corresponds to tier1
 
   -- Precompute attention-only and MLP-only factors so recomputation is localized.
-  let mut attnPart : Array Float := Array.mkEmpty model.numLayers
-  let mut mlpFactor : Array Float := Array.mkEmpty model.numLayers
-  for l in [:model.numLayers] do
+  let nLayers := model.numLayers
+  let useParallelInit := nLayers >= 4
+  let computeLayerInit (l : Nat) : (Float × Float) := Id.run do
     let layerData := cache.headData.getD l #[]
     let mut a : Float := 0.0
     for d in layerData do
@@ -4151,14 +4159,25 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
         (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
           d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
       a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
-    attnPart := attnPart.push a
 
     let y := cache.forwardResult.getPostAttnResidual l
     let ln2Bound := model.ln2OpBound l y
     let geluDerivBound : Float :=
       let d := cache.forwardResult.mlpActDerivMax.getD l 1.7
       if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
-    mlpFactor := mlpFactor.push (ln2Bound * geluDerivBound)
+    let m := ln2Bound * geluDerivBound
+    return (a, m)
+
+  let init : Array (Float × Float) :=
+    if useParallelInit then
+      let tasks : Array (Task (Float × Float)) :=
+        .ofFn fun i : Fin nLayers => Task.spawn (fun _ => computeLayerInit i.val)
+      tasks.map Task.get
+    else
+      .ofFn fun i : Fin nLayers => computeLayerInit i.val
+
+  let attnPart : Array Float := init.map (·.1)
+  let mlpFactor : Array Float := init.map (·.2)
 
   let mut lb : Array Float := Array.mkEmpty model.numLayers
   let useParallelLb := model.numLayers >= 4 && cfg.krylovSteps > 0
@@ -4179,8 +4198,17 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
       let base := attnPart.getD layerIdx 0.0
       if hm : layerIdx < model.mlps.size then
         let mlp := model.mlps[layerIdx]'hm
-        let win := mlp.W_in.opNormUpperBoundRectGramEffort eff
-        let wout := mlp.W_out.opNormUpperBoundRectGramEffort eff
+        let big :=
+          mlp.W_in.numRows * mlp.W_in.numCols + mlp.W_out.numRows * mlp.W_out.numCols
+        let useParallel :=
+          big >= 200000 && tierIdx > 0
+        let (win, wout) :=
+          if useParallel then
+            let t1 := Task.spawn (fun _ => mlp.W_in.opNormUpperBoundRectGramEffort eff)
+            let t2 := Task.spawn (fun _ => mlp.W_out.opNormUpperBoundRectGramEffort eff)
+            (t1.get, t2.get)
+          else
+            (mlp.W_in.opNormUpperBoundRectGramEffort eff, mlp.W_out.opNormUpperBoundRectGramEffort eff)
         let m := mlpFactor.getD layerIdx 0.0
         base + m * (win * wout)
       else
