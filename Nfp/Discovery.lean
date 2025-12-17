@@ -3491,181 +3491,177 @@ This precomputes all attention patterns, projections, and norms once.
       (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
       PrecomputedCache := Id.run do
   let fwdResult := model.runForward causal
+  -- Parallelizing both layers and heads can lead to too many tasks; prefer layer-level parallelism.
+  let useParallelLayers := model.numLayers >= 4
   let computeLayer (l : Nat) : (Array PrecomputedHeadData × (Float × ConcreteMatrix)) := Id.run do
-    let mut layerHeadData : Array PrecomputedHeadData := #[]
     let layerInput := fwdResult.getLayerInput l
     let attnInput := model.applyLn1 l layerInput
     let inputNorm := computeInputNorm attnInput
     let ln1Bound := model.ln1OpBound l layerInput
 
-    if h : l < model.layers.size then
+    let layerHeadData : Array PrecomputedHeadData :=
+      if h : l < model.layers.size then
       let heads := model.layers[l]'h
-      layerHeadData := Array.mkEmpty heads.size
-      for h_idx in [:heads.size] do
-        if hh : h_idx < heads.size then
-          let head := heads[h_idx]'hh
-
-          -- Precompute attention weights
-          let attn := head.computeAttentionWeights attnInput causal
-          let softmaxDiag := attn.softmaxJacobianOpDiag
-          let softmaxOpBound := min softmaxDiag.opBound 0.5
-          let n := attn.seqLen
-          let mut attnFrobNormSq : Float := 0.0
-          let mut maxRowAbsSum : Float := 0.0
-          let mut colAbsSums : Array Float := Array.replicate n 0.0
-          for q in [:n] do
-            let rowBase := q * n
-            let mut rowAbsSum : Float := 0.0
-            for k in [:n] do
-              -- SAFETY: `q,k < n` by loop bounds.
-              let w := attn.weights[rowBase + k]!
-              attnFrobNormSq := attnFrobNormSq + w * w
-              let a := Float.abs w
-              rowAbsSum := rowAbsSum + a
-              colAbsSums := colAbsSums.set! k (colAbsSums[k]! + a)
-            if rowAbsSum > maxRowAbsSum then
-              maxRowAbsSum := rowAbsSum
-          let mut maxColAbsSum : Float := 0.0
+      let computeHead (hIdx : Nat) (head : ConcreteAttentionLayer) : PrecomputedHeadData := Id.run do
+        let attn := head.computeAttentionWeights attnInput causal
+        let softmaxDiag := attn.softmaxJacobianOpDiag
+        let softmaxOpBound := min softmaxDiag.opBound 0.5
+        let n := attn.seqLen
+        let mut attnFrobNormSq : Float := 0.0
+        let mut maxRowAbsSum : Float := 0.0
+        let mut colAbsSums : Array Float := Array.replicate n 0.0
+        for q in [:n] do
+          let rowBase := q * n
+          let mut rowAbsSum : Float := 0.0
           for k in [:n] do
-            let s := colAbsSums[k]!
-            if s > maxColAbsSum then
-              maxColAbsSum := s
-          let attnOneInf : Float := Float.sqrt (max 0.0 (maxRowAbsSum * maxColAbsSum))
+            let w := attn.weights[rowBase + k]!
+            attnFrobNormSq := attnFrobNormSq + w * w
+            let a := Float.abs w
+            rowAbsSum := rowAbsSum + a
+            colAbsSums := colAbsSums.set! k (colAbsSums[k]! + a)
+          if rowAbsSum > maxRowAbsSum then
+            maxRowAbsSum := rowAbsSum
+        let mut maxColAbsSum : Float := 0.0
+        for k in [:n] do
+          let s := colAbsSums[k]!
+          if s > maxColAbsSum then
+            maxColAbsSum := s
+        let attnOneInf : Float := Float.sqrt (max 0.0 (maxRowAbsSum * maxColAbsSum))
 
-          let prevTokenStrength : Float :=
-            if attn.seqLen < 2 then
-              0.0
-            else
-              Id.run do
-                let n := attn.seqLen
-                let w := attn.weights
-                let mut sum : Float := 0.0
-                for i in [:n - 1] do
-                  sum := sum + w[(i + 1) * n + i]!
-                return sum / (n - 1).toFloat
+        let prevTokenStrength : Float :=
+          if attn.seqLen < 2 then
+            0.0
+          else
+            Id.run do
+              let n := attn.seqLen
+              let w := attn.weights
+              let mut sum : Float := 0.0
+              for i in [:n - 1] do
+                sum := sum + w[(i + 1) * n + i]!
+              return sum / (n - 1).toFloat
 
-          -- Precompute projections
-          let voProj := head.valueOutputProjection
-          let qkAlign := head.queryKeyAlignment
-          -- Low-rank Gram caches for composition scoring.
-          let wqGram := head.W_Q.transpose.matmul head.W_Q
-          let wvGram := head.W_V.transpose.matmul head.W_V
-          let wkGram := head.W_K.transpose.matmul head.W_K
-          let woGram := head.W_O.matmul head.W_O.transpose
+        let voProj := head.valueOutputProjection
+        let qkAlign := head.queryKeyAlignment
+        let wqGram := head.W_Q.transpose.matmul head.W_Q
+        let wvGram := head.W_V.transpose.matmul head.W_V
+        let wkGram := head.W_K.transpose.matmul head.W_K
+        let woGram := head.W_O.matmul head.W_O.transpose
 
-          -- Precompute norms
-          let voNorm := voProj.frobeniusNorm
-          let qkNorm := qkAlign.frobeniusNorm
+        let voNorm := voProj.frobeniusNorm
+        let qkNorm := qkAlign.frobeniusNorm
 
-          -- Candidate bounds (for diagnostics + sanity checking).
-          let qkDenseSchur := qkAlign.schurNormEst
-          let qkDenseFrob := qkNorm
-          -- Tight Gram-product candidate (low-rank, 64×64):
-          -- ‖W_Q W_Kᵀ‖₂² = λ_max((W_QᵀW_Q)(W_KᵀW_K)) ≤ ‖(W_QᵀW_Q)(W_KᵀW_K)‖_∞.
-          let qkDenseGram := Float.sqrt (max 0.0 ((wqGram.matmul wkGram).infNormAbs))
-          -- Brauer/Cassini Gram candidate on a 64×64 product with matching singular values.
-          let qkSmall := head.W_K.transpose.matmul head.W_Q
-          let qkDenseBrauer := qkSmall.opNormUpperBoundDenseBrauer
-          let qkFactorSchur := head.W_Q.schurNormEst * head.W_K.schurNormEst
-          let qkFactorFrob := head.W_Q.frobeniusNorm * head.W_K.frobeniusNorm
+        let qkDenseSchur := qkAlign.schurNormEst
+        let qkDenseFrob := qkNorm
+        let qkDenseGram := Float.sqrt (max 0.0 ((wqGram.matmul wkGram).infNormAbs))
+        let qkSmall := head.W_K.transpose.matmul head.W_Q
+        let qkDenseBrauer := qkSmall.opNormUpperBoundDenseBrauer
+        let qkFactorSchur := head.W_Q.schurNormEst * head.W_K.schurNormEst
+        let qkFactorFrob := head.W_Q.frobeniusNorm * head.W_K.frobeniusNorm
 
-          let voDenseSchur := voProj.schurNormEst
-          let voDenseFrob := voNorm
-          -- Tight Gram-product candidate (low-rank, 64×64):
-          -- For `M = W_V W_O`, ‖M‖₂² = λ_max((W_VᵀW_V)(W_O W_Oᵀ)) up to reordering.
-          let voDenseGram := Float.sqrt (max 0.0 ((wvGram.matmul woGram).infNormAbs))
-          -- Brauer/Cassini Gram candidate on a 64×64 product with matching singular values.
-          let voSmall := head.W_O.matmul head.W_V
-          let voDenseBrauer := voSmall.opNormUpperBoundDenseBrauer
-          let voFactorSchur := head.W_V.schurNormEst * head.W_O.schurNormEst
-          let voFactorFrob := head.W_V.frobeniusNorm * head.W_O.frobeniusNorm
+        let voDenseSchur := voProj.schurNormEst
+        let voDenseFrob := voNorm
+        let voDenseGram := Float.sqrt (max 0.0 ((wvGram.matmul woGram).infNormAbs))
+        let voSmall := head.W_O.matmul head.W_V
+        let voDenseBrauer := voSmall.opNormUpperBoundDenseBrauer
+        let voFactorSchur := head.W_V.schurNormEst * head.W_O.schurNormEst
+        let voFactorFrob := head.W_V.frobeniusNorm * head.W_O.frobeniusNorm
 
-          -- Gram-based factor operator bounds.
-          let wqOpGram := head.W_Q.opNormUpperBoundViaGramInf
-          let wkOpGram := head.W_K.opNormUpperBoundViaGramInf
-          let qkFactorGram := wqOpGram * wkOpGram
-          let wvOpGram := head.W_V.opNormUpperBoundViaGramInf
-          let woOpGram := head.W_O.transpose.opNormUpperBoundViaGramInf
-          let voFactorGram := wvOpGram * woOpGram
-          -- Deterministic Float upper bounds for operator norms.
-          --
-          -- Each candidate is a valid upper bound in exact real arithmetic.
-          -- Taking `min` tightens deterministically (in Float arithmetic).
-          let qkOpBound :=
-            min qkDenseFrob <|
-            min qkDenseSchur <|
-            min qkFactorSchur <|
-            min qkFactorFrob <|
-            min qkFactorGram <|
-            min qkDenseGram qkDenseBrauer
-          let voOpBound :=
-            min voDenseFrob <|
-            min voDenseSchur <|
-            min voFactorSchur <|
-            min voFactorFrob <|
-            min voFactorGram <|
-            min voDenseGram voDenseBrauer
+        let wqOpGram := head.W_Q.opNormUpperBoundViaGramInf
+        let wkOpGram := head.W_K.opNormUpperBoundViaGramInf
+        let qkFactorGram := wqOpGram * wkOpGram
+        let wvOpGram := head.W_V.opNormUpperBoundViaGramInf
+        let woOpGram := head.W_O.transpose.opNormUpperBoundViaGramInf
+        let voFactorGram := wvOpGram * woOpGram
 
-          let scaleFactor := Float.sqrt head.headDim.toFloat
-          let patternBound : Float :=
-            (softmaxOpBound / scaleFactor) * inputNorm * qkOpBound * voOpBound
-          let valueNorm : Float :=
-            Float.sqrt attnFrobNormSq * voNorm
-          let ratio : Float :=
-            if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
+        let qkOpBound :=
+          min qkDenseFrob <|
+          min qkDenseSchur <|
+          min qkFactorSchur <|
+          min qkFactorFrob <|
+          min qkFactorGram <|
+          min qkDenseGram qkDenseBrauer
+        let voOpBound :=
+          min voDenseFrob <|
+          min voDenseSchur <|
+          min voFactorSchur <|
+          min voFactorFrob <|
+          min voFactorGram <|
+          min voDenseGram voDenseBrauer
 
-          let data : PrecomputedHeadData := {
-            layerIdx := l
-            headIdx := h_idx
-            attention := attn
-            prevTokenStrength := prevTokenStrength
-            softmaxJacobianOpEst := softmaxOpBound
-            softmaxRowMaxP := softmaxDiag.maxRowMaxP
-            softmaxRowTraceBound := softmaxDiag.maxRowTraceBound
-            softmaxRowMomentBound := softmaxDiag.maxRowMomentBound
-            softmaxRowGershBound := softmaxDiag.maxRowGersh
-            softmaxRowBoundUsed := softmaxDiag.maxRowBoundUsed
-            softmaxRowsFallback := softmaxDiag.numRowsFallback
-            attentionFrobeniusNormSq := attnFrobNormSq
-            attentionOneInfBound := attnOneInf
-            patternTermBoundCached := patternBound
-            valueTermNormCached := valueNorm
-            faithfulnessRatioCached := ratio
-            valueOutputProj := voProj
-            queryKeyAlign := qkAlign
-            wqGram := wqGram
-            wvGram := wvGram
-            inputNorm := inputNorm
-            ln1OpBound := ln1Bound
-            scaleFactor := scaleFactor
-            valueOutputProjNorm := voNorm
-            queryKeyAlignNorm := qkNorm
-            valueOutputProjSchurNorm := voOpBound
-            queryKeyAlignSchurNorm := qkOpBound
+        let scaleFactor := Float.sqrt head.headDim.toFloat
+        let patternBound : Float :=
+          (softmaxOpBound / scaleFactor) * inputNorm * qkOpBound * voOpBound
+        let valueNorm : Float :=
+          Float.sqrt attnFrobNormSq * voNorm
+        let ratio : Float :=
+          if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
 
-            qkDenseSchur := qkDenseSchur
-            qkDenseFrob := qkDenseFrob
-            qkDenseGram := qkDenseGram
-            qkDenseBrauer := qkDenseBrauer
-            qkFactorSchur := qkFactorSchur
-            qkFactorFrob := qkFactorFrob
+        return {
+          layerIdx := l
+          headIdx := hIdx
+          attention := attn
+          prevTokenStrength := prevTokenStrength
+          softmaxJacobianOpEst := softmaxOpBound
+          softmaxRowMaxP := softmaxDiag.maxRowMaxP
+          softmaxRowTraceBound := softmaxDiag.maxRowTraceBound
+          softmaxRowMomentBound := softmaxDiag.maxRowMomentBound
+          softmaxRowGershBound := softmaxDiag.maxRowGersh
+          softmaxRowBoundUsed := softmaxDiag.maxRowBoundUsed
+          softmaxRowsFallback := softmaxDiag.numRowsFallback
+          attentionFrobeniusNormSq := attnFrobNormSq
+          attentionOneInfBound := attnOneInf
+          patternTermBoundCached := patternBound
+          valueTermNormCached := valueNorm
+          faithfulnessRatioCached := ratio
+          valueOutputProj := voProj
+          queryKeyAlign := qkAlign
+          wqGram := wqGram
+          wvGram := wvGram
+          inputNorm := inputNorm
+          ln1OpBound := ln1Bound
+          scaleFactor := scaleFactor
+          valueOutputProjNorm := voNorm
+          queryKeyAlignNorm := qkNorm
+          valueOutputProjSchurNorm := voOpBound
+          queryKeyAlignSchurNorm := qkOpBound
 
-            wqOpGram := wqOpGram
-            wkOpGram := wkOpGram
-            qkFactorGram := qkFactorGram
+          qkDenseSchur := qkDenseSchur
+          qkDenseFrob := qkDenseFrob
+          qkDenseGram := qkDenseGram
+          qkDenseBrauer := qkDenseBrauer
+          qkFactorSchur := qkFactorSchur
+          qkFactorFrob := qkFactorFrob
 
-            voDenseSchur := voDenseSchur
-            voDenseFrob := voDenseFrob
-            voDenseGram := voDenseGram
-            voDenseBrauer := voDenseBrauer
-            voFactorSchur := voFactorSchur
-            voFactorFrob := voFactorFrob
-            wvOpGram := wvOpGram
-            woOpGram := woOpGram
-            voFactorGram := voFactorGram
-          }
+          wqOpGram := wqOpGram
+          wkOpGram := wkOpGram
+          qkFactorGram := qkFactorGram
 
-          layerHeadData := layerHeadData.push data
+          voDenseSchur := voDenseSchur
+          voDenseFrob := voDenseFrob
+          voDenseGram := voDenseGram
+          voDenseBrauer := voDenseBrauer
+          voFactorSchur := voFactorSchur
+          voFactorFrob := voFactorFrob
+          wvOpGram := wvOpGram
+          woOpGram := woOpGram
+          voFactorGram := voFactorGram
+        }
+
+      let useParallelHeads := (!useParallelLayers) && heads.size >= 4
+      if useParallelHeads then
+        let tasks : Array (Task PrecomputedHeadData) :=
+          .ofFn fun i : Fin heads.size =>
+            Task.spawn (fun _ => computeHead i.val heads[i])
+        tasks.map Task.get
+      else
+        Id.run do
+          let mut out : Array PrecomputedHeadData := Array.mkEmpty heads.size
+          for h_idx in [:heads.size] do
+            if hh : h_idx < heads.size then
+              out := out.push (computeHead h_idx (heads[h_idx]'hh))
+          return out
+      else
+        #[]
 
     let norm : Float :=
       if computeLayerNormBounds then
@@ -3700,7 +3696,7 @@ This precomputes all attention patterns, projections, and norms once.
 
   -- Pure parallelism via tasks: layer cache construction is independent once the
   -- forward pass has produced all layer inputs.
-  let useParallel := model.numLayers >= 4
+  let useParallel := useParallelLayers
   let layerResults : Array (Array PrecomputedHeadData × (Float × ConcreteMatrix)) :=
     if useParallel then
       let tasks : Array (Task (Array PrecomputedHeadData × (Float × ConcreteMatrix))) :=
@@ -4165,8 +4161,15 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     mlpFactor := mlpFactor.push (ln2Bound * geluDerivBound)
 
   let mut lb : Array Float := Array.mkEmpty model.numLayers
-  for l in [:model.numLayers] do
-    lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps)
+  let useParallelLb := model.numLayers >= 4 && cfg.krylovSteps > 0
+  if useParallelLb then
+    let tasks : Array (Task Float) :=
+      .ofFn fun i : Fin model.numLayers =>
+        Task.spawn (fun _ => layerResidualJacobianLowerBound cache i.val cfg.krylovSteps)
+    lb := tasks.map Task.get
+  else
+    for l in [:model.numLayers] do
+      lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps)
 
   let computeUbAt (layerIdx tierIdx : Nat) : Float :=
     if layerIdx ≥ model.numLayers then
