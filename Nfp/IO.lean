@@ -318,7 +318,8 @@ def loadFromText (content : String) : IO LoadResult := do
     i := i + 1
     let mut toks : Array Nat := #[]
     while i < lines.size && lines[i]!.trim != "EMBEDDINGS" do
-      toks := toks ++ parseNatLine lines[i]!
+      for t in parseNatLine lines[i]! do
+        toks := toks.push t
       i := i + 1
     if toks.size != seqLen then
       return .error s!"TOKENS length mismatch: expected {seqLen}, got {toks.size}"
@@ -337,7 +338,8 @@ def loadFromText (content : String) : IO LoadResult := do
   let mut embFloats : Array Float := #[]
   while i < lines.size && !lines[i]!.startsWith "LAYER" do
     -- SAFETY: i < lines.size guaranteed by while condition
-    embFloats := embFloats ++ parseFloatLine lines[i]!
+    for x in parseFloatLine lines[i]! do
+      embFloats := embFloats.push x
     i := i + 1
 
   let inputEmbeddings := buildMatrix seqLen modelDim embFloats
@@ -375,21 +377,24 @@ def loadFromText (content : String) : IO LoadResult := do
       i := i + 1
       let mut wqFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "W_K" do
-        wqFloats := wqFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          wqFloats := wqFloats.push x
         i := i + 1
 
       -- Parse W_K
       i := i + 1
       let mut wkFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "W_V" do
-        wkFloats := wkFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          wkFloats := wkFloats.push x
         i := i + 1
 
       -- Parse W_V
       i := i + 1
       let mut wvFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "W_O" do
-        wvFloats := wvFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          wvFloats := wvFloats.push x
         i := i + 1
 
       -- Parse W_O
@@ -398,7 +403,8 @@ def loadFromText (content : String) : IO LoadResult := do
       while i < lines.size &&
             !lines[i]!.startsWith "HEAD" &&
             !lines[i]!.startsWith "MLP" do
-        woFloats := woFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          woFloats := woFloats.push x
         i := i + 1
 
       let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats
@@ -425,7 +431,8 @@ def loadFromText (content : String) : IO LoadResult := do
     while i < lines.size &&
           !lines[i]!.startsWith "W_out" &&
           !lines[i]!.startsWith "b_in" do
-      winFloats := winFloats ++ parseFloatLine lines[i]!
+      for x in parseFloatLine lines[i]! do
+        winFloats := winFloats.push x
       i := i + 1
 
     if i >= lines.size then
@@ -438,7 +445,8 @@ def loadFromText (content : String) : IO LoadResult := do
       -- Ordering (2): parse b_in then W_out.
       i := i + 1
       while i < lines.size && !lines[i]!.startsWith "W_out" do
-        binFloats := binFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          binFloats := binFloats.push x
         i := i + 1
 
       if i >= lines.size then
@@ -446,7 +454,8 @@ def loadFromText (content : String) : IO LoadResult := do
 
       i := i + 1
       while i < lines.size && !lines[i]!.startsWith "b_out" do
-        woutFloats := woutFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          woutFloats := woutFloats.push x
         i := i + 1
     else
       -- Ordering (1): parse W_out then b_in.
@@ -455,7 +464,8 @@ def loadFromText (content : String) : IO LoadResult := do
 
       i := i + 1
       while i < lines.size && !lines[i]!.startsWith "b_in" do
-        woutFloats := woutFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          woutFloats := woutFloats.push x
         i := i + 1
 
       if i >= lines.size then
@@ -463,7 +473,8 @@ def loadFromText (content : String) : IO LoadResult := do
 
       i := i + 1
       while i < lines.size && !lines[i]!.startsWith "b_out" do
-        binFloats := binFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          binFloats := binFloats.push x
         i := i + 1
 
     -- Parse b_out
@@ -472,7 +483,8 @@ def loadFromText (content : String) : IO LoadResult := do
     while i < lines.size &&
           (if isV2 then !lines[i]!.startsWith "LN1_GAMMA"
            else !lines[i]!.startsWith "LAYER" && !lines[i]!.startsWith "UNEMBEDDING") do
-      boutFloats := boutFloats ++ parseFloatLine lines[i]!
+      for x in parseFloatLine lines[i]! do
+        boutFloats := boutFloats.push x
       i := i + 1
 
     let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
@@ -491,21 +503,24 @@ def loadFromText (content : String) : IO LoadResult := do
       i := i + 1
       let mut ln1GammaFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "LN1_BETA" do
-        ln1GammaFloats := ln1GammaFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          ln1GammaFloats := ln1GammaFloats.push x
         i := i + 1
 
       -- LN1_BETA
       i := i + 1
       let mut ln1BetaFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "LN2_GAMMA" do
-        ln1BetaFloats := ln1BetaFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          ln1BetaFloats := ln1BetaFloats.push x
         i := i + 1
 
       -- LN2_GAMMA
       i := i + 1
       let mut ln2GammaFloats : Array Float := #[]
       while i < lines.size && !lines[i]!.startsWith "LN2_BETA" do
-        ln2GammaFloats := ln2GammaFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          ln2GammaFloats := ln2GammaFloats.push x
         i := i + 1
 
       -- LN2_BETA
@@ -514,7 +529,8 @@ def loadFromText (content : String) : IO LoadResult := do
       while i < lines.size &&
             !lines[i]!.startsWith "LAYER" &&
             !lines[i]!.startsWith "LN_F_GAMMA" do
-        ln2BetaFloats := ln2BetaFloats ++ parseFloatLine lines[i]!
+        for x in parseFloatLine lines[i]! do
+          ln2BetaFloats := ln2BetaFloats.push x
         i := i + 1
 
       let ln1Params : ConcreteLayerNormParams := {
@@ -547,13 +563,15 @@ def loadFromText (content : String) : IO LoadResult := do
     i := i + 1
     let mut lnfGammaFloats : Array Float := #[]
     while i < lines.size && !lines[i]!.startsWith "LN_F_BETA" do
-      lnfGammaFloats := lnfGammaFloats ++ parseFloatLine lines[i]!
+      for x in parseFloatLine lines[i]! do
+        lnfGammaFloats := lnfGammaFloats.push x
       i := i + 1
 
     i := i + 1
     let mut lnfBetaFloats : Array Float := #[]
     while i < lines.size && !lines[i]!.startsWith "UNEMBEDDING" do
-      lnfBetaFloats := lnfBetaFloats ++ parseFloatLine lines[i]!
+      for x in parseFloatLine lines[i]! do
+        lnfBetaFloats := lnfBetaFloats.push x
       i := i + 1
 
     lnf := {
@@ -567,7 +585,8 @@ def loadFromText (content : String) : IO LoadResult := do
   i := i + 1
   let mut unembFloats : Array Float := #[]
   while i < lines.size do
-    unembFloats := unembFloats ++ parseFloatLine lines[i]!
+    for x in parseFloatLine lines[i]! do
+      unembFloats := unembFloats.push x
     i := i + 1
 
   let unembedding := buildMatrix modelDim vocabSize unembFloats
