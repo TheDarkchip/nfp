@@ -95,8 +95,174 @@ def consumeMaxAbs
   let step := fun (m : Rat) (x : Rat) => max m (ratAbs x)
   foldRatTokens lines start n 0 step
 
+/-- Consume a vector of length `n` into an array. Returns `(xs, nextLineIndex)`. -/
+def consumeVector
+    (lines : Array String)
+    (start : Nat)
+    (n : Nat) : Except String (Array Rat × Nat) :=
+  let step := fun (acc : Array Rat) (x : Rat) => acc.push x
+  foldRatTokens lines start n (Array.mkEmpty n) step
+
+private def maxAbsOfVector (xs : Array Rat) : Rat :=
+  xs.foldl (fun acc x => max acc (ratAbs x)) 0
+
+private def addVecIntervals (a b : Array RatInterval) : Array RatInterval :=
+  Id.run do
+    if a.size ≠ b.size then
+      return a
+    let mut out : Array RatInterval := Array.mkEmpty a.size
+    for i in [:a.size] do
+      out := out.push (RatInterval.add a[i]! b[i]!)
+    return out
+
+private def addConstVec (a : Array RatInterval) (b : Array Rat) : Array RatInterval :=
+  Id.run do
+    if a.size ≠ b.size then
+      return a
+    let mut out : Array RatInterval := Array.mkEmpty a.size
+    for i in [:a.size] do
+      out := out.push (RatInterval.add a[i]! (RatInterval.const b[i]!))
+    return out
+
+private def unionVecIntervals (a b : Array RatInterval) : Array RatInterval :=
+  Id.run do
+    if a.size ≠ b.size then
+      return a
+    let mut out : Array RatInterval := Array.mkEmpty a.size
+    for i in [:a.size] do
+      out := out.push (RatInterval.union a[i]! b[i]!)
+    return out
+
+private def zeroIntervals (n : Nat) : Array RatInterval :=
+  Array.replicate n (RatInterval.const 0)
+
+private def unionRows (rows : Array (Array RatInterval)) (dim : Nat) : Array RatInterval :=
+  Id.run do
+    if rows.isEmpty then
+      return zeroIntervals dim
+    let mut out : Array RatInterval := zeroIntervals dim
+    let r0 := rows[0]!
+    if r0.size = dim then
+      out := r0
+    for r in rows do
+      if r.size = dim then
+        out := unionVecIntervals out r
+    return out
+
+private def layerNormRowApprox (row : Array RatInterval) (gamma beta : Array Rat) (eps : Rat) :
+    (Array RatInterval × Rat) :=
+  if row.size = 0 || gamma.size ≠ row.size || beta.size ≠ row.size then
+    (row, 0)
+  else
+    Id.run do
+      let μ := RatInterval.mean row
+      let varLB := RatInterval.varianceLowerBound row
+      let invσUpper : Rat :=
+        if varLB ≤ 0 then
+          0
+        else
+          layerNormOpBoundLocal 1 varLB eps
+      let mut out : Array RatInterval := Array.mkEmpty row.size
+      for i in [:row.size] do
+        let centered := RatInterval.sub row[i]! μ
+        let scaled := RatInterval.scale (gamma[i]! * invσUpper) centered
+        out := out.push (RatInterval.add scaled (RatInterval.const beta[i]!))
+      return (out, varLB)
+
+private def minVarAcrossRows (rows : Array (Array RatInterval)) : Rat :=
+  Id.run do
+    let mut best : Option Rat := none
+    for r in rows do
+      let v := RatInterval.varianceLowerBound r
+      best := some (match best with | none => v | some b => min b v)
+    best.getD 0
+
+private def findLineIdxFrom (lines : Array String) (start : Nat) (p : String → Bool) : Option Nat :=
+  Id.run do
+    let mut i := start
+    while i < lines.size do
+      if p (lines[i]!.trim) then
+        return some i
+      i := i + 1
+    return none
+
+private def skipUntil (lines : Array String) (start : Nat) (p : String → Bool) : Nat :=
+  match findLineIdxFrom lines start p with
+  | some i => i
+  | none => lines.size
+
+private def skipBlankLines (lines : Array String) (start : Nat) : Nat :=
+  Id.run do
+    let mut i := start
+    while i < lines.size && lines[i]!.trim.isEmpty do
+      i := i + 1
+    return i
+
+private def consumeMatrixSkip
+    (lines : Array String)
+    (start : Nat)
+    (rows cols : Nat) : Except String Nat :=
+  match foldRatTokens lines start (rows * cols) () (fun _ _ => ()) with
+  | .error e => .error e
+  | .ok (_, next) => .ok next
+
+/-!
+Streaming multiplication for row-major stored matrices.
+
+The `.nfpt` format stores matrices row-major with `rows` = input dimension and `cols` = output
+dimension in the repo's row-vector convention: `y = x · W` where `W : rows×cols`.
+
+We compute `y` in a single pass over weights by accumulating contributions row-by-row:
+for each input index `i`, parse the `i`-th row `w_{i,*}` and add `w_{i,j} * x[i]` into `y[j]`.
+This never stores the matrix.
+-/
+private def consumeMatrixMulAndNormInf
+    (lines : Array String)
+    (start : Nat)
+    (rows cols : Nat)
+    (input : Array RatInterval) : Except String (Array RatInterval × Rat × Nat) :=
+  Id.run do
+    if input.size ≠ rows then
+      return .error "input interval dimension mismatch"
+    let mut out : Array RatInterval := zeroIntervals cols
+    let mut iLine := start
+    let mut remaining := rows * cols
+    let mut idx : Nat := 0
+    let mut curRowAbs : Rat := 0
+    let mut maxRowAbs : Rat := 0
+
+    while remaining > 0 do
+      if iLine ≥ lines.size then
+        return .error "unexpected end of file while reading matrix"
+      let line := lines[iLine]!.trim
+      iLine := iLine + 1
+      if line.isEmpty then
+        pure ()
+      else
+        let toks := line.splitOn " " |>.filter (· ≠ "")
+        for t in toks do
+          if remaining = 0 then
+            break
+          match parseRat t with
+          | .error e => return .error e
+          | .ok w =>
+              let r := idx / cols
+              let c := idx % cols
+              curRowAbs := curRowAbs + ratAbs w
+              -- out[c] += w * input[r]
+              let term := RatInterval.scale w (input[r]!)
+              out := out.set! c (RatInterval.add (out[c]!) term)
+              idx := idx + 1
+              remaining := remaining - 1
+              if c + 1 = cols then
+                maxRowAbs := max maxRowAbs curRowAbs
+                curRowAbs := 0
+    -- Account for a partial last row (should not happen if rows*cols consumed).
+    maxRowAbs := max maxRowAbs curRowAbs
+    return .ok (out, maxRowAbs, iLine)
+
 /-- Soundly compute conservative per-layer amplification constants from a `.nfpt` file. -/
-def certifyModelFile
+def certifyModelFileGlobal
     (path : System.FilePath)
     (eps : Rat := defaultEps)
     (actDerivBound : Rat := defaultActDerivBound)
@@ -150,47 +316,7 @@ def certifyModelFile
   let some dh := headDim | return .error "missing head_dim"
   let some dhid := hiddenDim | return .error "missing hidden_dim"
 
-  -- Optional: local variance lower bound from an input region (LayerNorm at layer 0 only for now).
-  let inputVarLowerMin? : Option Rat ←
-    match inputPath? with
-    | none => pure none
-    | some ip => do
-        let contents ← IO.FS.readFile ip
-        let ilines : Array String := (contents.splitOn "\n").toArray
-        -- Find EMBEDDINGS marker then stream `seqLen*modelDim` entries.
-        let some n := seqLen
-          | return .error "missing seq_len in model header (needed for --input)"
-        let mut j : Nat := 0
-        while j < ilines.size && ilines[j]!.trim.isEmpty do
-          j := j + 1
-        if !(j < ilines.size) then
-          return .error "empty input file"
-        let headerTag := ilines[j]!.trim
-        if !headerTag.startsWith "NFP_TEXT" then
-          return .error s!"unexpected input header '{headerTag}'"
-        j := j + 1
-        -- skip header lines
-        while j < ilines.size && !(ilines[j]!.trim = "EMBEDDINGS") do
-          j := j + 1
-        if !(j < ilines.size) then
-          return .error "Missing EMBEDDINGS section in input file"
-        j := j + 1
-
-        let step :=
-          fun (st : (Array Rat × Nat × Rat)) (x : Rat) =>
-            let (row, col, minVar) := st
-            let row := row.push x
-            let col := col + 1
-            if col = d then
-              let varLower := varianceLowerBoundLinfBall row inputDelta
-              let minVar := if minVar = 0 then varLower else min minVar varLower
-              (#[], 0, minVar)
-            else
-              (row, col, minVar)
-
-        match foldRatTokens ilines j (n * d) (#[], 0, (0 : Rat)) step with
-        | .error e => return .error e
-        | .ok ((_, _, minVar), _) => pure (some minVar)
+  let inputVarLowerMin? : Option Rat := none
 
   -- Accumulators
   let mut ln1GammaMax : Array Rat := Array.replicate L 1
@@ -303,5 +429,359 @@ def certifyModelFile
     layers := layers
     totalAmplificationFactor := totalAmp
   }
+
+/-- Parse input `EMBEDDINGS` from an `.nfpt` file and return intervals `xᵢ ∈ [xᵢ-δ, xᵢ+δ]`
+as an array of rows (`seqLen` rows, each of length `modelDim`). -/
+private def loadEmbeddingsIntervals
+    (path : System.FilePath) (seqLen modelDim : Nat) (delta : Rat) :
+    IO (Except String (Array (Array RatInterval))) := do
+  let contents ← IO.FS.readFile path
+  let lines : Array String := (contents.splitOn "\n").toArray
+  let mut i : Nat := 0
+  while i < lines.size && lines[i]!.trim.isEmpty do
+    i := i + 1
+  if !(i < lines.size) then
+    return .error "empty input file"
+  let headerTag := lines[i]!.trim
+  if !headerTag.startsWith "NFP_TEXT" then
+    return .error s!"unexpected input header '{headerTag}'"
+  i := i + 1
+  -- Scan to EMBEDDINGS (optionally skipping TOKENS).
+  i := skipUntil lines i (fun s => s = "EMBEDDINGS")
+  if !(i < lines.size) then
+    return .error "Missing EMBEDDINGS section in input file"
+  i := i + 1
+
+  let step :=
+    fun (st : (Array (Array RatInterval) × Array RatInterval)) (x : Rat) =>
+      let (rows, cur) := st
+      let cur := cur.push { lo := x - delta, hi := x + delta }
+      if cur.size = modelDim then
+        (rows.push cur, #[])
+      else
+        (rows, cur)
+  match foldRatTokens lines i (seqLen * modelDim) (#[], #[]) step with
+  | .error e => return .error e
+  | .ok ((rows, cur), _) =>
+      if cur.size ≠ 0 then
+        return .error "EMBEDDINGS parse ended mid-row"
+      if rows.size ≠ seqLen then
+        return .error s!"EMBEDDINGS length mismatch: expected {seqLen} rows, got {rows.size}"
+      return .ok rows
+
+private structure LayerNormParams where
+  gamma : Array Rat
+  beta : Array Rat
+
+private def collectLayerNormParams
+    (lines : Array String) (L d : Nat) :
+    Except String (Array LayerNormParams × Array LayerNormParams) :=
+  Id.run do
+    let defP : LayerNormParams := { gamma := Array.replicate d 1, beta := Array.replicate d 0 }
+    let mut ln1 : Array LayerNormParams :=
+      Array.replicate L defP
+    let mut ln2 : Array LayerNormParams :=
+      Array.replicate L defP
+    let mut i : Nat := 0
+    let mut curLayer : Nat := 0
+    while i < lines.size do
+      let s := lines[i]!.trim
+      if s.startsWith "LAYER" then
+        let parts := s.splitOn " " |>.filter (· ≠ "")
+        if parts.length >= 2 then
+          curLayer := (parts[1]!).toNat? |>.getD curLayer
+        i := i + 1
+      else if s = "LN1_GAMMA" then
+        match consumeVector lines (i + 1) d with
+        | .error e => return .error e
+        | .ok (xs, next) =>
+            if curLayer < L then
+              let old := ln1.getD curLayer defP
+              ln1 := ln1.set! curLayer { old with gamma := xs }
+            i := next
+      else if s = "LN1_BETA" then
+        match consumeVector lines (i + 1) d with
+        | .error e => return .error e
+        | .ok (xs, next) =>
+            if curLayer < L then
+              let old := ln1.getD curLayer defP
+              ln1 := ln1.set! curLayer { old with beta := xs }
+            i := next
+      else if s = "LN2_GAMMA" then
+        match consumeVector lines (i + 1) d with
+        | .error e => return .error e
+        | .ok (xs, next) =>
+            if curLayer < L then
+              let old := ln2.getD curLayer defP
+              ln2 := ln2.set! curLayer { old with gamma := xs }
+            i := next
+      else if s = "LN2_BETA" then
+        match consumeVector lines (i + 1) d with
+        | .error e => return .error e
+        | .ok (xs, next) =>
+            if curLayer < L then
+              let old := ln2.getD curLayer defP
+              ln2 := ln2.set! curLayer { old with beta := xs }
+            i := next
+      else
+        i := i + 1
+    return .ok (ln1, ln2)
+
+/-- Local (input-dependent) certificate path using streaming interval propagation.
+
+This is conservative in two key ways to remain streaming/memory-safe:
+- it keeps per-token residual intervals (`seqLen×modelDim`) so LayerNorm variances are meaningful,
+- but it uses **union boxes** for attention/MLP linear maps to avoid `seqLen×hiddenDim` blowups.
+-/
+private def certifyModelFileLocal
+    (path : System.FilePath)
+    (eps : Rat)
+    (actDerivBound : Rat)
+    (inputPath : System.FilePath)
+    (inputDelta : Rat) : IO (Except String ModelCert) := do
+  let contents ← IO.FS.readFile path
+  let lines : Array String := (contents.splitOn "\n").toArray
+
+  -- Header
+  let mut i : Nat := 0
+  while i < lines.size && lines[i]!.trim.isEmpty do
+    i := i + 1
+  if !(i < lines.size) then
+    return .error "empty model file"
+  let headerTag := lines[i]!.trim
+  if !headerTag.startsWith "NFP_TEXT" then
+    return .error s!"unexpected header '{headerTag}'"
+  i := i + 1
+
+  let mut numLayers : Option Nat := none
+  let mut numHeads : Option Nat := none
+  let mut modelDim : Option Nat := none
+  let mut headDim : Option Nat := none
+  let mut hiddenDim : Option Nat := none
+  let mut seqLen : Option Nat := none
+  while i < lines.size do
+    let line := lines[i]!.trim
+    if line.isEmpty then
+      i := i + 1
+      break
+    match parseHeaderLine line with
+    | none => i := i + 1
+    | some (k, v) =>
+        match k with
+        | "num_layers" => numLayers := v.toNat?
+        | "num_heads" => numHeads := v.toNat?
+        | "model_dim" => modelDim := v.toNat?
+        | "head_dim" => headDim := v.toNat?
+        | "hidden_dim" => hiddenDim := v.toNat?
+        | "seq_len" => seqLen := v.toNat?
+        | _ => pure ()
+        i := i + 1
+
+  let some L := numLayers | return .error "missing num_layers"
+  let some H := numHeads | return .error "missing num_heads"
+  let some d := modelDim | return .error "missing model_dim"
+  let some dh := headDim | return .error "missing head_dim"
+  let some dhid := hiddenDim | return .error "missing hidden_dim"
+  let some n := seqLen | return .error "missing seq_len"
+
+  -- Prepass: collect LN parameters.
+  let (ln1Params, ln2Params) ←
+    match collectLayerNormParams lines L d with
+    | .error e => return .error e
+    | .ok x => pure x
+
+  let defLn : LayerNormParams := { gamma := Array.replicate d 1, beta := Array.replicate d 0 }
+
+  -- Input: per-token residual intervals.
+  let residual0 ← loadEmbeddingsIntervals inputPath n d inputDelta
+  match residual0 with
+  | .error e => return .error e
+  | .ok residualRows0 =>
+      let mut residualRows := residualRows0
+
+      -- Start scanning at first layer marker.
+      let mut pos : Nat := skipUntil lines 0 (fun s => s.startsWith "LAYER")
+
+      let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
+      let mut totalAmp : Rat := 1
+
+      for l in [:L] do
+        -- Ensure we're at the next layer.
+        pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
+        if pos ≥ lines.size then
+          return .error s!"unexpected end of file while scanning layer {l}"
+        pos := pos + 1
+
+        -- LN1: compute per-row outputs (for union) and min variance LB (for Jacobian bound).
+        let p1 := ln1Params.getD l defLn
+        let mut ln1OutRows : Array (Array RatInterval) := Array.mkEmpty n
+        let mut ln1VarMin : Option Rat := none
+        for r in residualRows do
+          let (y, v) := layerNormRowApprox r p1.gamma p1.beta eps
+          ln1OutRows := ln1OutRows.push y
+          ln1VarMin := some (match ln1VarMin with | none => v | some b => min b v)
+        let ln1VarLB := ln1VarMin.getD 0
+        let ln1MaxAbsGamma := maxAbsOfVector p1.gamma
+        let ln1Bound :=
+          if ln1VarLB > 0 then
+            layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+          else
+            layerNormOpBoundConservative ln1MaxAbsGamma eps
+        let ln1Union := unionRows ln1OutRows d
+
+        -- Attention (streaming): use union input box.
+        let mut attnUnion : Array RatInterval := zeroIntervals d
+        let mut attnCoeff : Rat := 0
+        for _h in [:H] do
+          pos := skipBlankLines lines pos
+          if !(pos < lines.size) then
+            return .error "unexpected end of file while scanning HEAD"
+          if !(lines[pos]!.trim.startsWith "HEAD") then
+            return .error "expected HEAD marker before per-head matrices"
+          pos := pos + 1
+
+          pos := skipBlankLines lines pos
+          if !(pos < lines.size && lines[pos]!.trim = "W_Q") then
+            return .error "missing W_Q"
+          match consumeMatrixSkip lines (pos + 1) d dh with
+          | .error e => return .error e
+          | .ok next => pos := next
+
+          pos := skipBlankLines lines pos
+          if !(pos < lines.size && lines[pos]!.trim = "W_K") then
+            return .error "missing W_K"
+          match consumeMatrixSkip lines (pos + 1) d dh with
+          | .error e => return .error e
+          | .ok next => pos := next
+
+          pos := skipBlankLines lines pos
+          if !(pos < lines.size && lines[pos]!.trim = "W_V") then
+            return .error "missing W_V"
+          match consumeMatrixMulAndNormInf lines (pos + 1) d dh ln1Union with
+          | .error e => return .error e
+          | .ok (vHidden, nv, nextV) =>
+              pos := nextV
+
+              pos := skipBlankLines lines pos
+              if !(pos < lines.size && lines[pos]!.trim = "W_O") then
+                return .error "missing W_O"
+              match consumeMatrixMulAndNormInf lines (pos + 1) dh d vHidden with
+              | .error e => return .error e
+              | .ok (vOut, no, nextO) =>
+                  pos := nextO
+                  attnUnion := addVecIntervals attnUnion vOut
+                  attnCoeff := attnCoeff + nv * no
+
+        residualRows := residualRows.map (fun r => addVecIntervals r attnUnion)
+
+        -- LN2: compute per-row outputs and min variance LB.
+        let p2 := ln2Params.getD l defLn
+        let mut ln2OutRows : Array (Array RatInterval) := Array.mkEmpty n
+        let mut ln2VarMin : Option Rat := none
+        for r in residualRows do
+          let (y, v) := layerNormRowApprox r p2.gamma p2.beta eps
+          ln2OutRows := ln2OutRows.push y
+          ln2VarMin := some (match ln2VarMin with | none => v | some b => min b v)
+        let ln2VarLB := ln2VarMin.getD 0
+        let ln2MaxAbsGamma := maxAbsOfVector p2.gamma
+        let ln2Bound :=
+          if ln2VarLB > 0 then
+            layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
+          else
+            layerNormOpBoundConservative ln2MaxAbsGamma eps
+        let ln2Union := unionRows ln2OutRows d
+
+        -- MLP (streaming): W_in, b_in, W_out, b_out.
+        pos := skipBlankLines lines pos
+        if !(pos < lines.size && lines[pos]!.trim = "MLP") then
+          return .error "missing MLP section"
+        pos := pos + 1
+
+        pos := skipBlankLines lines pos
+        if !(pos < lines.size && lines[pos]!.trim = "W_in") then
+          return .error "missing W_in"
+        match consumeMatrixMulAndNormInf lines (pos + 1) d dhid ln2Union with
+        | .error e => return .error e
+        | .ok (hidden, nWin, nextWin) =>
+            pos := nextWin
+
+            pos := skipBlankLines lines pos
+            if !(pos < lines.size && lines[pos]!.trim = "b_in") then
+              return .error "missing b_in"
+            match consumeVector lines (pos + 1) dhid with
+            | .error e => return .error e
+            | .ok (bin, nextBin) =>
+                pos := nextBin
+
+                let hiddenB := addConstVec hidden bin
+                let actHidden := hiddenB.map RatInterval.geluOverapprox
+
+                pos := skipBlankLines lines pos
+                if !(pos < lines.size && lines[pos]!.trim = "W_out") then
+                  return .error "missing W_out"
+                match consumeMatrixMulAndNormInf lines (pos + 1) dhid d actHidden with
+                | .error e => return .error e
+                | .ok (mlpOut0, nWout, nextWout) =>
+                    pos := nextWout
+                    pos := skipBlankLines lines pos
+                    if !(pos < lines.size && lines[pos]!.trim = "b_out") then
+                      return .error "missing b_out"
+                    match consumeVector lines (pos + 1) d with
+                    | .error e => return .error e
+                    | .ok (bout, nextBout) =>
+                        pos := nextBout
+                        let mlpOut := addConstVec mlpOut0 bout
+                        residualRows := residualRows.map (fun r => addVecIntervals r mlpOut)
+
+                        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+                        let mlpCoeff := nWin * actDerivBound * nWout
+                        let mlpW := ln2Bound * mlpCoeff
+                        let C := attnW + mlpW
+
+                        layers := layers.push {
+                          layerIdx := l
+                          ln1MaxAbsGamma := ln1MaxAbsGamma
+                          ln2MaxAbsGamma := ln2MaxAbsGamma
+                          ln1VarianceLowerBound? := some ln1VarLB
+                          ln2VarianceLowerBound? := some ln2VarLB
+                          ln1Bound := ln1Bound
+                          ln2Bound := ln2Bound
+                          attnWeightContribution := attnW
+                          mlpWeightContribution := mlpW
+                          C := C
+                        }
+                        totalAmp := totalAmp * (1 + C)
+                        pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
+
+      return .ok {
+        modelPath := path.toString
+        inputPath? := some inputPath.toString
+        inputDelta := inputDelta
+        eps := eps
+        actDerivBound := actDerivBound
+        softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
+        layers := layers
+        totalAmplificationFactor := totalAmp
+      }
+
+/-- Soundly compute certification bounds from a `.nfpt` model file.
+
+If an input is provided via `inputPath?`, the certificate uses streaming rational IBP to obtain
+local (input-dependent) LayerNorm variance lower bounds at every layer.
+Otherwise it falls back to the weight-only global certificate.
+-/
+def certifyModelFile
+    (path : System.FilePath)
+    (eps : Rat := defaultEps)
+    (actDerivBound : Rat := defaultActDerivBound)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+  match inputPath? with
+  | none =>
+      certifyModelFileGlobal path eps actDerivBound (inputPath? := none) (inputDelta := inputDelta)
+  | some ip =>
+      if inputDelta < 0 then
+        return .error "delta must be nonnegative"
+      certifyModelFileLocal path eps actDerivBound ip inputDelta
 
 end Nfp.Sound
