@@ -31,7 +31,7 @@ lake update
 lake build
 ```
 
-Run the CLI:
+Run the CLI (see subcommands below):
 
 ```bash
 lake exe nfp --help
@@ -64,56 +64,61 @@ The main entrypoint is:
 lake exe nfp <command> [args] [flags]
 ```
 
-### `induction`
-
-Searches for **candidate induction circuits** and prints ranked head pairs along with rigorous error terms.
-
-```bash
-lake exe nfp induction models/gpt2_rigorous.nfpt -v -d
-```
-
-Useful flags:
-
-- `-v` / `--verbose`: more internal metrics.
-- `-d` / `--diagnostics`: print extra bound decompositions and comparisons.
-
-The output contains:
-
-- A ranked list of head pairs (e.g. `L2H2 -> L5H5`).
-- A “rigorous” **Error** composed from per-head ε terms.
-- When diagnostics are enabled, a section like:
-  - `LAYER NORM DIAGNOSTICS (PI vs rigorous)`
-    - “PI” (power iteration) is *diagnostics only*.
-    - “rigorous ub” is the bound actually used.
-
 ### `analyze`
 
-Analyzes a specific head pair and (optionally) prints a detailed decomposition of each bound.
+Runs the default end-to-end analysis for the supplied model and prints a human-readable report.
 
 ```bash
 lake exe nfp analyze models/gpt2_rigorous.nfpt \
-  --l1 2 --h1 2 --l2 5 --h2 5 -v -d
+  --threshold 0.1 --verify --verbose --output report.txt
 ```
 
-### `rope`
+- `--threshold` (`-t`) sets the minimum effect threshold used for verification (default: `0.1`).
+- `--verify` optionally runs causal verification using model-provided inputs.
+- `--verbose` prints model metadata and per-stage status messages.
+- `--output` (`-o`) writes the report to a file instead of stdout.
 
-Computes (and prints) RoPE-related bounds used by the certificate/checking pipeline.
+### `induction`
+
+Searches for **candidate induction circuits** and ranks head pairs by a mechanical score.
 
 ```bash
-lake exe nfp rope models/gpt2_rigorous.nfpt
+lake exe nfp induction models/gpt2_rigorous.nfpt \
+  --threshold 0.0 --diagnostics --diagTop 5 --adaptive --verbose
 ```
+
+- `--threshold` (`-t`) sets the minimum normalized effect (default: `0.0`).
+- `--correct` / `--incorrect` manually pick logit IDs for the induction target (otherwise the target is inferred from tokens).
+- `--verify` runs causal verification via head ablation on the top-10 candidates.
+- `--diagnostics` enables bound breakdowns; `--diagTop` controls how many candidates receive diagnostics (default: `5`).
+- `--adaptive` turns on the adaptive bound scheduler. Tuning flags include `--targetSlack` (default: `8.0`),
+  `--maxUpgrades` (default: `200`), `--minRelImprove` (default: `0.01`), `--krylovSteps` (default: `4`),
+  and `--adaptiveScope` (`layernorm | all`, default: `layernorm`).
+- `--verbose` prints detailed scoring metrics for each candidate.
 
 ### `certify`
 
-Generates a conservative **certificate report** for a model (RoPE error, activation derivative bounds, etc.).
+Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
   --eps 1e-5 --actDeriv 2 --output cert.txt
 ```
 
-- `--output` writes the report to a file (otherwise it prints to stdout).
-- This is meant as a bridge between floating-point computation and a checkable “sound mode” story.
+- `--eps` sets the LayerNorm ε (default: `1e-5`).
+- `--actDeriv` bounds the activation derivative (default: `2`).
+- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
+
+### `rope`
+
+Generates RoPE-related linearization bounds used by the certificate/checking pipeline.
+
+```bash
+lake exe nfp rope --seqLen 4 --pairs 8
+```
+
+- `--seqLen` instantiates the bound at the given sequence length (default: `4`).
+- `--pairs` sets the number of RoPE pairs; the dimension is `2 * pairs` (default: `8`).
 
 ## What “rigorous” means here
 
