@@ -140,7 +140,11 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   IO.println s!"    wqOpGram       = {fmtFloat data.wqOpGram}"
   IO.println s!"    wkOpGram       = {fmtFloat data.wkOpGram}"
   IO.println s!"    qkFactorGram   = {fmtFloat data.qkFactorGram}"
-  IO.println s!"    qkCandidates   = denseSchur={fmtFloat data.qkDenseSchur}"
+  let qkDenseSchurStr : String :=
+    match data.diag? with
+    | some diag => fmtFloat diag.qkDenseSchur.get
+    | none => "n/a"
+  IO.println s!"    qkCandidates   = denseSchur={qkDenseSchurStr}"
   IO.println s!"                  = denseFrob={fmtFloat data.qkDenseFrob}"
   IO.println s!"                  = denseGram={fmtFloat data.qkDenseGram}"
   IO.println s!"                  = denseBrauer={fmtFloat data.qkDenseBrauer}"
@@ -155,7 +159,11 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   IO.println s!"    wvOpGram       = {fmtFloat data.wvOpGram}"
   IO.println s!"    woOpGram       = {fmtFloat data.woOpGram}"
   IO.println s!"    voFactorGram   = {fmtFloat data.voFactorGram}"
-  IO.println s!"    voCandidates   = denseSchur={fmtFloat data.voDenseSchur}"
+  let voDenseSchurStr : String :=
+    match data.diag? with
+    | some diag => fmtFloat diag.voDenseSchur.get
+    | none => "n/a"
+  IO.println s!"    voCandidates   = denseSchur={voDenseSchurStr}"
   IO.println s!"                  = denseFrob={fmtFloat data.voDenseFrob}"
   IO.println s!"                  = denseGram={fmtFloat data.voDenseGram}"
   IO.println s!"                  = denseBrauer={fmtFloat data.voDenseBrauer}"
@@ -338,6 +346,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
       let (heads, cache) :=
         findHeuristicInductionHeadsWithCache model target minEffect (minInductionScore := 0.01)
           (buildLayerNormBounds := buildLayerNormBounds)
+          (storeDiagnostics := diagnostics)
       let top := heads.take 50
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
 

@@ -1367,13 +1367,161 @@ structure ConcreteAttentionLayer where
 
 namespace ConcreteAttentionLayer
 
-/-- Compute the value-output projection W_V · W_O. -/
+/-- Compute the value-output projection `W_V · W_O` (dense `modelDim×modelDim`).
+
+This is **diagnostics-only** on the main discovery/verification paths. Prefer using
+small `headDim×headDim` Gram matrices and trace identities to compute scalar bounds.
+-/
 def valueOutputProjection (layer : ConcreteAttentionLayer) : ConcreteMatrix :=
   layer.W_V.matmul layer.W_O
 
-/-- Compute the query-key alignment W_Q · W_K^T. -/
+/-- Compute the query-key alignment `W_Q · W_Kᵀ` (dense `modelDim×modelDim`).
+
+This is **diagnostics-only** on the main discovery/verification paths. Prefer using
+small `headDim×headDim` Gram matrices and trace identities to compute scalar bounds.
+-/
 def queryKeyAlignment (layer : ConcreteAttentionLayer) : ConcreteMatrix :=
   layer.W_Q.matmul layer.W_K.transpose
+
+/-! ### No-dense scalar bounds for `W_Q·W_Kᵀ` and `W_V·W_O`
+
+We avoid materializing `modelDim×modelDim` products by working with `headDim×headDim` Grams.
+
+Key trace identities (for real matrices):
+- For `W_V : d×h` and `W_O : h×d`, with `vo = W_V·W_O`:
+  `‖vo‖_F² = trace((W_VᵀW_V) · (W_O W_Oᵀ))`.
+- For `W_Q : d×h` and `W_K : d×h`, with `qk = W_Q·W_Kᵀ`:
+  `‖qk‖_F² = trace((W_QᵀW_Q) · (W_KᵀW_K))`.
+
+These let us compute exact (in ℝ, given the Float-evaluated entries) Frobenius candidates
+using only `headDim×headDim` matrices.
+-/
+
+structure NoDenseProductBounds where
+  /-- `W_QᵀW_Q` (headDim×headDim). -/
+  wqGram : ConcreteMatrix
+  /-- `W_KᵀW_K` (headDim×headDim). -/
+  wkGram : ConcreteMatrix
+  /-- `W_VᵀW_V` (headDim×headDim). -/
+  wvGram : ConcreteMatrix
+  /-- `W_O W_Oᵀ` (headDim×headDim). -/
+  woGram : ConcreteMatrix
+
+  /-- Frobenius-squared of `W_Q·W_Kᵀ`, computed via a `headDim×headDim` trace identity. -/
+  qkFrobNormSq : Float
+  /-- Frobenius bound candidate `‖W_Q·W_Kᵀ‖_F`. -/
+  qkDenseFrob : Float
+  /-- Tight Gram-product candidate derived from `headDim×headDim` Grams. -/
+  qkDenseGram : Float
+  /-- Brauer/Cassini candidate computed on a `headDim×headDim` product with matching singular values. -/
+  qkDenseBrauer : Float
+  qkFactorSchur : Float
+  qkFactorFrob : Float
+  wqOpGram : Float
+  wkOpGram : Float
+  qkFactorGram : Float
+  /-- Final chosen upper bound (min of rigorous candidates). -/
+  qkOpBound : Float
+
+  /-- Frobenius-squared of `W_V·W_O`, computed via a `headDim×headDim` trace identity. -/
+  voFrobNormSq : Float
+  /-- Frobenius bound candidate `‖W_V·W_O‖_F`. -/
+  voDenseFrob : Float
+  /-- Tight Gram-product candidate derived from `headDim×headDim` Grams. -/
+  voDenseGram : Float
+  /-- Brauer/Cassini candidate computed on a `headDim×headDim` product with matching singular values. -/
+  voDenseBrauer : Float
+  voFactorSchur : Float
+  voFactorFrob : Float
+  wvOpGram : Float
+  woOpGram : Float
+  voFactorGram : Float
+  /-- Final chosen upper bound (min of rigorous candidates). -/
+  voOpBound : Float
+
+private def safeSqrt (x : Float) : Float :=
+  Float.sqrt (max 0.0 x)
+
+/-- Compute rigorous (in exact ℝ) scalar candidates for `‖W_Q·W_Kᵀ‖₂` and `‖W_V·W_O‖₂`
+without forming any dense `modelDim×modelDim` products. -/
+def noDenseProductBounds (layer : ConcreteAttentionLayer) : NoDenseProductBounds := Id.run do
+  let wqGram := layer.W_Q.transpose.matmul layer.W_Q
+  let wkGram := layer.W_K.transpose.matmul layer.W_K
+  let wvGram := layer.W_V.transpose.matmul layer.W_V
+  let woGram := layer.W_O.matmul layer.W_O.transpose
+
+  -- Frobenius candidates via trace identities (see docstring above).
+  let qkFrobSq := ConcreteMatrix.traceMul wqGram wkGram
+  let qkDenseFrob := safeSqrt qkFrobSq
+  let voFrobSq := ConcreteMatrix.traceMul wvGram woGram
+  let voDenseFrob := safeSqrt voFrobSq
+
+  -- Gram-product spectral candidates (headDim×headDim):
+  -- ‖W_Q W_Kᵀ‖₂² = λ_max((W_QᵀW_Q)(W_KᵀW_K)) ≤ ‖(W_QᵀW_Q)(W_KᵀW_K)‖_∞.
+  let qkDenseGram := safeSqrt ((wqGram.matmul wkGram).infNormAbs)
+  -- ‖W_V W_O‖₂² = λ_max((W_VᵀW_V)(W_O W_Oᵀ)) ≤ ‖(W_VᵀW_V)(W_O W_Oᵀ)‖_∞.
+  let voDenseGram := safeSqrt ((wvGram.matmul woGram).infNormAbs)
+
+  -- Brauer/Cassini candidates on `headDim×headDim` products with matching singular values.
+  let qkSmall := layer.W_K.transpose.matmul layer.W_Q
+  let qkDenseBrauer := qkSmall.opNormUpperBoundDenseBrauer
+  let voSmall := layer.W_O.matmul layer.W_V
+  let voDenseBrauer := voSmall.opNormUpperBoundDenseBrauer
+
+  -- Factor bounds from submultiplicativity.
+  let qkFactorSchur := layer.W_Q.schurNormEst * layer.W_K.schurNormEst
+  let qkFactorFrob := layer.W_Q.frobeniusNorm * layer.W_K.frobeniusNorm
+  let wqOpGram := layer.W_Q.opNormUpperBoundViaGramInf
+  let wkOpGram := layer.W_K.opNormUpperBoundViaGramInf
+  let qkFactorGram := wqOpGram * wkOpGram
+
+  let voFactorSchur := layer.W_V.schurNormEst * layer.W_O.schurNormEst
+  let voFactorFrob := layer.W_V.frobeniusNorm * layer.W_O.frobeniusNorm
+  let wvOpGram := layer.W_V.opNormUpperBoundViaGramInf
+  -- PERFORMANCE: `W_O` is typically wide (`headDim×modelDim`), so compute on `W_Oᵀ` instead.
+  let woOpGram := layer.W_O.transpose.opNormUpperBoundViaGramInf
+  let voFactorGram := wvOpGram * woOpGram
+
+  let qkOpBound :=
+    min qkDenseFrob <|
+    min qkDenseGram <|
+    min qkDenseBrauer <|
+    min qkFactorSchur <|
+    min qkFactorFrob qkFactorGram
+
+  let voOpBound :=
+    min voDenseFrob <|
+    min voDenseGram <|
+    min voDenseBrauer <|
+    min voFactorSchur <|
+    min voFactorFrob voFactorGram
+
+  return {
+    wqGram := wqGram
+    wkGram := wkGram
+    wvGram := wvGram
+    woGram := woGram
+    qkFrobNormSq := qkFrobSq
+    qkDenseFrob := qkDenseFrob
+    qkDenseGram := qkDenseGram
+    qkDenseBrauer := qkDenseBrauer
+    qkFactorSchur := qkFactorSchur
+    qkFactorFrob := qkFactorFrob
+    wqOpGram := wqOpGram
+    wkOpGram := wkOpGram
+    qkFactorGram := qkFactorGram
+    qkOpBound := qkOpBound
+    voFrobNormSq := voFrobSq
+    voDenseFrob := voDenseFrob
+    voDenseGram := voDenseGram
+    voDenseBrauer := voDenseBrauer
+    voFactorSchur := voFactorSchur
+    voFactorFrob := voFactorFrob
+    wvOpGram := wvOpGram
+    woOpGram := woOpGram
+    voFactorGram := voFactorGram
+    voOpBound := voOpBound
+  }
 
 private def opBoundMinOfMany (dense : ConcreteMatrix)
     (leftFactor rightFactor : ConcreteMatrix) : Float :=
@@ -1417,7 +1565,8 @@ Convenience wrapper that materializes `W_Q·W_Kᵀ`.
 Prefer `queryKeyAlignmentOpBoundFrom` when `qk` is already available.
 -/
 def queryKeyAlignmentOpBound (layer : ConcreteAttentionLayer) : Float :=
-  layer.queryKeyAlignmentOpBoundFrom layer.queryKeyAlignment
+  -- Prefer the no-dense path by default to avoid allocating a `modelDim×modelDim` matrix.
+  (layer.noDenseProductBounds).qkOpBound
 
 /-- A tighter (still sound-in-ℝ) Float upper bound on ‖W_V · W_O‖₂.
 
@@ -1450,7 +1599,8 @@ Convenience wrapper that materializes `W_V·W_O`.
 Prefer `valueOutputProjectionOpBoundFrom` when `vo` is already available.
 -/
 def valueOutputProjectionOpBound (layer : ConcreteAttentionLayer) : Float :=
-  layer.valueOutputProjectionOpBoundFrom layer.valueOutputProjection
+  -- Prefer the no-dense path by default to avoid allocating a `modelDim×modelDim` matrix.
+  (layer.noDenseProductBounds).voOpBound
 
 end ConcreteAttentionLayer
 
@@ -2546,25 +2696,20 @@ This avoids computing the full (N·D)² matrix!
 
 /-- Compute ‖valueTerm‖_F efficiently via factorization. -/
 def computeValueTermNorm (attn : ConcreteAttentionWeights)
-    (valueOutputProj : ConcreteMatrix) : Float :=
+    (valueOutputProjFrobNormSq : Float) : Float :=
   let attnNormSq := attn.weights.foldl (fun acc x => acc + x * x) 0.0
-  let projNormSq := valueOutputProj.frobeniusNormSq
-  Float.sqrt (attnNormSq * projNormSq)
+  Float.sqrt (attnNormSq * valueOutputProjFrobNormSq)
 
 /-- Information needed to bound the pattern term. -/
 structure PatternTermBoundInputs where
   /-- Attention weights -/
   attention : ConcreteAttentionWeights
-  /-- W_Q · W_K^T alignment matrix -/
-  queryKeyAlign : ConcreteMatrix
   /-- Deterministic Float upper bound on ‖W_Q · W_K^T‖₂.
 
 This is treated as an upper bound in exact real arithmetic and may be computed
 as the minimum of several valid upper bounds (e.g. Schur / Frobenius / factor bounds).
 -/
   queryKeyAlignSchurNorm : Float
-  /-- W_V · W_O projection -/
-  valueOutputProj : ConcreteMatrix
   /-- Deterministic Float upper bound on ‖W_V · W_O‖₂.
 
 This is treated as an upper bound in exact real arithmetic and may be computed
@@ -2615,9 +2760,9 @@ def computePatternTermBoundPessimistic (inputs : PatternTermBoundInputs) : Float
     inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
 
 /-- Compute faithfulness ratio: ‖patternTerm‖_F / ‖valueTerm‖_F. -/
-def computeFaithfulnessRatio (inputs : PatternTermBoundInputs) : Float :=
+def computeFaithfulnessRatio (inputs : PatternTermBoundInputs) (valueOutputProjFrobNormSq : Float) : Float :=
   let patternBound := computePatternTermBound inputs
-  let valueNorm := computeValueTermNorm inputs.attention inputs.valueOutputProj
+  let valueNorm := computeValueTermNorm inputs.attention valueOutputProjFrobNormSq
   if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
 
 /-! ## Discovery Structures -/
@@ -3355,6 +3500,16 @@ for models like GPT-2 Small (12 layers × 12 heads = 144 heads → 20,736 → 14
 -/
 
 /-- Precomputed data for a single attention head at a specific layer input. -/
+structure HeadDiagnosticsLazy where
+  /-- Dense `W_V·W_O` (diagnostics-only). -/
+  voProj : Thunk ConcreteMatrix
+  /-- Dense `W_Q·W_Kᵀ` (diagnostics-only). -/
+  qkAlign : Thunk ConcreteMatrix
+  /-- Dense Schur candidate `sqrt(‖M‖₁‖M‖∞)` for `W_V·W_O` (diagnostics-only). -/
+  voDenseSchur : Thunk Float
+  /-- Dense Schur candidate `sqrt(‖M‖₁‖M‖∞)` for `W_Q·W_Kᵀ` (diagnostics-only). -/
+  qkDenseSchur : Thunk Float
+
 structure PrecomputedHeadData where
   /-- Layer index -/
   layerIdx : Nat
@@ -3389,10 +3544,8 @@ structure PrecomputedHeadData where
   valueTermNormCached : Float
   /-- Cached dimensionless faithfulness ratio `‖PatternTerm‖_F / ‖ValueTerm‖_F`. -/
   faithfulnessRatioCached : Float
-  /-- Value-output projection (V·W_O) -/
-  valueOutputProj : ConcreteMatrix
-  /-- Query-key alignment (Q·K^T) -/
-  queryKeyAlign : ConcreteMatrix
+  /-- Optional lazy diagnostics. Never forced on the main path. -/
+  diag? : Option HeadDiagnosticsLazy
   /-- Cached Gram matrix `W_Qᵀ · W_Q` (headDim × headDim). -/
   wqGram : ConcreteMatrix
   /-- Cached Gram matrix `W_Vᵀ · W_V` (headDim × headDim). -/
@@ -3419,9 +3572,7 @@ structure PrecomputedHeadData where
   (Schur / Frobenius / factor bounds).
   -/
   queryKeyAlignSchurNorm : Float
-
   /-- Candidate bounds for `‖Q·Kᵀ‖₂` used in diagnostics. -/
-  qkDenseSchur : Float
   qkDenseFrob : Float
   /-- Tight Gram-product candidate derived from 64×64 Gram matrices. -/
   qkDenseGram : Float
@@ -3438,7 +3589,6 @@ structure PrecomputedHeadData where
   qkFactorGram : Float
 
   /-- Candidate bounds for `‖W_V·W_O‖₂` used in diagnostics. -/
-  voDenseSchur : Float
   voDenseFrob : Float
   /-- Tight Gram-product candidate derived from 64×64 Gram matrices. -/
   voDenseGram : Float
@@ -3555,7 +3705,8 @@ This precomputes all attention patterns, projections, and norms once.
 -/
   def build (model : ConcreteModel) (causal : Bool := true)
       (computeLayerNormBounds : Bool := true)
-      (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
+      (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
+      (storeDiagnostics : Bool := false) :
       PrecomputedCache := Id.run do
   let fwdResult := model.runForward causal
   -- Parallelizing both layers and heads can lead to too many tasks; prefer layer-level parallelism.
@@ -3607,53 +3758,25 @@ This precomputes all attention patterns, projections, and norms once.
                 sum := sum + w[(i + 1) * n + i]!
               return sum / (n - 1).toFloat
 
-        let voProj := head.valueOutputProjection
-        let qkAlign := head.queryKeyAlignment
-        let wqGram := head.W_Q.transpose.matmul head.W_Q
-        let wvGram := head.W_V.transpose.matmul head.W_V
-        let wkGram := head.W_K.transpose.matmul head.W_K
-        let woGram := head.W_O.matmul head.W_O.transpose
+        -- No-dense scalar bounds: avoid allocating per-head `modelDim×modelDim` products.
+        let bnds := head.noDenseProductBounds
+        let wqGram := bnds.wqGram
+        let wvGram := bnds.wvGram
+        let qkNorm := bnds.qkDenseFrob
+        let voNorm := bnds.voDenseFrob
+        let qkOpBound := bnds.qkOpBound
+        let voOpBound := bnds.voOpBound
 
-        let voNorm := voProj.frobeniusNorm
-        let qkNorm := qkAlign.frobeniusNorm
-
-        let qkDenseSchur := qkAlign.schurNormEst
-        let qkDenseFrob := qkNorm
-        let qkDenseGram := Float.sqrt (max 0.0 ((wqGram.matmul wkGram).infNormAbs))
-        let qkSmall := head.W_K.transpose.matmul head.W_Q
-        let qkDenseBrauer := qkSmall.opNormUpperBoundDenseBrauer
-        let qkFactorSchur := head.W_Q.schurNormEst * head.W_K.schurNormEst
-        let qkFactorFrob := head.W_Q.frobeniusNorm * head.W_K.frobeniusNorm
-
-        let voDenseSchur := voProj.schurNormEst
-        let voDenseFrob := voNorm
-        let voDenseGram := Float.sqrt (max 0.0 ((wvGram.matmul woGram).infNormAbs))
-        let voSmall := head.W_O.matmul head.W_V
-        let voDenseBrauer := voSmall.opNormUpperBoundDenseBrauer
-        let voFactorSchur := head.W_V.schurNormEst * head.W_O.schurNormEst
-        let voFactorFrob := head.W_V.frobeniusNorm * head.W_O.frobeniusNorm
-
-        let wqOpGram := head.W_Q.opNormUpperBoundViaGramInf
-        let wkOpGram := head.W_K.opNormUpperBoundViaGramInf
-        let qkFactorGram := wqOpGram * wkOpGram
-        let wvOpGram := head.W_V.opNormUpperBoundViaGramInf
-        let woOpGram := head.W_O.transpose.opNormUpperBoundViaGramInf
-        let voFactorGram := wvOpGram * woOpGram
-
-        let qkOpBound :=
-          min qkDenseFrob <|
-          min qkDenseSchur <|
-          min qkFactorSchur <|
-          min qkFactorFrob <|
-          min qkFactorGram <|
-          min qkDenseGram qkDenseBrauer
-        let voOpBound :=
-          min voDenseFrob <|
-          min voDenseSchur <|
-          min voFactorSchur <|
-          min voFactorFrob <|
-          min voFactorGram <|
-          min voDenseGram voDenseBrauer
+        let diag? : Option HeadDiagnosticsLazy :=
+          if storeDiagnostics then
+            let voProjT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.valueOutputProjection)
+            let qkAlignT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.queryKeyAlignment)
+            let voDenseSchurT : Thunk Float := Thunk.mk (fun _ => (voProjT.get).schurNormEst)
+            let qkDenseSchurT : Thunk Float := Thunk.mk (fun _ => (qkAlignT.get).schurNormEst)
+            some { voProj := voProjT, qkAlign := qkAlignT
+                   voDenseSchur := voDenseSchurT, qkDenseSchur := qkDenseSchurT }
+          else
+            none
 
         let scaleFactor := Float.sqrt head.headDim.toFloat
         let patternBound : Float :=
@@ -3680,8 +3803,7 @@ This precomputes all attention patterns, projections, and norms once.
           patternTermBoundCached := patternBound
           valueTermNormCached := valueNorm
           faithfulnessRatioCached := ratio
-          valueOutputProj := voProj
-          queryKeyAlign := qkAlign
+          diag? := diag?
           wqGram := wqGram
           wvGram := wvGram
           inputNorm := inputNorm
@@ -3692,26 +3814,24 @@ This precomputes all attention patterns, projections, and norms once.
           valueOutputProjSchurNorm := voOpBound
           queryKeyAlignSchurNorm := qkOpBound
 
-          qkDenseSchur := qkDenseSchur
-          qkDenseFrob := qkDenseFrob
-          qkDenseGram := qkDenseGram
-          qkDenseBrauer := qkDenseBrauer
-          qkFactorSchur := qkFactorSchur
-          qkFactorFrob := qkFactorFrob
+          qkDenseFrob := bnds.qkDenseFrob
+          qkDenseGram := bnds.qkDenseGram
+          qkDenseBrauer := bnds.qkDenseBrauer
+          qkFactorSchur := bnds.qkFactorSchur
+          qkFactorFrob := bnds.qkFactorFrob
 
-          wqOpGram := wqOpGram
-          wkOpGram := wkOpGram
-          qkFactorGram := qkFactorGram
+          wqOpGram := bnds.wqOpGram
+          wkOpGram := bnds.wkOpGram
+          qkFactorGram := bnds.qkFactorGram
 
-          voDenseSchur := voDenseSchur
-          voDenseFrob := voDenseFrob
-          voDenseGram := voDenseGram
-          voDenseBrauer := voDenseBrauer
-          voFactorSchur := voFactorSchur
-          voFactorFrob := voFactorFrob
-          wvOpGram := wvOpGram
-          woOpGram := woOpGram
-          voFactorGram := voFactorGram
+          voDenseFrob := bnds.voDenseFrob
+          voDenseGram := bnds.voDenseGram
+          voDenseBrauer := bnds.voDenseBrauer
+          voFactorSchur := bnds.voFactorSchur
+          voFactorFrob := bnds.voFactorFrob
+          wvOpGram := bnds.wvOpGram
+          woOpGram := bnds.woOpGram
+          voFactorGram := bnds.voFactorGram
         }
 
       let useParallelHeads := (!useParallelLayers) && heads.size >= 4
@@ -5327,16 +5447,13 @@ private def computeHeadMetricsForSAE
       let attn := head.computeAttentionWeights attnInput false
       let inputNorm := computeInputNorm attnInput
       let ln1Bound := model.ln1OpBound layerIdx layerInput
-      let voProj := head.valueOutputProjection
-      let qkAlign := head.queryKeyAlignment
+      let bnds := head.noDenseProductBounds
 
-      let valueNorm := ln1Bound * computeValueTermNorm attn voProj
+      let valueNorm := ln1Bound * computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := head.queryKeyAlignmentOpBoundFrom qkAlign
-        valueOutputProj := voProj
-        valueOutputProjSchurNorm := head.valueOutputProjectionOpBoundFrom voProj
+        queryKeyAlignSchurNorm := bnds.qkOpBound
+        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -5939,17 +6056,14 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let attn := head.computeAttentionWeights attnInput
       let inputNorm := attnInput.frobeniusNorm
       let ln1Bound := model.ln1OpBound layerIdx layerInput
-      let voProj := head.valueOutputProjection
-      let qkAlign := head.queryKeyAlignment
+      let bnds := head.noDenseProductBounds
 
       -- Pre-LN: effective value path includes the LayerNorm Jacobian.
-      let valueNorm := ln1Bound * computeValueTermNorm attn voProj
+      let valueNorm := ln1Bound * computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := head.queryKeyAlignmentOpBoundFrom qkAlign
-        valueOutputProj := voProj
-        valueOutputProjSchurNorm := head.valueOutputProjectionOpBoundFrom voProj
+        queryKeyAlignSchurNorm := bnds.qkOpBound
+        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
@@ -6265,48 +6379,57 @@ def computeInductionEffectiveness
     (target : TargetDirection) : Float :=
   match cache.getHeadData candidate.layer2Idx candidate.head2Idx with
   | some data2 =>
-      let W2 := data2.valueOutputProj
       let u := target.direction
 
       -- Direct head score: δ = ⟪(A₂ · ln₁(X₂) · W₂)[last], u⟫.
       --
       -- PERFORMANCE: compute this scalar without materializing any dense `d×d` products.
-      -- 1) v = W₂ · u
+      -- 1) v = (W_V·W_O) · u = W_V · (W_O · u)
       -- 2) xdot[k] = ⟪ln₁(X₂)[k], v⟫
       -- 3) δ = ⟪A₂[last], xdot⟫
       if u.numCols ≠ 1 then 0.0
-      else if layer2Ln1Input.numCols ≠ u.numRows then 0.0
       else if data2.attention.seqLen = 0 then 0.0
       else if layer2Ln1Input.numRows ≠ data2.attention.seqLen then 0.0
       else
-        let n := data2.attention.seqLen
-        let lastPos := n - 1
+        if hl : candidate.layer2Idx < cache.model.layers.size then
+          let layerHeads := cache.model.layers[candidate.layer2Idx]'hl
+          if hh : candidate.head2Idx < layerHeads.size then
+            let head2 := layerHeads[candidate.head2Idx]'hh
+            if layer2Ln1Input.numCols ≠ u.numRows then 0.0
+            else
+              let n := data2.attention.seqLen
+              let lastPos := n - 1
 
-        -- v = W2 · u
-        let v := W2.matVecMul u
-        if v.numRows = 0 then 0.0
+              -- v = W_V · (W_O · u)
+              let t := head2.W_O.matVecMul u
+              let v := head2.W_V.matVecMul t
+              if v.numRows = 0 then 0.0
+              else
+                -- xdot[k] = ⟪ln₁(X₂)[k], v⟫
+                let xdot : Array Float := .ofFn fun k : Fin n => Id.run do
+                  let xBase := k.val * layer2Ln1Input.numCols
+                  let mut acc : Float := 0.0
+                  for c in [:layer2Ln1Input.numCols] do
+                    -- SAFETY: `k < n = layer2Ln1Input.numRows` by construction and guard above.
+                    let x := layer2Ln1Input.data[xBase + c]!
+                    -- SAFETY: `v` is `modelDim×1` so `c < v.data.size`.
+                    let vc := v.data[c]!
+                    acc := acc + x * vc
+                  return acc
+
+                -- δ = ⟪A2[last], xdot⟫
+                Id.run do
+                  let w2 := data2.attention.weights
+                  let row2Base := lastPos * n
+                  let mut score : Float := 0.0
+                  for k in [:n] do
+                    -- SAFETY: `w2` has size `n*n` and `row2Base + k < n*n`.
+                    score := score + w2[row2Base + k]! * xdot[k]!
+                  return score
+          else
+            0.0
         else
-          -- xdot[k] = ⟪ln₁(X₂)[k], v⟫
-          let xdot : Array Float := .ofFn fun k : Fin n => Id.run do
-            let xBase := k.val * layer2Ln1Input.numCols
-            let mut acc : Float := 0.0
-            for c in [:layer2Ln1Input.numCols] do
-              -- SAFETY: `k < n = layer2Ln1Input.numRows` by construction and guard above.
-              let x := layer2Ln1Input.data[xBase + c]!
-              -- SAFETY: `v` is `modelDim×1` so `c < v.data.size`.
-              let vc := v.data[c]!
-              acc := acc + x * vc
-            return acc
-
-          -- δ = ⟪A2[last], xdot⟫
-          Id.run do
-            let w2 := data2.attention.weights
-            let row2Base := lastPos * n
-            let mut score : Float := 0.0
-            for k in [:n] do
-              -- SAFETY: `w2` has size `n*n` and `row2Base + k < n*n`.
-              score := score + w2[row2Base + k]! * xdot[k]!
-            return score
+          0.0
   | none => 0.0
 
 /-- Compute the **certified lower bound** from `true_induction_head_predicts_logits`.
@@ -6357,11 +6480,13 @@ def findHeuristicInductionHeadsWithCache (model : ConcreteModel)
     (minPrevTokenStrength : Float := 0.1)
     (minInductionScore : Float := 0.05)
     (buildLayerNormBounds : Bool := true)
-    (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1) :
+    (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
+    (storeDiagnostics : Bool := false) :
     (Array HeuristicInductionHead × PrecomputedCache) :=
   Id.run do
     let cache := PrecomputedCache.build model (computeLayerNormBounds := buildLayerNormBounds)
       (layerNormEffort := layerNormEffort)
+      (storeDiagnostics := storeDiagnostics)
     let tokens? := model.inputTokens
     let targetNorm := target.direction.vecNorm
     let candidates :=
@@ -6512,25 +6637,23 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
     let layerHeads := model.layers[layerIdx]
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]
-      let voProj := head.valueOutputProjection  -- (modelDim × modelDim)
-      let qkAlign := head.queryKeyAlignment
+      let bnds := head.noDenseProductBounds
 
       -- Standard metrics
-      let valueNorm := computeValueTermNorm attn voProj
+      let valueNorm := computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlign := qkAlign
-        queryKeyAlignSchurNorm := head.queryKeyAlignmentOpBoundFrom qkAlign
-        valueOutputProj := voProj
-        valueOutputProjSchurNorm := head.valueOutputProjectionOpBoundFrom voProj
+        queryKeyAlignSchurNorm := bnds.qkOpBound
+        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
       }
       let patternBound := computePatternTermBound inputs
 
-      -- Target-aware: compute ‖(W_V · W_O) · u‖
-      -- voProj is (modelDim × modelDim), target.direction is (modelDim × 1)
-      let projectedVec := voProj.matVecMul target.direction
+      -- Target-aware: compute ‖(W_V · W_O) · u‖ via low-rank matvecs:
+      -- (W_V·W_O)·u = W_V·(W_O·u).
+      let t := head.W_O.matVecMul target.direction
+      let projectedVec := head.W_V.matVecMul t
       let targetProj := projectedVec.vecNorm
 
       -- Scale by attention norm (as in standard valueTermNorm)
@@ -6773,12 +6896,11 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
         if circuit.isHeadIncluded layerIdx hidx then
           let head := heads[hidx]
           let attn := head.computeAttentionWeights attnInput
+          let bnds := head.noDenseProductBounds
           let inputs : PatternTermBoundInputs := {
             attention := attn
-            queryKeyAlign := head.queryKeyAlignment
-            queryKeyAlignSchurNorm := head.queryKeyAlignmentOpBound
-            valueOutputProj := head.valueOutputProjection
-            valueOutputProjSchurNorm := head.valueOutputProjectionOpBound
+            queryKeyAlignSchurNorm := bnds.qkOpBound
+            valueOutputProjSchurNorm := bnds.voOpBound
             inputNorm := inputNorm
             scaleFactor := Float.sqrt head.headDim.toFloat
           }
