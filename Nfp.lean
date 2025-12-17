@@ -273,6 +273,10 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 #print axioms Nfp.softmaxJacobian_diag_pos
 #print axioms Nfp.softmaxJacobian_off_diag_neg
 #print axioms Nfp.softmax_translation_invariant
+#print axioms Nfp.ropeJacobian
+#print axioms Nfp.rope
+#print axioms Nfp.ropeJacobian_cross_pos
+#print axioms Nfp.rope_operatorNormBound_le_two
 #print axioms Nfp.gradientTimesInput
 #print axioms Nfp.gradientTimesInput_complete
 #print axioms Nfp.composed_attribution

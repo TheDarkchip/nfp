@@ -318,6 +318,51 @@ noncomputable def tokenwiseLayerNormFullJacobian (γ : d → ℝ) (x : pos × d 
 
 end TokenwiseLayerNorm
 
+/-! ## Rotary Position Embeddings (RoPE) -/
+
+section RoPE
+
+variable {pos pair : Type*}
+  [Fintype pos] [DecidableEq pos]
+  [Fintype pair] [DecidableEq pair]
+
+/-- RoPE uses 2D rotations on each `(pairIdx, Bool)` coordinate pair. -/
+abbrev RoPEDim (pair : Type*) := pair × Bool
+
+/-- The RoPE linear map as a `SignedMixer` on the residual stream `(pos × (pair × Bool))`.
+
+For each position `p` and pair index `k`, this applies the 2×2 rotation with angle `θ p k`:
+`(x₀, x₁) ↦ (cos θ · x₀ - sin θ · x₁, sin θ · x₀ + cos θ · x₁)`.
+
+This is tokenwise (block-diagonal across `pos`): different positions never mix. -/
+noncomputable def ropeJacobian (θ : pos → pair → ℝ) :
+    SignedMixer (pos × RoPEDim pair) (pos × RoPEDim pair) where
+  w := fun i j =>
+    if i.1 = j.1 then
+      if i.2.1 = j.2.1 then
+        let p : pos := j.1
+        let k : pair := j.2.1
+        let ang := θ p k
+        match i.2.2, j.2.2 with
+        | false, false => Real.cos ang
+        | true, false => -Real.sin ang
+        | false, true => Real.sin ang
+        | true, true => Real.cos ang
+      else 0
+    else 0
+
+/-- RoPE forward map: apply the RoPE Jacobian as a linear operator. -/
+noncomputable def rope (θ : pos → pair → ℝ) (x : pos × RoPEDim pair → ℝ) :
+    pos × RoPEDim pair → ℝ :=
+  (ropeJacobian (pos := pos) (pair := pair) θ).apply x
+
+@[simp] lemma ropeJacobian_cross_pos (θ : pos → pair → ℝ)
+    {i j : pos × RoPEDim pair} (h : i.1 ≠ j.1) :
+    (ropeJacobian (pos := pos) (pair := pair) θ).w i j = 0 := by
+  simp [ropeJacobian, h]
+
+end RoPE
+
 /-! ## Softmax Linearization -/
 
 section Softmax
@@ -1171,6 +1216,101 @@ noncomputable def operatorNormBound [Nonempty n] [Nonempty d]
   -- Upper bound: max row sum of absolute values
   Finset.sup' Finset.univ (Finset.univ_nonempty (α := n × d)) fun i =>
     ∑ j : n × d, |M.w i j|
+
+/-! ### RoPE bounds -/
+
+section RoPEBounds
+
+variable {pos pair : Type*}
+  [Fintype pos] [DecidableEq pos] [Nonempty pos]
+  [Fintype pair] [DecidableEq pair] [Nonempty pair]
+
+/-- **Certification lemma (ℓ∞ bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
+
+Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute values are ≤ 1. -/
+theorem rope_operatorNormBound_le_two (θ : pos → pair → ℝ) :
+    operatorNormBound (n := pos) (d := RoPEDim pair)
+        (ropeJacobian (pos := pos) (pair := pair) θ) ≤ (2 : ℝ) := by
+  classical
+  -- Reduce `sup' ≤ 2` to a per-row absolute row-sum bound.
+  simp [operatorNormBound, Finset.sup'_le_iff]
+  intro p k
+  have hrow (b : Bool) :
+      (∑ j : pos × RoPEDim pair,
+          |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|) ≤ (2 : ℝ) := by
+    -- Expand the row-sum over `pos × pair × Bool` and collapse the `pos`/`pair` sums using
+    -- `Fintype.sum_eq_single` (all other terms are zero by definition of `ropeJacobian`).
+    have hpos :
+        (∑ j : pos,
+              ∑ j' : RoPEDim pair,
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (j, j')|)
+            =
+          ∑ j' : RoPEDim pair,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')| := by
+      -- `Fintype.sum_eq_single` in mathlib now has a single side-condition.
+      have hzero :
+          ∀ x : pos,
+            x ≠ p →
+              (∑ j' : RoPEDim pair,
+                    |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (x, j')|) = 0 := by
+        intro x hx
+        have hpx : p ≠ x := by
+          simpa [eq_comm] using hx
+        simp [ropeJacobian, hpx]
+      simpa using
+        (Fintype.sum_eq_single (f := fun x : pos =>
+            ∑ j' : RoPEDim pair,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (x, j')|) p hzero)
+    have hpair :
+        (∑ j' : RoPEDim pair,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')|)
+            =
+          ∑ bb : Bool,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := by
+      simp [RoPEDim, Fintype.sum_prod_type]
+      have hzero :
+          ∀ x : pair,
+            x ≠ k →
+              (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
+                    (p, (x, true))|)
+                +
+                  (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
+                        (p, (x, false))|) = 0 := by
+        intro x hx
+        have hkx : k ≠ x := by
+          simpa [eq_comm] using hx
+        simp [ropeJacobian, hkx]
+      -- Repackage into `Fintype.sum_eq_single` over `pair`.
+      simpa [Fintype.univ_bool] using
+        (Fintype.sum_eq_single (f := fun x : pair =>
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, true))| +
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, false))|)
+          k hzero)
+    have hbool :
+        (∑ bb : Bool,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))|)
+          = |Real.cos (θ p k)| + |Real.sin (θ p k)| := by
+      cases b <;>
+      simp [ropeJacobian, RoPEDim, Fintype.univ_bool, abs_neg, add_comm]
+    calc
+      (∑ j : pos × RoPEDim pair,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|)
+          =
+          (∑ j : pos,
+              ∑ j' : RoPEDim pair,
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (j, j')|) := by
+            simp [Fintype.sum_prod_type]
+      _ = ∑ j' : RoPEDim pair,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')| := hpos
+      _ = ∑ bb : Bool,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := hpair
+      _ = |Real.cos (θ p k)| + |Real.sin (θ p k)| := hbool
+      _ ≤ 1 + 1 := by
+            exact add_le_add (Real.abs_cos_le_one _) (Real.abs_sin_le_one _)
+      _ = (2 : ℝ) := by norm_num
+  exact ⟨hrow false, hrow true⟩
+
+end RoPEBounds
 
 variable [Nonempty n] [Nonempty d]
 
