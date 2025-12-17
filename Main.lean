@@ -19,29 +19,27 @@ Build the executable:
 lake build nfp
 ```
 
-Run analysis:
+List the available subcommands:
 ```bash
-# Basic analysis
-nfp analyze model.nfpt
+lake exe nfp --help
+```
 
-# With threshold
-nfp analyze model.nfpt --threshold 0.05
+Example invocations (see README for full flag descriptions):
+```bash
+# Analyze a model and write a report to a file
+lake exe nfp analyze model.nfpt --threshold 0.1 --output report.txt
 
-# With output file
-nfp analyze model.nfpt --output report.txt
+# Search for induction heads with diagnostics enabled
+lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 
-# Verify mode (empirical validation)
-nfp analyze model.nfpt --verify
+# Generate a sound-mode certificate report
+lake exe nfp certify model.nfpt --eps 1e-5 --actDeriv 2
 
-# Verbose output
-nfp analyze model.nfpt --verbose
+# Instantiate RoPE bounds for a specific shape
+lake exe nfp rope --seqLen 4 --pairs 8
 
 # Show version
-nfp --version
-
-# Show help
-nfp -h
-nfp analyze -h
+lake exe nfp --version
 ```
 -/
 
