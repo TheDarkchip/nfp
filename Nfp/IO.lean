@@ -244,6 +244,16 @@ private def appendFloatsFromLine (line : String) (acc : Array Float) : Array Flo
       | none => pure ()
   out
 
+private def parseFloatsFromLines (lines : Array String) (cap : Nat := 0) : Array Float :=
+  Id.run do
+    let mut out : Array Float := Array.mkEmpty cap
+    for line in lines do
+      out := appendFloatsFromLine line out
+    out
+
+private def spawnParseFloats (lines : Array String) (cap : Nat := 0) : Task (Array Float) :=
+  Task.spawn (fun _ => parseFloatsFromLines lines cap)
+
 /-- Parse a line of space-separated floats. -/
 def parseFloatLine (line : String) : Array Float :=
   appendFloatsFromLine line #[]
@@ -891,38 +901,47 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       if line? = none then
         return .error s!"Layer {l}: missing W_Q"
       line? ← readLine? h
-      let mut wqFloats : Array Float := Array.mkEmpty (modelDim * headDim)
+      let mut wqLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "W_K") do
-        wqFloats := appendFloatsFromLine (line?.get!) wqFloats
+        wqLines := wqLines.push (line?.get!)
         line? ← readLine? h
+      let tWq := spawnParseFloats wqLines (modelDim * headDim)
 
       if line? = none then
         return .error s!"Layer {l}: missing W_K"
       line? ← readLine? h
-      let mut wkFloats : Array Float := Array.mkEmpty (modelDim * headDim)
+      let mut wkLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "W_V") do
-        wkFloats := appendFloatsFromLine (line?.get!) wkFloats
+        wkLines := wkLines.push (line?.get!)
         line? ← readLine? h
+      let tWk := spawnParseFloats wkLines (modelDim * headDim)
 
       if line? = none then
         return .error s!"Layer {l}: missing W_V"
       line? ← readLine? h
-      let mut wvFloats : Array Float := Array.mkEmpty (modelDim * headDim)
+      let mut wvLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "W_O") do
-        wvFloats := appendFloatsFromLine (line?.get!) wvFloats
+        wvLines := wvLines.push (line?.get!)
         line? ← readLine? h
+      let tWv := spawnParseFloats wvLines (modelDim * headDim)
 
       if line? = none then
         return .error s!"Layer {l}: missing W_O"
       line? ← readLine? h
-      let mut woFloats : Array Float := Array.mkEmpty (headDim * modelDim)
+      let mut woLines : Array String := #[]
       while line?.isSome do
         let line := line?.get!
         if line.startsWith "HEAD" || line.startsWith "MLP" then
           break
-        woFloats := appendFloatsFromLine line woFloats
+        woLines := woLines.push line
         line? ← readLine? h
 
+      let tWo := spawnParseFloats woLines (headDim * modelDim)
+
+      let wqFloats := tWq.get
+      let wkFloats := tWk.get
+      let wvFloats := tWv.get
+      let woFloats := tWo.get
       let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats
       layerHeads := layerHeads.push head
 
@@ -940,52 +959,61 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     if line? = none then
       return .error s!"Layer {l}: missing W_in"
     line? ← readLine? h
-    let mut winFloats : Array Float := Array.mkEmpty (modelDim * hiddenDim)
+    let mut winLines : Array String := #[]
     while line?.isSome do
       let line := line?.get!
       if line.startsWith "W_out" || line.startsWith "b_in" then
         break
-      winFloats := appendFloatsFromLine line winFloats
+      winLines := winLines.push line
       line? ← readLine? h
 
     if line? = none then
       return .error s!"Layer {l}: incomplete MLP section after W_in"
 
-    let mut woutFloats : Array Float := #[]
     let mut binFloats : Array Float := #[]
+    let mut tWout? : Option (Task (Array Float)) := none
+    let tWin := spawnParseFloats winLines (modelDim * hiddenDim)
 
     if line?.map (·.trim) = some "b_in" then
       -- Ordering (2): b_in then W_out.
       line? ← readLine? h
+      let mut binLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "W_out") do
-        binFloats := appendFloatsFromLine (line?.get!) binFloats
+        binLines := binLines.push (line?.get!)
         line? ← readLine? h
+      binFloats := parseFloatsFromLines binLines hiddenDim
       if line? = none then
         return .error s!"Layer {l}: missing W_out after b_in"
       line? ← readLine? h
+      let mut woutLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "b_out") do
-        woutFloats := appendFloatsFromLine (line?.get!) woutFloats
+        woutLines := woutLines.push (line?.get!)
         line? ← readLine? h
+      tWout? := some (spawnParseFloats woutLines (hiddenDim * modelDim))
     else
       if line?.map (·.trim) != some "W_out" then
         return .error s!"Layer {l}: expected W_out or b_in after W_in"
       line? ← readLine? h
+      let mut woutLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "b_in") do
-        woutFloats := appendFloatsFromLine (line?.get!) woutFloats
+        woutLines := woutLines.push (line?.get!)
         line? ← readLine? h
+      tWout? := some (spawnParseFloats woutLines (hiddenDim * modelDim))
       if line? = none then
         return .error s!"Layer {l}: missing b_in after W_out"
       line? ← readLine? h
+      let mut binLines : Array String := #[]
       while line?.isSome && !(line?.get!.startsWith "b_out") do
-        binFloats := appendFloatsFromLine (line?.get!) binFloats
+        binLines := binLines.push (line?.get!)
         line? ← readLine? h
+      binFloats := parseFloatsFromLines binLines hiddenDim
 
     -- b_out
     line? ← skipUntil h line? (fun s => s.startsWith "b_out")
     if line? = none then
       return .error s!"Layer {l}: missing b_out"
     line? ← readLine? h
-    let mut boutFloats : Array Float := #[]
+    let mut boutLines : Array String := #[]
     while line?.isSome do
       let line := line?.get!
       let stop :=
@@ -995,8 +1023,15 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
           line.startsWith "LAYER" || line.startsWith "UNEMBEDDING"
       if stop then
         break
-      boutFloats := appendFloatsFromLine line boutFloats
+      boutLines := boutLines.push line
       line? ← readLine? h
+
+    let winFloats := tWin.get
+    let woutFloats :=
+      match tWout? with
+      | some t => t.get
+      | none => #[]
+    let boutFloats := parseFloatsFromLines boutLines modelDim
 
     let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
     mlps := mlps.push mlp
