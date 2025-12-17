@@ -4029,12 +4029,32 @@ def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx
 
   return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
 
-/-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`. -/
-def apply (ctx : LayerResidualJacobianCtx) (dX : ConcreteMatrix) : ConcreteMatrix := Id.run do
+  /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`.
+
+  If `parallelHeads=true`, per-head Jacobian-vector products are computed in parallel and then
+  summed in **head-index order** to preserve deterministic Float semantics.
+  -/
+  def apply (ctx : LayerResidualJacobianCtx) (dX : ConcreteMatrix)
+      (parallelHeads : Bool := false) : ConcreteMatrix := Id.run do
   let dU := ctx.ln1.apply dX
-  let mut dAttnSum : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
-  for hctx in ctx.heads do
-    dAttnSum := dAttnSum.add (hctx.apply dU)
+  let dAttnSum : ConcreteMatrix :=
+    if parallelHeads && ctx.heads.size >= 4 then
+      let tasks : Array (Task ConcreteMatrix) :=
+        .ofFn fun i : Fin ctx.heads.size =>
+          Task.spawn (fun _ => (ctx.heads[i]).apply dU)
+      let outs := tasks.map Task.get
+      Id.run do
+        let mut acc : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
+        for i in [:outs.size] do
+          if hi : i < outs.size then
+            acc := acc.add (outs[i]'hi)
+        return acc
+    else
+      Id.run do
+        let mut acc : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
+        for hctx in ctx.heads do
+          acc := acc.add (hctx.apply dU)
+        return acc
   let dY := dX.add dAttnSum
   let dV := ctx.ln2.apply dY
   let dMlp :=
@@ -4064,7 +4084,8 @@ private def normalizeFrob (X : ConcreteMatrix) : ConcreteMatrix :=
     ConcreteMatrix.scale (1.0 / n) X
 
 /-- Rigorous (in exact real arithmetic) lower bound on `‖J_resid‖₂` from `k` Krylov steps. -/
-def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) (k : Nat := 4) :
+def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) (k : Nat := 4)
+    (parallelHeads : Bool := false) :
     Float := Id.run do
   let x := cache.forwardResult.getLayerInput layerIdx
   let rows := x.numRows
@@ -4079,7 +4100,7 @@ def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) 
     let vNorm := v.frobeniusNorm
     if vNorm ≤ 0.0 || Float.isNaN vNorm || Float.isInf vNorm then
       break
-    let w := ctx.apply v
+    let w := ctx.apply v (parallelHeads := parallelHeads)
     let wNorm := w.frobeniusNorm
     let r : Float := wNorm / vNorm
     if r > best then
@@ -4184,11 +4205,12 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   if useParallelLb then
     let tasks : Array (Task Float) :=
       .ofFn fun i : Fin model.numLayers =>
-        Task.spawn (fun _ => layerResidualJacobianLowerBound cache i.val cfg.krylovSteps)
+        Task.spawn (fun _ =>
+          layerResidualJacobianLowerBound cache i.val cfg.krylovSteps (parallelHeads := false))
     lb := tasks.map Task.get
   else
     for l in [:model.numLayers] do
-      lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps)
+      lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps (parallelHeads := true))
 
   let computeUbAt (layerIdx tierIdx : Nat) : Float :=
     if layerIdx ≥ model.numLayers then
