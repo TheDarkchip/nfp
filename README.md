@@ -41,7 +41,7 @@ lake exe nfp --help
 
 The CLI expects a model file in **`.nfpt`** format.
 
-- The `models/` directory in this repo may contain symlinks on the original author's machine; you can replace these with your own `.nfpt` files.
+- Create a local `models/` directory and place your `.nfpt` files there (the repo does not version model files; the author’s setup may have used local symlinks).
 - You can export GPT-2 weights from Hugging Face using the scripts in `scripts/`.
 
 ### Exporting GPT-2 to `.nfpt`
@@ -147,7 +147,7 @@ lake exe nfp induction models/gpt2_rigorous.nfpt -v -d | sed -n '1,220p'
 - `Main.lean` — CLI wiring and command definitions.
 - `Nfp/` — library code (probability, transformer semantics, soundness/cert machinery, discovery routines).
 - `scripts/` — Python helpers to export models and generate induction datasets.
-- `models/` — model files (not versioned here if large; may contain local symlinks).
+- `models/` — local model files (not versioned here if large; author’s setup may have used local symlinks).
 
 ## Contributing
 
