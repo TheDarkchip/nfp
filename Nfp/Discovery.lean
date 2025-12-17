@@ -2754,6 +2754,85 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
     else min absSchur legacy
   return out
 
+/-- Diagnostics for the MLP absolute-Schur candidate bound `sqrt(‖J‖₁‖J‖∞)`. -/
+structure MLPOpAbsSchurDiag where
+  dMax : Float
+  boundInf : Float
+  boundOne : Float
+  absSchur : Float
+
+/-- Compute the absolute-Schur candidate for `‖W_in·diag(gelu'(z))·W_out‖₂` without using
+any operator-norm bounds on the weights (diagnostics helper).
+
+This matches the `absSchur` computation inside `computeMLPLayerOpNormFromGeluDerivWithOpBounds`.
+-/
+def computeMLPOpAbsSchurDiag (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) : MLPOpAbsSchurDiag := Id.run do
+  let d := layer.modelDim
+  let h := layer.hiddenDim
+  if d = 0 || h = 0 || geluDeriv.numRows = 0 || geluDeriv.numCols ≠ h then
+    return { dMax := 0.0, boundInf := 0.0, boundOne := 0.0, absSchur := 0.0 }
+  if layer.W_in.numRows ≠ d || layer.W_in.numCols ≠ h then
+    return { dMax := 0.0, boundInf := 0.0, boundOne := 0.0, absSchur := 0.0 }
+  if layer.W_out.numRows ≠ h || layer.W_out.numCols ≠ d then
+    return { dMax := 0.0, boundInf := 0.0, boundOne := 0.0, absSchur := 0.0 }
+
+  let rows := geluDeriv.numRows
+  let dMaxVec : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for i in [:rows] do
+      let base := i * h
+      for k in [:h] do
+        let a := Float.abs (geluDeriv.data[base + k]!)
+        if a > out[k]! then
+          out := out.set! k a
+    out
+  let globalDmax : Float := dMaxVec.foldl (fun m x => max m x) 0.0
+  if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
+    return { dMax := 0.0, boundInf := 0.0, boundOne := 0.0, absSchur := 0.0 }
+
+  let sOut : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for k in [:h] do
+      let rowBase := k * d
+      let mut s : Float := 0.0
+      for c in [:d] do
+        s := s + Float.abs (layer.W_out.data[rowBase + c]!)
+      out := out.set! k s
+    out
+  let sIn : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      for k in [:h] do
+        out := out.set! k (out[k]! + Float.abs (layer.W_in.data[rowBase + k]!))
+    out
+
+  let boundInf : Float := Id.run do
+    let mut maxRow : Float := 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMaxVec[k]! * sOut[k]!
+        s := s + Float.abs (layer.W_in.data[rowBase + k]!) * coeff
+      if s > maxRow then
+        maxRow := s
+    maxRow
+
+  let boundOne : Float := Id.run do
+    let mut maxCol : Float := 0.0
+    for c in [:d] do
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMaxVec[k]! * sIn[k]!
+        s := s + Float.abs (layer.W_out.data[k * d + c]!) * coeff
+      if s > maxCol then
+        maxCol := s
+    maxCol
+
+  let absSchur := Float.sqrt (max 0.0 (boundInf * boundOne))
+  return { dMax := globalDmax, boundInf := boundInf, boundOne := boundOne, absSchur := absSchur }
+
 /-- Fused MLP Jacobian upper bound, given the cached GeLU derivative matrix `gelu'(z)`. -/
 def computeMLPLayerOpNormFromGeluDeriv (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) : Float := Id.run do
   let winUb := layer.W_in.opNormUpperBoundRectGram

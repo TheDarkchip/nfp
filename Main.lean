@@ -424,6 +424,34 @@ def runInduction (p : Parsed) : IO UInt32 := do
             IO.println <|
               s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
                 s!"ub/lb={fmtFloat ratio}  tier={tier}"
+            if hm : l < cache.model.mlps.size then
+              let mlp := cache.model.mlps[l]'hm
+              let y := cache.forwardResult.getPostAttnResidual l
+              let ln2Bound := cache.model.ln2OpBound l y
+              let attnPart : Float := Id.run do
+                let layerData := cache.headData.getD l #[]
+                let mut a : Float := 0.0
+                for d in layerData do
+                  let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+                  let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+                  let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+                  let patternTermUb : Float :=
+                    (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
+                      d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+                  a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
+                a
+              let mlpJacLegacy : Float :=
+                if ln2Bound > 1e-12 then
+                  max 0.0 (ub - attnPart) / ln2Bound
+                else
+                  Float.nan
+              let geluDeriv := cache.forwardResult.getMlpGeluDeriv l
+              let diag := computeMLPOpAbsSchurDiag mlp geluDeriv
+              let chosen : Float := min diag.absSchur mlpJacLegacy
+              IO.println <|
+                s!"      mlpDiag(L{l}): absSchur={fmtFloat diag.absSchur}  " ++
+                  s!"legacy≈{fmtFloat mlpJacLegacy}  chosen≈{fmtFloat chosen}  " ++
+                  s!"dMax≈{fmtFloat diag.dMax}"
         else
           IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
           IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
