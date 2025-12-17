@@ -28,6 +28,10 @@ structure LayerAmplificationCert where
   layerIdx : Nat
   ln1MaxAbsGamma : Rat
   ln2MaxAbsGamma : Rat
+  /-- Optional local variance lower bound used for LN1 (if available). -/
+  ln1VarianceLowerBound? : Option Rat
+  /-- Optional local variance lower bound used for LN2 (if available). -/
+  ln2VarianceLowerBound? : Option Rat
   ln1Bound : Rat
   ln2Bound : Rat
   attnWeightContribution : Rat
@@ -38,6 +42,8 @@ structure LayerAmplificationCert where
 /-- Model-level certification report. -/
 structure ModelCert where
   modelPath : String
+  inputPath? : Option String
+  inputDelta : Rat
   eps : Rat
   actDerivBound : Rat
   softmaxJacobianNormInfWorst : Rat
@@ -51,6 +57,9 @@ namespace ModelCert
 def toString (c : ModelCert) : String :=
   let header :=
     s!"SOUND mode: conservative bounds; may be much looser than heuristic analysis.\n" ++
+    (match c.inputPath? with
+     | some p => s!"input={p}, delta={c.inputDelta}\n"
+     | none => "") ++
     s!"eps={c.eps}, actDerivBound={c.actDerivBound}, \
 softmaxJacobianNormInfWorst={c.softmaxJacobianNormInfWorst}\n" ++
     s!"totalAmplificationFactor={c.totalAmplificationFactor}\n"
@@ -58,7 +67,14 @@ softmaxJacobianNormInfWorst={c.softmaxJacobianNormInfWorst}\n" ++
     c.layers.foldl (fun acc l =>
       acc ++
       s!"Layer {l.layerIdx}: C={l.C} (attn={l.attnWeightContribution}, \
-mlp={l.mlpWeightContribution}, ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound})\n") ""
+mlp={l.mlpWeightContribution}, ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound}" ++
+        (match l.ln1VarianceLowerBound? with
+         | some v => s!", ln1Var≥{v}"
+         | none => "") ++
+        (match l.ln2VarianceLowerBound? with
+         | some v => s!", ln2Var≥{v}"
+         | none => "") ++
+        ")\n") ""
   header ++ body
 
 instance : ToString ModelCert := ⟨toString⟩

@@ -90,4 +90,67 @@ So we certify using `maxAbsGamma / eps`.
 def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
   if eps ≤ 0 then 0 else maxAbsGamma / eps
 
+/-! ### Local (input-dependent) LayerNorm bounds
+
+We want a sound upper bound on `max |γ| / sqrt(var + eps)` using exact `Rat` arithmetic,
+*without* importing real `sqrt`.
+
+Given a proven lower bound `L ≤ var`, we have:
+`1/sqrt(var+eps) ≤ 1/sqrt(L+eps)`.
+
+To avoid `sqrt`, we compute a dyadic rational `s = k/2^p` such that
+`s^2 ≤ (L+eps)`. Then `1/s ≥ 1/sqrt(L+eps)` is a valid **upper** bound on `1/sqrt(L+eps)`.
+-/
+
+private def pow2 (p : Nat) : Nat :=
+  Nat.pow 2 p
+
+private def sqNat (n : Nat) : Nat := n * n
+
+private def leSqDyadic (k : Nat) (scaleSq : Nat) (x : Rat) : Bool :=
+  -- (k/scale)^2 ≤ x  ↔  k^2 ≤ x * scale^2
+  ((sqNat k : Nat) : Rat) ≤ x * (scaleSq : Nat)
+
+private def sqrtLowerDyadic (x : Rat) (precBits : Nat := 20) : Rat :=
+  if x ≤ 0 then
+    0
+  else
+    Id.run do
+      let scale : Nat := pow2 precBits
+      let scaleSq : Nat := sqNat scale
+      -- Find an upper bracket by doubling.
+      let mut hi : Nat := scale
+      while leSqDyadic hi scaleSq x do
+        hi := hi * 2
+      -- Binary search for max k with k^2 ≤ x*scale^2.
+      let mut lo : Nat := 0
+      while lo + 1 < hi do
+        let mid := (lo + hi) / 2
+        if leSqDyadic mid scaleSq x then
+          lo := mid
+        else
+          hi := mid
+      return Rat.normalize (Int.ofNat lo) (pow2 precBits) (den_nz := by simp [pow2])
+
+/-- Local upper bound on the operator norm of a row-wise LayerNorm Jacobian.
+
+If `varianceLowerBound` is a proven lower bound on the per-row variance, then:
+`‖J‖₂ ≤ maxAbsGamma / sqrt(varianceLowerBound + eps)`.
+
+We compute an upper bound using a dyadic lower bound on `sqrt(varianceLowerBound + eps)`.
+If the dyadic lower bound is zero (too small / insufficient precision), we fall back to the
+conservative bound `maxAbsGamma / eps`.
+-/
+def layerNormOpBoundLocal (maxAbsGamma varianceLowerBound eps : Rat)
+    (sqrtPrecBits : Nat := 20) : Rat :=
+  let denom := varianceLowerBound + eps
+  if denom ≤ 0 then
+    layerNormOpBoundConservative maxAbsGamma eps
+  else
+    let s := sqrtLowerDyadic denom sqrtPrecBits
+    if s ≤ 0 then
+      layerNormOpBoundConservative maxAbsGamma eps
+    else
+      maxAbsGamma / s
+
 end Nfp.Sound

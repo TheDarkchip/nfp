@@ -2,6 +2,7 @@
 
 import Std
 import Nfp.Sound.Cert
+import Nfp.Sound.Interval
 
 namespace Nfp.Sound
 
@@ -95,7 +96,9 @@ def consumeMaxAbs
 def certifyModelFile
     (path : System.FilePath)
     (eps : Rat := defaultEps)
-    (actDerivBound : Rat := defaultActDerivBound) : IO (Except String ModelCert) := do
+    (actDerivBound : Rat := defaultActDerivBound)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
 
@@ -117,6 +120,7 @@ def certifyModelFile
   let mut modelDim : Option Nat := none
   let mut headDim : Option Nat := none
   let mut hiddenDim : Option Nat := none
+  let mut seqLen : Option Nat := none
 
   while i < lines.size do
     let line := lines[i]!.trim
@@ -133,6 +137,7 @@ def certifyModelFile
       | "model_dim" => modelDim := v.toNat?
       | "head_dim" => headDim := v.toNat?
       | "hidden_dim" => hiddenDim := v.toNat?
+      | "seq_len" => seqLen := v.toNat?
       | _ => pure ()
       i := i + 1
 
@@ -141,6 +146,48 @@ def certifyModelFile
   let some d := modelDim | return .error "missing model_dim"
   let some dh := headDim | return .error "missing head_dim"
   let some dhid := hiddenDim | return .error "missing hidden_dim"
+
+  -- Optional: local variance lower bound from an input region (LayerNorm at layer 0 only for now).
+  let inputVarLowerMin? : Option Rat ←
+    match inputPath? with
+    | none => pure none
+    | some ip => do
+        let contents ← IO.FS.readFile ip
+        let ilines : Array String := (contents.splitOn "\n").toArray
+        -- Find EMBEDDINGS marker then stream `seqLen*modelDim` entries.
+        let some n := seqLen
+          | return .error "missing seq_len in model header (needed for --input)"
+        let mut j : Nat := 0
+        while j < ilines.size && ilines[j]!.trim.isEmpty do
+          j := j + 1
+        if !(j < ilines.size) then
+          return .error "empty input file"
+        let headerTag := ilines[j]!.trim
+        if !headerTag.startsWith "NFP_TEXT" then
+          return .error s!"unexpected input header '{headerTag}'"
+        j := j + 1
+        -- skip header lines
+        while j < ilines.size && !(ilines[j]!.trim = "EMBEDDINGS") do
+          j := j + 1
+        if !(j < ilines.size) then
+          return .error "Missing EMBEDDINGS section in input file"
+        j := j + 1
+
+        let step :=
+          fun (st : (Array Rat × Nat × Rat)) (x : Rat) =>
+            let (row, col, minVar) := st
+            let row := row.push x
+            let col := col + 1
+            if col = d then
+              let varLower := varianceLowerBoundLinfBall row inputDelta
+              let minVar := if minVar = 0 then varLower else min minVar varLower
+              (#[], 0, minVar)
+            else
+              (row, col, minVar)
+
+        match foldRatTokens ilines j (n * d) (#[], 0, (0 : Rat)) step with
+        | .error e => return .error e
+        | .ok ((_, _, minVar), _) => pure (some minVar)
 
   -- Accumulators
   let mut ln1GammaMax : Array Rat := Array.replicate L 1
@@ -216,8 +263,16 @@ def certifyModelFile
   for l in [:L] do
     let ln1Max := ln1GammaMax[l]!
     let ln2Max := ln2GammaMax[l]!
-    let ln1Bound := layerNormOpBoundConservative ln1Max eps
-    let ln2Bound := layerNormOpBoundConservative ln2Max eps
+    let ln1Var? : Option Rat := if l = 0 then inputVarLowerMin? else none
+    let ln2Var? : Option Rat := none
+    let ln1Bound :=
+      match ln1Var? with
+      | some v => layerNormOpBoundLocal ln1Max v eps
+      | none => layerNormOpBoundConservative ln1Max eps
+    let ln2Bound :=
+      match ln2Var? with
+      | some v => layerNormOpBoundLocal ln2Max v eps
+      | none => layerNormOpBoundConservative ln2Max eps
     let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnSum[l]!
     let mlpW := ln2Bound * (mlpWin[l]! * actDerivBound * mlpWout[l]!)
     let C := attnW + mlpW
@@ -225,6 +280,8 @@ def certifyModelFile
       layerIdx := l
       ln1MaxAbsGamma := ln1Max
       ln2MaxAbsGamma := ln2Max
+      ln1VarianceLowerBound? := ln1Var?
+      ln2VarianceLowerBound? := ln2Var?
       ln1Bound := ln1Bound
       ln2Bound := ln2Bound
       attnWeightContribution := attnW
@@ -235,6 +292,8 @@ def certifyModelFile
 
   return .ok {
     modelPath := path.toString
+    inputPath? := inputPath?.map (·.toString)
+    inputDelta := inputDelta
     eps := eps
     actDerivBound := actDerivBound
     softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst

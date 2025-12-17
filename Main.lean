@@ -544,8 +544,10 @@ def runInduction (p : Parsed) : IO UInt32 := do
 def runCertify (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
   setStdoutLogNameFromModelPath modelPath
+  let inputPath := p.flag? "input" |>.map (·.as! String)
   let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
   let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
+  let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let outputPath := p.flag? "output" |>.map (·.as! String)
 
   let action : ExceptT String IO Nfp.Sound.ModelCert := do
@@ -557,7 +559,14 @@ def runCertify (p : Parsed) : IO UInt32 := do
       match Nfp.Sound.parseRat actDerivStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --actDeriv '{actDerivStr}': {e}"
-    let cert ← ExceptT.mk <| Nfp.Sound.certifyModelFile ⟨modelPath⟩ eps actDeriv
+    let delta ←
+      match Nfp.Sound.parseRat deltaStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
+    let inputPath? : Option System.FilePath := inputPath.map (fun s => ⟨s⟩)
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyModelFile ⟨modelPath⟩ eps actDeriv
+        (inputPath? := inputPath?) (inputDelta := delta)
     pure cert
 
   match ← action.run with
@@ -646,6 +655,8 @@ def certifyCmd : Cmd := `[Cli|
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust)."
 
   FLAGS:
+    input : String; "Optional input .nfpt file for local LayerNorm certification"
+    delta : String; "Input ℓ∞ radius δ for local certification (default: 0)"
     eps : String; "LayerNorm epsilon (default: 1e-5)"
     actDeriv : String; "Activation derivative bound (default: 2)"
     o, output : String; "Write report to file instead of stdout"
