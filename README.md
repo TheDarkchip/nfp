@@ -13,6 +13,31 @@ This repo contains:
 
 This is research tooling. Interfaces may change; please treat results as experimental unless they are backed by a certificate/check you trust.
 
+## North Star
+
+NFP’s long-term direction is **verified circuit discovery**:
+
+- Use fast, exploratory tooling to **propose** candidate circuits (e.g. induction-style head interactions),
+- then produce **checkable evidence** (bounds / certificates) that a skeptical reader can re-run and validate.
+
+Concretely, the intended split is:
+
+- **Discovery / exploration (untrusted, fast):**
+  Heuristic search, ranking, and diagnostics are allowed here (and should be clearly labelled as such).
+  This includes things like candidate search (`induction`) and comparison estimates printed under diagnostics/verbose flags.
+
+- **Certification / checking (trusted, boring):**
+  Anything described as “rigorous” should be justified by conservative inequalities or by a certificate that a checker can validate.
+  The long-term aim is that Lean does as little “real inference” as possible: instead of running large forward passes,
+  it should mostly **check small, structured proof obligations** (e.g. inequality chains, norm bounds, interval/rational arithmetic).
+
+Current state: `certify` is already an example of this direction (sound-mode reporting using exact `Rat` arithmetic rather than trusted floats),
+but the certificate story is still evolving and interfaces may change.
+
+Model trajectory: GPT-2 support is currently a proving ground for the end-to-end workflow (export → analyze/search → bound/certify).
+The goal is to gradually cover more modern decoder blocks (e.g. RoPE-style position handling) while keeping the certification/checking layer lightweight.
+
+
 ## Requirements
 
 - **Lean 4** (pinned by `lean-toolchain`) and **Lake**.
