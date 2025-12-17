@@ -2,15 +2,34 @@ name: CI
 
 on:
   push:
+    branches: ["main"]
   pull_request:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: leanprover/lean-action@v1
+
+      # Standard Lean CI setup + caching + (by default) mathlib cache auto-detection.
+      - name: Lean CI (build default targets)
+        uses: leanprover/lean-action@v1
         with:
-          build: |
-            lake build -q --wfail
-            lake build nfp -q --wfail
+          test: false
+          lint: false
+          mk_all-check: false
+          build-args: "--quiet --no-ansi --wfail"
+
+      # Build the CLI executable target too (quiet on success; verbose retry on failure).
+      - name: Build CLI (nfp)
+        run: |
+          set -euo pipefail
+          lake build nfp --quiet --no-ansi --wfail || {
+            echo "Quiet build failed; retrying verbose..."
+            lake build nfp -v --no-ansi --wfail
+          }
