@@ -2657,6 +2657,125 @@ def geluDerivFloat (x : Float) : Float :=
   let t' := a * (1.0 + 3.0 * b * x * x)
   0.5 * (1.0 + tanhT) + 0.5 * x * sech2 * t'
 
+/-- Data-dependent upper bound on the MLP Jacobian operator norm over a batch of tokens.
+
+For a token with GeLU derivative vector `d` (from the pre-activations `z`),
+the MLP Jacobian is `J = W_in · diag(d) · W_out`.
+
+Computing `J` explicitly is intractable (`modelDim×modelDim`). Instead we upper-bound `‖J‖₂`
+via the standard inequality `‖J‖₂ ≤ sqrt(‖J‖₁ · ‖J‖∞)`, where `‖·‖₁`/`‖·‖∞` are induced norms.
+
+For a fixed token, row/column absolute sums can be bounded without forming `J`:
+
+* `‖J‖∞ ≤ max_r ∑_k |W_in[r,k]| · |d_k| · (∑_c |W_out[k,c]|)`
+* `‖J‖₁ ≤ max_c ∑_k |W_out[k,c]| · |d_k| · (∑_r |W_in[r,k]|)`
+
+To avoid a per-token `O(modelDim·hiddenDim)` loop, we take `dMax[k] = max_token |d_token[k]|` and
+use it in place of `|d_k|`, which is sound for both `‖·‖₁` and `‖·‖∞`.
+-/
+def computeMLPLayerOpNormFromGeluDerivWithOpBounds
+    (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) (winUb woutUb : Float) : Float := Id.run do
+  let d := layer.modelDim
+  let h := layer.hiddenDim
+  if d = 0 || h = 0 || geluDeriv.numRows = 0 then
+    return 0.0
+  if geluDeriv.numCols ≠ h then
+    return 0.0
+  if layer.W_in.numRows ≠ d || layer.W_in.numCols ≠ h then
+    return 0.0
+  if layer.W_out.numRows ≠ h || layer.W_out.numCols ≠ d then
+    return 0.0
+
+  let rows := geluDeriv.numRows
+
+  -- dMax[k] = max_token |gelu'(z)[token,k]|.
+  let dMax : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for i in [:rows] do
+      let base := i * h
+      for k in [:h] do
+        let a := Float.abs (geluDeriv.data[base + k]!)
+        if a > out[k]! then
+          out := out.set! k a
+    out
+  let globalDmax : Float := dMax.foldl (fun m x => max m x) 0.0
+  if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
+    return 0.0
+
+  -- sOut[k] = ∑_c |W_out[k,c]|  (row sums of |W_out|).
+  let sOut : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for k in [:h] do
+      let rowBase := k * d
+      let mut s : Float := 0.0
+      for c in [:d] do
+        s := s + Float.abs (layer.W_out.data[rowBase + c]!)
+      out := out.set! k s
+    out
+
+  -- sIn[k] = ∑_r |W_in[r,k]|  (column sums of |W_in|).
+  let sIn : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      for k in [:h] do
+        out := out.set! k (out[k]! + Float.abs (layer.W_in.data[rowBase + k]!))
+    out
+
+  -- ‖J‖∞ upper bound via row sums.
+  let boundInf : Float := Id.run do
+    let mut maxRow : Float := 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMax[k]! * sOut[k]!
+        s := s + Float.abs (layer.W_in.data[rowBase + k]!) * coeff
+      if s > maxRow then
+        maxRow := s
+    maxRow
+
+  -- ‖J‖₁ upper bound via column sums.
+  let boundOne : Float := Id.run do
+    let mut maxCol : Float := 0.0
+    for c in [:d] do
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMax[k]! * sIn[k]!
+        s := s + Float.abs (layer.W_out.data[k * d + c]!) * coeff
+      if s > maxCol then
+        maxCol := s
+    maxCol
+
+  let absSchur := Float.sqrt (max 0.0 (boundInf * boundOne))
+  let legacy := winUb * globalDmax * woutUb
+  let out :=
+    if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then legacy
+    else min absSchur legacy
+  return out
+
+/-- Fused MLP Jacobian upper bound, given the cached GeLU derivative matrix `gelu'(z)`. -/
+def computeMLPLayerOpNormFromGeluDeriv (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) : Float := Id.run do
+  let winUb := layer.W_in.opNormUpperBoundRectGram
+  let woutUb := layer.W_out.opNormUpperBoundRectGram
+  computeMLPLayerOpNormFromGeluDerivWithOpBounds layer geluDeriv winUb woutUb
+
+/-- Compute the MLP Jacobian bound by re-evaluating `gelu'(z)` from a concrete input. -/
+def computeMLPLayerOpNorm (layer : ConcreteMLPLayer) (input : ConcreteMatrix) : Float := Id.run do
+  let d := layer.modelDim
+  let h := layer.hiddenDim
+  if d = 0 || h = 0 || input.numRows = 0 then
+    return 0.0
+  if layer.W_in.numRows ≠ d || layer.W_in.numCols ≠ h then
+    return 0.0
+  if layer.W_out.numRows ≠ h || layer.W_out.numCols ≠ d then
+    return 0.0
+  let hidden := (input.matmul layer.W_in).addBias layer.b_in
+  let geluDeriv := hidden.map geluDerivFloat
+  let winUb := layer.W_in.opNormUpperBoundRectGram
+  let woutUb := layer.W_out.opNormUpperBoundRectGram
+  computeMLPLayerOpNormFromGeluDerivWithOpBounds layer geluDeriv winUb woutUb
+
 /-- Forward pass for an MLP layer with GeLU activation.
 
 Input: X (seqLen × modelDim)
@@ -3118,10 +3237,16 @@ structure ForwardPassResult where
   attnOutputs : Array (Array ConcreteMatrix)
   /-- MLP outputs per layer: mlpOutputs[l] = output of MLP at layer l -/
   mlpOutputs : Array ConcreteMatrix
+  /-- Per-layer GeLU derivative matrices over MLP preactivations.
+
+  If a layer has an MLP, this is the matrix `gelu'(z)` where `z = ln₂(y_l)·W_in + b_in`.
+  Otherwise this entry is a `0×0` placeholder.
+  -/
+  mlpActDeriv : Array ConcreteMatrix
   /-- Per-layer maximum absolute GeLU derivative over MLP preactivations.
 
-Length is `numLayers`. For layers without an MLP, the entry is `0.0`.
--/
+  Length is `numLayers`. For layers without an MLP, the entry is `0.0`.
+  -/
   mlpActDerivMax : Array Float
   /-- Final output after all layers (after ln_f, i.e. what goes into unembedding). -/
   finalOutput : ConcreteMatrix
@@ -3144,6 +3269,7 @@ def ConcreteModel.runForward (model : ConcreteModel)
   let mut layerInputs : Array ConcreteMatrix := Array.mkEmpty (model.numLayers + 1)
   let mut attnOutputs : Array (Array ConcreteMatrix) := Array.mkEmpty model.numLayers
   let mut mlpOutputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
+  let mut mlpActDeriv : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut mlpActDerivMax : Array Float := Array.mkEmpty model.numLayers
   let mut residual := model.inputEmbeddings
   layerInputs := layerInputs.push residual
@@ -3186,13 +3312,24 @@ def ConcreteModel.runForward (model : ConcreteModel)
     let mlpInput := model.applyLn2 l residualAfterAttn
     let mut mlpOut : ConcreteMatrix := ConcreteMatrix.zeros residual.numRows residual.numCols
     if hm : l < model.mlps.size then
-      let (out, dmax) := model.mlps[l].forwardWithGeluDerivMax mlpInput
+      let mlp := model.mlps[l]
+      let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+      let geluDeriv := hidden.map geluDerivFloat
+      let mut dmax : Float := 0.0
+      for z in geluDeriv.data do
+        let d := Float.abs z
+        if d > dmax then
+          dmax := d
+      let activated := hidden.map geluFloat
+      let out := (activated.matmul mlp.W_out).addBias mlp.b_out
       let dmax' : Float :=
         if Float.isNaN dmax || Float.isInf dmax then 0.0 else dmax
+      mlpActDeriv := mlpActDeriv.push geluDeriv
       mlpActDerivMax := mlpActDerivMax.push dmax'
       mlpOut := out
     else
       -- No MLP at this layer.
+      mlpActDeriv := mlpActDeriv.push (ConcreteMatrix.zeros 0 0)
       mlpActDerivMax := mlpActDerivMax.push 0.0
       mlpOut := ConcreteMatrix.zeros residual.numRows residual.numCols
 
@@ -3209,6 +3346,7 @@ def ConcreteModel.runForward (model : ConcreteModel)
     layerInputs := layerInputs
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
+    mlpActDeriv := mlpActDeriv
     mlpActDerivMax := mlpActDerivMax
     finalOutput := finalOutput
   }
@@ -3219,6 +3357,13 @@ def ForwardPassResult.getLayerInput (result : ForwardPassResult)
   if h : layerIdx < result.layerInputs.size then
     result.layerInputs[layerIdx]
   else ConcreteMatrix.zeros 0 0
+
+/-- Get the cached MLP GeLU-derivative matrix for a layer, if present. -/
+def ForwardPassResult.getMlpGeluDeriv (result : ForwardPassResult) (layerIdx : Nat) : ConcreteMatrix :=
+  if h : layerIdx < result.mlpActDeriv.size then
+    result.mlpActDeriv[layerIdx]
+  else
+    ConcreteMatrix.zeros 0 0
 
 /-- Get the post-attention residual `y_l = x_l + attn_sum` for a layer.
 
@@ -3362,13 +3507,20 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
     -- Add MLP contribution if present
     if hm : layerIdx < model.mlps.size then
       let mlp := model.mlps[layerIdx]
-      -- MLP Jacobian norm ≤ ‖W_out‖ · ‖∂activation‖ · ‖W_in‖
+      -- Use the fused Jacobian bound (data-dependent on `gelu'(z)`), but keep the legacy
+      -- product-of-norms as a (looser) fallback.
       let winNormUb := mlp.W_in.opNormUpperBoundRectGram
       let woutNormUb := mlp.W_out.opNormUpperBoundRectGram
-      let geluDerivBound : Float :=
-        let d := fwdResult.mlpActDerivMax.getD layerIdx 1.7
-        if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
-      totalNorm := totalNorm + ln2Bound * (winNormUb * geluDerivBound * woutNormUb)
+      let geluDeriv := fwdResult.getMlpGeluDeriv layerIdx
+      let mlpUb :=
+        if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+          computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv winNormUb woutNormUb
+        else
+          let mlpInput := model.applyLn2 layerIdx y
+          let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+          let dAct := hidden.map geluDerivFloat
+          computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winNormUb woutNormUb
+      totalNorm := totalNorm + ln2Bound * mlpUb
 
     totalNorm
   else
@@ -3677,10 +3829,16 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
     let mlp := model.mlps[layerIdx]'hm
     let winUb := mlp.W_in.opNormUpperBoundRectGramEffort effort
     let woutUb := mlp.W_out.opNormUpperBoundRectGramEffort effort
-    let geluDerivBound : Float :=
-      let d := fwd.mlpActDerivMax.getD layerIdx 1.7
-      if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
-    norm := norm + ln2Bound * (winUb * geluDerivBound * woutUb)
+    let geluDeriv := fwd.getMlpGeluDeriv layerIdx
+    let mlpUb :=
+      if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+        computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv winUb woutUb
+      else
+        let mlpInput := model.applyLn2 layerIdx y
+        let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+        let dAct := hidden.map geluDerivFloat
+        computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winUb woutUb
+    norm := norm + ln2Bound * mlpUb
 
   return norm
 
@@ -3873,10 +4031,16 @@ This precomputes all attention patterns, projections, and norms once.
             let mlp := model.mlps[l]'hm
             let winNormUb := mlp.W_in.opNormUpperBoundRectGramEffort layerNormEffort
             let woutNormUb := mlp.W_out.opNormUpperBoundRectGramEffort layerNormEffort
-            let geluDerivBound : Float :=
-              let d := fwdResult.mlpActDerivMax.getD l 1.7
-              if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
-            nrm := nrm + ln2Bound * (winNormUb * geluDerivBound * woutNormUb)
+            let geluDeriv := fwdResult.getMlpGeluDeriv l
+            let mlpUb :=
+              if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+                computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv winNormUb woutNormUb
+              else
+                let mlpInput := model.applyLn2 l y
+                let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+                let dAct := hidden.map geluDerivFloat
+                computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winNormUb woutNormUb
+            nrm := nrm + ln2Bound * mlpUb
           return nrm
       else
         0.0
@@ -5854,6 +6018,7 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
     layerInputs := layerInputs
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
+    mlpActDeriv := Array.replicate model.numLayers (ConcreteMatrix.zeros 0 0)
     mlpActDerivMax := Array.replicate model.numLayers 0.0
     finalOutput := finalOutput
   }
