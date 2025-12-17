@@ -78,68 +78,155 @@ open IO
 
 /-! ## Float Parsing Utilities -/
 
-/-- Parse a floating point number from a string.
-    Handles integers, decimals, and negative numbers. -/
-def parseFloat (s : String) : Option Float := do
-  let s := s.trim
-  if s.isEmpty then none
+private def pow10PowTable : Array Float := Id.run do
+  -- Precompute `Float.pow 10.0 k` for k=0..308 so we avoid calling `Float.pow` per token.
+  let mut out : Array Float := Array.mkEmpty 309
+  for k in [:309] do
+    out := out.push (Float.pow 10.0 k.toFloat)
+  out
+
+private def pow10Pow (n : Nat) : Float :=
+  if n < pow10PowTable.size then
+    pow10PowTable[n]!
   else
-    -- Handle sign
-    let (negative, rest) :=
-      if s.startsWith "-" then (true, s.drop 1)
-      else if s.startsWith "+" then (false, s.drop 1)
-      else (false, s)
+    Float.pow 10.0 n.toFloat
 
-    -- Parse unsigned decimal without exponent.
-    let parseUnsignedNoExp (t : String) : Option Float := do
-      let parts := t.splitOn "."
-      match parts with
-      | [intPart] =>
-        let n := intPart.toNat?
-        n.map (·.toFloat)
-      | [intPart, fracPart] =>
-        let intN := if intPart.isEmpty then some 0 else intPart.toNat?
-        let fracN := if fracPart.isEmpty then some 0 else fracPart.toNat?
-        match intN, fracN with
-        | some iN, some fN =>
-          let fracLen := fracPart.length
-          let divisor := Float.pow 10.0 fracLen.toFloat
-          some (iN.toFloat + fN.toFloat / divisor)
-        | _, _ => none
-      | _ => none
+private def parseFloatRange (s : String) (start stop : String.Pos.Raw) : Option Float := Id.run do
+  -- This is a faster, allocation-free version of the previous `parseFloat`, but it preserves
+  -- the exact Float computation structure (Nat parsing + `Float.pow`) to keep results stable.
 
-    -- Parse optional scientific exponent `e` / `E` (e.g. "1.2e-3").
-    let (mantissaStr, expStr?) : String × Option String :=
-      match rest.splitOn "e" with
-      | [m, e] => (m, some e)
-      | _ =>
-        match rest.splitOn "E" with
-        | [m, e] => (m, some e)
-        | _ => (rest, none)
+  let parseNatRange (s : String) (start stop : String.Pos.Raw) : Option Nat := Id.run do
+    let mut p := start
+    if p ≥ stop then
+      return none
+    let mut acc : Nat := 0
+    let mut saw : Bool := false
+    while p < stop do
+      let c := p.get s
+      if ('0' ≤ c) && (c ≤ '9') then
+        acc := acc * 10 + (c.toNat - '0'.toNat)
+        saw := true
+        p := p.next s
+      else
+        return none
+    if saw then some acc else none
 
-    let mantissa ← parseUnsignedNoExp mantissaStr
-    let value :=
-      match expStr? with
-      | none => mantissa
-      | some expStr =>
-        let expStr := expStr.trim
-        if expStr.isEmpty then mantissa
+  let mut p := start
+  if p ≥ stop then
+    return none
+
+  let mut negative := false
+  let c0 := p.get s
+  if c0 = '-' then
+    negative := true
+    p := p.next s
+  else if c0 = '+' then
+    p := p.next s
+
+  if p ≥ stop then
+    return none
+
+  -- Find exponent marker the same way as the old parser: accept exactly one `e` if present,
+  -- otherwise accept exactly one `E`.
+  let mut ePos : Option String.Pos.Raw := none
+  let mut eCount : Nat := 0
+  let mut EPos : Option String.Pos.Raw := none
+  let mut ECount : Nat := 0
+  let mut q := p
+  while q < stop do
+    let c := q.get s
+    if c = 'e' then
+      eCount := eCount + 1
+      if eCount = 1 then ePos := some q
+    else if c = 'E' then
+      ECount := ECount + 1
+      if ECount = 1 then EPos := some q
+    q := q.next s
+
+  let expMarker? : Option String.Pos.Raw :=
+    if eCount = 1 then ePos else if ECount = 1 then EPos else none
+
+  let mantEnd : String.Pos.Raw :=
+    match expMarker? with
+    | some ep => ep
+    | none => stop
+
+  -- Find decimal point in mantissa (must be 0 or 1 occurrences).
+  let mut dotPos : Option String.Pos.Raw := none
+  let mut dotCount : Nat := 0
+  let mut r := p
+  while r < mantEnd do
+    if r.get s = '.' then
+      dotCount := dotCount + 1
+      if dotCount = 1 then dotPos := some r
+    r := r.next s
+  if dotCount > 1 then
+    return none
+
+  let (intStart, intStop, fracStart?, fracStop) :=
+    match dotPos with
+    | none => (p, mantEnd, none, mantEnd)
+    | some dp => (p, dp, some (dp.next s), mantEnd)
+
+  let intN? : Option Nat :=
+    if dotPos.isSome && intStart = intStop then
+      some 0
+    else
+      parseNatRange s intStart intStop
+
+  let fracN? : Option Nat :=
+    match fracStart? with
+    | none => none
+    | some fs =>
+        if fs = fracStop then some 0 else parseNatRange s fs fracStop
+
+  let mantissa? : Option Float :=
+    match dotPos, intN?, fracN? with
+    | none, some iN, _ =>
+        some iN.toFloat
+    | some _, some iN, some fN =>
+        let fracLen := (fracStop.byteIdx - (fracStart?.getD fracStop).byteIdx)
+        let divisor := pow10Pow fracLen
+        some (iN.toFloat + fN.toFloat / divisor)
+    | some _, _, none =>
+        -- `.` present but no fractional parse (shouldn't happen), treat as invalid.
+        none
+    | _, none, _ => none
+
+  let some mantissa := mantissa? | return none
+
+  let value : Float :=
+    match expMarker? with
+    | none => mantissa
+    | some ep =>
+        let expStart := ep.next s
+        if expStart ≥ stop then
+          mantissa
         else
-          let (expNeg, expRest) :=
-            if expStr.startsWith "-" then (true, expStr.drop 1)
-            else if expStr.startsWith "+" then (false, expStr.drop 1)
-            else (false, expStr)
-          match expRest.toNat? with
+          -- Parse exponent, but if it is malformed, ignore it (old behavior).
+          let c := expStart.get s
+          let (expNeg, es) :=
+            if c = '-' then (true, expStart.next s)
+            else if c = '+' then (false, expStart.next s)
+            else (false, expStart)
+          match parseNatRange s es stop with
           | none => mantissa
           | some eNat =>
-            let pow10 := Float.pow 10.0 eNat.toFloat
-            if expNeg then mantissa / pow10 else mantissa * pow10
+              let p10 := pow10Pow eNat
+              if expNeg then mantissa / p10 else mantissa * p10
 
-    some ((if negative then -1.0 else 1.0) * value)
+  some (if negative then -value else value)
 
-/-- Parse a line of space-separated floats. -/
-def parseFloatLine (line : String) : Array Float := Id.run do
-  let mut out : Array Float := #[]
+/-- Parse a floating point number from a string. -/
+def parseFloat (s : String) : Option Float := Id.run do
+  let s := s.trim
+  if s.isEmpty then
+    none
+  else
+    parseFloatRange s 0 s.endPos
+
+private def appendFloatsFromLine (line : String) (acc : Array Float) : Array Float := Id.run do
+  let mut out := acc
   let s := line
   let mut p : String.Pos.Raw := 0
   let endPos := s.endPos
@@ -152,17 +239,36 @@ def parseFloatLine (line : String) : Array Float := Id.run do
     while p < endPos && !isWs (p.get s) do
       p := p.next s
     if start < p then
-      let tok := String.Pos.Raw.extract s start p
-      match parseFloat tok with
+      match parseFloatRange s start p with
       | some x => out := out.push x
       | none => pure ()
   out
 
+/-- Parse a line of space-separated floats. -/
+def parseFloatLine (line : String) : Array Float :=
+  appendFloatsFromLine line #[]
+
 /-! ## Nat Parsing Utilities -/
 
 /-- Parse a line of space-separated natural numbers. -/
-def parseNatLine (line : String) : Array Nat := Id.run do
-  let mut out : Array Nat := #[]
+private def parseNatRange (s : String) (start stop : String.Pos.Raw) : Option Nat := Id.run do
+  let mut p := start
+  if p ≥ stop then
+    return none
+  let mut acc : Nat := 0
+  let mut saw : Bool := false
+  while p < stop do
+    let c := p.get s
+    if ('0' ≤ c) && (c ≤ '9') then
+      acc := acc * 10 + (c.toNat - '0'.toNat)
+      saw := true
+      p := p.next s
+    else
+      return none
+  if saw then some acc else none
+
+private def appendNatsFromLine (line : String) (acc : Array Nat) : Array Nat := Id.run do
+  let mut out := acc
   let s := line
   let mut p : String.Pos.Raw := 0
   let endPos := s.endPos
@@ -175,11 +281,13 @@ def parseNatLine (line : String) : Array Nat := Id.run do
     while p < endPos && !isWs (p.get s) do
       p := p.next s
     if start < p then
-      let tok := String.Pos.Raw.extract s start p |>.trim
-      match tok.toNat? with
+      match parseNatRange s start p with
       | some n => out := out.push n
       | none => pure ()
   out
+
+def parseNatLine (line : String) : Array Nat :=
+  appendNatsFromLine line #[]
 
 /-! ## Matrix Construction for IO
 
@@ -466,8 +574,8 @@ def loadFromText (content : String) : IO LoadResult := do
     if i >= lines.size then
       return .error s!"Layer {l}: incomplete MLP section after W_in"
 
-    let mut woutFloats : Array Float := #[]
-    let mut binFloats : Array Float := #[]
+    let mut woutFloats : Array Float := Array.mkEmpty (hiddenDim * modelDim)
+    let mut binFloats : Array Float := Array.mkEmpty hiddenDim
 
     if lines[i]! = "b_in" then
       -- Ordering (2): parse b_in then W_out.
@@ -507,7 +615,7 @@ def loadFromText (content : String) : IO LoadResult := do
 
     -- Parse b_out
     i := i + 1
-    let mut boutFloats : Array Float := #[]
+    let mut boutFloats : Array Float := Array.mkEmpty modelDim
     while i < lines.size &&
           (if isV2 then !lines[i]!.startsWith "LN1_GAMMA"
            else !lines[i]!.startsWith "LAYER" && !lines[i]!.startsWith "UNEMBEDDING") do
@@ -529,7 +637,7 @@ def loadFromText (content : String) : IO LoadResult := do
       if i >= lines.size then
         return .error s!"Layer {l}: missing LN1_GAMMA section"
       i := i + 1
-      let mut ln1GammaFloats : Array Float := #[]
+      let mut ln1GammaFloats : Array Float := Array.mkEmpty modelDim
       while i < lines.size && !lines[i]!.startsWith "LN1_BETA" do
         for x in parseFloatLine lines[i]! do
           ln1GammaFloats := ln1GammaFloats.push x
@@ -537,7 +645,7 @@ def loadFromText (content : String) : IO LoadResult := do
 
       -- LN1_BETA
       i := i + 1
-      let mut ln1BetaFloats : Array Float := #[]
+      let mut ln1BetaFloats : Array Float := Array.mkEmpty modelDim
       while i < lines.size && !lines[i]!.startsWith "LN2_GAMMA" do
         for x in parseFloatLine lines[i]! do
           ln1BetaFloats := ln1BetaFloats.push x
@@ -545,7 +653,7 @@ def loadFromText (content : String) : IO LoadResult := do
 
       -- LN2_GAMMA
       i := i + 1
-      let mut ln2GammaFloats : Array Float := #[]
+      let mut ln2GammaFloats : Array Float := Array.mkEmpty modelDim
       while i < lines.size && !lines[i]!.startsWith "LN2_BETA" do
         for x in parseFloatLine lines[i]! do
           ln2GammaFloats := ln2GammaFloats.push x
@@ -553,7 +661,7 @@ def loadFromText (content : String) : IO LoadResult := do
 
       -- LN2_BETA
       i := i + 1
-      let mut ln2BetaFloats : Array Float := #[]
+      let mut ln2BetaFloats : Array Float := Array.mkEmpty modelDim
       while i < lines.size &&
             !lines[i]!.startsWith "LAYER" &&
             !lines[i]!.startsWith "LN_F_GAMMA" do
@@ -589,14 +697,14 @@ def loadFromText (content : String) : IO LoadResult := do
     if i >= lines.size then
       return .error "Missing LN_F_GAMMA section"
     i := i + 1
-    let mut lnfGammaFloats : Array Float := #[]
+    let mut lnfGammaFloats : Array Float := Array.mkEmpty modelDim
     while i < lines.size && !lines[i]!.startsWith "LN_F_BETA" do
       for x in parseFloatLine lines[i]! do
         lnfGammaFloats := lnfGammaFloats.push x
       i := i + 1
 
     i := i + 1
-    let mut lnfBetaFloats : Array Float := #[]
+    let mut lnfBetaFloats : Array Float := Array.mkEmpty modelDim
     while i < lines.size && !lines[i]!.startsWith "UNEMBEDDING" do
       for x in parseFloatLine lines[i]! do
         lnfBetaFloats := lnfBetaFloats.push x
@@ -727,8 +835,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       match line? with
       | none => return .error "Missing EMBEDDINGS section"
       | some line =>
-          for t in parseNatLine line do
-            toks := toks.push t
+          toks := appendNatsFromLine line toks
           line? ← readLine? h
     if toks.size != seqLen then
       return .error s!"TOKENS length mismatch: expected {seqLen}, got {toks.size}"
@@ -750,8 +857,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     | some line =>
         if line.startsWith "LAYER" then
           break
-        for x in parseFloatLine line do
-          embFloats := embFloats.push x
+        embFloats := appendFloatsFromLine line embFloats
         line? ← readLine? h
 
   let inputEmbeddings := buildMatrix seqLen modelDim embFloats
@@ -785,40 +891,36 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       if line? = none then
         return .error s!"Layer {l}: missing W_Q"
       line? ← readLine? h
-      let mut wqFloats : Array Float := #[]
+      let mut wqFloats : Array Float := Array.mkEmpty (modelDim * headDim)
       while line?.isSome && !(line?.get!.startsWith "W_K") do
-        for x in parseFloatLine (line?.get!) do
-          wqFloats := wqFloats.push x
+        wqFloats := appendFloatsFromLine (line?.get!) wqFloats
         line? ← readLine? h
 
       if line? = none then
         return .error s!"Layer {l}: missing W_K"
       line? ← readLine? h
-      let mut wkFloats : Array Float := #[]
+      let mut wkFloats : Array Float := Array.mkEmpty (modelDim * headDim)
       while line?.isSome && !(line?.get!.startsWith "W_V") do
-        for x in parseFloatLine (line?.get!) do
-          wkFloats := wkFloats.push x
+        wkFloats := appendFloatsFromLine (line?.get!) wkFloats
         line? ← readLine? h
 
       if line? = none then
         return .error s!"Layer {l}: missing W_V"
       line? ← readLine? h
-      let mut wvFloats : Array Float := #[]
+      let mut wvFloats : Array Float := Array.mkEmpty (modelDim * headDim)
       while line?.isSome && !(line?.get!.startsWith "W_O") do
-        for x in parseFloatLine (line?.get!) do
-          wvFloats := wvFloats.push x
+        wvFloats := appendFloatsFromLine (line?.get!) wvFloats
         line? ← readLine? h
 
       if line? = none then
         return .error s!"Layer {l}: missing W_O"
       line? ← readLine? h
-      let mut woFloats : Array Float := #[]
+      let mut woFloats : Array Float := Array.mkEmpty (headDim * modelDim)
       while line?.isSome do
         let line := line?.get!
         if line.startsWith "HEAD" || line.startsWith "MLP" then
           break
-        for x in parseFloatLine line do
-          woFloats := woFloats.push x
+        woFloats := appendFloatsFromLine line woFloats
         line? ← readLine? h
 
       let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats
@@ -838,13 +940,12 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     if line? = none then
       return .error s!"Layer {l}: missing W_in"
     line? ← readLine? h
-    let mut winFloats : Array Float := #[]
+    let mut winFloats : Array Float := Array.mkEmpty (modelDim * hiddenDim)
     while line?.isSome do
       let line := line?.get!
       if line.startsWith "W_out" || line.startsWith "b_in" then
         break
-      for x in parseFloatLine line do
-        winFloats := winFloats.push x
+      winFloats := appendFloatsFromLine line winFloats
       line? ← readLine? h
 
     if line? = none then
@@ -857,30 +958,26 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       -- Ordering (2): b_in then W_out.
       line? ← readLine? h
       while line?.isSome && !(line?.get!.startsWith "W_out") do
-        for x in parseFloatLine (line?.get!) do
-          binFloats := binFloats.push x
+        binFloats := appendFloatsFromLine (line?.get!) binFloats
         line? ← readLine? h
       if line? = none then
         return .error s!"Layer {l}: missing W_out after b_in"
       line? ← readLine? h
       while line?.isSome && !(line?.get!.startsWith "b_out") do
-        for x in parseFloatLine (line?.get!) do
-          woutFloats := woutFloats.push x
+        woutFloats := appendFloatsFromLine (line?.get!) woutFloats
         line? ← readLine? h
     else
       if line?.map (·.trim) != some "W_out" then
         return .error s!"Layer {l}: expected W_out or b_in after W_in"
       line? ← readLine? h
       while line?.isSome && !(line?.get!.startsWith "b_in") do
-        for x in parseFloatLine (line?.get!) do
-          woutFloats := woutFloats.push x
+        woutFloats := appendFloatsFromLine (line?.get!) woutFloats
         line? ← readLine? h
       if line? = none then
         return .error s!"Layer {l}: missing b_in after W_out"
       line? ← readLine? h
       while line?.isSome && !(line?.get!.startsWith "b_out") do
-        for x in parseFloatLine (line?.get!) do
-          binFloats := binFloats.push x
+        binFloats := appendFloatsFromLine (line?.get!) binFloats
         line? ← readLine? h
 
     -- b_out
@@ -898,8 +995,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
           line.startsWith "LAYER" || line.startsWith "UNEMBEDDING"
       if stop then
         break
-      for x in parseFloatLine line do
-        boutFloats := boutFloats.push x
+      boutFloats := appendFloatsFromLine line boutFloats
       line? ← readLine? h
 
     let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
@@ -913,8 +1009,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       line? ← readLine? h
       let mut ln1GammaFloats : Array Float := #[]
       while line?.isSome && !(line?.get!.startsWith "LN1_BETA") do
-        for x in parseFloatLine (line?.get!) do
-          ln1GammaFloats := ln1GammaFloats.push x
+        ln1GammaFloats := appendFloatsFromLine (line?.get!) ln1GammaFloats
         line? ← readLine? h
 
       -- LN1_BETA
@@ -923,8 +1018,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       line? ← readLine? h
       let mut ln1BetaFloats : Array Float := #[]
       while line?.isSome && !(line?.get!.startsWith "LN2_GAMMA") do
-        for x in parseFloatLine (line?.get!) do
-          ln1BetaFloats := ln1BetaFloats.push x
+        ln1BetaFloats := appendFloatsFromLine (line?.get!) ln1BetaFloats
         line? ← readLine? h
 
       -- LN2_GAMMA
@@ -933,8 +1027,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       line? ← readLine? h
       let mut ln2GammaFloats : Array Float := #[]
       while line?.isSome && !(line?.get!.startsWith "LN2_BETA") do
-        for x in parseFloatLine (line?.get!) do
-          ln2GammaFloats := ln2GammaFloats.push x
+        ln2GammaFloats := appendFloatsFromLine (line?.get!) ln2GammaFloats
         line? ← readLine? h
 
       -- LN2_BETA
@@ -945,8 +1038,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       while line?.isSome &&
           !(line?.get!.startsWith "LAYER") &&
           !(line?.get!.startsWith "LN_F_GAMMA") do
-        for x in parseFloatLine (line?.get!) do
-          ln2BetaFloats := ln2BetaFloats.push x
+        ln2BetaFloats := appendFloatsFromLine (line?.get!) ln2BetaFloats
         line? ← readLine? h
 
       let ln1Params : ConcreteLayerNormParams := {
@@ -973,8 +1065,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     line? ← readLine? h
     let mut lnfGammaFloats : Array Float := #[]
     while line?.isSome && !(line?.get!.startsWith "LN_F_BETA") do
-      for x in parseFloatLine (line?.get!) do
-        lnfGammaFloats := lnfGammaFloats.push x
+      lnfGammaFloats := appendFloatsFromLine (line?.get!) lnfGammaFloats
       line? ← readLine? h
 
     if line? = none then
@@ -982,8 +1073,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     line? ← readLine? h
     let mut lnfBetaFloats : Array Float := #[]
     while line?.isSome && !(line?.get!.startsWith "UNEMBEDDING") do
-      for x in parseFloatLine (line?.get!) do
-        lnfBetaFloats := lnfBetaFloats.push x
+      lnfBetaFloats := appendFloatsFromLine (line?.get!) lnfBetaFloats
       line? ← readLine? h
 
     lnf := {
@@ -1000,8 +1090,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
     match line? with
     | none => break
     | some line =>
-        for x in parseFloatLine line do
-          unembFloats := unembFloats.push x
+        unembFloats := appendFloatsFromLine line unembFloats
         line? ← readLine? h
 
   let unembedding := buildMatrix modelDim vocabSize unembFloats
