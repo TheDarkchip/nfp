@@ -3,3 +3,6 @@ models
 *.nfpt
 .DS_Store
 logs/
+lean-reference-manual/
+inductionhead_papers/
+nfp.zip
