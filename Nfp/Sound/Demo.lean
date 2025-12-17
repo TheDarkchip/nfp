@@ -1,4 +1,5 @@
-import Mathlib
+import Mathlib.Tactic.Linarith
+import Mathlib.Tactic.NormNum
 import Nfp.Linearization
 
 namespace Nfp.Sound

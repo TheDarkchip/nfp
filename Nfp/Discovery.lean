@@ -1,8 +1,4 @@
-import Mathlib.Data.Nat.Basic
-import Mathlib.Data.List.Range
 import Batteries.Lean.Float
-import Nfp.Linearization
-import Nfp.Abstraction
 
 /-!
 # Executable Circuit Discovery for Induction Heads
@@ -61,9 +57,6 @@ of minutes for full network analysis).
 -/
 
 namespace Nfp
-
-open scoped BigOperators
-open Finset
 
 /-! ## Concrete Weight Representations -/
 

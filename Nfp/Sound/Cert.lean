@@ -1,4 +1,4 @@
-import Mathlib
+import Std
 import Nfp.Sound.Bounds
 
 namespace Nfp.Sound

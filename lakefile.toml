@@ -10,7 +10,7 @@ relaxedAutoImplicit = false
 weak.linter.mathlibStandardSet = true
 maxSynthPendingDepth = 3
 linter.unusedVariables = true
-linter.unreachableTactic = true
+weak.linter.unreachableTactic = true
 
 [[require]]
 name = "mathlib"
