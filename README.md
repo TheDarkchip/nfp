@@ -89,6 +89,8 @@ The main entrypoint is:
 lake exe nfp <command> [args] [flags]
 ```
 
+By default, `nfp` mirrors everything printed to stdout into `logs/` as a timestamped `.log` file.
+
 ### `analyze`
 
 Runs the default end-to-end analysis for the supplied model and prints a human-readable report.
@@ -125,13 +127,26 @@ lake exe nfp induction models/gpt2_rigorous.nfpt \
 
 Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
 
+`certify` supports both:
+- **global certification** (weights only), and
+- **local certification** (weights + a small input region around a concrete prompt/input).
+
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
   --eps 1e-5 --actDeriv 2 --output cert.txt
 ```
 
+- For local (input-dependent) LayerNorm certification, pass an input `.nfpt` containing `EMBEDDINGS` and an ℓ∞ radius `δ`:
+
+```bash
+lake exe nfp certify models/gpt2_rigorous.nfpt \
+  --input models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
+```
+
 - `--eps` sets the LayerNorm ε (default: `1e-5`).
 - `--actDeriv` bounds the activation derivative (default: `2`).
+- `--input` optionally provides an input `.nfpt` file used for local certification.
+- `--delta` sets the local ℓ∞ radius `δ` (default: `0`).
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `rope`

@@ -16,6 +16,9 @@ This is a minimal, *sound* loader intended for certification.
 It does **not** construct the full `ConcreteModel` (Float-based). Instead it parses only the
 weights needed for conservative amplification constants `Cᵢ`, using exact `Rat` arithmetic.
 
+It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
+LayerNorm certification on a bounded region around that input.
+
 Trusted base:
 - Parsing from text to `Rat` via `Nfp.Sound.parseRat`.
 - Exact accumulation of row-sum norms and max-abs values.

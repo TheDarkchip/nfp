@@ -35,6 +35,9 @@ lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 # Generate a sound-mode certificate report
 lake exe nfp certify model.nfpt --eps 1e-5 --actDeriv 2
 
+# Local (input-dependent) sound-mode certificate report
+lake exe nfp certify model.nfpt --input model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
+
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
 

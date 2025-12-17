@@ -86,6 +86,10 @@ For sound certification without `sqrt`, we use the very conservative inequality:
 `1/σ ≤ 1/eps` (since `σ ≥ sqrt(eps)` and for `eps ∈ (0,1]`, `1/eps ≥ 1/sqrt(eps)`).
 
 So we certify using `maxAbsGamma / eps`.
+
+For tighter **local** certification (weights + a bounded input region), use
+`layerNormOpBoundLocal`, which replaces `1/eps` with a sound upper bound on
+`1/sqrt(varianceLowerBound + eps)`.
 -/
 def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
   if eps ≤ 0 then 0 else maxAbsGamma / eps
