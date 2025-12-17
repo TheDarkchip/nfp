@@ -248,11 +248,42 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let verify := p.hasFlag "verify"
   let verbose := p.hasFlag "verbose"
   let diagnostics := p.hasFlag "diagnostics"
+  let adaptive := p.hasFlag "adaptive"
+  let targetSlackStr := p.flag? "targetSlack" |>.map (·.as! String) |>.getD "8.0"
+  let maxUpgrades := p.flag? "maxUpgrades" |>.map (·.as! Nat) |>.getD 200
+  let minRelImproveStr := p.flag? "minRelImprove" |>.map (·.as! String) |>.getD "0.01"
+  let krylovSteps := p.flag? "krylovSteps" |>.map (·.as! Nat) |>.getD 4
+  let adaptiveScopeStr := p.flag? "adaptiveScope" |>.map (·.as! String) |>.getD "layernorm"
   let diagTop := p.flag? "diagTop" |>.map (·.as! Nat) |>.getD 5
   let some minEffect := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
       return 1
+
+  let (targetSlack, minRelImprove, adaptiveScope) ←
+    if adaptive then
+      let some targetSlack := Nfp.parseFloat targetSlackStr
+        | do
+          IO.eprintln s!"Error: Invalid --targetSlack '{targetSlackStr}'"
+          return 1
+      let some minRelImprove := Nfp.parseFloat minRelImproveStr
+        | do
+          IO.eprintln s!"Error: Invalid --minRelImprove '{minRelImproveStr}'"
+          return 1
+      let adaptiveScope? : Option Nfp.AdaptiveScope :=
+        match adaptiveScopeStr.trim.toLower with
+        | "layernorm" => some .layernorm
+        | "all" => some .all
+        | _ => none
+      let some adaptiveScope := adaptiveScope?
+        | do
+          IO.eprintln <|
+            s!"Error: Invalid --adaptiveScope '{adaptiveScopeStr}' " ++
+              "(expected layernorm|all)"
+          return 1
+      pure (targetSlack, minRelImprove, adaptiveScope)
+    else
+      pure (8.0, 0.01, Nfp.AdaptiveScope.layernorm)
 
   IO.println "Loading model..."
   let loadResult ← loadModel ⟨modelPath⟩
@@ -303,10 +334,41 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
       IO.println "  kComp = kComp_raw - 1/√modelDim"
 
+      let buildLayerNormBounds := diagnostics && (!adaptive)
       let (heads, cache) :=
         findHeuristicInductionHeadsWithCache model target minEffect (minInductionScore := 0.01)
+          (buildLayerNormBounds := buildLayerNormBounds)
       let top := heads.take 50
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
+
+      let needSched := adaptive && (verbose || diagnostics)
+      let sched? : Option Nfp.AdaptiveSchedulerResult :=
+        if needSched then
+          let cfg : Nfp.AdaptiveSchedulerConfig :=
+            { targetSlack := targetSlack
+              maxUpgrades := maxUpgrades
+              minRelImprove := minRelImprove
+              krylovSteps := krylovSteps
+              scope := adaptiveScope
+              debugMonotone := diagnostics }
+          some (Nfp.runAdaptiveScheduler cache cfg)
+        else
+          none
+
+      if adaptive && verbose then
+        let some sched := sched?
+          | pure ()
+        IO.println ""
+        IO.println "ADAPTIVE SCHEDULER"
+        IO.println <|
+          s!"  targetSlack={fmtFloat targetSlack}  maxUpgrades={maxUpgrades} " ++
+            s!"minRelImprove={fmtFloat minRelImprove}  krylovSteps={krylovSteps} " ++
+            s!"scope={adaptiveScopeStr}"
+        for s in sched.steps do
+          IO.println <|
+            s!"  it={s.iter}  L{s.layerIdx}: tier {s.tierFrom}->{s.tierTo}  " ++
+              s!"ub {fmtFloat s.ubBefore}->{fmtFloat s.ubAfter}  " ++
+              s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
 
       for h in top do
         let c := h.candidate
@@ -334,13 +396,30 @@ def runInduction (p : Parsed) : IO UInt32 := do
       if diagnostics then
         IO.println ""
         let diagN := min diagTop top.size
-        IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
-        IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
-        for l in [:cache.layerNormBounds.size] do
-          let ub := cache.layerNormBounds[l]!
-          let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
-          let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
-          IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
+        if adaptive then
+          let some sched := sched?
+            | do
+              IO.eprintln "Error: internal scheduler state missing."
+              return 1
+          IO.println ""
+          IO.println "LAYER NORM DIAGNOSTICS (LOWER vs UPPER)"
+          IO.println "  (lb is rigorous lower bound via Krylov steps; ub is rigorous upper bound)"
+          for l in [:sched.ub.size] do
+            let ub := sched.ub[l]!
+            let lb := sched.lb[l]!
+            let ratio : Float := if lb > 1e-12 then ub / lb else Float.inf
+            let tier := sched.tier[l]!
+            IO.println <|
+              s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
+                s!"ub/lb={fmtFloat ratio}  tier={tier}"
+        else
+          IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
+          IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
+          for l in [:cache.layerNormBounds.size] do
+            let ub := cache.layerNormBounds[l]!
+            let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
+            let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
+            IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
 
         -- Rectangular Gram diagnostics for MLP weights (layer 0 only).
         if h0 : 0 < cache.model.mlps.size then
@@ -541,6 +620,12 @@ def inductionCmd : Cmd := `[Cli|
     v, verbose; "Enable verbose output"
     d, diagnostics; "Print diagnostic breakdown of ε bounds (pattern/value decomposition)"
     diagTop : Nat; "How many top candidates get diagnostics (default: 5)"
+    adaptive; "Enable adaptive bound scheduler (rigorous; deterministic)"
+    targetSlack : String; "Stop when ub/lb ≤ targetSlack (default: 8.0)"
+    maxUpgrades : Nat; "Maximum adaptive upgrades (default: 200)"
+    minRelImprove : String; "Stop upgrading a layer if improvement < this fraction (default: 0.01)"
+    krylovSteps : Nat; "Krylov steps for LOWER bounds only (default: 4)"
+    adaptiveScope : String; "Adaptive scope: layernorm | all (default: layernorm)"
 
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
