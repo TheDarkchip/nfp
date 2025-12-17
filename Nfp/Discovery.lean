@@ -103,6 +103,32 @@ def set (M : ConcreteMatrix) (i j : Nat) (val : Float) : ConcreteMatrix :=
   else
     M
 
+/-- Maximum absolute entry in a given row. Returns 0 if the row is out of bounds. -/
+def rowMaxAbs (M : ConcreteMatrix) (r : Nat) : Float :=
+  if r < M.numRows then
+    Id.run do
+      let mut m : Float := 0.0
+      let rowBase := r * M.numCols
+      for c in [:M.numCols] do
+        let a := Float.abs (M.data[rowBase + c]!)
+        if a > m then
+          m := a
+      return m
+  else
+    0.0
+
+/-- Take the first `n` rows of a matrix (keeping all columns). -/
+def takeRows (M : ConcreteMatrix) (n : Nat) : ConcreteMatrix :=
+  if n ≥ M.numRows then
+    M
+  else
+    { numRows := n
+      numCols := M.numCols
+      data := .ofFn fun idx : Fin (n * M.numCols) =>
+        -- Since `n < M.numRows`, `idx.val < n*numCols ≤ numRows*numCols = data.size`.
+        M.data.getD idx.val 0.0
+      size_eq := Array.size_ofFn }
+
 /-- Create a zero matrix of given dimensions. -/
 def zeros (rows cols : Nat) : ConcreteMatrix where
   numRows := rows
@@ -1277,6 +1303,63 @@ def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float 
       if invσ > maxInvStd then maxInvStd := invσ
 
   return gammaMaxAbs * maxInvStd
+
+structure LayerNormOpDiag where
+  gammaMaxAbs : Float
+  maxInvStd : Float
+  maxInvStdRow : Nat
+  minVar : Float
+  minVarRow : Nat
+  deriving Repr
+
+/-- Diagnostics for `layerNormRowwiseOpEst`: reports `max |γ|`, the worst-case row inverse-std,
+and the minimum variance row (useful for spotting padding/degenerate rows). -/
+def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : LayerNormOpDiag := Id.run do
+  if X.numRows = 0 || X.numCols = 0 then
+    return { gammaMaxAbs := 0.0, maxInvStd := 0.0, maxInvStdRow := 0, minVar := 0.0, minVarRow := 0 }
+  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols) then
+    return { gammaMaxAbs := 0.0, maxInvStd := 0.0, maxInvStdRow := 0, minVar := 0.0, minVarRow := 0 }
+
+  let mut gammaMaxAbs : Float := 0.0
+  for c in [:X.numCols] do
+    let g := Float.abs (γ.get 0 c)
+    if g > gammaMaxAbs then gammaMaxAbs := g
+
+  let mut maxInvStd : Float := 0.0
+  let mut maxInvStdRow : Nat := 0
+  let mut minVar : Float := Float.inf
+  let mut minVarRow : Nat := 0
+
+  for r in [:X.numRows] do
+    let mut sum : Float := 0.0
+    for c in [:X.numCols] do
+      sum := sum + X.get r c
+    let μ := sum / X.numCols.toFloat
+    let mut varSum : Float := 0.0
+    for c in [:X.numCols] do
+      let centered := X.get r c - μ
+      varSum := varSum + centered * centered
+    let var := varSum / X.numCols.toFloat
+    if var < minVar then
+      minVar := var
+      minVarRow := r
+    let σ := Float.sqrt (var + eps)
+    if σ > 0.0 then
+      let invσ := 1.0 / σ
+      if invσ > maxInvStd then
+        maxInvStd := invσ
+        maxInvStdRow := r
+
+  if Float.isInf minVar || Float.isNaN minVar then
+    minVar := 0.0
+
+  return {
+    gammaMaxAbs := gammaMaxAbs
+    maxInvStd := maxInvStd
+    maxInvStdRow := maxInvStdRow
+    minVar := minVar
+    minVarRow := minVarRow
+  }
 
 /-- Get column j as a vector (stored as numRows×1 matrix). -/
 def getCol (M : ConcreteMatrix) (j : Nat) : ConcreteMatrix :=
@@ -3329,6 +3412,39 @@ namespace ConcreteModel
 /-- Model dimension (d), inferred from input embeddings. -/
 def modelDim (model : ConcreteModel) : Nat :=
   model.inputEmbeddings.numCols
+
+/-- Trim trailing all-zero embedding rows (common when `.nfpt` uses a fixed `seqLen` with padding).
+
+This is a **semantic no-op** for causal analysis of the *prefix* of real tokens: padded positions
+occur after the prompt and are never attended to by earlier queries, but they can badly inflate
+LayerNorm Jacobian bounds because zero rows have variance `0` (hence `1/sqrt(eps)` scaling).
+
+We only trim when we detect a sufficiently long suffix of (near-)zero rows to avoid accidental
+truncation on legitimate data.
+-/
+def trimTrailingZeroEmbeddings (model : ConcreteModel)
+    (minTrailing : Nat := 8) (eps : Float := 1e-12) : ConcreteModel := Id.run do
+  let X := model.inputEmbeddings
+  if X.numRows = 0 || X.numCols = 0 then
+    return model
+  let mut k : Nat := 0
+  let mut r : Nat := X.numRows
+  while r > 0 do
+    let r' := r - 1
+    let m := ConcreteMatrix.rowMaxAbs X r'
+    if m ≤ eps then
+      k := k + 1
+      r := r'
+    else
+      break
+  if k < minTrailing then
+    return model
+  let newLen := X.numRows - k
+  let toks? := model.inputTokens.map (fun ts => ts.take newLen)
+  return { model with
+    seqLen := newLen
+    inputEmbeddings := X.takeRows newLen
+    inputTokens := toks? }
 
 /-- Get ln_1 parameters for a layer, defaulting to identity. -/
 def ln1Params (model : ConcreteModel) (layerIdx : Nat) : ConcreteLayerNormParams :=

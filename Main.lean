@@ -219,7 +219,10 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
-  | .ok model =>
+  | .ok model0 =>
+    let model := model0.trimTrailingZeroEmbeddings
+    if verbose && model.seqLen ≠ model0.seqLen then
+      IO.println s!"  Trimmed trailing zero embeddings: seqLen {model0.seqLen} -> {model.seqLen}"
     if verbose then
       IO.println s!"✓ Model loaded successfully"
       IO.println s!"  Layers: {model.numLayers}"
@@ -303,7 +306,10 @@ def runInduction (p : Parsed) : IO UInt32 := do
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
-  | .ok model =>
+  | .ok model0 =>
+    let model := model0.trimTrailingZeroEmbeddings
+    if verbose && model.seqLen ≠ model0.seqLen then
+      IO.println s!"  Trimmed trailing zero embeddings: seqLen {model0.seqLen} -> {model.seqLen}"
     match model.unembedding with
     | none =>
       IO.eprintln "Error: Model is missing unembedding matrix (needed for logit directions)."
@@ -424,6 +430,20 @@ def runInduction (p : Parsed) : IO UInt32 := do
             IO.println <|
               s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
                 s!"ub/lb={fmtFloat ratio}  tier={tier}"
+            let x := cache.forwardResult.getLayerInput l
+            let y := cache.forwardResult.getPostAttnResidual l
+            let ln1p := cache.model.ln1Params l
+            let ln2p := cache.model.ln2Params l
+            let ln1 := ConcreteMatrix.layerNormRowwiseOpDiag x ln1p.gamma
+            let ln2 := ConcreteMatrix.layerNormRowwiseOpDiag y ln2p.gamma
+            IO.println <|
+              s!"      ln1: op≈{fmtFloat (ln1.gammaMaxAbs * ln1.maxInvStd)} " ++
+                s!"(γmax≈{fmtFloat ln1.gammaMaxAbs}, invStdMax≈{fmtFloat ln1.maxInvStd} " ++
+                s!"@r={ln1.maxInvStdRow}, varMin≈{fmtFloat ln1.minVar} @r={ln1.minVarRow})"
+            IO.println <|
+              s!"      ln2: op≈{fmtFloat (ln2.gammaMaxAbs * ln2.maxInvStd)} " ++
+                s!"(γmax≈{fmtFloat ln2.gammaMaxAbs}, invStdMax≈{fmtFloat ln2.maxInvStd} " ++
+                s!"@r={ln2.maxInvStdRow}, varMin≈{fmtFloat ln2.minVar} @r={ln2.minVarRow})"
             if hm : l < cache.model.mlps.size then
               let mlp := cache.model.mlps[l]'hm
               let y := cache.forwardResult.getPostAttnResidual l
