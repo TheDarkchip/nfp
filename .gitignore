@@ -2,3 +2,4 @@
 models
 *.nfpt
 .DS_Store
+logs/

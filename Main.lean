@@ -3,6 +3,7 @@ import Nfp.IO
 import Nfp.Linearization
 import Nfp.Verification
 import Nfp.Sound.IO
+import Std.Time.Format
 
 /-!
 # NFP CLI: Circuit Verification Command-Line Tool
@@ -46,6 +47,70 @@ open Cli Nfp
 
 private def fmtFloat (x : Float) : String :=
   toString x
+
+/-! ## Stdout logging -/
+
+private structure StdoutLogCtx where
+  handle : IO.FS.Handle
+  pathRef : IO.Ref System.FilePath
+  pendingRef : IO.Ref Bool
+  timestamp : String
+
+initialize stdoutLogCtxRef : IO.Ref (Option StdoutLogCtx) ← IO.mkRef none
+
+private def sanitizeFileComponent (s : String) : String :=
+  String.mk <|
+    s.toList.map fun c =>
+      if c.isAlphanum || c = '_' || c = '-' || c = '.' then c else '_'
+
+private def timestampNowForLog : IO String := do
+  let dt ← Std.Time.ZonedDateTime.now
+  let dateStr := s!"{dt.toPlainDate}"
+  let timeRaw := s!"{dt.toPlainTime}"
+  let timeNoFrac := (timeRaw.splitOn ".").getD 0 timeRaw
+  let timeStr := timeNoFrac.replace ":" "-"
+  return s!"{dateStr}-{timeStr}"
+
+private def openPendingStdoutLog : IO StdoutLogCtx := do
+  let logsDir : System.FilePath := "logs"
+  IO.FS.createDirAll logsDir
+  let ts ← timestampNowForLog
+  let path : System.FilePath := logsDir / s!"{ts}_pending.log"
+  let h ← IO.FS.Handle.mk path .write
+  let pathRef ← IO.mkRef path
+  let pendingRef ← IO.mkRef true
+  return { handle := h, pathRef := pathRef, pendingRef := pendingRef, timestamp := ts }
+
+private def mkTeeStream (out log : IO.FS.Stream) : IO.FS.Stream :=
+  { flush := do out.flush; log.flush
+    read := fun n => out.read n
+    write := fun b => do out.write b; log.write b
+    getLine := out.getLine
+    putStr := fun s => do out.putStr s; log.putStr s
+    isTty := out.isTty }
+
+private def setStdoutLogName (name : String) : IO Unit := do
+  let some ctx ← stdoutLogCtxRef.get | return ()
+  let pending ← ctx.pendingRef.get
+  if !pending then
+    return ()
+  let oldPath ← ctx.pathRef.get
+  let logsDir : System.FilePath := "logs"
+  let safeName := sanitizeFileComponent name
+  let newPath : System.FilePath := logsDir / s!"{ctx.timestamp}_{safeName}.log"
+  try
+    IO.FS.rename oldPath newPath
+    ctx.pathRef.set newPath
+    ctx.pendingRef.set false
+  catch
+    | _ =>
+      -- If rename fails, keep the pending filename but continue.
+      pure ()
+
+private def setStdoutLogNameFromModelPath (modelPath : String) : IO Unit := do
+  let p : System.FilePath := modelPath
+  let stem := p.fileStem.getD (p.fileName.getD "model")
+  setStdoutLogName stem
 
 private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) : IO Unit := do
   let attnFrob : Float := Float.sqrt data.attentionFrobeniusNormSq
@@ -119,6 +184,7 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
 /-- Run the analyze command - perform circuit analysis. -/
 def runAnalyze (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
+  setStdoutLogNameFromModelPath modelPath
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.1"
   let some threshold := Nfp.parseFloat thresholdStr
     | do
@@ -171,6 +237,7 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
 /-- Run the induction command - discover induction heads ranked by effectiveness. -/
 def runInduction (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
+  setStdoutLogNameFromModelPath modelPath
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
@@ -384,6 +451,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
 /-- Run the certify command - compute conservative, exact bounds in sound mode. -/
 def runCertify (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
+  setStdoutLogNameFromModelPath modelPath
   let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
   let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
   let outputPath := p.flag? "output" |>.map (·.as! String)
@@ -512,8 +580,20 @@ def nfpCmd : Cmd := `[Cli|
 
 /-- Main entry point. -/
 def main (args : List String) : IO UInt32 := do
-  if args.contains "--version" then
-    IO.println "nfp version 0.1.0"
-    return 0
-
-  nfpCmd.validate args
+  let ctx ← openPendingStdoutLog
+  stdoutLogCtxRef.set (some ctx)
+  let out ← IO.getStdout
+  let log := IO.FS.Stream.ofHandle ctx.handle
+  let tee := mkTeeStream out log
+  IO.withStdout tee <| do
+    try
+      if args.contains "--version" then
+        setStdoutLogName "version"
+        IO.println "nfp version 0.1.0"
+        return (0 : UInt32)
+      nfpCmd.validate args
+    finally
+      let pending ← ctx.pendingRef.get
+      if pending then
+        setStdoutLogName "no_model"
+      stdoutLogCtxRef.set none
