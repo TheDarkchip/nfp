@@ -519,10 +519,16 @@ Otherwise (size-capped), we fall back to cheap dense bounds.
 -/
 structure RectGramDiag where
   usedGram : Bool
+  /-- Used the absolute-Gram fallback (no materialized Gram). -/
+  usedAbsGram : Bool
   gramDim : Nat
   lambdaBrauer : Float
   lambdaMoment : Float
   lambdaGersh : Float
+  /-- Gershgorin upper bound computed without forming the Gram matrix. -/
+  lambdaAbsGersh : Float
+  /-- Brauer/Cassini upper bound computed without forming the Gram matrix. -/
+  lambdaAbsBrauer : Float
   lambdaUsed : Float
   opBound : Float
   frobBound : Float
@@ -592,6 +598,131 @@ def symmLambdaMaxUpperBrauer (G : ConcreteMatrix) : Float := Id.run do
   else
     return max maxDiag maxPair
 
+/-- Gershgorin and Brauer/Cassini upper bounds for the reduced Gram matrix, without forming it.
+
+Let `A` be `m×n`. We reduce to `G = A Aᵀ` if `m ≤ n` and `G = Aᵀ A` otherwise, so
+`‖A‖₂² = λ_max(G)` (exact real arithmetic).
+
+We avoid forming `G` by bounding absolute row sums via:
+- If `m > n` (`G = AᵀA`): use `s_row[k] = Σ_j |A[k,j]|` and
+  `Σ_j |G[i,j]| ≤ Σ_k |A[k,i]| * s_row[k]`.
+- If `m ≤ n` (`G = AAᵀ`): use `s_col[t] = Σ_i |A[i,t]|` and
+  `Σ_j |G[i,j]| ≤ Σ_t |A[i,t]| * s_col[t]`.
+
+The first component is the Gershgorin/∞ bound `max_i rowSumUpper[i]`.
+The second is the Brauer/Cassini bound computed from `diag[i]` and
+`offSumUpper[i] = max(0, rowSumUpper[i] - diag[i])`.
+
+If NaN/Inf appears in the Brauer calculation, we conservatively fall back to the
+Gershgorin bound.
+-/
+def rectAbsGramLambdaUpperGershBrauer (A : ConcreteMatrix) : Float × Float := Id.run do
+  let m := A.numRows
+  let n := A.numCols
+  if m = 0 || n = 0 then
+    return (0.0, 0.0)
+
+  if m > n then
+    -- `G = AᵀA` (size `n×n`), using row absolute sums of `A`.
+    let mut sRow : Array Float := Array.replicate m 0.0
+    for k in [:m] do
+      let mut acc : Float := 0.0
+      let rowBase := k * n
+      for j in [:n] do
+        acc := acc + Float.abs (A.data[rowBase + j]!)
+      sRow := sRow.set! k acc
+
+    let mut diag : Array Float := Array.replicate n 0.0
+    let mut rowSumUpper : Array Float := Array.replicate n 0.0
+    for k in [:m] do
+      let s := sRow[k]!
+      let rowBase := k * n
+      for i in [:n] do
+        let a := A.data[rowBase + i]!
+        diag := diag.set! i (diag[i]! + a * a)
+        rowSumUpper := rowSumUpper.set! i (rowSumUpper[i]! + Float.abs a * s)
+
+    let mut lambdaAbsGersh : Float := 0.0
+    for i in [:n] do
+      lambdaAbsGersh := max lambdaAbsGersh rowSumUpper[i]!
+
+    if n < 2 then
+      return (lambdaAbsGersh, diag[0]!)
+
+    let mut maxPair : Float := 0.0
+    let mut bad : Bool := false
+    for i in [:n] do
+      let di := diag[i]!
+      let ri := max 0.0 (rowSumUpper[i]! - di)
+      if Float.isNaN di || Float.isInf di || Float.isNaN ri || Float.isInf ri then
+        bad := true
+      for j in [i + 1:n] do
+        let dj := diag[j]!
+        let rj := max 0.0 (rowSumUpper[j]! - dj)
+        if Float.isNaN dj || Float.isInf dj || Float.isNaN rj || Float.isInf rj then
+          bad := true
+        let delta := di - dj
+        let disc := max 0.0 (delta * delta + 4.0 * ri * rj)
+        let root := Float.sqrt disc
+        let bij := (di + dj + root) / 2.0
+        if Float.isNaN bij || Float.isInf bij then
+          bad := true
+        maxPair := max maxPair bij
+
+    let lambdaAbsBrauer := if bad then lambdaAbsGersh else maxPair
+    return (lambdaAbsGersh, lambdaAbsBrauer)
+  else
+    -- `G = AAᵀ` (size `m×m`), using column absolute sums of `A`.
+    let mut sCol : Array Float := Array.replicate n 0.0
+    for i in [:m] do
+      let rowBase := i * n
+      for t in [:n] do
+        let a := A.data[rowBase + t]!
+        sCol := sCol.set! t (sCol[t]! + Float.abs a)
+
+    let mut diag : Array Float := Array.replicate m 0.0
+    let mut rowSumUpper : Array Float := Array.replicate m 0.0
+    for i in [:m] do
+      let mut di : Float := 0.0
+      let mut ru : Float := 0.0
+      let rowBase := i * n
+      for t in [:n] do
+        let a := A.data[rowBase + t]!
+        di := di + a * a
+        ru := ru + Float.abs a * sCol[t]!
+      diag := diag.set! i di
+      rowSumUpper := rowSumUpper.set! i ru
+
+    let mut lambdaAbsGersh : Float := 0.0
+    for i in [:m] do
+      lambdaAbsGersh := max lambdaAbsGersh rowSumUpper[i]!
+
+    if m < 2 then
+      return (lambdaAbsGersh, diag[0]!)
+
+    let mut maxPair : Float := 0.0
+    let mut bad : Bool := false
+    for i in [:m] do
+      let di := diag[i]!
+      let ri := max 0.0 (rowSumUpper[i]! - di)
+      if Float.isNaN di || Float.isInf di || Float.isNaN ri || Float.isInf ri then
+        bad := true
+      for j in [i + 1:m] do
+        let dj := diag[j]!
+        let rj := max 0.0 (rowSumUpper[j]! - dj)
+        if Float.isNaN dj || Float.isInf dj || Float.isNaN rj || Float.isInf rj then
+          bad := true
+        let delta := di - dj
+        let disc := max 0.0 (delta * delta + 4.0 * ri * rj)
+        let root := Float.sqrt disc
+        let bij := (di + dj + root) / 2.0
+        if Float.isNaN bij || Float.isInf bij then
+          bad := true
+        maxPair := max maxPair bij
+
+    let lambdaAbsBrauer := if bad then lambdaAbsGersh else maxPair
+    return (lambdaAbsGersh, lambdaAbsBrauer)
+
 /-- Compute a rigorous operator-norm upper bound for a rectangular matrix via Gram reduction.
 
 Algorithm (exact real arithmetic):
@@ -616,22 +747,38 @@ def opNormUpperBoundRectGramDiag (A : ConcreteMatrix) (maxGramDim : Nat := 256) 
   let k := min m n
   if k = 0 then
     { usedGram := true
+      usedAbsGram := false
       gramDim := 0
       lambdaBrauer := 0.0
       lambdaMoment := 0.0
       lambdaGersh := 0.0
+      lambdaAbsGersh := 0.0
+      lambdaAbsBrauer := 0.0
       lambdaUsed := 0.0
       opBound := 0.0
       frobBound := frob
       oneInfBound := oneInf }
   else if k > maxGramDim then
+    let (lambdaAbsGersh, lambdaAbsBrauer) := rectAbsGramLambdaUpperGershBrauer A
+    let lambdaAbsUpper := min lambdaAbsGersh lambdaAbsBrauer
+    let opAbsRaw := Float.sqrt (max 0.0 lambdaAbsUpper)
+    let opAbs : Float :=
+      if Float.isNaN opAbsRaw || Float.isInf opAbsRaw then
+        Float.inf
+      else
+        opAbsRaw
+    let opBound := min cheap opAbs
+    let lambdaUsed := min (max 0.0 (cheap * cheap)) (max 0.0 lambdaAbsUpper)
     { usedGram := false
+      usedAbsGram := true
       gramDim := k
       lambdaBrauer := 0.0
       lambdaMoment := 0.0
       lambdaGersh := 0.0
-      lambdaUsed := max 0.0 (cheap * cheap)
-      opBound := cheap
+      lambdaAbsGersh := lambdaAbsGersh
+      lambdaAbsBrauer := lambdaAbsBrauer
+      lambdaUsed := lambdaUsed
+      opBound := opBound
       frobBound := frob
       oneInfBound := oneInf }
   else
@@ -649,10 +796,13 @@ def opNormUpperBoundRectGramDiag (A : ConcreteMatrix) (maxGramDim : Nat := 256) 
     let lambdaUpper := min lambdaGersh (min lambdaBrauer lambdaMoment)
     let op := Float.sqrt (max 0.0 lambdaUpper)
     { usedGram := true
+      usedAbsGram := false
       gramDim := k
       lambdaBrauer := lambdaBrauer
       lambdaMoment := lambdaMoment
       lambdaGersh := lambdaGersh
+      lambdaAbsGersh := 0.0
+      lambdaAbsBrauer := 0.0
       lambdaUsed := lambdaUpper
       opBound := min cheap op
       frobBound := frob

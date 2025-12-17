@@ -278,20 +278,32 @@ def runInduction (p : Parsed) : IO UInt32 := do
           let dOut := mlp0.W_out.opNormUpperBoundRectGramDiag
           IO.println ""
           IO.println "RECT-GRAM DIAGNOSTICS (MLP layer 0 weights)"
-          IO.println s!"  W_in:  usedGram={dIn.usedGram}  gramDim={dIn.gramDim}"
-          IO.println s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound}"
+          IO.println <|
+            s!"  W_in:  usedGram={dIn.usedGram}  usedAbsGram={dIn.usedAbsGram} " ++
+              s!"gramDim={dIn.gramDim}"
+          IO.println <|
+            s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound} " ++
+              s!"opBound={fmtFloat dIn.opBound}"
+          IO.println <|
+            s!"        λ_abs_gersh={fmtFloat dIn.lambdaAbsGersh} " ++
+              s!"λ_abs_brauer={fmtFloat dIn.lambdaAbsBrauer}"
           IO.println s!"        λ_gersh={fmtFloat dIn.lambdaGersh}"
           IO.println s!"        λ_brauer={fmtFloat dIn.lambdaBrauer}"
           IO.println s!"        λ_moment={fmtFloat dIn.lambdaMoment}"
           IO.println s!"        λ_used={fmtFloat dIn.lambdaUsed}"
-          IO.println s!"        opBound={fmtFloat dIn.opBound}"
-          IO.println s!"  W_out: usedGram={dOut.usedGram}  gramDim={dOut.gramDim}"
-          IO.println s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound}"
+          IO.println <|
+            s!"  W_out: usedGram={dOut.usedGram}  usedAbsGram={dOut.usedAbsGram} " ++
+              s!"gramDim={dOut.gramDim}"
+          IO.println <|
+            s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound} " ++
+              s!"opBound={fmtFloat dOut.opBound}"
+          IO.println <|
+            s!"        λ_abs_gersh={fmtFloat dOut.lambdaAbsGersh} " ++
+              s!"λ_abs_brauer={fmtFloat dOut.lambdaAbsBrauer}"
           IO.println s!"        λ_gersh={fmtFloat dOut.lambdaGersh}"
           IO.println s!"        λ_brauer={fmtFloat dOut.lambdaBrauer}"
           IO.println s!"        λ_moment={fmtFloat dOut.lambdaMoment}"
           IO.println s!"        λ_used={fmtFloat dOut.lambdaUsed}"
-          IO.println s!"        opBound={fmtFloat dOut.opBound}"
         IO.println ""
         IO.println s!"DIAGNOSTICS (ε decomposition) for top-{diagN} candidates"
         for h in (top.take diagN) do
