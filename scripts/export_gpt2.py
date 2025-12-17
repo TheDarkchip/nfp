@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """
 Export GPT-2 Small weights to NFP Text Format (.nfpt).
 

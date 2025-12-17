@@ -1,3 +1,5 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
 import Mathlib.Data.Finset.Basic
 import Mathlib.Data.List.Basic
 import Mathlib.Data.NNReal.Basic

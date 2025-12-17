@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """
 Generate a "Rigorous Induction" dataset for NFP verification.
 Constructs a sequence of random English words repeated K times.

@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: AGPL-3.0-or-later
+
 """
 Generate a "Strong Induction" dataset for NFP verification.
 Creates a sequence of random common words repeated multiple times.
