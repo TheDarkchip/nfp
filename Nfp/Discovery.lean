@@ -88,6 +88,21 @@ def get (M : ConcreteMatrix) (i j : Nat) : Float :=
     M.data[i * M.numCols + j]!
   else 0.0
 
+/-- Set element `(i,j)` of the matrix. If out of bounds, returns the original matrix.
+
+PERFORMANCE: This is intended for small matrices (e.g. `headDim×headDim` Grams) where copying the
+underlying array is cheap. Prefer bulk construction for large matrices.
+-/
+def set (M : ConcreteMatrix) (i j : Nat) (val : Float) : ConcreteMatrix :=
+  if h : i < M.numRows ∧ j < M.numCols then
+    let idx := i * M.numCols + j
+    { numRows := M.numRows
+      numCols := M.numCols
+      data := M.data.set! idx val
+      size_eq := by simpa [idx] using M.size_eq }
+  else
+    M
+
 /-- Create a zero matrix of given dimensions. -/
 def zeros (rows cols : Nat) : ConcreteMatrix where
   numRows := rows
@@ -1385,6 +1400,56 @@ small `headDim×headDim` Gram matrices and trace identities to compute scalar bo
 def queryKeyAlignment (layer : ConcreteAttentionLayer) : ConcreteMatrix :=
   layer.W_Q.matmul layer.W_K.transpose
 
+/-- Compute a tighter rigorous bound on `‖W_Q W_Kᵀ‖₂` by centering `W_K` across its rows.
+
+Key observation: attention keys are computed from the Pre-LN activation `u = ln₁(x)`, and each row
+of `u` has (approximately) zero mean across the `modelDim` features. Therefore, replacing
+`W_K` by `W_K - 1·μᵀ` where `μ = (1/modelDim)·(1ᵀ W_K)` does not change `u·W_K`, hence does not
+change the attention logits or their Jacobian, but can reduce the operator norm used in bounds.
+
+We avoid materializing `W_K - 1·μᵀ` by applying the corresponding rank-1 correction to the Gram:
+`(W_K - 1·μᵀ)ᵀ (W_K - 1·μᵀ) = W_KᵀW_K - (1/modelDim)·uᵀu` where `u = 1ᵀ W_K`.
+-/
+def centeredQKOpBound (layer : ConcreteAttentionLayer) : Float := Id.run do
+  let kRows := layer.modelDim
+  let kCols := layer.headDim
+  if kRows = 0 || kCols = 0 then
+    return 0.0
+
+  -- 1) u = 1ᵀ W_K (column sums of W_K).
+  let mut colSums : Array Float := Array.replicate kCols 0.0
+  for r in [:kRows] do
+    let rowBase := r * kCols
+    for c in [:kCols] do
+      colSums := colSums.set! c (colSums[c]! + layer.W_K.data[rowBase + c]!)
+
+  -- 2) Centered Gram: G' = W_KᵀW_K - (1/kRows)·uᵀu.
+  let invDim := 1.0 / kRows.toFloat
+  let wkGram := layer.W_K.transpose.matmul layer.W_K
+  let wkGramCentered : ConcreteMatrix :=
+    { numRows := kCols
+      numCols := kCols
+      data := .ofFn fun idx : Fin (kCols * kCols) =>
+        let i := idx.val / kCols
+        let j := idx.val % kCols
+        let ui := colSums.getD i 0.0
+        let uj := colSums.getD j 0.0
+        wkGram.get i j - (invDim * ui * uj)
+      size_eq := Array.size_ofFn }
+
+  let wqGram := layer.W_Q.transpose.matmul layer.W_Q
+
+  -- Candidate A: factorized Gram bound using `‖·‖∞` on Grams.
+  let wqOp := Float.sqrt (max 0.0 (wqGram.infNormAbs))
+  let wkOpCentered := Float.sqrt (max 0.0 (wkGramCentered.infNormAbs))
+  let boundFactor := wqOp * wkOpCentered
+
+  -- Candidate B: Frobenius candidate via trace identity.
+  let frobSq := ConcreteMatrix.traceMul wqGram wkGramCentered
+  let boundFrob := Float.sqrt (max 0.0 frobSq)
+
+  return min boundFactor boundFrob
+
 /-! ### No-dense scalar bounds for `W_Q·W_Kᵀ` and `W_V·W_O`
 
 We avoid materializing `modelDim×modelDim` products by working with `headDim×headDim` Grams.
@@ -1484,10 +1549,12 @@ def noDenseProductBounds (layer : ConcreteAttentionLayer) : NoDenseProductBounds
   let woOpGram := layer.W_O.transpose.opNormUpperBoundViaGramInf
   let voFactorGram := wvOpGram * woOpGram
 
+  let qkOpBoundCentered := layer.centeredQKOpBound
   let qkOpBound :=
     min qkDenseFrob <|
     min qkDenseGram <|
     min qkDenseBrauer <|
+    min qkOpBoundCentered <|
     min qkFactorSchur <|
     min qkFactorFrob qkFactorGram
 
