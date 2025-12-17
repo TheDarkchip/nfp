@@ -1036,6 +1036,87 @@ def add (A B : ConcreteMatrix) : ConcreteMatrix :=
     }
   else zeros 0 0
 
+/-- Sum a list of same-shape matrices in a single pass.
+
+This avoids repeated `add` allocations (which would traverse the matrix multiple times).
+When `allowParallel=true` and the matrices are sufficiently large, it uses row-chunk parallelism.
+-/
+def sumMatrices (ms : Array ConcreteMatrix) (allowParallel : Bool := true) : ConcreteMatrix :=
+  if ms.isEmpty then
+    zeros 0 0
+  else
+    letI : Inhabited ConcreteMatrix := ⟨zeros 0 0⟩
+    let base := ms[0]!
+    let rows := base.numRows
+    let cols := base.numCols
+    let okDims :=
+      ms.all fun M => M.numRows = rows ∧ M.numCols = cols
+    if !okDims then
+      zeros 0 0
+    else
+      let entries := rows * cols
+      let shouldPar : Bool :=
+        allowParallel &&
+          entries ≥ 200_000 &&
+          rows ≥ 2 &&
+          cols ≥ 256 &&
+          ms.size ≥ 4
+      if !shouldPar then
+        {
+          numRows := rows
+          numCols := cols
+          data := .ofFn fun idx : Fin entries => Id.run do
+            let mut acc : Float := 0.0
+            for M in ms do
+              acc := acc + M.data[idx.val]!
+            return acc
+          size_eq := Array.size_ofFn
+        }
+      else
+        let numTasks : Nat := min 16 rows
+        let q := rows / numTasks
+        let r := rows % numTasks
+        let tasks : Array (Task (Array Float)) :=
+          .ofFn fun t : Fin numTasks =>
+            Task.spawn (fun _ =>
+              let tid := t.val
+              let extra := if tid < r then 1 else 0
+              let rowsHere := q + extra
+              let startRow := tid * q + min tid r
+              let chunkSize := rowsHere * cols
+              .ofFn fun idx : Fin chunkSize => Id.run do
+                let localRow := idx.val / cols
+                let j := idx.val % cols
+                let i := startRow + localRow
+                let globalIdx := i * cols + j
+                let mut acc : Float := 0.0
+                for M in ms do
+                  acc := acc + M.data[globalIdx]!
+                return acc)
+        -- Join in increasing task index order (deterministic).
+        let chunks := tasks.map Task.get
+        let cutoff := (q + 1) * r
+        {
+          numRows := rows
+          numCols := cols
+          data := .ofFn fun idx : Fin entries =>
+            let row := idx.val / cols
+            let col := idx.val % cols
+            let taskIdx :=
+              if row < cutoff then
+                row / (q + 1)
+              else
+                r + (row - cutoff) / q
+            let localRow :=
+              if row < cutoff then
+                row % (q + 1)
+              else
+                (row - cutoff) % q
+            let chunk := chunks[taskIdx]!
+            chunk[localRow * cols + col]!
+          size_eq := Array.size_ofFn
+        }
+
 /-- Scalar multiplication. -/
 def scale (c : Float) (M : ConcreteMatrix) : ConcreteMatrix where
   numRows := M.numRows
@@ -2951,17 +3032,7 @@ def ConcreteModel.runForward (model : ConcreteModel)
       if layerAttnOutputs.isEmpty then
         residual
       else
-        let attnSum : ConcreteMatrix := {
-          numRows := rows
-          numCols := cols
-          data := .ofFn fun idx : Fin (rows * cols) => Id.run do
-            let mut acc : Float := 0.0
-            for hOut in layerAttnOutputs do
-              acc := acc + hOut.data[idx.val]!
-            return acc
-          size_eq := Array.size_ofFn
-        }
-        residual.add attnSum
+        residual.add (ConcreteMatrix.sumMatrices layerAttnOutputs)
 
     -- Compute MLP output
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
@@ -3014,19 +3085,7 @@ def ForwardPassResult.getPostAttnResidual (result : ForwardPassResult)
     if heads.isEmpty then
       return x
     else
-      let rows := x.numRows
-      let cols := x.numCols
-      let sum : ConcreteMatrix := {
-        numRows := rows
-        numCols := cols
-        data := .ofFn fun idx : Fin (rows * cols) => Id.run do
-          let mut acc : Float := 0.0
-          for hOut in heads do
-            acc := acc + hOut.data[idx.val]!
-          return acc
-        size_eq := Array.size_ofFn
-      }
-      return x.add sum
+      return x.add (ConcreteMatrix.sumMatrices heads)
   else
     return x
 
@@ -4043,18 +4102,13 @@ def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx
         .ofFn fun i : Fin ctx.heads.size =>
           Task.spawn (fun _ => (ctx.heads[i]).apply dU)
       let outs := tasks.map Task.get
-      Id.run do
-        let mut acc : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
-        for i in [:outs.size] do
-          if hi : i < outs.size then
-            acc := acc.add (outs[i]'hi)
-        return acc
+      ConcreteMatrix.sumMatrices outs (allowParallel := parallelHeads)
     else
       Id.run do
-        let mut acc : ConcreteMatrix := ConcreteMatrix.zeros dX.numRows dX.numCols
+        let mut outs : Array ConcreteMatrix := Array.mkEmpty ctx.heads.size
         for hctx in ctx.heads do
-          acc := acc.add (hctx.apply dU)
-        return acc
+          outs := outs.push (hctx.apply dU)
+        return ConcreteMatrix.sumMatrices outs (allowParallel := false)
   let dY := dX.add dAttnSum
   let dV := ctx.ln2.apply dY
   let dMlp :=
@@ -5656,17 +5710,7 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
       if includedHeadOutputs.isEmpty then
         residual
       else
-        let attnSum : ConcreteMatrix := {
-          numRows := rows
-          numCols := cols
-          data := .ofFn fun idx : Fin (rows * cols) => Id.run do
-            let mut acc : Float := 0.0
-            for hOut in includedHeadOutputs do
-              acc := acc + hOut.data[idx.val]!
-            return acc
-          size_eq := Array.size_ofFn
-        }
-        residual.add attnSum
+        residual.add (ConcreteMatrix.sumMatrices includedHeadOutputs)
 
     -- Compute MLP output with neuron-level ablation
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
@@ -6030,25 +6074,18 @@ def computeAllImportance (model : ConcreteModel) : Array ComponentImportance := 
       return #[]
 
   let useParallel := model.numLayers >= 4
-  let headChunks : Array (Array ComponentImportance) :=
+  let layerPairs : Array (Array ComponentImportance × Array ComponentImportance) :=
     if useParallel then
-      let tasks : Array (Task (Array ComponentImportance)) :=
+      let tasks : Array (Task (Array ComponentImportance × Array ComponentImportance)) :=
         .ofFn fun i : Fin model.numLayers =>
-          Task.spawn (fun _ => computeHeadsForLayer i.val)
+          Task.spawn (fun _ => (computeHeadsForLayer i.val, computeNeuronsForLayer i.val))
       tasks.map Task.get
     else
       .ofFn fun i : Fin model.numLayers =>
-        computeHeadsForLayer i.val
+        (computeHeadsForLayer i.val, computeNeuronsForLayer i.val)
 
-  let neuronChunks : Array (Array ComponentImportance) :=
-    if useParallel then
-      let tasks : Array (Task (Array ComponentImportance)) :=
-        .ofFn fun i : Fin model.numLayers =>
-          Task.spawn (fun _ => computeNeuronsForLayer i.val)
-      tasks.map Task.get
-    else
-      .ofFn fun i : Fin model.numLayers =>
-        computeNeuronsForLayer i.val
+  let headChunks : Array (Array ComponentImportance) := layerPairs.map (·.1)
+  let neuronChunks : Array (Array ComponentImportance) := layerPairs.map (·.2)
 
   -- Join in the same order as the original loop: heads then neurons, increasing layer index.
   let totalHeads := headChunks.foldl (fun acc cs => acc + cs.size) 0
