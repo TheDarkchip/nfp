@@ -1,5 +1,6 @@
 import Cli
 import Nfp.IO
+import Nfp.Linearization
 import Nfp.Verification
 import Nfp.Sound.IO
 
@@ -42,6 +43,78 @@ nfp analyze -h
 -/
 
 open Cli Nfp
+
+private def fmtFloat (x : Float) : String :=
+  toString x
+
+private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) : IO Unit := do
+  let attnFrob : Float := Float.sqrt data.attentionFrobeniusNormSq
+  let patternRecon : Float :=
+    (data.softmaxJacobianOpEst / data.scaleFactor) *
+      data.inputNorm * data.queryKeyAlignSchurNorm * data.valueOutputProjSchurNorm
+  let valueRecon : Float := attnFrob * data.valueOutputProjNorm
+  let epsRecon : Float :=
+    if valueRecon < 1e-10 then Float.inf else patternRecon / valueRecon
+
+  let patternCached := data.patternTermBoundCached
+  let valueCached := data.valueTermNormCached
+  let epsCached := data.faithfulnessRatioCached
+
+  IO.println s!"  {label} L{data.layerIdx}H{data.headIdx}:"
+  IO.println s!"    softmaxOpBound = {fmtFloat data.softmaxJacobianOpEst}"
+  IO.println s!"    softmaxParts  = rowMaxP={fmtFloat data.softmaxRowMaxP}"
+  IO.println s!"                 = rowTrace={fmtFloat data.softmaxRowTraceBound}"
+  IO.println s!"                 = rowMoment={fmtFloat data.softmaxRowMomentBound}"
+  IO.println s!"                 = rowGersh={fmtFloat data.softmaxRowGershBound}"
+  IO.println s!"                 = rowUsed={fmtFloat data.softmaxRowBoundUsed}"
+  IO.println s!"                 = fallbackRows={data.softmaxRowsFallback}"
+  IO.println s!"    scaleFactor    = {fmtFloat data.scaleFactor}"
+  IO.println s!"    inputNorm      = {fmtFloat data.inputNorm}"
+  IO.println s!"    qkOpBoundUsed  = {fmtFloat data.queryKeyAlignSchurNorm}"
+  IO.println s!"    qkFrob         = {fmtFloat data.queryKeyAlignNorm}"
+  IO.println s!"    wqOpGram       = {fmtFloat data.wqOpGram}"
+  IO.println s!"    wkOpGram       = {fmtFloat data.wkOpGram}"
+  IO.println s!"    qkFactorGram   = {fmtFloat data.qkFactorGram}"
+  IO.println s!"    qkCandidates   = denseSchur={fmtFloat data.qkDenseSchur}"
+  IO.println s!"                  = denseFrob={fmtFloat data.qkDenseFrob}"
+  IO.println s!"                  = denseGram={fmtFloat data.qkDenseGram}"
+  IO.println s!"                  = denseBrauer={fmtFloat data.qkDenseBrauer}"
+  let qkBrauerOk : String :=
+    if data.qkDenseBrauer ≤ data.qkDenseGram then "true" else "false"
+  IO.println s!"                  = denseBrauer≤denseGram={qkBrauerOk}"
+  IO.println s!"                  = factorSchur={fmtFloat data.qkFactorSchur}"
+  IO.println s!"                  = factorFrob={fmtFloat data.qkFactorFrob}"
+  IO.println s!"                  = factorGram={fmtFloat data.qkFactorGram}"
+  IO.println s!"    voOpBoundUsed  = {fmtFloat data.valueOutputProjSchurNorm}"
+  IO.println s!"    voFrob         = {fmtFloat data.valueOutputProjNorm}"
+  IO.println s!"    wvOpGram       = {fmtFloat data.wvOpGram}"
+  IO.println s!"    woOpGram       = {fmtFloat data.woOpGram}"
+  IO.println s!"    voFactorGram   = {fmtFloat data.voFactorGram}"
+  IO.println s!"    voCandidates   = denseSchur={fmtFloat data.voDenseSchur}"
+  IO.println s!"                  = denseFrob={fmtFloat data.voDenseFrob}"
+  IO.println s!"                  = denseGram={fmtFloat data.voDenseGram}"
+  IO.println s!"                  = denseBrauer={fmtFloat data.voDenseBrauer}"
+  let voBrauerOk : String :=
+    if data.voDenseBrauer ≤ data.voDenseGram then "true" else "false"
+  IO.println s!"                  = denseBrauer≤denseGram={voBrauerOk}"
+  IO.println s!"                  = factorSchur={fmtFloat data.voFactorSchur}"
+  IO.println s!"                  = factorFrob={fmtFloat data.voFactorFrob}"
+  IO.println s!"                  = factorGram={fmtFloat data.voFactorGram}"
+  IO.println s!"    attnFrob       = {fmtFloat attnFrob}"
+  IO.println s!"    patternCached  = {fmtFloat patternCached}"
+  IO.println s!"    valueCached    = {fmtFloat valueCached}"
+  IO.println s!"    εCached        = {fmtFloat epsCached}"
+  IO.println s!"    patternRecon   = {fmtFloat patternRecon}"
+  IO.println s!"    valueRecon     = {fmtFloat valueRecon}"
+  IO.println s!"    εRecon         = {fmtFloat epsRecon}"
+  let qkOk : String :=
+    if data.queryKeyAlignSchurNorm ≤ data.queryKeyAlignNorm then "true" else "false"
+  let voOk : String :=
+    if data.valueOutputProjSchurNorm ≤ data.valueOutputProjNorm then "true" else "false"
+  IO.println s!"    checks         = qkUsed≤qkFrob={qkOk}, voUsed≤voFrob={voOk}"
+  IO.println s!"    reconDiff      = Δpattern={fmtFloat (patternRecon - patternCached)}"
+  IO.println s!"                    Δvalue={fmtFloat (valueRecon - valueCached)}"
+  IO.println s!"                    Δε={fmtFloat (epsRecon - epsCached)}"
 
 /-- Run the analyze command - perform circuit analysis. -/
 def runAnalyze (p : Parsed) : IO UInt32 := do
@@ -103,6 +176,8 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
   let verify := p.hasFlag "verify"
   let verbose := p.hasFlag "verbose"
+  let diagnostics := p.hasFlag "diagnostics"
+  let diagTop := p.flag? "diagTop" |>.map (·.as! Nat) |>.getD 5
   let some minEffect := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
@@ -157,8 +232,8 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
       IO.println "  kComp = kComp_raw - 1/√modelDim"
 
-      let heads :=
-        findHeuristicInductionHeads model target minEffect (minInductionScore := 0.01)
+      let (heads, cache) :=
+        findHeuristicInductionHeadsWithCache model target minEffect (minInductionScore := 0.01)
       let top := heads.take 50
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
 
@@ -184,6 +259,59 @@ def runInduction (p : Parsed) : IO UInt32 := do
               s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
               s!"Error: {c.combinedError} | " ++
               s!"‖X₂‖_F: {h.layer2InputNorm}"
+
+      if diagnostics then
+        IO.println ""
+        let diagN := min diagTop top.size
+        IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
+        IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
+        for l in [:cache.layerNormBounds.size] do
+          let ub := cache.layerNormBounds[l]!
+          let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
+          let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
+          IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
+
+        -- Rectangular Gram diagnostics for MLP weights (layer 0 only).
+        if h0 : 0 < cache.model.mlps.size then
+          let mlp0 : ConcreteMLPLayer := cache.model.mlps[0]'h0
+          let dIn := mlp0.W_in.opNormUpperBoundRectGramDiag
+          let dOut := mlp0.W_out.opNormUpperBoundRectGramDiag
+          IO.println ""
+          IO.println "RECT-GRAM DIAGNOSTICS (MLP layer 0 weights)"
+          IO.println s!"  W_in:  usedGram={dIn.usedGram}  gramDim={dIn.gramDim}"
+          IO.println s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound}"
+          IO.println s!"        λ_gersh={fmtFloat dIn.lambdaGersh}"
+          IO.println s!"        λ_brauer={fmtFloat dIn.lambdaBrauer}"
+          IO.println s!"        λ_moment={fmtFloat dIn.lambdaMoment}"
+          IO.println s!"        λ_used={fmtFloat dIn.lambdaUsed}"
+          IO.println s!"        opBound={fmtFloat dIn.opBound}"
+          IO.println s!"  W_out: usedGram={dOut.usedGram}  gramDim={dOut.gramDim}"
+          IO.println s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound}"
+          IO.println s!"        λ_gersh={fmtFloat dOut.lambdaGersh}"
+          IO.println s!"        λ_brauer={fmtFloat dOut.lambdaBrauer}"
+          IO.println s!"        λ_moment={fmtFloat dOut.lambdaMoment}"
+          IO.println s!"        λ_used={fmtFloat dOut.lambdaUsed}"
+          IO.println s!"        opBound={fmtFloat dOut.opBound}"
+        IO.println ""
+        IO.println s!"DIAGNOSTICS (ε decomposition) for top-{diagN} candidates"
+        for h in (top.take diagN) do
+          let c := h.candidate
+          IO.println s!"Candidate L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx}"
+          match cache.getHeadData c.layer1Idx c.head1Idx,
+                cache.getHeadData c.layer2Idx c.head2Idx with
+          | some d1, some d2 =>
+              printHeadDiagnostics "Head1" d1
+              printHeadDiagnostics "Head2" d2
+              let ε1 := d1.faithfulnessRatioCached
+              let ε2 := d2.faithfulnessRatioCached
+              let combinedRecon := ε1 + ε2 + ε1 * ε2
+              IO.println "  Combined:"
+              IO.println s!"    ε1 = {fmtFloat ε1}  ε2 = {fmtFloat ε2}"
+              IO.println s!"    combinedError = (1+ε1)(1+ε2)-1 = {fmtFloat combinedRecon}"
+              IO.println s!"    combinedErrorCached = {fmtFloat c.combinedError}"
+              IO.println s!"    reconDiff = {fmtFloat (combinedRecon - c.combinedError)}"
+          | _, _ =>
+              IO.println "  (diagnostics unavailable: missing cached head data)"
 
       if verify then
         IO.println ""
@@ -274,6 +402,33 @@ def runCertify (p : Parsed) : IO UInt32 := do
       IO.println s
     return 0
 
+/-- Run the rope command - print a proof-backed RoPE operator norm certificate. -/
+def runRoPE (p : Parsed) : IO UInt32 := do
+  let seqLen := p.flag? "seqLen" |>.map (·.as! Nat) |>.getD 4
+  let pairs := p.flag? "pairs" |>.map (·.as! Nat) |>.getD 8
+
+  match seqLen, pairs with
+  | Nat.succ n, Nat.succ m =>
+      -- Instantiate the theorem at concrete sizes to ensure the report is proof-backed.
+      let θ : Fin (Nat.succ n) → Fin (Nat.succ m) → ℝ := fun _ _ => 0
+      have _ :
+          Nfp.operatorNormBound
+              (n := Fin (Nat.succ n)) (d := Nfp.RoPEDim (Fin (Nat.succ m)))
+              (Nfp.ropeJacobian (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
+            ≤ (2 : ℝ) := by
+        simpa using
+          (Nfp.rope_operatorNormBound_le_two (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
+
+      IO.println "RoPE certificate (static):"
+      IO.println s!"  seqLen={seqLen}, pairs={pairs}, dim={2 * pairs}"
+      IO.println "  Bound: operatorNormBound(ropeJacobian θ) ≤ 2"
+      IO.println "  Meaning: max row-sum of absolute weights (ℓ∞ induced upper bound)."
+      IO.println "  Proof: Nfp.rope_operatorNormBound_le_two (uses |sin|,|cos| ≤ 1 from mathlib)."
+      return 0
+  | _, _ =>
+      IO.eprintln "Error: --seqLen and --pairs must be positive."
+      return 1
+
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
@@ -300,6 +455,8 @@ def inductionCmd : Cmd := `[Cli|
     t, threshold : String; "Minimum normalized Effect threshold (default: 0.0)"
     verify; "Run causal verification via head ablation on the top-10 candidates"
     v, verbose; "Enable verbose output"
+    d, diagnostics; "Print diagnostic breakdown of ε bounds (pattern/value decomposition)"
+    diagTop : Nat; "How many top candidates get diagnostics (default: 5)"
 
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
@@ -319,6 +476,16 @@ def certifyCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The rope subcommand. -/
+def ropeCmd : Cmd := `[Cli|
+  rope VIA runRoPE;
+  "Static certificate for RoPE (rotary position embedding) linearization bounds."
+
+  FLAGS:
+    seqLen : Nat; "Sequence length (>0) used for instantiation (default: 4)"
+    pairs : Nat; "Number of RoPE pairs (>0); dimension is 2*pairs (default: 8)"
+]
+
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
@@ -327,7 +494,8 @@ def nfpCmd : Cmd := `[Cli|
   SUBCOMMANDS:
     analyzeCmd;
     inductionCmd;
-    certifyCmd
+    certifyCmd;
+    ropeCmd
 ]
 
 /-- Main entry point. -/
