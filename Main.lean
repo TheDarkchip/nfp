@@ -208,13 +208,17 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
-  | .ok model embeddings =>
+  | .ok model =>
     if verbose then
       IO.println s!"✓ Model loaded successfully"
       IO.println s!"  Layers: {model.numLayers}"
       IO.println s!"  Sequence Length: {model.seqLen}"
-      IO.println s!"  Embedding Vocabulary: {embeddings.numRows}"
-      IO.println s!"  Model Dimension: {embeddings.numCols}"
+      let vocabSize :=
+        match model.unembedding with
+        | some u => u.numCols
+        | none => 0
+      IO.println s!"  Embedding Vocabulary: {vocabSize}"
+      IO.println s!"  Model Dimension: {model.modelDim}"
       IO.println ""
       IO.println "Running analysis..."
 
@@ -257,7 +261,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
-  | .ok model _embeddings =>
+  | .ok model =>
     match model.unembedding with
     | none =>
       IO.eprintln "Error: Model is missing unembedding matrix (needed for logit directions)."
