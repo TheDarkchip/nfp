@@ -4750,18 +4750,45 @@ private def normalizeFrob (X : ConcreteMatrix) : ConcreteMatrix :=
   else
     ConcreteMatrix.scale (1.0 / n) X
 
-/-- Rigorous (in exact real arithmetic) lower bound on `‖J_resid‖₂` from `k` Krylov steps. -/
-def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) (k : Nat := 4)
-    (parallelHeads : Bool := false) :
-    Float := Id.run do
-  let x := cache.forwardResult.getLayerInput layerIdx
-  let rows := x.numRows
-  let cols := x.numCols
-  if rows = 0 || cols = 0 then
-    return 0.0
+private def maxAbsIndex (X : ConcreteMatrix) : Nat := Id.run do
+  let mut bestIdx : Nat := 0
+  let mut best : Float := 0.0
+  for i in [:X.data.size] do
+    let a := Float.abs (X.data[i]!)
+    if a > best then
+      best := a
+      bestIdx := i
+  bestIdx
 
-  let ctx := LayerResidualJacobianCtx.build cache layerIdx
-  let mut v := deterministicInitVec rows cols layerIdx
+private def basisAt (rows cols idx : Nat) : ConcreteMatrix :=
+  if rows = 0 || cols = 0 then
+    ConcreteMatrix.zeros rows cols
+  else
+    let n := rows * cols
+    if idx < n then
+      { numRows := rows
+        numCols := cols
+        data := .ofFn fun i : Fin n => if i.val = idx then 1.0 else 0.0
+        size_eq := Array.size_ofFn }
+    else
+      ConcreteMatrix.zeros rows cols
+
+private def signLike (X : ConcreteMatrix) : ConcreteMatrix :=
+  { numRows := X.numRows
+    numCols := X.numCols
+    data := .ofFn fun i : Fin (X.numRows * X.numCols) =>
+      let x := X.data[i.val]!
+      if x > 0.0 then 1.0 else if x < 0.0 then (-1.0) else 0.0
+    size_eq := Array.size_ofFn }
+
+/-- Improve the lower bound by trying a small set of deterministic initial vectors.
+
+This is still rigorous: for any nonzero `v`, `‖J v‖/‖v‖ ≤ ‖J‖`. We simply take the max
+over a few starts to avoid a "bad" basis vector giving a vacuous bound.
+-/
+private def krylovLowerBoundFromInit (ctx : LayerResidualJacobianCtx) (v0 : ConcreteMatrix)
+    (k : Nat) (parallelHeads : Bool) : Float := Id.run do
+  let mut v := v0
   let mut best : Float := 0.0
   for _ in [:k] do
     let vNorm := v.frobeniusNorm
@@ -4776,6 +4803,27 @@ def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) 
       break
     v := normalizeFrob w
   return best
+
+/-- Rigorous (in exact real arithmetic) lower bound on `‖J_resid‖₂` from `k` Krylov steps. -/
+def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) (k : Nat := 4)
+    (parallelHeads : Bool := false) :
+    Float := Id.run do
+  let x := cache.forwardResult.getLayerInput layerIdx
+  let rows := x.numRows
+  let cols := x.numCols
+  if rows = 0 || cols = 0 then
+    return 0.0
+
+  let ctx := LayerResidualJacobianCtx.build cache layerIdx
+  let vHash := deterministicInitVec rows cols layerIdx
+  let vData := normalizeFrob x
+  let vMax := basisAt rows cols (maxAbsIndex x)
+  let vSign := normalizeFrob (signLike x)
+  let b1 := krylovLowerBoundFromInit ctx vHash k parallelHeads
+  let b2 := krylovLowerBoundFromInit ctx vData k parallelHeads
+  let b3 := krylovLowerBoundFromInit ctx vMax k parallelHeads
+  let b4 := krylovLowerBoundFromInit ctx vSign k parallelHeads
+  return max (max b1 b2) (max b3 b4)
 
 /-! ## Adaptive bound scheduler (rigorous upper bounds, deterministic) -/
 
