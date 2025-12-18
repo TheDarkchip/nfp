@@ -2853,55 +2853,120 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
     return 0.0
 
   -- sOut[k] = ∑_c |W_out[k,c]|  (row sums of |W_out|).
-  let sOut : Array Float := Id.run do
+  let (sOut, woutRowSqSum) : (Array Float × Array Float) := Id.run do
     let mut out : Array Float := Array.replicate h 0.0
+    let mut sq : Array Float := Array.replicate h 0.0
     for k in [:h] do
       let rowBase := k * d
       let mut s : Float := 0.0
+      let mut ss : Float := 0.0
       for c in [:d] do
-        s := s + Float.abs (layer.W_out.data[rowBase + c]!)
+        let w := layer.W_out.data[rowBase + c]!
+        s := s + Float.abs w
+        ss := ss + w * w
       out := out.set! k s
-    out
+      sq := sq.set! k ss
+    (out, sq)
 
   -- sIn[k] = ∑_r |W_in[r,k]|  (column sums of |W_in|).
-  let sIn : Array Float := Id.run do
+  let (sIn, winColSqSum) : (Array Float × Array Float) := Id.run do
     let mut out : Array Float := Array.replicate h 0.0
+    let mut sq : Array Float := Array.replicate h 0.0
     for r in [:d] do
       let rowBase := r * h
       for k in [:h] do
-        out := out.set! k (out[k]! + Float.abs (layer.W_in.data[rowBase + k]!))
-    out
+        let w := layer.W_in.data[rowBase + k]!
+        out := out.set! k (out[k]! + Float.abs w)
+        sq := sq.set! k (sq[k]! + w * w)
+    (out, sq)
+
+  -- Fast candidates that exploit the full per-unit maxima `dMax[k]` (not just `max_k dMax[k]`):
+  --
+  --   ‖W_in·diag(d)·W_out‖₂ ≤ ‖W_in·diag(dMax)‖₂ · ‖W_out‖₂
+  --   ‖W_in·diag(d)·W_out‖₂ ≤ ‖W_in‖₂ · ‖diag(dMax)·W_out‖₂
+  --
+  -- where `dMax[k] = max_token |gelu'(z)[token,k]|`. Both are rigorous because induced
+  -- norms / Frobenius norms are monotone under entrywise scaling by `dMax`.
+  let maxWinScaledCol : Float := Id.run do
+    let mut m : Float := 0.0
+    for k in [:h] do
+      m := max m (dMax[k]! * sIn[k]!)
+    m
+  let maxWoutScaledRow : Float := Id.run do
+    let mut m : Float := 0.0
+    for k in [:h] do
+      m := max m (dMax[k]! * sOut[k]!)
+    m
+  let winScaledFrob : Float := Id.run do
+    let mut s : Float := 0.0
+    for k in [:h] do
+      let dk := dMax[k]!
+      s := s + (dk * dk) * winColSqSum[k]!
+    Float.sqrt (max 0.0 s)
+  let woutScaledFrob : Float := Id.run do
+    let mut s : Float := 0.0
+    for k in [:h] do
+      let dk := dMax[k]!
+      s := s + (dk * dk) * woutRowSqSum[k]!
+    Float.sqrt (max 0.0 s)
 
   -- ‖J‖∞ upper bound via row sums.
-  let boundInf : Float := Id.run do
+  let (boundInf, maxWinRowScaled) : (Float × Float) := Id.run do
     let mut maxRow : Float := 0.0
+    let mut maxScaled : Float := 0.0
     for r in [:d] do
       let rowBase := r * h
       let mut s : Float := 0.0
+      let mut sScaled : Float := 0.0
       for k in [:h] do
         let coeff := dMax[k]! * sOut[k]!
-        s := s + Float.abs (layer.W_in.data[rowBase + k]!) * coeff
+        let a := Float.abs (layer.W_in.data[rowBase + k]!)
+        s := s + a * coeff
+        sScaled := sScaled + a * dMax[k]!
       if s > maxRow then
         maxRow := s
-    maxRow
+      if sScaled > maxScaled then
+        maxScaled := sScaled
+    (maxRow, maxScaled)
 
   -- ‖J‖₁ upper bound via column sums.
-  let boundOne : Float := Id.run do
+  let (boundOne, maxWoutColScaled) : (Float × Float) := Id.run do
     let mut maxCol : Float := 0.0
+    let mut maxScaled : Float := 0.0
     for c in [:d] do
       let mut s : Float := 0.0
+      let mut sScaled : Float := 0.0
       for k in [:h] do
         let coeff := dMax[k]! * sIn[k]!
-        s := s + Float.abs (layer.W_out.data[k * d + c]!) * coeff
+        let a := Float.abs (layer.W_out.data[k * d + c]!)
+        s := s + a * coeff
+        sScaled := sScaled + a * dMax[k]!
       if s > maxCol then
         maxCol := s
-    maxCol
+      if sScaled > maxScaled then
+        maxScaled := sScaled
+    (maxCol, maxScaled)
 
   let absSchur := Float.sqrt (max 0.0 (boundInf * boundOne))
   let legacy := winUb * globalDmax * woutUb
+  let winScaledOneInf := Float.sqrt (max 0.0 (maxWinScaledCol * maxWinRowScaled))
+  let woutScaledOneInf := Float.sqrt (max 0.0 (maxWoutScaledRow * maxWoutColScaled))
+  let winScaledUb := min winScaledFrob winScaledOneInf
+  let woutScaledUb := min woutScaledFrob woutScaledOneInf
+  let scaledViaWin := winScaledUb * woutUb
+  let scaledViaWout := winUb * woutScaledUb
+  let scaled :=
+    if scaledViaWin ≤ 0.0 || Float.isNaN scaledViaWin || Float.isInf scaledViaWin then
+      scaledViaWout
+    else if scaledViaWout ≤ 0.0 || Float.isNaN scaledViaWout || Float.isInf scaledViaWout then
+      scaledViaWin
+    else
+      min scaledViaWin scaledViaWout
   let out :=
-    if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then legacy
-    else min absSchur legacy
+    if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then
+      min legacy scaled
+    else
+      min absSchur (min legacy scaled)
   return out
 
 /-- Diagnostics for the MLP absolute-Schur candidate bound `sqrt(‖J‖₁‖J‖∞)`. -/
@@ -4785,11 +4850,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
 
     let y := cache.forwardResult.getPostAttnResidual l
     let ln2Bound := model.ln2OpBound l y
-    let geluDerivBound : Float :=
-      let d := cache.forwardResult.mlpActDerivMax.getD l 1.7
-      if d ≤ 0.0 || Float.isNaN d || Float.isInf d then 1.7 else d
-    let m := ln2Bound * geluDerivBound
-    return (a, m)
+    return (a, ln2Bound)
 
   let init : Array (Float × Float) :=
     if useParallelInit then
@@ -4800,7 +4861,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
       .ofFn fun i : Fin nLayers => computeLayerInit i.val
 
   let attnPart : Array Float := init.map (·.1)
-  let mlpFactor : Array Float := init.map (·.2)
+  let ln2Bound : Array Float := init.map (·.2)
 
   let mut lb : Array Float := Array.mkEmpty model.numLayers
   let useParallelLb := model.numLayers >= 4 && cfg.krylovSteps > 0
@@ -4833,8 +4894,18 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
             (t1.get, t2.get)
           else
             (mlp.W_in.opNormUpperBoundRectGramEffort eff, mlp.W_out.opNormUpperBoundRectGramEffort eff)
-        let m := mlpFactor.getD layerIdx 0.0
-        base + m * (win * wout)
+        let y := cache.forwardResult.getPostAttnResidual layerIdx
+        let l2 := ln2Bound.getD layerIdx 0.0
+        let geluDeriv := cache.forwardResult.getMlpGeluDeriv layerIdx
+        let mlpUb :=
+          if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+            computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv win wout
+          else
+            let mlpInput := model.applyLn2 layerIdx y
+            let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+            let dAct := hidden.map geluDerivFloat
+            computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct win wout
+        base + l2 * mlpUb
       else
         base
 

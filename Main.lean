@@ -448,21 +448,40 @@ def runInduction (p : Parsed) : IO UInt32 := do
               let mlp := cache.model.mlps[l]'hm
               let y := cache.forwardResult.getPostAttnResidual l
               let ln2Bound := cache.model.ln2OpBound l y
-              let attnPart : Float := Id.run do
+              let (attnPart, maxHeadIdx, maxHeadContrib, maxHeadValue, maxHeadPattern) :
+                  (Float × Nat × Float × Float × Float) := Id.run do
                 let layerData := cache.headData.getD l #[]
                 let mut a : Float := 0.0
+                let mut bestIdx : Nat := 0
+                let mut best : Float := 0.0
+                let mut bestValue : Float := 0.0
+                let mut bestPattern : Float := 0.0
+                let mut idx : Nat := 0
                 for d in layerData do
                   let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
                   let attnOpUb : Float := min attnFrob d.attentionOneInfBound
-                  let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+                  let valueTermUb : Float := d.ln1OpBound * (attnOpUb * d.valueOutputProjSchurNorm)
                   let patternTermUb : Float :=
-                    (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
-                      d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
-                  a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
-                a
+                    d.ln1OpBound *
+                      ((d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
+                        d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm)
+                  let contrib := valueTermUb + patternTermUb
+                  a := a + contrib
+                  if contrib > best then
+                    bestIdx := idx
+                    best := contrib
+                    bestValue := valueTermUb
+                    bestPattern := patternTermUb
+                  idx := idx + 1
+                (a, bestIdx, best, bestValue, bestPattern)
+              let mlpPart : Float := max 0.0 (ub - attnPart)
+              IO.println <|
+                s!"      contrib: attn≈{fmtFloat attnPart}  mlp≈{fmtFloat mlpPart}  " ++
+                  s!"(maxHead=H{maxHeadIdx}≈{fmtFloat maxHeadContrib}, " ++
+                  s!"value≈{fmtFloat maxHeadValue}, pattern≈{fmtFloat maxHeadPattern})"
               let mlpJacLegacy : Float :=
                 if ln2Bound > 1e-12 then
-                  max 0.0 (ub - attnPart) / ln2Bound
+                  mlpPart / ln2Bound
                 else
                   Float.nan
               let geluDeriv := cache.forwardResult.getMlpGeluDeriv l
