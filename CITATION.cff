@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it."
+type: software
+title: "NFP"
+abstract: >
+  NFP is a Lean 4 project for mathematically rigorous reasoning about transformer-style
+  computations, with a focus on mechanistic interpretability and provable norm/error bounds.
+authors:
+  - family-names: Gieseke
+    given-names: Robin
+    alias: TheDarkchip
+url: "https://github.com/TheDarkchip/nfp"
+repository-code: "https://github.com/TheDarkchip/nfp"
+keywords:
+  - Lean 4
+  - transformers
+  - mechanistic interpretability
+  - rigorous bounds
+  - certificates
+license: AGPL-3.0-or-later
