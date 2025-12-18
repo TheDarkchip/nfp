@@ -2860,14 +2860,17 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
     (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) (winUb woutUb : Float) : Float := Id.run do
   let d := layer.modelDim
   let h := layer.hiddenDim
+  let legacy : Float := winUb * 1.7 * woutUb
   if d = 0 || h = 0 || geluDeriv.numRows = 0 then
+    -- No tokens or empty layer: treat as zero contribution.
     return 0.0
   if geluDeriv.numCols ≠ h then
-    return 0.0
+    -- Dimension mismatch indicates an inconsistent forward-pass cache; fall back conservatively.
+    return legacy
   if layer.W_in.numRows ≠ d || layer.W_in.numCols ≠ h then
-    return 0.0
+    return legacy
   if layer.W_out.numRows ≠ h || layer.W_out.numCols ≠ d then
-    return 0.0
+    return legacy
 
   let rows := geluDeriv.numRows
 
@@ -2883,7 +2886,8 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
     out
   let globalDmax : Float := dMax.foldl (fun m x => max m x) 0.0
   if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
-    return 0.0
+    -- If derivative information is degenerate, we can still use the global GeLU' upper bound (≈1.7).
+    return legacy
 
   -- sOut[k] = ∑_c |W_out[k,c]|  (row sums of |W_out|).
   let (sOut, woutRowSqSum) : (Array Float × Array Float) := Id.run do
@@ -2988,13 +2992,15 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
   let woutScaledUb := min woutScaledFrob woutScaledOneInf
   let scaledViaWin := winScaledUb * woutUb
   let scaledViaWout := winUb * woutScaledUb
-  let scaled :=
+  let scaled0 :=
     if scaledViaWin ≤ 0.0 || Float.isNaN scaledViaWin || Float.isInf scaledViaWin then
       scaledViaWout
     else if scaledViaWout ≤ 0.0 || Float.isNaN scaledViaWout || Float.isInf scaledViaWout then
       scaledViaWin
     else
       min scaledViaWin scaledViaWout
+  let scaled :=
+    if scaled0 ≤ 0.0 || Float.isNaN scaled0 || Float.isInf scaled0 then legacy else scaled0
   let out :=
     if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then
       min legacy scaled
