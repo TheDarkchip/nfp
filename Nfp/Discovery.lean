@@ -557,6 +557,8 @@ structure RectGramDiag where
   usedGram : Bool
   /-- Used the absolute-Gram fallback (no materialized Gram). -/
   usedAbsGram : Bool
+  /-- True if we would have formed a signed Gram (by `maxGramDim`) but skipped it via a deterministic cost guard. -/
+  skippedGram : Bool
   gramDim : Nat
   lambdaBrauer : Float
   lambdaMoment : Float
@@ -815,6 +817,7 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
   if k = 0 then
     { usedGram := true
       usedAbsGram := false
+      skippedGram := false
       gramDim := 0
       lambdaBrauer := 0.0
       lambdaMoment := 0.0
@@ -829,6 +832,7 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
     let mut bestOp : Float := cheap
     let mut usedAbs : Bool := false
     let mut usedGram : Bool := false
+    let mut skippedGram : Bool := false
     let mut lambdaAbsGersh : Float := 0.0
     let mut lambdaAbsBrauer : Float := 0.0
     let mut lambdaGersh : Float := 0.0
@@ -854,31 +858,42 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
         usedGram := false
 
     if effort.enableSignedGram && k ≤ effort.maxGramDim then
-      let G : ConcreteMatrix :=
-        if m ≤ n then
-          A.matmul A.transpose
+      -- Deterministic scalability guard: forming `k×k` Gram matrices can be prohibitively expensive
+      -- for large rectangular matrices (e.g. 768×3072). We therefore skip this candidate when the
+      -- estimated matmul cost is too high.
+      --
+      -- Correctness is preserved: skipping a candidate can only loosen the final bound.
+      let cost : Nat := k * k * (max m n)
+      let allowGram : Bool := cost ≤ 200000000
+      if allowGram then
+        let G : ConcreteMatrix :=
+          if m ≤ n then
+            A.matmul A.transpose
+          else
+            A.transpose.matmul A
+        lambdaGersh := G.infNormAbs
+        lambdaBrauer := symmLambdaMaxUpperBrauer G
+        let mut lUpper : Float := min lambdaGersh lambdaBrauer
+        if effort.enableMoment then
+          -- For Gram `G`, `trace(G) = ‖A‖_F²`.
+          let tr : Float := A.frobeniusNormSq
+          let f2 : Float := G.frobeniusNormSq
+          lambdaMoment := psdLambdaMaxUpperMoment k tr f2
+          lUpper := min lUpper lambdaMoment
         else
-          A.transpose.matmul A
-      lambdaGersh := G.infNormAbs
-      lambdaBrauer := symmLambdaMaxUpperBrauer G
-      let mut lUpper : Float := min lambdaGersh lambdaBrauer
-      if effort.enableMoment then
-        -- For Gram `G`, `trace(G) = ‖A‖_F²`.
-        let tr : Float := A.frobeniusNormSq
-        let f2 : Float := G.frobeniusNormSq
-        lambdaMoment := psdLambdaMaxUpperMoment k tr f2
-        lUpper := min lUpper lambdaMoment
+          lambdaMoment := 0.0
+        let op := Float.sqrt (max 0.0 lUpper)
+        if op < bestOp then
+          bestOp := op
+          lambdaUsed := max 0.0 lUpper
+          usedAbs := false
+          usedGram := true
       else
-        lambdaMoment := 0.0
-      let op := Float.sqrt (max 0.0 lUpper)
-      if op < bestOp then
-        bestOp := op
-        lambdaUsed := max 0.0 lUpper
-        usedAbs := false
-        usedGram := true
+        skippedGram := true
 
     { usedGram := usedGram
       usedAbsGram := usedAbs
+      skippedGram := skippedGram
       gramDim := k
       lambdaBrauer := lambdaBrauer
       lambdaMoment := lambdaMoment
@@ -3087,6 +3102,169 @@ def computeMLPOpAbsSchurDiag (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMat
   let absSchur := Float.sqrt (max 0.0 (boundInf * boundOne))
   return { dMax := globalDmax, boundInf := boundInf, boundOne := boundOne, absSchur := absSchur }
 
+/-- Precomputed, token-batch–dependent factors for bounding `‖W_in · diag(gelu'(z)) · W_out‖₂`.
+
+This is used by the adaptive scheduler to avoid recomputing weight-dependent summaries
+(`absSchur`, scaled Frobenius/Schur bounds) across effort-tier upgrades.
+
+Correctness: the final upper bound is still computed as a minimum of rigorous candidates;
+this structure merely memoizes pieces of those candidates.
+-/
+structure MLPJacobianBoundCore where
+  /-- `max_k dMax[k]` where `dMax[k] = max_token |gelu'(z)[token,k]|`. -/
+  globalDmax : Float
+  /-- Candidate `sqrt(‖J‖₁‖J‖∞)` computed from absolute row/col sums (independent of `winUb/woutUb`). -/
+  absSchur : Float
+  /-- Upper bound on `‖W_in · diag(dMax)‖₂` (min of scaled Frobenius and scaled Schur/one-inf). -/
+  winScaledUb : Float
+  /-- Upper bound on `‖diag(dMax) · W_out‖₂` (min of scaled Frobenius and scaled Schur/one-inf). -/
+  woutScaledUb : Float
+  deriving Repr
+
+/-- Precompute `MLPJacobianBoundCore` for a layer and a given `geluDeriv` matrix.
+
+Returns `none` if dimensions don't match; callers should conservatively fall back.
+-/
+def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
+    (geluDeriv : ConcreteMatrix) : Option MLPJacobianBoundCore := Id.run do
+  let d := layer.modelDim
+  let h := layer.hiddenDim
+  if d = 0 || h = 0 || geluDeriv.numRows = 0 || geluDeriv.numCols ≠ h then
+    return none
+  if layer.W_in.numRows ≠ d || layer.W_in.numCols ≠ h then
+    return none
+  if layer.W_out.numRows ≠ h || layer.W_out.numCols ≠ d then
+    return none
+
+  let rows := geluDeriv.numRows
+
+  -- dMax[k] = max_token |gelu'(z)[token,k]|.
+  let dMax : Array Float := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    for i in [:rows] do
+      let base := i * h
+      for k in [:h] do
+        let a := Float.abs (geluDeriv.data[base + k]!)
+        if a > out[k]! then
+          out := out.set! k a
+    out
+  let globalDmax : Float := dMax.foldl (fun m x => max m x) 0.0
+  if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
+    return none
+
+  -- sOut[k] = ∑_c |W_out[k,c]|  (row sums of |W_out|).
+  let (sOut, woutRowSqSum) : (Array Float × Array Float) := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    let mut sq : Array Float := Array.replicate h 0.0
+    for k in [:h] do
+      let rowBase := k * d
+      let mut s : Float := 0.0
+      let mut ss : Float := 0.0
+      for c in [:d] do
+        let w := layer.W_out.data[rowBase + c]!
+        s := s + Float.abs w
+        ss := ss + w * w
+      out := out.set! k s
+      sq := sq.set! k ss
+    (out, sq)
+
+  -- sIn[k] = ∑_r |W_in[r,k]|  (column sums of |W_in|).
+  let (sIn, winColSqSum) : (Array Float × Array Float) := Id.run do
+    let mut out : Array Float := Array.replicate h 0.0
+    let mut sq : Array Float := Array.replicate h 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      for k in [:h] do
+        let w := layer.W_in.data[rowBase + k]!
+        out := out.set! k (out[k]! + Float.abs w)
+        sq := sq.set! k (sq[k]! + w * w)
+    (out, sq)
+
+  -- ‖J‖∞ upper bound via row sums.
+  let boundInf : Float := Id.run do
+    let mut maxRow : Float := 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMax[k]! * sOut[k]!
+        let a := Float.abs (layer.W_in.data[rowBase + k]!)
+        s := s + a * coeff
+      if s > maxRow then
+        maxRow := s
+    maxRow
+
+  -- ‖J‖₁ upper bound via column sums.
+  let boundOne : Float := Id.run do
+    let mut maxCol : Float := 0.0
+    for c in [:d] do
+      let mut s : Float := 0.0
+      for k in [:h] do
+        let coeff := dMax[k]! * sIn[k]!
+        let a := Float.abs (layer.W_out.data[k * d + c]!)
+        s := s + a * coeff
+      if s > maxCol then
+        maxCol := s
+    maxCol
+
+  let absSchur : Float := Float.sqrt (max 0.0 (boundInf * boundOne))
+
+  let winScaledFrob : Float := Id.run do
+    let mut s : Float := 0.0
+    for k in [:h] do
+      let dk := dMax[k]!
+      s := s + (dk * dk) * winColSqSum[k]!
+    Float.sqrt (max 0.0 s)
+  let woutScaledFrob : Float := Id.run do
+    let mut s : Float := 0.0
+    for k in [:h] do
+      let dk := dMax[k]!
+      s := s + (dk * dk) * woutRowSqSum[k]!
+    Float.sqrt (max 0.0 s)
+
+  let maxWinScaledCol : Float := Id.run do
+    let mut m : Float := 0.0
+    for k in [:h] do
+      m := max m (dMax[k]! * sIn[k]!)
+    m
+  let maxWoutScaledRow : Float := Id.run do
+    let mut m : Float := 0.0
+    for k in [:h] do
+      m := max m (dMax[k]! * sOut[k]!)
+    m
+  let maxWinRowScaled : Float := Id.run do
+    let mut m : Float := 0.0
+    for r in [:d] do
+      let rowBase := r * h
+      let mut s : Float := 0.0
+      for k in [:h] do
+        s := s + Float.abs (layer.W_in.data[rowBase + k]!) * dMax[k]!
+      m := max m s
+    m
+  let maxWoutColScaled : Float := Id.run do
+    let mut m : Float := 0.0
+    for c in [:d] do
+      let mut s : Float := 0.0
+      for k in [:h] do
+        s := s + Float.abs (layer.W_out.data[k * d + c]!) * dMax[k]!
+      m := max m s
+    m
+
+  let winScaledOneInf := Float.sqrt (max 0.0 (maxWinScaledCol * maxWinRowScaled))
+  let woutScaledOneInf := Float.sqrt (max 0.0 (maxWoutScaledRow * maxWoutColScaled))
+  let winScaledUb := min winScaledFrob winScaledOneInf
+  let woutScaledUb := min woutScaledFrob woutScaledOneInf
+
+  if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then
+    return none
+  if winScaledUb ≤ 0.0 || Float.isNaN winScaledUb || Float.isInf winScaledUb then
+    return none
+  if woutScaledUb ≤ 0.0 || Float.isNaN woutScaledUb || Float.isInf woutScaledUb then
+    return none
+
+  return some { globalDmax := globalDmax, absSchur := absSchur,
+                winScaledUb := winScaledUb, woutScaledUb := woutScaledUb }
+
 /-- Fused MLP Jacobian upper bound, given the cached GeLU derivative matrix `gelu'(z)`. -/
 def computeMLPLayerOpNormFromGeluDeriv (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMatrix) : Float := Id.run do
   let winUb := layer.W_in.opNormUpperBoundRectGram
@@ -4823,6 +5001,46 @@ def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx
 
   return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
 
+ /-- Build a `LayerResidualJacobianCtx` restricted to the first `prefixLen` token positions.
+
+ For causal attention, the outputs at positions `< prefixLen` depend only on inputs at
+ positions `< prefixLen`. Therefore, computing a Krylov lower bound on the restricted
+ operator (and measuring norms only on this prefix) yields a valid lower bound for the
+ full-sequence Jacobian operator norm.
+ -/
+ def buildPrefix (cache : PrecomputedCache) (layerIdx : Nat) (prefixLen : Nat) : LayerResidualJacobianCtx := Id.run do
+  let model := cache.model
+  let fwd := cache.forwardResult
+  let xFull := fwd.getLayerInput layerIdx
+  let yFull := fwd.getPostAttnResidual layerIdx
+  let p := min prefixLen xFull.numRows
+  let x := xFull.takeRows p
+  let y := yFull.takeRows p
+
+  let ln1p := model.ln1.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+  let ln2p := model.ln2.getD layerIdx (ConcreteLayerNormParams.identity model.modelDim)
+  let ln1Ctx := ConcreteMatrix.mkLayerNormJacobianCtx x ln1p.gamma
+  let ln2Ctx := ConcreteMatrix.mkLayerNormJacobianCtx y ln2p.gamma
+
+  let attnInput := model.applyLn1 layerIdx x
+  let layerHeads := model.layers.getD layerIdx #[]
+  let mut headCtxs : Array HeadJacobianCtx := Array.mkEmpty layerHeads.size
+  for h in [:layerHeads.size] do
+    if hh : h < layerHeads.size then
+      let head := layerHeads[h]'hh
+      let attn := head.computeAttentionWeights attnInput true
+      headCtxs := headCtxs.push (HeadJacobianCtx.build head attnInput attn)
+
+  let mlp? : Option MLPJacobianCtx :=
+    if hm : layerIdx < model.mlps.size then
+      let mlp := model.mlps[layerIdx]'hm
+      let mlpInput := model.applyLn2 layerIdx y
+      some (MLPJacobianCtx.build mlp mlpInput)
+    else
+      none
+
+  return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
+
   /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`.
 
   If `parallelHeads=true`, per-head Jacobian-vector products are computed in parallel and then
@@ -4936,16 +5154,38 @@ def layerResidualJacobianLowerBound (cache : PrecomputedCache) (layerIdx : Nat) 
   if rows = 0 || cols = 0 then
     return 0.0
 
-  let ctx := LayerResidualJacobianCtx.build cache layerIdx
-  let vHash := deterministicInitVec rows cols layerIdx
-  let vData := normalizeFrob x
-  let vMax := basisAt rows cols (maxAbsIndex x)
-  let vSign := normalizeFrob (signLike x)
-  let b1 := krylovLowerBoundFromInit ctx vHash k parallelHeads
-  let b2 := krylovLowerBoundFromInit ctx vData k parallelHeads
-  let b3 := krylovLowerBoundFromInit ctx vMax k parallelHeads
-  let b4 := krylovLowerBoundFromInit ctx vSign k parallelHeads
-  return max (max b1 b2) (max b3 b4)
+  -- PERFORMANCE: the full Jacobian-apply cost scales like `O(seqLen^2)` per head.
+  -- For causal attention we can restrict to a small prefix and still obtain a rigorous
+  -- lower bound by projecting the output norm to that prefix.
+  -- Keep this small: the Jacobian-apply cost is roughly quadratic in `prefixLen` due to softmax terms.
+  let prefixLen : Nat := min rows 16
+  let xP := x.takeRows prefixLen
+  let ctx :=
+    if prefixLen = rows then
+      LayerResidualJacobianCtx.build cache layerIdx
+    else
+      LayerResidualJacobianCtx.buildPrefix cache layerIdx prefixLen
+  let vHash := deterministicInitVec prefixLen cols layerIdx
+  let vData := normalizeFrob xP
+  let vMax := basisAt prefixLen cols (maxAbsIndex xP)
+  let vSign := normalizeFrob (signLike xP)
+  let useParallelInits : Bool := parallelHeads && (prefixLen * cols ≥ 50000) && k > 0
+  if useParallelInits then
+    let t1 := Task.spawn (fun _ => krylovLowerBoundFromInit ctx vHash k parallelHeads)
+    let t2 := Task.spawn (fun _ => krylovLowerBoundFromInit ctx vData k parallelHeads)
+    let t3 := Task.spawn (fun _ => krylovLowerBoundFromInit ctx vMax k parallelHeads)
+    let t4 := Task.spawn (fun _ => krylovLowerBoundFromInit ctx vSign k parallelHeads)
+    let b1 := t1.get
+    let b2 := t2.get
+    let b3 := t3.get
+    let b4 := t4.get
+    return max (max b1 b2) (max b3 b4)
+  else
+    let b1 := krylovLowerBoundFromInit ctx vHash k parallelHeads
+    let b2 := krylovLowerBoundFromInit ctx vData k parallelHeads
+    let b3 := krylovLowerBoundFromInit ctx vMax k parallelHeads
+    let b4 := krylovLowerBoundFromInit ctx vSign k parallelHeads
+    return max (max b1 b2) (max b3 b4)
 
 /-! ## Adaptive bound scheduler (rigorous upper bounds, deterministic) -/
 
@@ -4995,6 +5235,13 @@ structure AdaptiveSchedulerResult where
   /-- Upgrade log (one entry per accepted upgrade). -/
   steps : Array AdaptiveSchedulerStep
   deriving Repr
+
+private structure AdaptiveUbCaches where
+  winUb : Array (Array (Option Float))
+  woutUb : Array (Array (Option Float))
+  ubAt : Array (Array (Option Float))
+  mlpCore : Array (Option MLPJacobianBoundCore)
+  deriving Inhabited
 
 private def safeSlack (ub lb : Float) : Float :=
   if lb ≤ 0.0 || Float.isNaN lb || Float.isInf lb then
@@ -5064,55 +5311,147 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     let tasks : Array (Task Float) :=
       .ofFn fun i : Fin model.numLayers =>
         Task.spawn (fun _ =>
-          layerResidualJacobianLowerBound cache i.val cfg.krylovSteps (parallelHeads := false))
+          layerResidualJacobianLowerBound cache i.val cfg.krylovSteps (parallelHeads := true))
     lb := tasks.map Task.get
   else
     for l in [:model.numLayers] do
       lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps (parallelHeads := true))
 
-  let computeUbAt (layerIdx tierIdx : Nat) : Float :=
-    if layerIdx ≥ model.numLayers then
-      0.0
-    else
-      let eff := tiers.getD tierIdx ConcreteMatrix.BoundEffort.tier1
-      let base := attnPart.getD layerIdx 0.0
-      if hm : layerIdx < model.mlps.size then
-        let mlp := model.mlps[layerIdx]'hm
-        let big :=
-          mlp.W_in.numRows * mlp.W_in.numCols + mlp.W_out.numRows * mlp.W_out.numCols
-        let useParallel :=
-          big >= 200000 && tierIdx > 0
-        let (win, wout) :=
-          if useParallel then
-            let t1 := Task.spawn (fun _ => mlp.W_in.opNormUpperBoundRectGramEffort eff)
-            let t2 := Task.spawn (fun _ => mlp.W_out.opNormUpperBoundRectGramEffort eff)
-            (t1.get, t2.get)
-          else
-            (mlp.W_in.opNormUpperBoundRectGramEffort eff, mlp.W_out.opNormUpperBoundRectGramEffort eff)
-        let y := cache.forwardResult.getPostAttnResidual layerIdx
-        let l2 := ln2Bound.getD layerIdx 0.0
-        let geluDeriv := cache.forwardResult.getMlpGeluDeriv layerIdx
-        let mlpUb :=
-          if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
-            computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv win wout
-          else
-            let mlpInput := model.applyLn2 layerIdx y
-            let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
-            let dAct := hidden.map geluDerivFloat
-            computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct win wout
-        base + l2 * mlpUb
+  let mlpUbFromCore (core : MLPJacobianBoundCore) (winUb woutUb : Float) : Float :=
+    let legacy := winUb * core.globalDmax * woutUb
+    let scaledViaWin := core.winScaledUb * woutUb
+    let scaledViaWout := winUb * core.woutScaledUb
+    let scaled0 :=
+      if scaledViaWin ≤ 0.0 || Float.isNaN scaledViaWin || Float.isInf scaledViaWin then
+        scaledViaWout
+      else if scaledViaWout ≤ 0.0 || Float.isNaN scaledViaWout || Float.isInf scaledViaWout then
+        scaledViaWin
       else
-        base
+        min scaledViaWin scaledViaWout
+    let scaled :=
+      if scaled0 ≤ 0.0 || Float.isNaN scaled0 || Float.isInf scaled0 then legacy else scaled0
+    let absSchur := core.absSchur
+    if absSchur ≤ 0.0 || Float.isNaN absSchur || Float.isInf absSchur then
+      min legacy scaled
+    else
+      min absSchur (min legacy scaled)
+
+  let initCaches : AdaptiveUbCaches :=
+    { winUb := Array.replicate model.numLayers (Array.replicate tiers.size none)
+      woutUb := Array.replicate model.numLayers (Array.replicate tiers.size none)
+      ubAt := Array.replicate model.numLayers (Array.replicate tiers.size none)
+      mlpCore := Array.replicate model.numLayers none }
+  let mut caches : AdaptiveUbCaches := initCaches
+
+  let getWinWoutM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches (Float × Float) := do
+    let st ← get
+    if !(layerIdx < model.numLayers ∧ tierIdx < tiers.size) then
+      return (0.0, 0.0)
+    if hm : layerIdx < model.mlps.size then
+      let win? := st.winUb[layerIdx]![tierIdx]!
+      let wout? := st.woutUb[layerIdx]![tierIdx]!
+      match win?, wout? with
+      | some win, some wout => return (win, wout)
+      | _, _ =>
+          let eff := tiers[tierIdx]!
+          let mlp := model.mlps[layerIdx]'hm
+          let big := mlp.W_in.numRows * mlp.W_in.numCols + mlp.W_out.numRows * mlp.W_out.numCols
+          let useParallel := big >= 200000 && tierIdx > 0
+          let (win, wout) :=
+            if useParallel then
+              let t1 := Task.spawn (fun _ => mlp.W_in.opNormUpperBoundRectGramEffort eff)
+              let t2 := Task.spawn (fun _ => mlp.W_out.opNormUpperBoundRectGramEffort eff)
+              (t1.get, t2.get)
+            else
+              (mlp.W_in.opNormUpperBoundRectGramEffort eff, mlp.W_out.opNormUpperBoundRectGramEffort eff)
+          let rowWin := (st.winUb[layerIdx]!).set! tierIdx (some win)
+          let rowWout := (st.woutUb[layerIdx]!).set! tierIdx (some wout)
+          set { st with winUb := st.winUb.set! layerIdx rowWin, woutUb := st.woutUb.set! layerIdx rowWout }
+          return (win, wout)
+    else
+      return (0.0, 0.0)
+
+  let getMlpCoreM (layerIdx : Nat) : StateM AdaptiveUbCaches (Option MLPJacobianBoundCore) := do
+    let st ← get
+    if !(layerIdx < model.numLayers) then
+      return none
+    match st.mlpCore[layerIdx]! with
+    | some core => return some core
+    | none =>
+        if hm : layerIdx < model.mlps.size then
+          let mlp := model.mlps[layerIdx]'hm
+          let y := cache.forwardResult.getPostAttnResidual layerIdx
+          let geluDeriv := cache.forwardResult.getMlpGeluDeriv layerIdx
+          let core? :=
+            if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+              mlp.precomputeJacobianBoundCore geluDeriv
+            else
+              let mlpInput := model.applyLn2 layerIdx y
+              let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+              let dAct := hidden.map geluDerivFloat
+              mlp.precomputeJacobianBoundCore dAct
+          set { st with mlpCore := st.mlpCore.set! layerIdx core? }
+          return core?
+        else
+          return none
+
+  let computeUbAtM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches Float := do
+    let st ← get
+    if !(layerIdx < model.numLayers ∧ tierIdx < tiers.size) then
+      return 0.0
+    match st.ubAt[layerIdx]![tierIdx]! with
+    | some v => return v
+    | none =>
+        let base := attnPart.getD layerIdx 0.0
+        let v : Float ←
+          if hm : layerIdx < model.mlps.size then
+            let mlp := model.mlps[layerIdx]'hm
+            let (win, wout) ← getWinWoutM layerIdx tierIdx
+            let l2 := ln2Bound.getD layerIdx 0.0
+            let mlpUb : Float ←
+              if tierIdx ≤ startTier then
+                -- Tier0/tier1 are only evaluated once per layer; avoid extra passes just to build core.
+                let y := cache.forwardResult.getPostAttnResidual layerIdx
+                let geluDeriv := cache.forwardResult.getMlpGeluDeriv layerIdx
+                if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+                  pure (computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv win wout)
+                else
+                  let mlpInput := model.applyLn2 layerIdx y
+                  let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+                  let dAct := hidden.map geluDerivFloat
+                  pure (computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct win wout)
+              else
+                match (← getMlpCoreM layerIdx) with
+                | some core =>
+                    pure (mlpUbFromCore core win wout)
+                | none =>
+                    let y := cache.forwardResult.getPostAttnResidual layerIdx
+                    let geluDeriv := cache.forwardResult.getMlpGeluDeriv layerIdx
+                    if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
+                      pure (computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv win wout)
+                    else
+                      let mlpInput := model.applyLn2 layerIdx y
+                      let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
+                      let dAct := hidden.map geluDerivFloat
+                      pure (computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct win wout)
+            pure (base + l2 * mlpUb)
+          else
+            pure base
+        let row := (st.ubAt[layerIdx]!).set! tierIdx (some v)
+        set { st with ubAt := st.ubAt.set! layerIdx row }
+        return v
 
   -- Initialize to current default (tier1) to ensure adaptive never worsens bounds.
   let mut tier : Array Nat := Array.replicate model.numLayers startTier
   let mut ub : Array Float := Array.mkEmpty model.numLayers
   for l in [:model.numLayers] do
+    let (v, st) := (computeUbAtM l startTier).run caches
+    caches := st
     let baseUb : Float :=
       if cache.layerNormBoundsComputed then
-        cache.layerNormBounds.getD l (computeUbAt l startTier)
+        cache.layerNormBounds.getD l v
       else
-        computeUbAt l startTier
+        v
     ub := ub.push baseUb
 
   let mut steps : Array AdaptiveSchedulerStep := #[]
@@ -5153,10 +5492,40 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     let canUb := (!stalledUb[l]!) && (t + 1 < tiers.size)
     let canLb := (!stalledLb[l]!) && (lbStep > 0) && (lbK[l]! < maxKrylov)
 
+    -- Heuristic choice when both upgrades are possible:
+    -- if slack is dominated by a tiny lower bound, prioritize strengthening `lb` first.
+    if canLb && canUb && (oldLb ≤ 0.0 || oldSlack > cfg.targetSlack * 4.0) then
+      let fromK := lbK[l]!
+      let toK := min (fromK + lbStep) maxKrylov
+      let newLb := layerResidualJacobianLowerBound cache l toK (parallelHeads := true)
+      let relImprove : Float :=
+        if oldLb ≤ 0.0 then (if newLb > 0.0 then 1.0 else 0.0) else (newLb - oldLb) / oldLb
+      if relImprove < cfg.minRelImprove then
+        stalledLb := stalledLb.set! l true
+      else
+        lbK := lbK.set! l toK
+        lb := lb.set! l newLb
+      steps := steps.push
+        { iter := upgradesUsed
+          layerIdx := l
+          kind := .lbSteps
+          tierFrom := tier[l]!
+          tierTo := tier[l]!
+          kFrom := fromK
+          kTo := toK
+          ubBefore := oldUb
+          ubAfter := oldUb
+          lb := lb[l]!
+          slackBefore := oldSlack
+          slackAfter := safeSlack oldUb (lb[l]!) }
+      upgradesUsed := upgradesUsed + 1
+      continue
+
     if canUb then
       let fromTier := t
       let toTier := fromTier + 1
-      let newUb := computeUbAt l toTier
+      let (newUb, st) := (computeUbAtM l toTier).run caches
+      caches := st
       if cfg.debugMonotone && newUb > oldUb + epsNoise then
         panic! s!"Adaptive monotonicity violated at layer {l}: old={oldUb} new={newUb}"
       let relImprove : Float :=
