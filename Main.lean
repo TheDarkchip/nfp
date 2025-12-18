@@ -37,7 +37,8 @@ lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 lake exe nfp certify model.nfpt --eps 1e-5 --actDeriv 2
 
 # Local (input-dependent) sound-mode certificate report
-lake exe nfp certify model.nfpt --input model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
+# (If the model `.nfpt` contains `EMBEDDINGS`, `--input` can be omitted.)
+lake exe nfp certify model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
 
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
@@ -115,6 +116,38 @@ private def setStdoutLogNameFromModelPath (modelPath : String) : IO Unit := do
   let p : System.FilePath := modelPath
   let stem := p.fileStem.getD (p.fileName.getD "model")
   setStdoutLogName stem
+
+/-- Check whether a `.nfpt` file contains an `EMBEDDINGS` section before the first `LAYER`.
+
+This is used to decide whether `nfp certify --delta ...` can default to using the model file as
+its own input source (so users don't have to pass `--input model.nfpt`). -/
+private def hasEmbeddingsBeforeLayers (path : System.FilePath) : IO Bool := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  -- Header: read until blank line.
+  let mut seenHeader : Bool := false
+  while true do
+    let line ← h.getLine
+    if line.isEmpty then
+      return false
+    let s := line.trim
+    if !seenHeader then
+      if s.startsWith "NFP_TEXT" then
+        seenHeader := true
+      continue
+    if s.isEmpty then
+      break
+
+  -- After the header, `EMBEDDINGS` (if present) must appear before any layer payload.
+  while true do
+    let line ← h.getLine
+    if line.isEmpty then
+      return false
+    let s := line.trim
+    if s = "EMBEDDINGS" then
+      return true
+    if s.startsWith "LAYER" then
+      return false
+  return false
 
 private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) : IO Unit := do
   let attnFrob : Float := Float.sqrt data.attentionFrobeniusNormSq
@@ -654,7 +687,8 @@ def runCertify (p : Parsed) : IO UInt32 := do
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
   let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
-  let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
+  let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
+  let deltaStr := deltaFlag?.getD "0"
   let outputPath := p.flag? "output" |>.map (·.as! String)
 
   let action : ExceptT String IO Nfp.Sound.ModelCert := do
@@ -670,7 +704,26 @@ def runCertify (p : Parsed) : IO UInt32 := do
       match Nfp.Sound.parseRat deltaStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-    let inputPath? : Option System.FilePath := inputPath.map (fun s => ⟨s⟩)
+
+    /- If `--input` is omitted but `--delta` is provided, try to use `modelPath` as the input file
+       (for `.nfpt` exports that embed `EMBEDDINGS` in the same file). This keeps `nfp certify`
+       ergonomic without changing the default behavior when `--delta` is absent. -/
+    let inputPath? : Option System.FilePath ←
+      match inputPath with
+      | some s => pure (some ⟨s⟩)
+      | none =>
+          match deltaFlag? with
+          | none => pure none
+          | some _ =>
+              let hasEmbeddings ←
+                hasEmbeddingsBeforeLayers ⟨modelPath⟩
+              if hasEmbeddings then
+                pure (some ⟨modelPath⟩)
+              else
+                throw <|
+                  "local certification requested via --delta, but the model file has no \
+EMBEDDINGS section before the first LAYER; pass --input <input.nfpt> (containing EMBEDDINGS) \
+or omit --delta for global certification."
     let cert ← ExceptT.mk <|
       Nfp.Sound.certifyModelFile ⟨modelPath⟩ eps actDeriv
         (inputPath? := inputPath?) (inputDelta := delta)
@@ -857,8 +910,9 @@ def certifyCmd : Cmd := `[Cli|
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust)."
 
   FLAGS:
-    input : String; "Optional input .nfpt file for local LayerNorm certification"
-    delta : String; "Input ℓ∞ radius δ for local certification (default: 0)"
+    input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS)"
+    delta : String; "Input ℓ∞ radius δ for local certification (default: 0; if --input is omitted, \
+uses EMBEDDINGS in the model file when present)"
     eps : String; "LayerNorm epsilon (default: 1e-5)"
     actDeriv : String; "Activation derivative bound (default: 2)"
     o, output : String; "Write report to file instead of stdout"

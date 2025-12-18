@@ -142,13 +142,22 @@ lake exe nfp certify models/gpt2_rigorous.nfpt \
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --input models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
+  --delta 1/100 --eps 1e-5 --actDeriv 2
+```
+
+- If your model `.nfpt` does **not** include an `EMBEDDINGS` section (e.g. a weights-only export),
+  pass a separate input file:
+
+```bash
+lake exe nfp certify models/gpt2_rigorous.nfpt \
+  --input models/some_input.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
 ```
 
 - `--eps` sets the LayerNorm ε (default: `1e-5`).
 - `--actDeriv` bounds the activation derivative (default: `2`).
-- `--input` optionally provides an input `.nfpt` file used for local certification.
-- `--delta` sets the local ℓ∞ radius `δ` (default: `0`).
+- `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification
+  if `EMBEDDINGS` are available (either in the model file or via `--input`).
+- `--input` optionally provides an input `.nfpt` file used for local certification (must contain `EMBEDDINGS`).
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `rope`
