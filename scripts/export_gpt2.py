@@ -117,15 +117,20 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             # We need to split into Q, K, V and then split each by heads
 
             c_attn_weight = block.attn.c_attn.weight.detach().numpy()  # (768, 2304)
+            c_attn_bias = block.attn.c_attn.bias.detach().numpy()  # (2304,)
 
             # c_attn.weight layout: input_dim -> [Q_all_heads, K_all_heads, V_all_heads]
             # Each section is (model_dim, model_dim)
             W_Q_all = c_attn_weight[:, 0:model_dim]  # (768, 768)
             W_K_all = c_attn_weight[:, model_dim : 2 * model_dim]  # (768, 768)
             W_V_all = c_attn_weight[:, 2 * model_dim : 3 * model_dim]  # (768, 768)
+            b_Q_all = c_attn_bias[0:model_dim]  # (768,)
+            b_K_all = c_attn_bias[model_dim : 2 * model_dim]  # (768,)
+            b_V_all = c_attn_bias[2 * model_dim : 3 * model_dim]  # (768,)
 
             # Output projection c_proj
             c_proj_weight = block.attn.c_proj.weight.detach().numpy()  # (768, 768)
+            c_proj_bias = block.attn.c_proj.bias.detach().numpy()  # (768,)
 
             # Split into heads
             # W_Q_all columns are organized as [head0, head1, ..., head11]
@@ -148,12 +153,22 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
                 f.write(f"HEAD {head_idx}\n")
                 f.write("W_Q\n")
                 write_matrix(f, W_Q)
+                f.write("b_Q\n")
+                write_vector(f, b_Q_all[start:end])
                 f.write("W_K\n")
                 write_matrix(f, W_K)
+                f.write("b_K\n")
+                write_vector(f, b_K_all[start:end])
                 f.write("W_V\n")
                 write_matrix(f, W_V)
+                f.write("b_V\n")
+                write_vector(f, b_V_all[start:end])
                 f.write("W_O\n")
                 write_matrix(f, W_O)
+
+            # Attention output bias (c_proj.bias), applied once after combining heads.
+            f.write("ATTN_BIAS\n")
+            write_vector(f, c_proj_bias)
 
             # MLP weights
             # GPT-2 MLP: x -> c_fc (expand) -> GELU -> c_proj (contract) -> out

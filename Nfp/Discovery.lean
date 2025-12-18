@@ -1450,18 +1450,30 @@ structure ConcreteAttentionLayer where
   headDim : Nat
   /-- Query projection matrix (modelDim × headDim) -/
   W_Q : ConcreteMatrix
+  /-- Query bias (1×headDim). -/
+  b_Q : ConcreteMatrix
   /-- Key projection matrix (modelDim × headDim) -/
   W_K : ConcreteMatrix
+  /-- Key bias (1×headDim). -/
+  b_K : ConcreteMatrix
   /-- Value projection matrix (modelDim × headDim) -/
   W_V : ConcreteMatrix
+  /-- Value bias (1×headDim). -/
+  b_V : ConcreteMatrix
   /-- Output projection matrix (headDim × modelDim) -/
   W_O : ConcreteMatrix
   /-- Dimension consistency for W_Q -/
   W_Q_dims : W_Q.numRows = modelDim ∧ W_Q.numCols = headDim
+  /-- Dimension consistency for b_Q -/
+  b_Q_dims : b_Q.numRows = 1 ∧ b_Q.numCols = headDim
   /-- Dimension consistency for W_K -/
   W_K_dims : W_K.numRows = modelDim ∧ W_K.numCols = headDim
+  /-- Dimension consistency for b_K -/
+  b_K_dims : b_K.numRows = 1 ∧ b_K.numCols = headDim
   /-- Dimension consistency for W_V -/
   W_V_dims : W_V.numRows = modelDim ∧ W_V.numCols = headDim
+  /-- Dimension consistency for b_V -/
+  b_V_dims : b_V.numRows = 1 ∧ b_V.numCols = headDim
   /-- Dimension consistency for W_O -/
   W_O_dims : W_O.numRows = headDim ∧ W_O.numCols = modelDim
 
@@ -2743,8 +2755,8 @@ accumulating the residual stream as in real transformers.
 /-- Compute attention weights for a layer given an input matrix. -/
 def ConcreteAttentionLayer.computeAttentionWeights (layer : ConcreteAttentionLayer)
     (input : ConcreteMatrix) (causal : Bool := true) : ConcreteAttentionWeights :=
-  let queries := input.matmul layer.W_Q
-  let keys := input.matmul layer.W_K
+  let queries := (input.matmul layer.W_Q).addBias layer.b_Q
+  let keys := (input.matmul layer.W_K).addBias layer.b_K
   let scale := Float.sqrt layer.headDim.toFloat
   ConcreteAttentionWeights.compute queries keys scale input.numRows causal
 
@@ -2761,7 +2773,7 @@ This computes the attention output (before residual connection):
 def ConcreteAttentionLayer.forward (layer : ConcreteAttentionLayer) (input : ConcreteMatrix)
     (causal : Bool := true) : ConcreteMatrix :=
   let attn := layer.computeAttentionWeights input causal
-  let values := input.matmul layer.W_V  -- seqLen × headDim
+  let values := (input.matmul layer.W_V).addBias layer.b_V  -- seqLen × headDim
   -- Compute A · V using direct construction
   let attnValues : ConcreteMatrix := {
     numRows := input.numRows
@@ -3119,22 +3131,24 @@ def computeValueTermNorm (attn : ConcreteAttentionWeights)
 structure PatternTermBoundInputs where
   /-- Attention weights -/
   attention : ConcreteAttentionWeights
-  /-- Deterministic Float upper bound on ‖W_Q · W_K^T‖₂.
-
-This is treated as an upper bound in exact real arithmetic and may be computed
-as the minimum of several valid upper bounds (e.g. Schur / Frobenius / factor bounds).
--/
-  queryKeyAlignSchurNorm : Float
-  /-- Deterministic Float upper bound on ‖W_V · W_O‖₂.
-
-This is treated as an upper bound in exact real arithmetic and may be computed
-as the minimum of several valid upper bounds (e.g. Schur / Frobenius / factor bounds).
--/
-  valueOutputProjSchurNorm : Float
   /-- Input embedding norm (‖X‖_F) -/
   inputNorm : Float
   /-- Scaling factor (√d_head) -/
   scaleFactor : Float
+  /-- Deterministic Float upper bound on ‖W_Q‖₂. -/
+  wqOpBound : Float
+  /-- Deterministic Float upper bound on ‖W_K‖₂. -/
+  wkOpBound : Float
+  /-- Deterministic Float upper bound on ‖W_V‖₂. -/
+  wvOpBound : Float
+  /-- Deterministic Float upper bound on ‖W_O‖₂. -/
+  woOpBound : Float
+  /-- Query bias Frobenius norm (for the 1×headDim bias row). -/
+  bqFrob : Float
+  /-- Key bias Frobenius norm (for the 1×headDim bias row). -/
+  bkFrob : Float
+  /-- Value bias Frobenius norm (for the 1×headDim bias row). -/
+  bvFrob : Float
 
 /-- Bound ‖patternTerm‖_F without expanding the full Jacobian.
 
@@ -3161,8 +3175,19 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
   -- Provable global bound: for any probability vector p, J = diag(p) - p pᵀ has ‖J‖₂ ≤ 1/2.
   -- Clamp defensively so callers cannot accidentally exceed this.
   let softmaxBound := min inputs.attention.softmaxJacobianOpEst 0.5
-  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
-    inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
+  let n := inputs.attention.seqLen
+  let sqrtN := Float.sqrt n.toFloat
+  -- Bias-aware Frobenius upper bounds on the concrete Q/K/V activations:
+  --   Q = X·W_Q + 1·b_Q, so ‖Q‖_F ≤ ‖X‖_F‖W_Q‖₂ + √n·‖b_Q‖₂ (and similarly for K, V).
+  let qFrobUb := inputs.inputNorm * inputs.wqOpBound + sqrtN * inputs.bqFrob
+  let kFrobUb := inputs.inputNorm * inputs.wkOpBound + sqrtN * inputs.bkFrob
+  let vFrobUb := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  -- Logits sensitivity:
+  --   dS = (dQ)Kᵀ + Q(dK)ᵀ, with ‖dQ‖_F ≤ ‖dX‖_F‖W_Q‖₂ and ‖dK‖_F ≤ ‖dX‖_F‖W_K‖₂.
+  let sCoeff := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
+  -- Pattern term: dA·V·W_O, with ‖dA‖_F ≤ ‖J_softmax‖₂‖dS‖_F and
+  -- ‖dA·V·W_O‖_F ≤ ‖dA‖_F‖V‖_F‖W_O‖₂.
+  (softmaxBound * sCoeff) * vFrobUb * inputs.woOpBound
 
 /-- Bound ‖patternTerm‖_F using the old pessimistic constant bound.
 
@@ -3171,8 +3196,13 @@ Prefer `computePatternTermBound` for tighter data-dependent bounds.
 -/
 def computePatternTermBoundPessimistic (inputs : PatternTermBoundInputs) : Float :=
   let softmaxBound : Float := 0.5  -- Worst-case softmax Jacobian spectral norm
-  (softmaxBound / inputs.scaleFactor) * inputs.inputNorm *
-    inputs.queryKeyAlignSchurNorm * inputs.valueOutputProjSchurNorm
+  let n := inputs.attention.seqLen
+  let sqrtN := Float.sqrt n.toFloat
+  let qFrobUb := inputs.inputNorm * inputs.wqOpBound + sqrtN * inputs.bqFrob
+  let kFrobUb := inputs.inputNorm * inputs.wkOpBound + sqrtN * inputs.bkFrob
+  let vFrobUb := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let sCoeff := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
+  (softmaxBound * sCoeff) * vFrobUb * inputs.woOpBound
 
 /-- Compute faithfulness ratio: ‖patternTerm‖_F / ‖valueTerm‖_F. -/
 def computeFaithfulnessRatio (inputs : PatternTermBoundInputs) (valueOutputProjFrobNormSq : Float) : Float :=
@@ -3448,6 +3478,12 @@ structure ConcreteModel where
   numLayers : Nat
   /-- Attention layers with their heads: layers[l] is array of heads in layer l -/
   layers : Array (Array ConcreteAttentionLayer)
+  /-- Attention output projection bias (c_proj.bias), one per layer (1×modelDim).
+
+  In GPT-2, this bias is added **once per layer** after combining all heads, i.e.:
+  `attn_out = c_proj(concat(heads)) + bias`.
+  -/
+  attnProjBias : Array ConcreteMatrix := #[]
   /-- MLP layers: mlps[l] is the MLP in layer l (one per layer) -/
   mlps : Array ConcreteMLPLayer
   /-- Pre-LN LayerNorm parameters before attention (ln_1), one per layer. -/
@@ -3477,6 +3513,10 @@ namespace ConcreteModel
 /-- Model dimension (d), inferred from input embeddings. -/
 def modelDim (model : ConcreteModel) : Nat :=
   model.inputEmbeddings.numCols
+
+/-- Attention output bias for a layer, defaulting to zero. -/
+def attnProjBiasAt (model : ConcreteModel) (layerIdx : Nat) : ConcreteMatrix :=
+  model.attnProjBias.getD layerIdx (ConcreteMatrix.zeros 1 model.modelDim)
 
 /-- Trim trailing all-zero embedding rows (common when `.nfpt` uses a fixed `seqLen` with padding).
 
@@ -3560,6 +3600,8 @@ def ConcreteModel.numNeuronsAtLayer (model : ConcreteModel) (layerIdx : Nat) : N
 structure ForwardPassResult where
   /-- Input to each layer. layerInputs[l] is what layer l receives. -/
   layerInputs : Array ConcreteMatrix
+  /-- Post-attention residual for each layer: `y_l = x_l + attn_out` (including attention output bias). -/
+  postAttnResiduals : Array ConcreteMatrix
   /-- Attention outputs per layer per head: attnOutputs[l][h] = output of head h at layer l -/
   attnOutputs : Array (Array ConcreteMatrix)
   /-- MLP outputs per layer: mlpOutputs[l] = output of MLP at layer l -/
@@ -3594,6 +3636,7 @@ output of layers 0..N-1, not just the raw embeddings.
 def ConcreteModel.runForward (model : ConcreteModel)
     (causal : Bool := true) : ForwardPassResult := Id.run do
   let mut layerInputs : Array ConcreteMatrix := Array.mkEmpty (model.numLayers + 1)
+  let mut postAttnResiduals : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut attnOutputs : Array (Array ConcreteMatrix) := Array.mkEmpty model.numLayers
   let mut mlpOutputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut mlpActDeriv : Array ConcreteMatrix := Array.mkEmpty model.numLayers
@@ -3632,7 +3675,10 @@ def ConcreteModel.runForward (model : ConcreteModel)
       if layerAttnOutputs.isEmpty then
         residual
       else
-        residual.add (ConcreteMatrix.sumMatrices layerAttnOutputs)
+        let attnSum := ConcreteMatrix.sumMatrices layerAttnOutputs
+        let attnBias := model.attnProjBiasAt l
+        residual.add ((attnSum.addBias attnBias))
+    postAttnResiduals := postAttnResiduals.push residualAfterAttn
 
     -- Compute MLP output
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
@@ -3671,6 +3717,7 @@ def ConcreteModel.runForward (model : ConcreteModel)
   let finalOutput := model.applyLnf residual
   {
     layerInputs := layerInputs
+    postAttnResiduals := postAttnResiduals
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
     mlpActDeriv := mlpActDeriv
@@ -3698,15 +3745,15 @@ This is the input to `ln_2` in a Pre-LN transformer block.
 -/
 def ForwardPassResult.getPostAttnResidual (result : ForwardPassResult)
     (layerIdx : Nat) : ConcreteMatrix := Id.run do
-  let x := result.getLayerInput layerIdx
-  if h : layerIdx < result.attnOutputs.size then
-    let heads := result.attnOutputs[layerIdx]
-    if heads.isEmpty then
-      return x
-    else
-      return x.add (ConcreteMatrix.sumMatrices heads)
+  if h : layerIdx < result.postAttnResiduals.size then
+    result.postAttnResiduals[layerIdx]
   else
-    return x
+    let x := result.getLayerInput layerIdx
+    if h2 : layerIdx < result.attnOutputs.size then
+      let heads := result.attnOutputs[layerIdx]
+      if heads.isEmpty then x else x.add (ConcreteMatrix.sumMatrices heads)
+    else
+      x
 
 /-! ## N-Layer Error Amplification Computation
 
@@ -3825,9 +3872,20 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
         let attnOpUb : Float := min attnFrob attnOneInf
         let valueTermUb := attnOpUb * valueOutputProjNorm
 
-        -- Pattern-term bound (same factorization as `computePatternTermBound`):
-        let patternTermUb :=
-          (softmaxOpBound / scaleFactor) * inputNorm * qkNorm * valueOutputProjNorm
+        let bnds := head.noDenseProductBounds
+        let inputs : PatternTermBoundInputs := {
+          attention := attn
+          inputNorm := inputNorm
+          scaleFactor := scaleFactor
+          wqOpBound := bnds.wqOpGram
+          wkOpBound := bnds.wkOpGram
+          wvOpBound := bnds.wvOpGram
+          woOpBound := bnds.woOpGram
+          bqFrob := head.b_Q.frobeniusNorm
+          bkFrob := head.b_K.frobeniusNorm
+          bvFrob := head.b_V.frobeniusNorm
+        }
+        let patternTermUb := computePatternTermBound inputs
 
         totalNorm := totalNorm + ln1Bound * (valueTermUb + patternTermUb)
 
@@ -4066,6 +4124,12 @@ structure PrecomputedHeadData where
   wqOpGram : Float
   /-- Gram-based operator bound for `W_K`: `sqrt(‖W_KᵀW_K‖∞)` (computed implicitly). -/
   wkOpGram : Float
+  /-- Frobenius norm of the 1×headDim query bias row `b_Q`. -/
+  bqFrob : Float
+  /-- Frobenius norm of the 1×headDim key bias row `b_K`. -/
+  bkFrob : Float
+  /-- Frobenius norm of the 1×headDim value bias row `b_V`. -/
+  bvFrob : Float
   /-- Factorized Gram bound for `‖W_Q·W_Kᵀ‖₂`: `wqOpGram * wkOpGram`. -/
   qkFactorGram : Float
 
@@ -4147,9 +4211,19 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
     let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
     let attnOpUb : Float := min attnFrob d.attentionOneInfBound
     let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
-    let patternTermUb : Float :=
-      (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
-        d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+    let inputs : PatternTermBoundInputs := {
+      attention := d.attention
+      inputNorm := d.inputNorm
+      scaleFactor := d.scaleFactor
+      wqOpBound := d.wqOpGram
+      wkOpBound := d.wkOpGram
+      wvOpBound := d.wvOpGram
+      woOpBound := d.woOpGram
+      bqFrob := d.bqFrob
+      bkFrob := d.bkFrob
+      bvFrob := d.bvFrob
+    }
+    let patternTermUb : Float := computePatternTermBound inputs
     norm := norm + d.ln1OpBound * (valueTermUb + patternTermUb)
 
   if hm : layerIdx < model.mlps.size then
@@ -4266,8 +4340,19 @@ This precomputes all attention patterns, projections, and norms once.
             none
 
         let scaleFactor := Float.sqrt head.headDim.toFloat
-        let patternBound : Float :=
-          (softmaxOpBound / scaleFactor) * inputNorm * qkOpBound * voOpBound
+        let inputs : PatternTermBoundInputs := {
+          attention := attn
+          inputNorm := inputNorm
+          scaleFactor := scaleFactor
+          wqOpBound := bnds.wqOpGram
+          wkOpBound := bnds.wkOpGram
+          wvOpBound := bnds.wvOpGram
+          woOpBound := bnds.woOpGram
+          bqFrob := head.b_Q.frobeniusNorm
+          bkFrob := head.b_K.frobeniusNorm
+          bvFrob := head.b_V.frobeniusNorm
+        }
+        let patternBound : Float := computePatternTermBound inputs
         let valueNorm : Float :=
           Float.sqrt attnFrobNormSq * voNorm
         let ratio : Float :=
@@ -4309,6 +4394,9 @@ This precomputes all attention patterns, projections, and norms once.
 
           wqOpGram := bnds.wqOpGram
           wkOpGram := bnds.wkOpGram
+          bqFrob := head.b_Q.frobeniusNorm
+          bkFrob := head.b_K.frobeniusNorm
+          bvFrob := head.b_V.frobeniusNorm
           qkFactorGram := bnds.qkFactorGram
 
           voDenseFrob := bnds.voDenseFrob
@@ -4349,9 +4437,19 @@ This precomputes all attention patterns, projections, and norms once.
             let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
             let attnOpUb : Float := min attnFrob d.attentionOneInfBound
             let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
-            let patternTermUb : Float :=
-              (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
-                d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+            let inputs : PatternTermBoundInputs := {
+              attention := d.attention
+              inputNorm := d.inputNorm
+              scaleFactor := d.scaleFactor
+              wqOpBound := d.wqOpGram
+              wkOpBound := d.wkOpGram
+              wvOpBound := d.wvOpGram
+              woOpBound := d.woOpGram
+              bqFrob := d.bqFrob
+              bkFrob := d.bkFrob
+              bvFrob := d.bvFrob
+            }
+            let patternTermUb : Float := computePatternTermBound inputs
             nrm := nrm + d.ln1OpBound * (valueTermUb + patternTermUb)
 
           if hm : l < model.mlps.size then
@@ -4572,9 +4670,9 @@ namespace HeadJacobianCtx
 
 def build (head : ConcreteAttentionLayer) (input : ConcreteMatrix) (attn : ConcreteAttentionWeights) :
     HeadJacobianCtx :=
-  let Q := input.matmul head.W_Q
-  let K := input.matmul head.W_K
-  let V := input.matmul head.W_V
+  let Q := (input.matmul head.W_Q).addBias head.b_Q
+  let K := (input.matmul head.W_K).addBias head.b_K
+  let V := (input.matmul head.W_V).addBias head.b_V
   let KT := K.transpose
   let AV := attn.mul V
   let invScale := 1.0 / Float.sqrt head.headDim.toFloat
@@ -4905,9 +5003,19 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
       let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
       let attnOpUb : Float := min attnFrob d.attentionOneInfBound
       let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
-      let patternTermUb : Float :=
-        (d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
-          d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm
+      let inputs : PatternTermBoundInputs := {
+        attention := d.attention
+        inputNorm := d.inputNorm
+        scaleFactor := d.scaleFactor
+        wqOpBound := d.wqOpGram
+        wkOpBound := d.wkOpGram
+        wvOpBound := d.wvOpGram
+        woOpBound := d.woOpGram
+        bqFrob := d.bqFrob
+        bkFrob := d.bkFrob
+        bvFrob := d.bvFrob
+      }
+      let patternTermUb : Float := computePatternTermBound inputs
       a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
 
     let y := cache.forwardResult.getPostAttnResidual l
@@ -5473,12 +5581,18 @@ def mkConcreteAttentionLayer
   modelDim := modelDim
   headDim := headDim
   W_Q := { numRows := modelDim, numCols := headDim, data := wq, size_eq := hq }
+  b_Q := { numRows := 1, numCols := headDim, data := Array.replicate headDim 0.0, size_eq := by simp }
   W_K := { numRows := modelDim, numCols := headDim, data := wk, size_eq := hk }
+  b_K := { numRows := 1, numCols := headDim, data := Array.replicate headDim 0.0, size_eq := by simp }
   W_V := { numRows := modelDim, numCols := headDim, data := wv, size_eq := hv }
+  b_V := { numRows := 1, numCols := headDim, data := Array.replicate headDim 0.0, size_eq := by simp }
   W_O := { numRows := headDim, numCols := modelDim, data := wo, size_eq := ho }
   W_Q_dims := ⟨rfl, rfl⟩
+  b_Q_dims := ⟨rfl, rfl⟩
   W_K_dims := ⟨rfl, rfl⟩
+  b_K_dims := ⟨rfl, rfl⟩
   W_V_dims := ⟨rfl, rfl⟩
+  b_V_dims := ⟨rfl, rfl⟩
   W_O_dims := ⟨rfl, rfl⟩
 
 /-! ## Generic Circuit Discovery
@@ -6040,10 +6154,15 @@ private def computeHeadMetricsForSAE
       let valueNorm := ln1Bound * computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlignSchurNorm := bnds.qkOpBound
-        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
+        wqOpBound := bnds.wqOpGram
+        wkOpBound := bnds.wkOpGram
+        wvOpBound := bnds.wvOpGram
+        woOpBound := bnds.woOpGram
+        bqFrob := head.b_Q.frobeniusNorm
+        bkFrob := head.b_K.frobeniusNorm
+        bvFrob := head.b_V.frobeniusNorm
       }
       let patternBound := ln1Bound * computePatternTermBound inputs
       some (valueNorm, patternBound)
@@ -6355,6 +6474,7 @@ This enables **empirical validation** of theoretical circuit bounds:
 def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteCircuit)
     (causal : Bool := true) : ForwardPassResult := Id.run do
   let mut layerInputs : Array ConcreteMatrix := Array.mkEmpty (model.numLayers + 1)
+  let mut postAttnResiduals : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut attnOutputs : Array (Array ConcreteMatrix) := Array.mkEmpty model.numLayers
   let mut mlpOutputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
   let mut residual := model.inputEmbeddings
@@ -6411,11 +6531,14 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
     attnOutputs := attnOutputs.push layerAttnOutputs
 
     -- Add attention residual
-    let residualAfterAttn :=
+    let attnBias := model.attnProjBiasAt l
+    let attnSum :=
       if includedHeadOutputs.isEmpty then
-        residual
+        ConcreteMatrix.zeros rows cols
       else
-        residual.add (ConcreteMatrix.sumMatrices includedHeadOutputs)
+        ConcreteMatrix.sumMatrices includedHeadOutputs
+    let residualAfterAttn := residual.add (attnSum.addBias attnBias)
+    postAttnResiduals := postAttnResiduals.push residualAfterAttn
 
     -- Compute MLP output with neuron-level ablation
     -- Pre-LN: MLP sees ln_2(residualAfterAttn)
@@ -6438,6 +6561,7 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
   let finalOutput := model.applyLnf residual
   {
     layerInputs := layerInputs
+    postAttnResiduals := postAttnResiduals
     attnOutputs := attnOutputs
     mlpOutputs := mlpOutputs
     mlpActDeriv := Array.replicate model.numLayers (ConcreteMatrix.zeros 0 0)
@@ -6651,10 +6775,15 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let valueNorm := ln1Bound * computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlignSchurNorm := bnds.qkOpBound
-        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
+        wqOpBound := bnds.wqOpGram
+        wkOpBound := bnds.wkOpGram
+        wvOpBound := bnds.wvOpGram
+        woOpBound := bnds.woOpGram
+        bqFrob := head.b_Q.frobeniusNorm
+        bkFrob := head.b_K.frobeniusNorm
+        bvFrob := head.b_V.frobeniusNorm
       }
       let patternBound := ln1Bound * computePatternTermBound inputs
       let ratio := if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
@@ -7232,10 +7361,15 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let valueNorm := computeValueTermNorm attn bnds.voFrobNormSq
       let inputs : PatternTermBoundInputs := {
         attention := attn
-        queryKeyAlignSchurNorm := bnds.qkOpBound
-        valueOutputProjSchurNorm := bnds.voOpBound
         inputNorm := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
+        wqOpBound := bnds.wqOpGram
+        wkOpBound := bnds.wkOpGram
+        wvOpBound := bnds.wvOpGram
+        woOpBound := bnds.woOpGram
+        bqFrob := head.b_Q.frobeniusNorm
+        bkFrob := head.b_K.frobeniusNorm
+        bvFrob := head.b_V.frobeniusNorm
       }
       let patternBound := computePatternTermBound inputs
 
@@ -7488,10 +7622,15 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
           let bnds := head.noDenseProductBounds
           let inputs : PatternTermBoundInputs := {
             attention := attn
-            queryKeyAlignSchurNorm := bnds.qkOpBound
-            valueOutputProjSchurNorm := bnds.voOpBound
             inputNorm := inputNorm
             scaleFactor := Float.sqrt head.headDim.toFloat
+            wqOpBound := bnds.wqOpGram
+            wkOpBound := bnds.wkOpGram
+            wvOpBound := bnds.wvOpGram
+            woOpBound := bnds.woOpGram
+            bqFrob := head.b_Q.frobeniusNorm
+            bkFrob := head.b_K.frobeniusNorm
+            bvFrob := head.b_V.frobeniusNorm
           }
           -- Pre-LN: pattern sensitivity is scaled by the LayerNorm Jacobian.
           totalBound := totalBound + ln1Bound * computePatternTermBound inputs

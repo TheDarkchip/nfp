@@ -77,23 +77,37 @@ def export_induction_weights(output_path: str = "models/gpt2_induction.nfpt"):
 
             # Attention
             c_attn = block.attn.c_attn.weight.detach().numpy()
+            c_attn_bias = block.attn.c_attn.bias.detach().numpy()
             c_proj = block.attn.c_proj.weight.detach().numpy()
+            c_proj_bias = block.attn.c_proj.bias.detach().numpy()
 
             W_Q_all = c_attn[:, 0:model_dim]
             W_K_all = c_attn[:, model_dim : 2 * model_dim]
             W_V_all = c_attn[:, 2 * model_dim : 3 * model_dim]
+            b_Q_all = c_attn_bias[0:model_dim]
+            b_K_all = c_attn_bias[model_dim : 2 * model_dim]
+            b_V_all = c_attn_bias[2 * model_dim : 3 * model_dim]
 
             for h in range(num_heads):
                 start, end = h * head_dim, (h + 1) * head_dim
                 f.write(f"HEAD {h}\n")
                 f.write("W_Q\n")
                 write_matrix(f, W_Q_all[:, start:end])
+                f.write("b_Q\n")
+                write_vector(f, b_Q_all[start:end])
                 f.write("W_K\n")
                 write_matrix(f, W_K_all[:, start:end])
+                f.write("b_K\n")
+                write_vector(f, b_K_all[start:end])
                 f.write("W_V\n")
                 write_matrix(f, W_V_all[:, start:end])
+                f.write("b_V\n")
+                write_vector(f, b_V_all[start:end])
                 f.write("W_O\n")
                 write_matrix(f, c_proj[start:end, :])
+
+            f.write("ATTN_BIAS\n")
+            write_vector(f, c_proj_bias)
 
             # MLP
             f.write("MLP\n")

@@ -41,9 +41,19 @@ LAYER 0
 HEAD 0
 W_Q
 <floats>
+b_Q
+<floats>  -- length = head_dim (optional; default 0)
 W_K
 <floats>
+b_K
+<floats>  -- length = head_dim (optional; default 0)
+W_V
+<floats>
+b_V
+<floats>  -- length = head_dim (optional; default 0)
 ...
+ATTN_BIAS
+<floats>  -- length = model_dim (optional; default 0)
 
 MLP
 W_in
@@ -367,21 +377,30 @@ structure NfpHeader where
     The dimension proofs are satisfied by construction (buildMatrix ensures correct sizes). -/
 def mkAttentionLayer
     (modelDim headDim : Nat)
-    (wq wk wv wo : Array Float) : ConcreteAttentionLayer :=
+    (wq wk wv wo bq bk bv : Array Float) : ConcreteAttentionLayer :=
   let wQ := buildMatrix modelDim headDim wq
+  let bQ := buildMatrix 1 headDim bq
   let wK := buildMatrix modelDim headDim wk
+  let bK := buildMatrix 1 headDim bk
   let wV := buildMatrix modelDim headDim wv
+  let bV := buildMatrix 1 headDim bv
   let wO := buildMatrix headDim modelDim wo
   {
     modelDim := modelDim
     headDim := headDim
     W_Q := wQ
+    b_Q := bQ
     W_K := wK
+    b_K := bK
     W_V := wV
+    b_V := bV
     W_O := wO
     W_Q_dims := ⟨rfl, rfl⟩
+    b_Q_dims := ⟨rfl, rfl⟩
     W_K_dims := ⟨rfl, rfl⟩
+    b_K_dims := ⟨rfl, rfl⟩
     W_V_dims := ⟨rfl, rfl⟩
+    b_V_dims := ⟨rfl, rfl⟩
     W_O_dims := ⟨rfl, rfl⟩
   }
 
@@ -500,6 +519,7 @@ def loadFromText (content : String) : IO LoadResult := do
 
   -- Parse layers
   let mut layers : Array (Array ConcreteAttentionLayer) := #[]
+  let mut attnProjBias : Array ConcreteMatrix := #[]
   let mut mlps : Array ConcreteMLPLayer := #[]
   let mut ln1 : Array ConcreteLayerNormParams := #[]
   let mut ln2 : Array ConcreteLayerNormParams := #[]
@@ -524,44 +544,84 @@ def loadFromText (content : String) : IO LoadResult := do
         i := i + 1
       i := i + 1
       let mut wqFloats : Array Float := #[]
-      while i < lines.size && !lines[i]!.startsWith "W_K" do
+      while i < lines.size &&
+            !lines[i]!.startsWith "b_Q" &&
+            !lines[i]!.startsWith "W_K" do
         for x in parseFloatLine lines[i]! do
           wqFloats := wqFloats.push x
         i := i + 1
+      let mut bqFloats : Array Float := #[]
+      if i < lines.size && lines[i]! = "b_Q" then
+        i := i + 1
+        while i < lines.size && !lines[i]!.startsWith "W_K" do
+          for x in parseFloatLine lines[i]! do
+            bqFloats := bqFloats.push x
+          i := i + 1
 
       -- Parse W_K
       i := i + 1
       let mut wkFloats : Array Float := #[]
-      while i < lines.size && !lines[i]!.startsWith "W_V" do
+      while i < lines.size &&
+            !lines[i]!.startsWith "b_K" &&
+            !lines[i]!.startsWith "W_V" do
         for x in parseFloatLine lines[i]! do
           wkFloats := wkFloats.push x
         i := i + 1
+      let mut bkFloats : Array Float := #[]
+      if i < lines.size && lines[i]! = "b_K" then
+        i := i + 1
+        while i < lines.size && !lines[i]!.startsWith "W_V" do
+          for x in parseFloatLine lines[i]! do
+            bkFloats := bkFloats.push x
+          i := i + 1
 
       -- Parse W_V
       i := i + 1
       let mut wvFloats : Array Float := #[]
-      while i < lines.size && !lines[i]!.startsWith "W_O" do
+      while i < lines.size &&
+            !lines[i]!.startsWith "b_V" &&
+            !lines[i]!.startsWith "W_O" do
         for x in parseFloatLine lines[i]! do
           wvFloats := wvFloats.push x
         i := i + 1
+      let mut bvFloats : Array Float := #[]
+      if i < lines.size && lines[i]! = "b_V" then
+        i := i + 1
+        while i < lines.size && !lines[i]!.startsWith "W_O" do
+          for x in parseFloatLine lines[i]! do
+            bvFloats := bvFloats.push x
+          i := i + 1
 
       -- Parse W_O
       i := i + 1
       let mut woFloats : Array Float := #[]
       while i < lines.size &&
             !lines[i]!.startsWith "HEAD" &&
+            !lines[i]!.startsWith "ATTN_BIAS" &&
             !lines[i]!.startsWith "MLP" do
         for x in parseFloatLine lines[i]! do
           woFloats := woFloats.push x
         i := i + 1
 
-      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats
+      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats bqFloats bkFloats bvFloats
       layerHeads := layerHeads.push head
 
     -- Validate all heads were loaded
     if layerHeads.size != numHeads then
       return .error s!"Layer {l}: expected {numHeads} heads, got {layerHeads.size}"
     layers := layers.push layerHeads
+
+    -- Optional attention projection bias (c_proj.bias), applied once after combining heads.
+    let mut layerAttnBias : ConcreteMatrix := ConcreteMatrix.zeros 1 modelDim
+    if i < lines.size && lines[i]! = "ATTN_BIAS" then
+      i := i + 1
+      let mut biasFloats : Array Float := #[]
+      while i < lines.size && !lines[i]!.startsWith "MLP" do
+        for x in parseFloatLine lines[i]! do
+          biasFloats := biasFloats.push x
+        i := i + 1
+      layerAttnBias := buildMatrix 1 modelDim biasFloats
+    attnProjBias := attnProjBias.push layerAttnBias
 
     -- Parse MLP
     while i < lines.size && lines[i]! != "MLP" do
@@ -742,6 +802,7 @@ def loadFromText (content : String) : IO LoadResult := do
   let model : ConcreteModel := {
     numLayers := numLayers
     layers := layers
+    attnProjBias := attnProjBias
     mlps := mlps
     ln1 := ln1
     ln2 := ln2
@@ -880,6 +941,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
   IO.println s!"[3/5] Loading {numLayers} layers with {numHeads} heads each..."
 
   let mut layers : Array (Array ConcreteAttentionLayer) := #[]
+  let mut attnProjBias : Array ConcreteMatrix := #[]
   let mut mlps : Array ConcreteMLPLayer := #[]
   let mut ln1 : Array ConcreteLayerNormParams := #[]
   let mut ln2 : Array ConcreteLayerNormParams := #[]
@@ -904,28 +966,58 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
         return .error s!"Layer {l}: missing W_Q"
       line? ← readLine? h
       let mut wqLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "W_K") do
+      while line?.isSome &&
+            !(line?.get!.startsWith "b_Q") &&
+            !(line?.get!.startsWith "W_K") do
         wqLines := wqLines.push (line?.get!)
         line? ← readLine? h
       let tWq := spawnParseFloats wqLines (modelDim * headDim)
+      let mut bqFloats : Array Float := Array.mkEmpty headDim
+      if line?.map (·.trim) = some "b_Q" then
+        line? ← readLine? h
+        let mut bqLines : Array String := #[]
+        while line?.isSome && !(line?.get!.startsWith "W_K") do
+          bqLines := bqLines.push (line?.get!)
+          line? ← readLine? h
+        bqFloats := parseFloatsFromLines bqLines headDim
 
       if line? = none then
         return .error s!"Layer {l}: missing W_K"
       line? ← readLine? h
       let mut wkLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "W_V") do
+      while line?.isSome &&
+            !(line?.get!.startsWith "b_K") &&
+            !(line?.get!.startsWith "W_V") do
         wkLines := wkLines.push (line?.get!)
         line? ← readLine? h
       let tWk := spawnParseFloats wkLines (modelDim * headDim)
+      let mut bkFloats : Array Float := Array.mkEmpty headDim
+      if line?.map (·.trim) = some "b_K" then
+        line? ← readLine? h
+        let mut bkLines : Array String := #[]
+        while line?.isSome && !(line?.get!.startsWith "W_V") do
+          bkLines := bkLines.push (line?.get!)
+          line? ← readLine? h
+        bkFloats := parseFloatsFromLines bkLines headDim
 
       if line? = none then
         return .error s!"Layer {l}: missing W_V"
       line? ← readLine? h
       let mut wvLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "W_O") do
+      while line?.isSome &&
+            !(line?.get!.startsWith "b_V") &&
+            !(line?.get!.startsWith "W_O") do
         wvLines := wvLines.push (line?.get!)
         line? ← readLine? h
       let tWv := spawnParseFloats wvLines (modelDim * headDim)
+      let mut bvFloats : Array Float := Array.mkEmpty headDim
+      if line?.map (·.trim) = some "b_V" then
+        line? ← readLine? h
+        let mut bvLines : Array String := #[]
+        while line?.isSome && !(line?.get!.startsWith "W_O") do
+          bvLines := bvLines.push (line?.get!)
+          line? ← readLine? h
+        bvFloats := parseFloatsFromLines bvLines headDim
 
       if line? = none then
         return .error s!"Layer {l}: missing W_O"
@@ -933,7 +1025,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       let mut woLines : Array String := #[]
       while line?.isSome do
         let line := line?.get!
-        if line.startsWith "HEAD" || line.startsWith "MLP" then
+        if line.startsWith "HEAD" || line.startsWith "ATTN_BIAS" || line.startsWith "MLP" then
           break
         woLines := woLines.push line
         line? ← readLine? h
@@ -944,12 +1036,24 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
       let wkFloats := tWk.get
       let wvFloats := tWv.get
       let woFloats := tWo.get
-      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats
+      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats bqFloats bkFloats bvFloats
       layerHeads := layerHeads.push head
 
     if layerHeads.size != numHeads then
       return .error s!"Layer {l}: expected {numHeads} heads, got {layerHeads.size}"
     layers := layers.push layerHeads
+
+    -- Optional attention projection bias (c_proj.bias), applied once after combining heads.
+    let mut layerAttnBias : ConcreteMatrix := ConcreteMatrix.zeros 1 modelDim
+    if line?.map (·.trim) = some "ATTN_BIAS" then
+      line? ← readLine? h
+      let mut biasLines : Array String := #[]
+      while line?.isSome && (line?.get!.trim != "MLP") do
+        biasLines := biasLines.push (line?.get!)
+        line? ← readLine? h
+      let biasFloats := parseFloatsFromLines biasLines modelDim
+      layerAttnBias := buildMatrix 1 modelDim biasFloats
+    attnProjBias := attnProjBias.push layerAttnBias
 
     -- MLP section.
     line? ← skipUntil h line? (fun s => s.trim = "MLP")
@@ -1135,6 +1239,7 @@ def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
   let model : ConcreteModel := {
     numLayers := numLayers
     layers := layers
+    attnProjBias := attnProjBias
     mlps := mlps
     ln1 := ln1
     ln2 := ln2

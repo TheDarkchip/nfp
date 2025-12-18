@@ -103,23 +103,37 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
             f.write(f"LAYER {layer_idx}\n")
 
             c_attn = block.attn.c_attn.weight.detach().numpy()
+            c_attn_bias = block.attn.c_attn.bias.detach().numpy()
             c_proj = block.attn.c_proj.weight.detach().numpy()
+            c_proj_bias = block.attn.c_proj.bias.detach().numpy()
 
             W_Q_all = c_attn[:, 0:768]
             W_K_all = c_attn[:, 768 : 2 * 768]
             W_V_all = c_attn[:, 2 * 768 : 3 * 768]
+            b_Q_all = c_attn_bias[0:768]
+            b_K_all = c_attn_bias[768 : 2 * 768]
+            b_V_all = c_attn_bias[2 * 768 : 3 * 768]
 
             for h in range(12):
                 start, end = h * 64, (h + 1) * 64
                 f.write(f"HEAD {h}\n")
                 f.write("W_Q\n")
                 write_matrix(f, W_Q_all[:, start:end])
+                f.write("b_Q\n")
+                write_vector(f, b_Q_all[start:end])
                 f.write("W_K\n")
                 write_matrix(f, W_K_all[:, start:end])
+                f.write("b_K\n")
+                write_vector(f, b_K_all[start:end])
                 f.write("W_V\n")
                 write_matrix(f, W_V_all[:, start:end])
+                f.write("b_V\n")
+                write_vector(f, b_V_all[start:end])
                 f.write("W_O\n")
                 write_matrix(f, c_proj[start:end, :])
+
+            f.write("ATTN_BIAS\n")
+            write_vector(f, c_proj_bias)
 
             f.write("MLP\n")
             f.write("W_in\n")
