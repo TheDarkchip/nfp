@@ -3,6 +3,8 @@
 import Std
 import Nfp.Sound.Cert
 import Nfp.Sound.Interval
+import Nfp.Sound.Cache
+import Nfp.Sound.Fixed
 
 namespace Nfp.Sound
 
@@ -587,6 +589,255 @@ private def collectLayerNormParams
         i := i + 1
     return .ok (ln1, ln2)
 
+/-!
+## Cached fixed-point local certification (fast path)
+
+The original local path (`RatInterval` + `parseRat`) is mathematically rigorous but too slow for
+large models because it performs gcd-based normalization on the hot path.
+
+We therefore prefer a cached fixed-point representation (`sound_cache/*.nfpc`) and run local IBP
+in scaled-`Int` arithmetic with conservative outward rounding.
+-/
+
+private def defaultFixedScalePow10 : Nat := 9
+private def fixedUlpSlack : Int := 1
+
+private def scaleCfgOfPow10 (p : Nat) : Fixed10Cfg := { scalePow10 := p }
+
+private def ratCeilMulNat (x : Rat) (k : Nat) : Int :=
+  if x ≤ 0 then
+    0
+  else
+    let num : Int := x.num
+    let den : Nat := x.den
+    let numK : Int := num * (Int.ofNat k)
+    let q := numK.ediv (Int.ofNat den)
+    let r := numK.emod (Int.ofNat den)
+    if r = 0 then q else q + 1
+
+private def fixedMeanInterval (xs : Array Fixed10Interval) : Fixed10Interval :=
+  if xs.isEmpty then
+    { lo := 0, hi := 0 }
+  else
+    Id.run do
+      let n : Nat := xs.size
+      let mut loSum : Int := 0
+      let mut hiSum : Int := 0
+      for x in xs do
+        loSum := loSum + x.lo
+        hiSum := hiSum + x.hi
+      let loμ := loSum.ediv (Int.ofNat n)
+      let hiμ :=
+        let q := hiSum.ediv (Int.ofNat n)
+        let r := hiSum.emod (Int.ofNat n)
+        if r = 0 then q else q + 1
+      { lo := loμ, hi := hiμ }
+
+private def fixedVarianceLowerBoundRange (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) : Rat :=
+  if xs.size < 2 then
+    0
+  else
+    Id.run do
+      let n : Nat := xs.size
+      let nRat : Rat := (n : Nat)
+      let mut loMax : Int := xs[0]!.lo
+      let mut hiMin : Int := xs[0]!.hi
+      for x in xs do
+        loMax := max loMax x.lo
+        hiMin := min hiMin x.hi
+      let δInt : Int := max 0 (loMax - hiMin)
+      if δInt = 0 then
+        return 0
+      let δRat : Rat :=
+        Rat.normalize δInt cfg.scaleNat (den_nz := by
+          have h10pos : (0 : Nat) < 10 := by decide
+          exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+      let δSq : Rat := δRat * δRat
+      let nMinus1 : Rat := ((n - 1 : Nat) : Rat)
+      return (nMinus1 * δSq) / (nRat * nRat)
+
+private def fixedLayerNormRowApprox
+    (cfg : Fixed10Cfg)
+    (row : Array Fixed10Interval)
+    (gamma beta : Array Fixed10Interval)
+    (eps : Rat) :
+    (Array Fixed10Interval × Rat) :=
+  if row.size = 0 || gamma.size ≠ row.size || beta.size ≠ row.size then
+    (row, 0)
+  else
+    Id.run do
+      let μ := fixedMeanInterval row
+      let varLB := fixedVarianceLowerBoundRange cfg row
+      let invσUpper : Rat :=
+        if varLB ≤ 0 then
+          layerNormOpBoundConservative 1 eps
+        else
+          layerNormOpBoundLocal 1 varLB eps
+      let invσUpperInt : Int := ratCeilMulNat invσUpper cfg.scaleNat
+      let invσFix : Fixed10Interval := { lo := invσUpperInt, hi := invσUpperInt }
+      let mut out : Array Fixed10Interval := Array.mkEmpty row.size
+      for i in [:row.size] do
+        let centered := Fixed10Interval.sub row[i]! μ
+        let coeff := Fixed10Interval.mul cfg gamma[i]! invσFix
+        let scaled := Fixed10Interval.mul cfg coeff centered
+        out := out.push (Fixed10Interval.add scaled beta[i]!)
+      return (out, varLB)
+
+private def readVecIntervals
+    (r : SoundCache.I32Reader) (n : Nat) (slack : Int) :
+    IO (Array Fixed10Interval × SoundCache.I32Reader) := do
+  let mut rr := r
+  let mut out : Array Fixed10Interval := Array.mkEmpty n
+  for _ in [:n] do
+    let (x, rr2) ← SoundCache.I32Reader.readI32 rr
+    rr := rr2
+    out := out.push { lo := x - slack, hi := x + slack }
+  return (out, rr)
+
+private def maxAbsVecFixed (xs : Array Fixed10Interval) : Int :=
+  xs.foldl (fun acc x => max acc (Fixed10Interval.absUpper x)) 0
+
+private def addVecFixed (a b : Array Fixed10Interval) : Array Fixed10Interval :=
+  Id.run do
+    if a.size ≠ b.size then
+      return a
+    let mut out := Array.mkEmpty a.size
+    for i in [:a.size] do
+      out := out.push (Fixed10Interval.add a[i]! b[i]!)
+    return out
+
+private def consumeMatrixMulAndNormInfFixed
+    (cfg : Fixed10Cfg)
+    (slack : Int)
+    (r : SoundCache.I32Reader)
+    (rows cols : Nat)
+    (input : Array Fixed10Interval) :
+    IO (Array Fixed10Interval × Rat × SoundCache.I32Reader) := do
+  if input.size ≠ rows then
+    return (Array.replicate cols { lo := 0, hi := 0 }, 0, r)
+  let mut rr := r
+  let mut out : Array Fixed10Interval := Array.replicate cols { lo := 0, hi := 0 }
+  let mut curRowAbs : Int := 0
+  let mut maxRowAbs : Int := 0
+  for rowIdx in [:rows] do
+    let xi := input[rowIdx]!
+    for colIdx in [:cols] do
+      let (w, rr2) ← SoundCache.I32Reader.readI32 rr
+      rr := rr2
+      let wAbsBound : Int := (if w < 0 then -w else w) + slack
+      curRowAbs := curRowAbs + wAbsBound
+      let wI : Fixed10Interval := { lo := w - slack, hi := w + slack }
+      let term := Fixed10Interval.mul cfg wI xi
+      out := out.set! colIdx (Fixed10Interval.add (out[colIdx]!) term)
+    maxRowAbs := max maxRowAbs curRowAbs
+    curRowAbs := 0
+  let normInf : Rat :=
+    Rat.normalize maxRowAbs cfg.scaleNat (den_nz := by
+      have h10pos : (0 : Nat) < 10 := by decide
+      exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+  return (out, normInf, rr)
+
+private def loadEmbeddingsUnionFixed
+    (cfg : Fixed10Cfg)
+    (path : System.FilePath)
+    (expectedModelDim : Nat)
+    (delta : Rat) : IO (Except String (Array Fixed10Interval)) := do
+  let deltaInt : Int := ratCeilMulNat delta cfg.scaleNat
+  let mut out : Array Fixed10Interval := Array.replicate expectedModelDim { lo := 0, hi := 0 }
+  let mut iCol : Nat := 0
+  let mut remaining : Nat := 0
+
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  -- Header: read until blank line.
+  let mut seqLen : Option Nat := none
+  let mut modelDim : Option Nat := none
+  let mut seenHeader : Bool := false
+  while true do
+    let line ← h.getLine
+    if line.isEmpty then
+      return .error "unexpected EOF while reading input header"
+    let s := line.trim
+    if !seenHeader then
+      if s.startsWith "NFP_TEXT" then
+        seenHeader := true
+      continue
+    if s.isEmpty then
+      break
+    match parseHeaderLine s with
+    | none => pure ()
+    | some (k, v) =>
+        if k = "seq_len" then
+          seqLen := v.toNat?
+        else if k = "model_dim" then
+          modelDim := v.toNat?
+        else
+          pure ()
+
+  let some n := seqLen | return .error "missing seq_len in input file"
+  let some d := modelDim | return .error "missing model_dim in input file"
+  if d ≠ expectedModelDim then
+    return .error s!"input model_dim mismatch (expected {expectedModelDim}, got {d})"
+  remaining := n * d
+
+  -- Scan to EMBEDDINGS marker.
+  let mut found : Bool := false
+  while !found do
+    let line ← h.getLine
+    if line.isEmpty then
+      return .error "unexpected EOF while scanning for EMBEDDINGS"
+    if line.trim = "EMBEDDINGS" then
+      found := true
+
+  while remaining > 0 do
+    let line ← h.getLine
+    if line.isEmpty then
+      return .error "unexpected EOF while reading EMBEDDINGS"
+    let s := line.trim
+    if s.isEmpty then
+      continue
+    let bytes := s.toUTF8
+    let mut j : Nat := 0
+    while j < bytes.size && remaining > 0 do
+      while j < bytes.size && (bytes[j]! = 32 || bytes[j]! = 9) do
+        j := j + 1
+      if j ≥ bytes.size then
+        break
+      let tokStart := j
+      while j < bytes.size && (bytes[j]! ≠ 32 && bytes[j]! ≠ 9) do
+        j := j + 1
+      let tokStop := j
+      match parseFixed10Rounded cfg.scalePow10 bytes tokStart tokStop with
+      | .error e => return .error e
+      | .ok x =>
+          let lo := x - fixedUlpSlack - deltaInt
+          let hi := x + fixedUlpSlack + deltaInt
+          let cur := out[iCol]!
+          out := out.set! iCol { lo := min cur.lo lo, hi := max cur.hi hi }
+          iCol := (iCol + 1) % expectedModelDim
+          remaining := remaining - 1
+  return .ok out
+
+private def ensureSoundCache
+    (modelPath : System.FilePath)
+    (scalePow10 : Nat := defaultFixedScalePow10) :
+    IO (Except String (System.FilePath × SoundCache.Header)) := do
+  SoundCache.ensureCacheDir
+  let modelHash ← SoundCache.fnv1a64File modelPath
+  let mdata ← modelPath.metadata
+  let modelSize : UInt64 := mdata.byteSize
+  let cpath := SoundCache.cachePath modelPath modelHash scalePow10
+  if !(← cpath.pathExists) then
+    match (← SoundCache.buildCacheFile modelPath cpath scalePow10) with
+    | .error e => return .error e
+    | .ok _ => pure ()
+  let h ← IO.FS.Handle.mk cpath IO.FS.Mode.read
+  let hdr ← SoundCache.readHeader h
+  if hdr.modelHash ≠ modelHash then
+    return .error "sound cache hash mismatch"
+  if hdr.modelSize ≠ modelSize then
+    return .error "sound cache size mismatch"
+  return .ok (cpath, hdr)
+
 /-- Local (input-dependent) certificate path using streaming interval propagation.
 
 This is conservative in two key ways to remain streaming/memory-safe:
@@ -594,7 +845,7 @@ This is conservative in two key ways to remain streaming/memory-safe:
   which is sound (a superset) but can be looser than per-token tracking,
 - it uses union boxes for attention/MLP linear maps to avoid `seqLen×hiddenDim` blowups.
 -/
-private def certifyModelFileLocal
+private def certifyModelFileLocalText
     (path : System.FilePath)
     (eps : Rat)
     (actDerivBound : Rat)
@@ -843,6 +1094,133 @@ private def certifyModelFileLocal
         layers := layers
         totalAmplificationFactor := totalAmp
       }
+
+private def certifyModelFileLocal
+    (path : System.FilePath)
+    (eps : Rat)
+    (actDerivBound : Rat)
+    (inputPath : System.FilePath)
+    (inputDelta : Rat) : IO (Except String ModelCert) := do
+  -- Prefer cached fixed-point path; fall back to the (slow) Rat-based path on any cache error.
+  match (← ensureSoundCache path) with
+  | .error _ =>
+      certifyModelFileLocalText path eps actDerivBound inputPath inputDelta
+  | .ok (cpath, hdr) =>
+      let cfg : Fixed10Cfg := scaleCfgOfPow10 hdr.scalePow10.toNat
+      let slack : Int := fixedUlpSlack
+      let modelDim := hdr.modelDim.toNat
+      let headDim := hdr.headDim.toNat
+      let hiddenDim := hdr.hiddenDim.toNat
+      let L := hdr.numLayers.toNat
+      let H := hdr.numHeads.toNat
+      -- For now we read embeddings from the input `.nfpt` file and use a union box.
+      let residualUnionE ← loadEmbeddingsUnionFixed cfg inputPath modelDim inputDelta
+      match residualUnionE with
+      | .error e => return .error e
+      | .ok residualUnion0 =>
+          let mut residualUnion := residualUnion0
+          -- Open cache and position reader after header.
+          let ch ← IO.FS.Handle.mk cpath IO.FS.Mode.read
+          let _ ← SoundCache.readHeader ch
+          let mut rr ← SoundCache.I32Reader.init ch
+
+          let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
+          let mut totalAmp : Rat := 1
+
+          for l in [:L] do
+            -- LN params from cache
+            let (ln1Gamma, rr1) ← readVecIntervals rr modelDim slack
+            let (ln1Beta, rr2) ← readVecIntervals rr1 modelDim slack
+            let (ln2Gamma, rr3) ← readVecIntervals rr2 modelDim slack
+            let (ln2Beta, rr4) ← readVecIntervals rr3 modelDim slack
+            rr := rr4
+
+            -- LN1
+            let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion ln1Gamma ln1Beta eps
+            let ln1MaxAbsGamma : Rat :=
+              Rat.normalize (maxAbsVecFixed ln1Gamma) cfg.scaleNat (den_nz := by
+                have h10pos : (0 : Nat) < 10 := by decide
+                exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+            let ln1Bound :=
+              if ln1VarLB > 0 then
+                layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+              else
+                layerNormOpBoundConservative ln1MaxAbsGamma eps
+
+            -- Attention (streaming from cache)
+            let mut attnUnion : Array Fixed10Interval := Array.replicate modelDim { lo := 0, hi := 0 }
+            let mut attnCoeff : Rat := 0
+            for _h in [:H] do
+              let (vHidden0, nWv, rrV) ← consumeMatrixMulAndNormInfFixed cfg slack rr modelDim headDim ln1Out
+              rr := rrV
+              let (bV, rrBv) ← readVecIntervals rr headDim slack
+              rr := rrBv
+              let vHidden := addVecFixed vHidden0 bV
+              let (vOut, nWo, rrO) ← consumeMatrixMulAndNormInfFixed cfg slack rr headDim modelDim vHidden
+              rr := rrO
+              attnUnion := addVecFixed attnUnion vOut
+              attnCoeff := attnCoeff + nWv * nWo
+
+            let (attnBias, rrB) ← readVecIntervals rr modelDim slack
+            rr := rrB
+            attnUnion := addVecFixed attnUnion attnBias
+            residualUnion := addVecFixed residualUnion attnUnion
+
+            -- LN2
+            let (ln2Out, ln2VarLB) := fixedLayerNormRowApprox cfg residualUnion ln2Gamma ln2Beta eps
+            let ln2MaxAbsGamma : Rat :=
+              Rat.normalize (maxAbsVecFixed ln2Gamma) cfg.scaleNat (den_nz := by
+                have h10pos : (0 : Nat) < 10 := by decide
+                exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+            let ln2Bound :=
+              if ln2VarLB > 0 then
+                layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
+              else
+                layerNormOpBoundConservative ln2MaxAbsGamma eps
+
+            -- MLP
+            let (hidden0, nWin, rrWin) ← consumeMatrixMulAndNormInfFixed cfg slack rr modelDim hiddenDim ln2Out
+            rr := rrWin
+            let (bIn, rrBin) ← readVecIntervals rr hiddenDim slack
+            rr := rrBin
+            let hiddenB := addVecFixed hidden0 bIn
+            let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+            let (mlpOut0, nWout, rrWout) ← consumeMatrixMulAndNormInfFixed cfg slack rr hiddenDim modelDim actHidden
+            rr := rrWout
+            let (bOut, rrBout) ← readVecIntervals rr modelDim slack
+            rr := rrBout
+            let mlpOut := addVecFixed mlpOut0 bOut
+            residualUnion := addVecFixed residualUnion mlpOut
+
+            let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+            let mlpCoeff := nWin * actDerivBound * nWout
+            let mlpW := ln2Bound * mlpCoeff
+            let C := attnW + mlpW
+
+            layers := layers.push {
+              layerIdx := l
+              ln1MaxAbsGamma := ln1MaxAbsGamma
+              ln2MaxAbsGamma := ln2MaxAbsGamma
+              ln1VarianceLowerBound? := some ln1VarLB
+              ln2VarianceLowerBound? := some ln2VarLB
+              ln1Bound := ln1Bound
+              ln2Bound := ln2Bound
+              attnWeightContribution := attnW
+              mlpWeightContribution := mlpW
+              C := C
+            }
+            totalAmp := totalAmp * (1 + C)
+
+          return .ok {
+            modelPath := path.toString
+            inputPath? := some inputPath.toString
+            inputDelta := inputDelta
+            eps := eps
+            actDerivBound := actDerivBound
+            softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
+            layers := layers
+            totalAmplificationFactor := totalAmp
+          }
 
 /-- Soundly compute certification bounds from a `.nfpt` model file.
 
