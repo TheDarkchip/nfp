@@ -4841,11 +4841,19 @@ structure AdaptiveSchedulerConfig where
   debugMonotone : Bool := false
   deriving Repr
 
+inductive AdaptiveUpgradeKind where
+  | ubTier
+  | lbSteps
+  deriving Repr, BEq, Inhabited
+
 structure AdaptiveSchedulerStep where
   iter : Nat
   layerIdx : Nat
+  kind : AdaptiveUpgradeKind := .ubTier
   tierFrom : Nat
   tierTo : Nat
+  kFrom : Nat := 0
+  kTo : Nat := 0
   ubBefore : Float
   ubAfter : Float
   lb : Float
@@ -4858,6 +4866,8 @@ structure AdaptiveSchedulerResult where
   ub : Array Float
   /-- Per-layer rigorous lower bounds from Krylov steps. -/
   lb : Array Float
+  /-- Krylov steps used for each layer lower bound. -/
+  lbK : Array Nat
   /-- Final effort tier index per layer. -/
   tier : Array Nat
   /-- Upgrade log (one entry per accepted upgrade). -/
@@ -4880,6 +4890,10 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let model := cache.model
   let tiers := ConcreteMatrix.BoundEffort.tiers
   let startTier : Nat := 1  -- current default behavior corresponds to tier1
+  let lbStep : Nat := if cfg.krylovSteps = 0 then 0 else max 1 cfg.krylovSteps
+  let maxKrylov : Nat :=
+    if cfg.krylovSteps = 0 then 0
+    else max cfg.krylovSteps (min 32 (max 8 (cfg.krylovSteps * 4)))
 
   -- Precompute attention-only and MLP-only factors so recomputation is localized.
   let nLayers := model.numLayers
@@ -4911,6 +4925,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let attnPart : Array Float := init.map (·.1)
   let ln2Bound : Array Float := init.map (·.2)
 
+  let mut lbK : Array Nat := Array.replicate model.numLayers cfg.krylovSteps
   let mut lb : Array Float := Array.mkEmpty model.numLayers
   let useParallelLb := model.numLayers >= 4 && cfg.krylovSteps > 0
   if useParallelLb then
@@ -4969,21 +4984,22 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     ub := ub.push baseUb
 
   let mut steps : Array AdaptiveSchedulerStep := #[]
-  let mut stalled : Array Bool := Array.replicate model.numLayers false
+  let mut stalledUb : Array Bool := Array.replicate model.numLayers false
+  let mut stalledLb : Array Bool := Array.replicate model.numLayers false
   let mut upgradesUsed : Nat := 0
   let epsNoise : Float := 1e-6
 
   while upgradesUsed < cfg.maxUpgrades do
-    -- Find worst slack among layers that can still be upgraded.
+    -- Find worst slack among layers that can still be upgraded (ub tier or lb steps).
     let mut bestLayer : Nat := 0
     let mut bestSlack : Float := 0.0
     let mut bestUb : Float := 0.0
     let mut found : Bool := false
     for l in [:model.numLayers] do
-      if stalled[l]! then
-        continue
       let t := tier[l]!
-      if t + 1 ≥ tiers.size then
+      let canUb := (!stalledUb[l]!) && (t + 1 < tiers.size)
+      let canLb := (!stalledLb[l]!) && (lbStep > 0) && (lbK[l]! < maxKrylov)
+      if (!canUb) && (!canLb) then
         continue
       let s := safeSlack (ub[l]!) (lb[l]!)
       if (!found) || s > bestSlack || (s == bestSlack && ub[l]! > bestUb) then
@@ -4998,49 +5014,74 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
       break
 
     let l := bestLayer
-    let fromTier := tier[l]!
-    let toTier := fromTier + 1
     let oldUb := ub[l]!
-    let newUb := computeUbAt l toTier
-    if cfg.debugMonotone && newUb > oldUb + epsNoise then
-      panic! s!"Adaptive monotonicity violated at layer {l}: old={oldUb} new={newUb}"
+    let oldLb := lb[l]!
+    let oldSlack := safeSlack oldUb oldLb
+    let t := tier[l]!
+    let canUb := (!stalledUb[l]!) && (t + 1 < tiers.size)
+    let canLb := (!stalledLb[l]!) && (lbStep > 0) && (lbK[l]! < maxKrylov)
 
-    let relImprove : Float :=
-      if oldUb ≤ 0.0 then 0.0 else (oldUb - newUb) / oldUb
-    let oldSlack := safeSlack oldUb (lb[l]!)
-    let newSlack := safeSlack newUb (lb[l]!)
-
-    if relImprove < cfg.minRelImprove then
-      stalled := stalled.set! l true
-      -- Still record the attempted upgrade if it was requested (verbose reporting).
+    if canUb then
+      let fromTier := t
+      let toTier := fromTier + 1
+      let newUb := computeUbAt l toTier
+      if cfg.debugMonotone && newUb > oldUb + epsNoise then
+        panic! s!"Adaptive monotonicity violated at layer {l}: old={oldUb} new={newUb}"
+      let relImprove : Float :=
+        if oldUb ≤ 0.0 then 0.0 else (oldUb - newUb) / oldUb
+      if relImprove < cfg.minRelImprove then
+        stalledUb := stalledUb.set! l true
+      else
+        tier := tier.set! l toTier
+        ub := ub.set! l (min oldUb newUb)
       steps := steps.push
         { iter := upgradesUsed
           layerIdx := l
+          kind := .ubTier
           tierFrom := fromTier
           tierTo := toTier
+          kFrom := lbK[l]!
+          kTo := lbK[l]!
           ubBefore := oldUb
-          ubAfter := newUb
+          ubAfter := ub[l]!
           lb := lb[l]!
           slackBefore := oldSlack
-          slackAfter := newSlack }
+          slackAfter := safeSlack (ub[l]!) (lb[l]!) }
       upgradesUsed := upgradesUsed + 1
       continue
 
-    tier := tier.set! l toTier
-    ub := ub.set! l (min oldUb newUb)
-    steps := steps.push
-      { iter := upgradesUsed
-        layerIdx := l
-        tierFrom := fromTier
-        tierTo := toTier
-        ubBefore := oldUb
-        ubAfter := ub[l]!
-        lb := lb[l]!
-        slackBefore := oldSlack
-        slackAfter := safeSlack (ub[l]!) (lb[l]!) }
+    if canLb then
+      let fromK := lbK[l]!
+      let toK := min (fromK + lbStep) maxKrylov
+      let newLb := layerResidualJacobianLowerBound cache l toK (parallelHeads := true)
+      let relImprove : Float :=
+        if oldLb ≤ 0.0 then (if newLb > 0.0 then 1.0 else 0.0) else (newLb - oldLb) / oldLb
+      if relImprove < cfg.minRelImprove then
+        stalledLb := stalledLb.set! l true
+      else
+        lbK := lbK.set! l toK
+        lb := lb.set! l newLb
+      steps := steps.push
+        { iter := upgradesUsed
+          layerIdx := l
+          kind := .lbSteps
+          tierFrom := tier[l]!
+          tierTo := tier[l]!
+          kFrom := fromK
+          kTo := toK
+          ubBefore := oldUb
+          ubAfter := oldUb
+          lb := lb[l]!
+          slackBefore := oldSlack
+          slackAfter := safeSlack (ub[l]!) (lb[l]!) }
+      upgradesUsed := upgradesUsed + 1
+      continue
+
+    stalledUb := stalledUb.set! l true
+    stalledLb := stalledLb.set! l true
     upgradesUsed := upgradesUsed + 1
 
-  return { ub := ub, lb := lb, tier := tier, steps := steps }
+  return { ub := ub, lb := lb, lbK := lbK, tier := tier, steps := steps }
 
 
 /-! ## Head Composition Metrics -/

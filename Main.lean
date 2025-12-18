@@ -384,9 +384,16 @@ def runInduction (p : Parsed) : IO UInt32 := do
             s!"scope={adaptiveScopeStr}"
         for s in sched.steps do
           IO.println <|
-            s!"  it={s.iter}  L{s.layerIdx}: tier {s.tierFrom}->{s.tierTo}  " ++
-              s!"ub {fmtFloat s.ubBefore}->{fmtFloat s.ubAfter}  " ++
-              s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
+            match s.kind with
+            | .ubTier =>
+                s!"  it={s.iter}  L{s.layerIdx}: tier {s.tierFrom}->{s.tierTo}  " ++
+                  s!"ub {fmtFloat s.ubBefore}->{fmtFloat s.ubAfter}  " ++
+                  s!"lb≈{fmtFloat s.lb} (k={s.kTo})  " ++
+                  s!"slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
+            | .lbSteps =>
+                s!"  it={s.iter}  L{s.layerIdx}: lb-steps {s.kFrom}->{s.kTo}  " ++
+                  s!"ub {fmtFloat s.ubBefore}  " ++
+                  s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
 
       for h in top do
         let c := h.candidate
@@ -427,9 +434,10 @@ def runInduction (p : Parsed) : IO UInt32 := do
             let lb := sched.lb[l]!
             let ratio : Float := if lb > 1e-12 then ub / lb else Float.inf
             let tier := sched.tier[l]!
+            let k := sched.lbK.getD l 0
             IO.println <|
               s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
-                s!"ub/lb={fmtFloat ratio}  tier={tier}"
+                s!"ub/lb={fmtFloat ratio}  tier={tier}  k={k}"
             let x := cache.forwardResult.getLayerInput l
             let y := cache.forwardResult.getPostAttnResidual l
             let ln1p := cache.model.ln1Params l
