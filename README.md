@@ -66,10 +66,26 @@ lake exe nfp --help
 
 ## Models
 
-The CLI expects a model file in **`.nfpt`** format.
+The CLI expects a model file in **`.nfpt`** format (NFP_BINARY_V1).
 
 - Create a local `models/` directory and place your `.nfpt` files there (the repo does not version model files; the author’s setup may have used local symlinks).
 - You can export GPT-2 weights from Hugging Face using the scripts in `scripts/`.
+
+`.nfpt` files use a small text header followed by a binary payload:
+
+```
+NFP_BINARY_V1
+num_layers=...
+num_heads=...
+model_dim=...
+head_dim=...
+hidden_dim=...
+vocab_size=...
+seq_len=...
+BINARY_START
+```
+
+The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
 
 ### Exporting GPT-2 to `.nfpt`
 
@@ -81,7 +97,11 @@ Example (write `models/gpt2_rigorous.nfpt`):
 python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
 ```
 
-If you prefer a locked Python environment, use `uv` or a venv and install dependencies from `pyproject.toml`.
+If you prefer a locked Python environment, use `uv` or a venv and install dependencies from `pyproject.toml`:
+
+```bash
+uv run python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
+```
 
 ## CLI overview
 
@@ -138,26 +158,19 @@ lake exe nfp certify models/gpt2_rigorous.nfpt \
   --eps 1e-5 --actDeriv 2 --output cert.txt
 ```
 
-- For local (input-dependent) LayerNorm certification, pass an input `.nfpt` containing `EMBEDDINGS` and an ℓ∞ radius `δ`:
+- For local (input-dependent) LayerNorm certification, pass an ℓ∞ radius `δ`:
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
   --delta 1/100 --eps 1e-5 --actDeriv 2
 ```
 
-- If your model `.nfpt` does **not** include an `EMBEDDINGS` section (e.g. a weights-only export),
-  pass a separate input file:
-
-```bash
-lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --input models/some_input.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
-```
+If you want to override the embedded input, pass a separate input `.nfpt`:
 
 - `--eps` sets the LayerNorm ε (default: `1e-5`).
 - `--actDeriv` bounds the activation derivative (default: `2`).
-- `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification
-  if `EMBEDDINGS` are available (either in the model file or via `--input`).
-- `--input` optionally provides an input `.nfpt` file used for local certification (must contain `EMBEDDINGS`).
+- `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
+- `--input` optionally provides an input `.nfpt` file used for local certification.
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `rope`

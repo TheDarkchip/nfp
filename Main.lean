@@ -119,8 +119,9 @@ private def setStdoutLogNameFromModelPath (modelPath : String) : IO Unit := do
 
 /-- Check whether a `.nfpt` file contains an `EMBEDDINGS` section before the first `LAYER`.
 
-This is used to decide whether `nfp certify --delta ...` can default to using the model file as
-its own input source (so users don't have to pass `--input model.nfpt`). -/
+For `NFP_BINARY_V1`, embeddings are always present, so this returns true. This is used to decide
+whether `nfp certify --delta ...` can default to using the model file as its own input source
+(so users don't have to pass `--input model.nfpt`). -/
 private def hasEmbeddingsBeforeLayers (path : System.FilePath) : IO Bool := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   let line ← h.getLine
