@@ -557,8 +557,20 @@ structure RectGramDiag where
   usedGram : Bool
   /-- Used the absolute-Gram fallback (no materialized Gram). -/
   usedAbsGram : Bool
+  /-- True if we computed the absolute-Gram bounds (even if they weren't chosen). -/
+  computedAbsGram : Bool
+  /-- True if we computed a signed Gram matrix candidate (even if it wasn't chosen). -/
+  computedGram : Bool
   /-- True if we would have formed a signed Gram (by `maxGramDim`) but skipped it via a deterministic cost guard. -/
   skippedGram : Bool
+  /-- The `maxGramDim` cap from the `BoundEffort` used. -/
+  maxGramDimCap : Nat
+  /-- Whether signed-Gram candidates were enabled in the `BoundEffort` used. -/
+  signedGramEnabled : Bool
+  /-- Estimated cost for materializing Gram (`k*k*max(m,n)`). -/
+  gramCost : Nat
+  /-- Deterministic Gram-cost limit used for scalability guard. -/
+  gramCostLimit : Nat
   gramDim : Nat
   lambdaBrauer : Float
   lambdaMoment : Float
@@ -813,11 +825,19 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
   let m := A.numRows
   let n := A.numCols
   let k := min m n
+  let costLimit : Nat := 200000000
+  let cost : Nat := k * k * (max m n)
 
   if k = 0 then
     { usedGram := true
       usedAbsGram := false
+      computedAbsGram := false
+      computedGram := false
       skippedGram := false
+      maxGramDimCap := effort.maxGramDim
+      signedGramEnabled := effort.enableSignedGram
+      gramCost := 0
+      gramCostLimit := costLimit
       gramDim := 0
       lambdaBrauer := 0.0
       lambdaMoment := 0.0
@@ -832,6 +852,8 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
     let mut bestOp : Float := cheap
     let mut usedAbs : Bool := false
     let mut usedGram : Bool := false
+    let mut computedAbsGram : Bool := false
+    let mut computedGram : Bool := false
     let mut skippedGram : Bool := false
     let mut lambdaAbsGersh : Float := 0.0
     let mut lambdaAbsBrauer : Float := 0.0
@@ -841,6 +863,7 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
     let mut lambdaUsed : Float := max 0.0 (cheap * cheap)
 
     if effort.enableAbsGram then
+      computedAbsGram := true
       let (lG, lB) := rectAbsGramLambdaUpperGershBrauer A
       lambdaAbsGersh := lG
       lambdaAbsBrauer := lB
@@ -863,9 +886,9 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
       -- estimated matmul cost is too high.
       --
       -- Correctness is preserved: skipping a candidate can only loosen the final bound.
-      let cost : Nat := k * k * (max m n)
-      let allowGram : Bool := cost ≤ 200000000
+      let allowGram : Bool := cost ≤ costLimit
       if allowGram then
+        computedGram := true
         let G : ConcreteMatrix :=
           if m ≤ n then
             A.matmul A.transpose
@@ -893,7 +916,13 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
 
     { usedGram := usedGram
       usedAbsGram := usedAbs
+      computedAbsGram := computedAbsGram
+      computedGram := computedGram
       skippedGram := skippedGram
+      maxGramDimCap := effort.maxGramDim
+      signedGramEnabled := effort.enableSignedGram
+      gramCost := cost
+      gramCostLimit := costLimit
       gramDim := k
       lambdaBrauer := lambdaBrauer
       lambdaMoment := lambdaMoment

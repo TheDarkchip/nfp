@@ -513,11 +513,32 @@ def runInduction (p : Parsed) : IO UInt32 := do
           let mlp0 : ConcreteMLPLayer := cache.model.mlps[0]'h0
           let dIn := mlp0.W_in.opNormUpperBoundRectGramDiag
           let dOut := mlp0.W_out.opNormUpperBoundRectGramDiag
+          let chosenMsg (d : _) : String :=
+            if d.usedGram then "chosen=signedGram"
+            else if d.usedAbsGram then "chosen=absGram"
+            else "chosen=cheap"
+          let signedGramMsg (d : _) : String :=
+            if !d.signedGramEnabled then "signedGram=disabled"
+            else if d.gramDim > d.maxGramDimCap then "signedGram=skipped(maxGramDim cap)"
+            else if d.skippedGram then "signedGram=skipped(cost guard)"
+            else if d.computedGram then "signedGram=computed"
+            else "signedGram=not-attempted"
+          let absGramMsg (d : _) : String :=
+            if !d.computedAbsGram then "absGram=disabled"
+            else if d.usedAbsGram then "absGram=chosen"
+            else "absGram=computed"
           IO.println ""
           IO.println "RECT-GRAM DIAGNOSTICS (MLP layer 0 weights)"
           IO.println <|
-            s!"  W_in:  usedGram={dIn.usedGram}  usedAbsGram={dIn.usedAbsGram} " ++
-              s!"gramDim={dIn.gramDim}"
+            s!"  W_in:  usedGram={dIn.usedGram}  usedAbsGram={dIn.usedAbsGram}  " ++
+              s!"computedGram={dIn.computedGram}  computedAbsGram={dIn.computedAbsGram}  " ++
+              s!"skippedGram={dIn.skippedGram}"
+          IO.println <|
+            s!"        gramDim={dIn.gramDim}  maxGramDimCap={dIn.maxGramDimCap}  " ++
+              s!"signedGramEnabled={dIn.signedGramEnabled}"
+          IO.println <|
+            s!"        gramCost={dIn.gramCost}  gramCostLimit={dIn.gramCostLimit}  " ++
+              s!"{chosenMsg dIn}  {signedGramMsg dIn}  {absGramMsg dIn}"
           IO.println <|
             s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound} " ++
               s!"opBound={fmtFloat dIn.opBound}"
@@ -529,8 +550,15 @@ def runInduction (p : Parsed) : IO UInt32 := do
           IO.println s!"        λ_moment={fmtFloat dIn.lambdaMoment}"
           IO.println s!"        λ_used={fmtFloat dIn.lambdaUsed}"
           IO.println <|
-            s!"  W_out: usedGram={dOut.usedGram}  usedAbsGram={dOut.usedAbsGram} " ++
-              s!"gramDim={dOut.gramDim}"
+            s!"  W_out: usedGram={dOut.usedGram}  usedAbsGram={dOut.usedAbsGram}  " ++
+              s!"computedGram={dOut.computedGram}  computedAbsGram={dOut.computedAbsGram}  " ++
+              s!"skippedGram={dOut.skippedGram}"
+          IO.println <|
+            s!"        gramDim={dOut.gramDim}  maxGramDimCap={dOut.maxGramDimCap}  " ++
+              s!"signedGramEnabled={dOut.signedGramEnabled}"
+          IO.println <|
+            s!"        gramCost={dOut.gramCost}  gramCostLimit={dOut.gramCostLimit}  " ++
+              s!"{chosenMsg dOut}  {signedGramMsg dOut}  {absGramMsg dOut}"
           IO.println <|
             s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound} " ++
               s!"opBound={fmtFloat dOut.opBound}"
