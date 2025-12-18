@@ -136,6 +136,41 @@ The library’s claims rest on these being preserved (preferably with explicit l
 
 ---
 
+## Lean 4 performance & scalability (use when justified)
+
+Default: write the simplest correct thing first. Use the levers below only when there is a clear payoff
+(hot path, large workload, or expensive work that’s often unused). Add a short comment explaining the trigger.
+
+### Parallelism: `Task` (opt-in, deterministic-by-construction)
+Use `Task` when work is independent and CPU-heavy (e.g., per-candidate / per-layer computations).
+- Prefer *pure* tasks: `Task.spawn (fun () => ...)` and later `Task.get`.
+  Tasks cache their result; subsequent `get`s do not recompute. (Tasks are like “opportunistic thunks”.)
+- Use `IO.asTask` only when you truly need effects; remember a task is spawned each time the returned `IO` action is executed.
+- Keep results deterministic: never depend on completion order; aggregate by stable keys.
+- Keep granularity coarse enough to amortize scheduling overhead.
+- Cancellation: pure tasks stop when dropped; `IO.asTask` tasks must check for cancellation (`IO.checkCanceled`), and can be canceled via `IO.cancel`.
+- If benchmarking, note that the runtime task thread pool size is controlled by `LEAN_NUM_THREADS` (or defaults to logical CPU count).
+
+### Laziness: `Thunk` / delayed computations (opt-in, for expensive-but-often-unused work)
+Use `Thunk` to defer work that is expensive and frequently unused (debug traces, optional certificates, rare branches).
+- Prefer `Thunk` over “manual caching”: the runtime forces at most once and caches the value.
+- Force explicitly at the boundary (`Thunk.get`), not “deep inside” unrelated logic.
+- If a thunk is forced from multiple threads, other threads will wait while one thread computes it—avoid forcing in places where blocking could deadlock.
+
+### Compile-time / elaboration performance nudge
+When proofs or declarations get large, prefer factoring them into smaller independent theorems/lemmas when it improves clarity.
+Lean can elaborate theorem bodies in parallel, so smaller independent units can help the compiler do more work concurrently.
+
+### Transparency / unfolding control (use sparingly)
+Unfolding choices affect performance of simplification and typeclass search.
+- The simplifier unfolds *reducible* definitions by default; semireducible/irreducible require explicit rewrite rules or different settings.
+- `opaque` definitions are not δ-reduced in the kernel; use them to prevent expensive kernel reduction when unfolding is not needed for reasoning.
+- Avoid cargo-culting reducibility attributes: use `local`/`scoped` when possible, and leave a short comment about why.
+
+Note: Recent Lean versions changed the story around well-founded recursion transparency; don’t rely on old recipes like making well-founded recursion “reducible” via attributes.
+
+---
+
 ## 5. Module Map (Where Things Live)
 
 This is a *map*, not a prison. You may reshuffle if a better design emerges,
