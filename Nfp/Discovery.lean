@@ -1235,7 +1235,8 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
     for c in [:X.numCols] do
       let d := X.get r c - μ
       varSum := varSum + d * d
-    let var := varSum / X.numCols.toFloat
+    -- In exact arithmetic, `var ≥ 0`. Clamp to avoid NaN from tiny negative float noise.
+    let var := max 0.0 (varSum / X.numCols.toFloat)
     let invσ := 1.0 / Float.sqrt (var + eps)
     means := means.push μ
     invStds := invStds.push invσ
@@ -1279,7 +1280,10 @@ def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float 
   let mut gammaMaxAbs : Float := 0.0
   for c in [:X.numCols] do
     let g := Float.abs (γ.get 0 c)
-    if g > gammaMaxAbs then gammaMaxAbs := g
+    if Float.isNaN g || Float.isInf g then
+      gammaMaxAbs := Float.inf
+    else if g > gammaMaxAbs then
+      gammaMaxAbs := g
 
   -- max_r (1/σ_r)
   let mut maxInvStd : Float := 0.0
@@ -1295,12 +1299,19 @@ def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float 
     for c in [:X.numCols] do
       let centered := X.get r c - μ
       varSum := varSum + centered * centered
-    let var := varSum / X.numCols.toFloat
+    let varRaw := varSum / X.numCols.toFloat
+    -- In exact arithmetic, `var ≥ 0`. If we see NaN/Inf, conservatively treat as 0
+    -- so that `1/σ ≤ 1/sqrt(eps)`.
+    let var :=
+      if Float.isNaN varRaw || Float.isInf varRaw then 0.0
+      else max 0.0 varRaw
     let σ := Float.sqrt (var + eps)
-
-    if σ > 0.0 then
+    if σ > 0.0 && !(Float.isNaN σ || Float.isInf σ) then
       let invσ := 1.0 / σ
       if invσ > maxInvStd then maxInvStd := invσ
+
+  if maxInvStd ≤ 0.0 || Float.isNaN maxInvStd || Float.isInf maxInvStd then
+    maxInvStd := 1.0 / Float.sqrt eps
 
   return gammaMaxAbs * maxInvStd
 
@@ -1323,7 +1334,10 @@ def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
   let mut gammaMaxAbs : Float := 0.0
   for c in [:X.numCols] do
     let g := Float.abs (γ.get 0 c)
-    if g > gammaMaxAbs then gammaMaxAbs := g
+    if Float.isNaN g || Float.isInf g then
+      gammaMaxAbs := Float.inf
+    else if g > gammaMaxAbs then
+      gammaMaxAbs := g
 
   let mut maxInvStd : Float := 0.0
   let mut maxInvStdRow : Nat := 0
@@ -1339,7 +1353,10 @@ def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
     for c in [:X.numCols] do
       let centered := X.get r c - μ
       varSum := varSum + centered * centered
-    let var := varSum / X.numCols.toFloat
+    let varRaw := varSum / X.numCols.toFloat
+    let var :=
+      if Float.isNaN varRaw || Float.isInf varRaw then 0.0
+      else max 0.0 varRaw
     if var < minVar then
       minVar := var
       minVarRow := r
@@ -1352,6 +1369,8 @@ def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
 
   if Float.isInf minVar || Float.isNaN minVar then
     minVar := 0.0
+  if maxInvStd ≤ 0.0 || Float.isNaN maxInvStd || Float.isInf maxInvStd then
+    maxInvStd := 1.0 / Float.sqrt eps
 
   return {
     gammaMaxAbs := gammaMaxAbs
@@ -4016,11 +4035,8 @@ def ConcreteModel.computeAttention (model : ConcreteModel)
     let layerHeads := model.layers[layerIdx]
     if h2 : headIdx < layerHeads.size then
       let head := layerHeads[headIdx]
-      let scale := Float.sqrt head.headDim.toFloat
       let attnInput := model.applyLn1 layerIdx model.inputEmbeddings
-      let queries := attnInput.matmul head.W_Q
-      let keys := attnInput.matmul head.W_K
-      some (ConcreteAttentionWeights.compute queries keys scale model.seqLen)
+      some (head.computeAttentionWeights attnInput)
     else none
   else none
 
