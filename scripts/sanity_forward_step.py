@@ -83,6 +83,9 @@ def run_lean_dump(model_path: Path, layer: int, pos: int, take: int) -> np.ndarr
 
 def run_torch(model_name: str, tokens: list[int], layer: int, pos: int, take: int) -> np.ndarray:
     m = GPT2Model.from_pretrained(model_name)
+    # Lean `Float` is IEEE-754 double; run PyTorch in float64 to avoid large float32-vs-float64 drift
+    # (especially through attention softmax on long sequences).
+    m = m.to(dtype=torch.float64)
     m.eval()
     input_ids = torch.tensor([tokens], dtype=torch.long)
     with torch.no_grad():
