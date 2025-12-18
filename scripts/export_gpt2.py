@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Export GPT-2 Small weights to NFP Text Format (.nfpt).
+Export GPT-2 Small weights to NFP_BINARY_V1 format (.nfpt).
 
 This script loads GPT-2 Small from HuggingFace and exports all weights needed
 for circuit analysis in the NFP library.
@@ -68,17 +68,18 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
 
     print(f"\nExporting to {output_path}...")
 
-    with open(output_path, "w") as f:
+    with open(output_path, "wb") as f:
         # Header
-        f.write("NFP_TEXT_V2\n")
-        f.write(f"num_layers={num_layers}\n")
-        f.write(f"num_heads={num_heads}\n")
-        f.write(f"model_dim={model_dim}\n")
-        f.write(f"head_dim={head_dim}\n")
-        f.write(f"hidden_dim={hidden_dim}\n")
-        f.write(f"vocab_size={vocab_size}\n")
-        f.write(f"seq_len={seq_len}\n")
-        f.write("\n")
+        write_header(
+            f,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            model_dim=model_dim,
+            head_dim=head_dim,
+            hidden_dim=hidden_dim,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+        )
 
         # Sample input embeddings for analysis
         # For circuit analysis, we need input embeddings for a specific sequence
@@ -97,19 +98,14 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
         # Ground-truth token sequence for self-supervised induction targeting.
         # This is used by the Lean pipeline to choose the correct induction target
         # algorithmically from the sequence history.
-        f.write("TOKENS\n")
-        write_tokens(f, sample_tokens)
-        f.write("\n")
-
-        f.write("EMBEDDINGS\n")
-        write_matrix(f, sample_embeddings)
+        write_i32(f, sample_tokens)
+        write_f64(f, sample_embeddings)
 
         # Process each layer
         for layer_idx in range(num_layers):
             print(f"  Processing layer {layer_idx}...")
             block = model.h[layer_idx]
 
-            f.write(f"LAYER {layer_idx}\n")
 
             # Attention weights
             # GPT-2 stores Q, K, V concatenated in c_attn.weight
@@ -117,7 +113,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             # We need to split into Q, K, V and then split each by heads
 
             c_attn_weight = block.attn.c_attn.weight.detach().numpy()  # (768, 2304)
-            c_attn_bias = block.attn.c_attn.bias.detach().numpy()  # (2304,)
+            c_attn_bias = get_bias(block.attn.c_attn.bias, 3 * model_dim)  # (2304,)
 
             # c_attn.weight layout: input_dim -> [Q_all_heads, K_all_heads, V_all_heads]
             # Each section is (model_dim, model_dim)
@@ -130,7 +126,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
 
             # Output projection c_proj
             c_proj_weight = block.attn.c_proj.weight.detach().numpy()  # (768, 768)
-            c_proj_bias = block.attn.c_proj.bias.detach().numpy()  # (768,)
+            c_proj_bias = get_bias(block.attn.c_proj.bias, model_dim)  # (768,)
 
             # Split into heads
             # W_Q_all columns are organized as [head0, head1, ..., head11]
@@ -150,25 +146,16 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
                 # W_O: (head_dim, model_dim) - projects head output back to model dim
                 W_O = c_proj_weight[start:end, :]  # (64, 768)
 
-                f.write(f"HEAD {head_idx}\n")
-                f.write("W_Q\n")
-                write_matrix(f, W_Q)
-                f.write("b_Q\n")
-                write_vector(f, b_Q_all[start:end])
-                f.write("W_K\n")
-                write_matrix(f, W_K)
-                f.write("b_K\n")
-                write_vector(f, b_K_all[start:end])
-                f.write("W_V\n")
-                write_matrix(f, W_V)
-                f.write("b_V\n")
-                write_vector(f, b_V_all[start:end])
-                f.write("W_O\n")
-                write_matrix(f, W_O)
+                write_f64(f, W_Q)
+                write_f64(f, b_Q_all[start:end])
+                write_f64(f, W_K)
+                write_f64(f, b_K_all[start:end])
+                write_f64(f, W_V)
+                write_f64(f, b_V_all[start:end])
+                write_f64(f, W_O)
 
             # Attention output bias (c_proj.bias), applied once after combining heads.
-            f.write("ATTN_BIAS\n")
-            write_vector(f, c_proj_bias)
+            write_f64(f, c_proj_bias)
 
             # MLP weights
             # GPT-2 MLP: x -> c_fc (expand) -> GELU -> c_proj (contract) -> out
@@ -176,55 +163,43 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             # c_proj: (hidden_dim, model_dim)
 
             mlp_c_fc_weight = block.mlp.c_fc.weight.detach().numpy()  # (768, 3072)
-            mlp_c_fc_bias = block.mlp.c_fc.bias.detach().numpy()  # (3072,)
+            mlp_c_fc_bias = get_bias(block.mlp.c_fc.bias, hidden_dim)  # (3072,)
             mlp_c_proj_weight = block.mlp.c_proj.weight.detach().numpy()  # (3072, 768)
-            mlp_c_proj_bias = block.mlp.c_proj.bias.detach().numpy()  # (768,)
+            mlp_c_proj_bias = get_bias(block.mlp.c_proj.bias, model_dim)  # (768,)
 
             # Note: GPT-2 uses Conv1D which stores weights transposed compared to Linear
             # Conv1D weight shape is (in_features, out_features)
             # Our format expects W_in: (model_dim, hidden_dim) and W_out: (hidden_dim, model_dim)
 
-            f.write("MLP\n")
-            f.write("W_in\n")
-            write_matrix(f, mlp_c_fc_weight)  # (768, 3072)
-            f.write("b_in\n")
-            write_vector(f, mlp_c_fc_bias)  # (3072,)
-            f.write("W_out\n")
-            write_matrix(f, mlp_c_proj_weight)  # (3072, 768)
-            f.write("b_out\n")
-            write_vector(f, mlp_c_proj_bias)  # (768,)
+            write_f64(f, mlp_c_fc_weight)  # (768, 3072)
+            write_f64(f, mlp_c_fc_bias)  # (3072,)
+            write_f64(f, mlp_c_proj_weight)  # (3072, 768)
+            write_f64(f, mlp_c_proj_bias)  # (768,)
 
             # LayerNorm parameters (Pre-LN)
             # ln_1 is applied before attention; ln_2 is applied before MLP.
             ln1_gamma = block.ln_1.weight.detach().numpy()  # (model_dim,)
-            ln1_beta = block.ln_1.bias.detach().numpy()  # (model_dim,)
+            ln1_beta = get_bias(block.ln_1.bias, model_dim)  # (model_dim,)
             ln2_gamma = block.ln_2.weight.detach().numpy()  # (model_dim,)
-            ln2_beta = block.ln_2.bias.detach().numpy()  # (model_dim,)
+            ln2_beta = get_bias(block.ln_2.bias, model_dim)  # (model_dim,)
 
-            f.write("LN1_GAMMA\n")
-            write_vector(f, ln1_gamma)
-            f.write("LN1_BETA\n")
-            write_vector(f, ln1_beta)
-            f.write("LN2_GAMMA\n")
-            write_vector(f, ln2_gamma)
-            f.write("LN2_BETA\n")
-            write_vector(f, ln2_beta)
+            write_f64(f, ln1_gamma)
+            write_f64(f, ln1_beta)
+            write_f64(f, ln2_gamma)
+            write_f64(f, ln2_beta)
 
         # Final LayerNorm (ln_f) before unembedding
         ln_f_gamma = model.ln_f.weight.detach().numpy()  # (model_dim,)
-        ln_f_beta = model.ln_f.bias.detach().numpy()  # (model_dim,)
-        f.write("LN_F_GAMMA\n")
-        write_vector(f, ln_f_gamma)
-        f.write("LN_F_BETA\n")
-        write_vector(f, ln_f_beta)
+        ln_f_beta = get_bias(model.ln_f.bias, model_dim)  # (model_dim,)
+        write_f64(f, ln_f_gamma)
+        write_f64(f, ln_f_beta)
 
         # Unembedding matrix
         # In GPT-2, the unembedding is tied to the embedding (same weights transposed)
         # We want (model_dim, vocab_size) for projecting hidden states to logits
         # wte is (vocab_size, model_dim), so we transpose it
         unembed = wte.T  # (768, 50257)
-        f.write("UNEMBEDDING\n")
-        write_matrix(f, unembed)
+        write_f64(f, unembed)
 
     # Report file size
     file_size = output_file.stat().st_size
@@ -233,24 +208,27 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
     print(f"  Output: {output_path}")
 
 
-def write_matrix(f, matrix: np.ndarray, precision: int = 9):
-    """Write a 2D matrix to file in row-major order, space-separated."""
-    for row in matrix:
-        # Format each float with sufficient precision
-        row_str = " ".join(f"{x:.{precision}g}" for x in row)
-        f.write(row_str + "\n")
+def write_header(f, **fields: int) -> None:
+    f.write(b"NFP_BINARY_V1\n")
+    for key, value in fields.items():
+        f.write(f"{key}={value}\n".encode("ascii"))
+    f.write(b"BINARY_START\n")
 
 
-def write_vector(f, vector: np.ndarray, precision: int = 9):
-    """Write a 1D vector as a single row."""
-    row_str = " ".join(f"{x:.{precision}g}" for x in vector)
-    f.write(row_str + "\n")
+def write_i32(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<i4")
+    f.write(arr.tobytes(order="C"))
 
-def write_tokens(f, tokens: np.ndarray, per_line: int = 64):
-    """Write integer token IDs as space-separated lines."""
-    toks = [str(int(t)) for t in tokens.tolist()]
-    for i in range(0, len(toks), per_line):
-        f.write(" ".join(toks[i : i + per_line]) + "\n")
+
+def write_f64(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<f8")
+    f.write(arr.tobytes(order="C"))
+
+
+def get_bias(param, size: int) -> np.ndarray:
+    if param is None:
+        return np.zeros(size, dtype=np.float64)
+    return param.detach().numpy()
 
 
 if __name__ == "__main__":

@@ -81,31 +81,29 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"\nExporting to {output_path}...")
-    with open(output_path, "w") as f:
-        # Header
-        f.write("NFP_TEXT_V2\n")
-        f.write(f"num_layers={config.n_layer}\n")
-        f.write(f"num_heads={config.n_head}\n")
-        f.write(f"model_dim={768}\n")
-        f.write(f"head_dim={64}\n")
-        f.write(f"hidden_dim={config.n_inner or 4 * 768}\n")
-        f.write(f"vocab_size={config.vocab_size}\n")
-        f.write(f"seq_len={seq_len}\n\n")
+    with open(output_path, "wb") as f:
+        write_header(
+            f,
+            num_layers=config.n_layer,
+            num_heads=config.n_head,
+            model_dim=768,
+            head_dim=64,
+            hidden_dim=config.n_inner or 4 * 768,
+            vocab_size=config.vocab_size,
+            seq_len=seq_len,
+        )
 
-        f.write("TOKENS\n")
-        write_tokens(f, full_sequence)
-        f.write("\nEMBEDDINGS\n")
-        write_matrix(f, sample_embeddings)
+        write_i32(f, full_sequence)
+        write_f64(f, sample_embeddings)
 
         # Export Layers (Standard Loop)
         for layer_idx in range(config.n_layer):
             block = model.h[layer_idx]
-            f.write(f"LAYER {layer_idx}\n")
 
             c_attn = block.attn.c_attn.weight.detach().numpy()
-            c_attn_bias = block.attn.c_attn.bias.detach().numpy()
+            c_attn_bias = get_bias(block.attn.c_attn.bias, 3 * 768)
             c_proj = block.attn.c_proj.weight.detach().numpy()
-            c_proj_bias = block.attn.c_proj.bias.detach().numpy()
+            c_proj_bias = get_bias(block.attn.c_proj.bias, 768)
 
             W_Q_all = c_attn[:, 0:768]
             W_K_all = c_attn[:, 768 : 2 * 768]
@@ -116,67 +114,54 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
 
             for h in range(12):
                 start, end = h * 64, (h + 1) * 64
-                f.write(f"HEAD {h}\n")
-                f.write("W_Q\n")
-                write_matrix(f, W_Q_all[:, start:end])
-                f.write("b_Q\n")
-                write_vector(f, b_Q_all[start:end])
-                f.write("W_K\n")
-                write_matrix(f, W_K_all[:, start:end])
-                f.write("b_K\n")
-                write_vector(f, b_K_all[start:end])
-                f.write("W_V\n")
-                write_matrix(f, W_V_all[:, start:end])
-                f.write("b_V\n")
-                write_vector(f, b_V_all[start:end])
-                f.write("W_O\n")
-                write_matrix(f, c_proj[start:end, :])
+                write_f64(f, W_Q_all[:, start:end])
+                write_f64(f, b_Q_all[start:end])
+                write_f64(f, W_K_all[:, start:end])
+                write_f64(f, b_K_all[start:end])
+                write_f64(f, W_V_all[:, start:end])
+                write_f64(f, b_V_all[start:end])
+                write_f64(f, c_proj[start:end, :])
 
-            f.write("ATTN_BIAS\n")
-            write_vector(f, c_proj_bias)
+            write_f64(f, c_proj_bias)
 
-            f.write("MLP\n")
-            f.write("W_in\n")
-            write_matrix(f, block.mlp.c_fc.weight.detach().numpy())
-            f.write("b_in\n")
-            write_vector(f, block.mlp.c_fc.bias.detach().numpy())
-            f.write("W_out\n")
-            write_matrix(f, block.mlp.c_proj.weight.detach().numpy())
-            f.write("b_out\n")
-            write_vector(f, block.mlp.c_proj.bias.detach().numpy())
+            write_f64(f, block.mlp.c_fc.weight.detach().numpy())
+            write_f64(f, get_bias(block.mlp.c_fc.bias, config.n_inner or 4 * 768))
+            write_f64(f, block.mlp.c_proj.weight.detach().numpy())
+            write_f64(f, get_bias(block.mlp.c_proj.bias, 768))
 
-            f.write("LN1_GAMMA\n")
-            write_vector(f, block.ln_1.weight.detach().numpy())
-            f.write("LN1_BETA\n")
-            write_vector(f, block.ln_1.bias.detach().numpy())
-            f.write("LN2_GAMMA\n")
-            write_vector(f, block.ln_2.weight.detach().numpy())
-            f.write("LN2_BETA\n")
-            write_vector(f, block.ln_2.bias.detach().numpy())
+            write_f64(f, block.ln_1.weight.detach().numpy())
+            write_f64(f, get_bias(block.ln_1.bias, 768))
+            write_f64(f, block.ln_2.weight.detach().numpy())
+            write_f64(f, get_bias(block.ln_2.bias, 768))
 
-        f.write("LN_F_GAMMA\n")
-        write_vector(f, model.ln_f.weight.detach().numpy())
-        f.write("LN_F_BETA\n")
-        write_vector(f, model.ln_f.bias.detach().numpy())
-        f.write("UNEMBEDDING\n")
-        write_matrix(f, wte.T)
+        write_f64(f, model.ln_f.weight.detach().numpy())
+        write_f64(f, get_bias(model.ln_f.bias, 768))
+        write_f64(f, wte.T)
 
     print("Done.")
 
 
-def write_matrix(f, m):
-    for row in m:
-        f.write(" ".join(f"{x:.9g}" for x in row) + "\n")
+def write_header(f, **fields: int) -> None:
+    f.write(b"NFP_BINARY_V1\n")
+    for key, value in fields.items():
+        f.write(f"{key}={value}\n".encode("ascii"))
+    f.write(b"BINARY_START\n")
 
 
-def write_vector(f, v):
-    f.write(" ".join(f"{x:.9g}" for x in v) + "\n")
+def write_i32(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<i4")
+    f.write(arr.tobytes(order="C"))
 
 
-def write_tokens(f, t):
-    s = [str(x) for x in t]
-    for i in range(0, len(s), 64):
-        f.write(" ".join(s[i : i + 64]) + "\n")
+def write_f64(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<f8")
+    f.write(arr.tobytes(order="C"))
+
+
+def get_bias(param, size: int) -> np.ndarray:
+    if param is None:
+        return np.zeros(size, dtype=np.float64)
+    return param.detach().numpy()
 
 
 if __name__ == "__main__":

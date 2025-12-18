@@ -17,12 +17,12 @@ This module prioritizes **safety and clear error reporting** over raw performanc
 
 For high-performance computation, see `Discovery.lean` where hot paths are optimized.
 
-## File Format: `.nfpt` (NFP Text Format)
+## File Format: `.nfpt` (NFP_BINARY_V1)
 
-Human-readable text format for debugging and small models:
+Hybrid text header + binary body:
 
 ```
-NFP_TEXT_V2
+NFP_BINARY_V1
 num_layers=12
 num_heads=12
 model_dim=768
@@ -30,57 +30,24 @@ head_dim=64
 hidden_dim=3072
 vocab_size=50257
 seq_len=1024
+BINARY_START
+```
 
-TOKENS
-<space-separated integers (token IDs), length = seq_len>
-
-EMBEDDINGS
-<space-separated floats, row-major>
-
-LAYER 0
-HEAD 0
-W_Q
-<floats>
-b_Q
-<floats>  -- length = head_dim (optional; default 0)
-W_K
-<floats>
-b_K
-<floats>  -- length = head_dim (optional; default 0)
-W_V
-<floats>
-b_V
-<floats>  -- length = head_dim (optional; default 0)
-...
-ATTN_BIAS
-<floats>  -- length = model_dim (optional; default 0)
-
-MLP
-W_in
-<floats>
-W_out
-<floats>
-b_in
-<floats>
-b_out
-<floats>
-
-LN1_GAMMA
-<floats>  -- length = model_dim
-LN1_BETA
-<floats>  -- length = model_dim
-LN2_GAMMA
-<floats>  -- length = model_dim
-LN2_BETA
-<floats>  -- length = model_dim
-
-LN_F_GAMMA
-<floats>  -- length = model_dim
-LN_F_BETA
-<floats>  -- length = model_dim
-
-UNEMBEDDING
-<floats>  -- model_dim × vocab_size, row-major
+Binary payload (little-endian, row-major, no markers):
+1. TOKENS: `seq_len` × Int32
+2. EMBEDDINGS: `seq_len` × `model_dim` × Float64
+3. For each layer (0..num_layers-1), for each head (0..num_heads-1):
+   - W_Q (`model_dim`×`head_dim`), b_Q (`head_dim`)
+   - W_K (`model_dim`×`head_dim`), b_K (`head_dim`)
+   - W_V (`model_dim`×`head_dim`), b_V (`head_dim`)
+   - W_O (`head_dim`×`model_dim`)
+4. ATTN_BIAS: `model_dim`
+5. MLP: W_in (`model_dim`×`hidden_dim`), b_in (`hidden_dim`),
+        W_out (`hidden_dim`×`model_dim`), b_out (`model_dim`)
+6. LN1 gamma/beta (`model_dim` each)
+7. LN2 gamma/beta (`model_dim` each)
+8. LN_F gamma/beta (`model_dim` each)
+9. UNEMBEDDING: `model_dim`×`vocab_size`
 ```
 -/
 
@@ -427,396 +394,10 @@ def mkMLPLayer
   }
 
 /-- Load a model from NFP text format content. -/
-def loadFromText (content : String) : IO LoadResult := do
-  let lines := content.splitOn "\n" |>.toArray
-  if lines.size = 0 then return .error "Empty file"
+def loadFromText (_content : String) : IO LoadResult := do
+  return .error "NFP_TEXT format is deprecated; use NFP_BINARY_V1"
 
-  -- Check magic - SAFETY: lines.size > 0 guaranteed above
-  let magic := lines[0]!.trim
-  let isV1 := magic = "NFP_TEXT_V1"
-  let isV2 := magic = "NFP_TEXT_V2"
-  if !(isV1 || isV2) then
-    return .error "Invalid magic: expected NFP_TEXT_V1 or NFP_TEXT_V2"
-
-  IO.println "[1/5] Parsing header..."
-
-  -- Parse header
-  let mut numLayers : Nat := 0
-  let mut numHeads : Nat := 0
-  let mut modelDim : Nat := 0
-  let mut headDim : Nat := 0
-  let mut hiddenDim : Nat := 0
-  let mut vocabSize : Nat := 0
-  let mut seqLen : Nat := 0
-
-  let mut i := 1
-  while i < lines.size &&
-        lines[i]!.trim != "TOKENS" &&
-        !lines[i]!.startsWith "EMBEDDINGS" do
-    -- SAFETY: i < lines.size guaranteed by while condition
-    let line := lines[i]!
-    if line.startsWith "num_layers=" then
-      numLayers := (line.drop 11).toNat!
-    else if line.startsWith "num_heads=" then
-      numHeads := (line.drop 10).toNat!
-    else if line.startsWith "model_dim=" then
-      modelDim := (line.drop 10).toNat!
-    else if line.startsWith "head_dim=" then
-      headDim := (line.drop 9).toNat!
-    else if line.startsWith "hidden_dim=" then
-      hiddenDim := (line.drop 11).toNat!
-    else if line.startsWith "vocab_size=" then
-      vocabSize := (line.drop 11).toNat!
-    else if line.startsWith "seq_len=" then
-      seqLen := (line.drop 8).toNat!
-    i := i + 1
-
-  -- Validate required header fields
-  if modelDim = 0 || numLayers = 0 || numHeads = 0 then
-    return .error s!"Invalid header: modelDim={modelDim}, \
-      numLayers={numLayers}, numHeads={numHeads} (all must be > 0)"
-
-  -- Optional TOKENS section (ground-truth token IDs for the analyzed prompt)
-  while i < lines.size && lines[i]!.trim.isEmpty do
-    i := i + 1
-
-  let mut inputTokens : Option (Array Nat) := none
-  if i < lines.size && lines[i]!.trim = "TOKENS" then
-    i := i + 1
-    let mut toks : Array Nat := #[]
-    while i < lines.size && lines[i]!.trim != "EMBEDDINGS" do
-      for t in parseNatLine lines[i]! do
-        toks := toks.push t
-      i := i + 1
-    if toks.size != seqLen then
-      return .error s!"TOKENS length mismatch: expected {seqLen}, got {toks.size}"
-    inputTokens := some toks
-
-  IO.println s!"[2/5] Loading input embeddings (seq_len={seqLen}, model_dim={modelDim})..."
-
-  -- Skip to EMBEDDINGS
-  while i < lines.size && lines[i]! != "EMBEDDINGS" do
-    i := i + 1
-  if i >= lines.size then
-    return .error "Missing EMBEDDINGS section"
-  i := i + 1  -- Skip "EMBEDDINGS" line
-
-  -- Parse input embeddings (sample sequence activations)
-  let mut embFloats : Array Float := #[]
-  while i < lines.size && !lines[i]!.startsWith "LAYER" do
-    -- SAFETY: i < lines.size guaranteed by while condition
-    for x in parseFloatLine lines[i]! do
-      embFloats := embFloats.push x
-    i := i + 1
-
-  let inputEmbeddings := buildMatrix seqLen modelDim embFloats
-  -- Validate input embeddings were loaded
-  if inputEmbeddings.numRows != seqLen || inputEmbeddings.numCols != modelDim then
-    return .error s!"Input embeddings dimension mismatch: \
-      expected {seqLen}×{modelDim}, got {inputEmbeddings.numRows}×{inputEmbeddings.numCols}"
-
-  IO.println s!"[3/5] Loading {numLayers} layers with {numHeads} heads each..."
-
-  -- Parse layers
-  let mut layers : Array (Array ConcreteAttentionLayer) := #[]
-  let mut attnProjBias : Array ConcreteMatrix := #[]
-  let mut mlps : Array ConcreteMLPLayer := #[]
-  let mut ln1 : Array ConcreteLayerNormParams := #[]
-  let mut ln2 : Array ConcreteLayerNormParams := #[]
-
-  for l in [:numLayers] do
-    IO.println s!"  Loading layer {l}/{numLayers}..."
-    -- Skip to LAYER line
-    while i < lines.size && !lines[i]!.startsWith "LAYER" do
-      i := i + 1
-    i := i + 1
-
-    -- Parse heads for this layer
-    let mut layerHeads : Array ConcreteAttentionLayer := #[]
-    for _h in [:numHeads] do
-      -- Skip to HEAD line
-      while i < lines.size && !lines[i]!.startsWith "HEAD" do
-        i := i + 1
-      i := i + 1
-
-      -- Parse W_Q
-      while i < lines.size && lines[i]! != "W_Q" do
-        i := i + 1
-      i := i + 1
-      let mut wqFloats : Array Float := #[]
-      while i < lines.size &&
-            !lines[i]!.startsWith "b_Q" &&
-            !lines[i]!.startsWith "W_K" do
-        for x in parseFloatLine lines[i]! do
-          wqFloats := wqFloats.push x
-        i := i + 1
-      let mut bqFloats : Array Float := #[]
-      if i < lines.size && lines[i]! = "b_Q" then
-        i := i + 1
-        while i < lines.size && !lines[i]!.startsWith "W_K" do
-          for x in parseFloatLine lines[i]! do
-            bqFloats := bqFloats.push x
-          i := i + 1
-
-      -- Parse W_K
-      i := i + 1
-      let mut wkFloats : Array Float := #[]
-      while i < lines.size &&
-            !lines[i]!.startsWith "b_K" &&
-            !lines[i]!.startsWith "W_V" do
-        for x in parseFloatLine lines[i]! do
-          wkFloats := wkFloats.push x
-        i := i + 1
-      let mut bkFloats : Array Float := #[]
-      if i < lines.size && lines[i]! = "b_K" then
-        i := i + 1
-        while i < lines.size && !lines[i]!.startsWith "W_V" do
-          for x in parseFloatLine lines[i]! do
-            bkFloats := bkFloats.push x
-          i := i + 1
-
-      -- Parse W_V
-      i := i + 1
-      let mut wvFloats : Array Float := #[]
-      while i < lines.size &&
-            !lines[i]!.startsWith "b_V" &&
-            !lines[i]!.startsWith "W_O" do
-        for x in parseFloatLine lines[i]! do
-          wvFloats := wvFloats.push x
-        i := i + 1
-      let mut bvFloats : Array Float := #[]
-      if i < lines.size && lines[i]! = "b_V" then
-        i := i + 1
-        while i < lines.size && !lines[i]!.startsWith "W_O" do
-          for x in parseFloatLine lines[i]! do
-            bvFloats := bvFloats.push x
-          i := i + 1
-
-      -- Parse W_O
-      i := i + 1
-      let mut woFloats : Array Float := #[]
-      while i < lines.size &&
-            !lines[i]!.startsWith "HEAD" &&
-            !lines[i]!.startsWith "ATTN_BIAS" &&
-            !lines[i]!.startsWith "MLP" do
-        for x in parseFloatLine lines[i]! do
-          woFloats := woFloats.push x
-        i := i + 1
-
-      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats bqFloats bkFloats bvFloats
-      layerHeads := layerHeads.push head
-
-    -- Validate all heads were loaded
-    if layerHeads.size != numHeads then
-      return .error s!"Layer {l}: expected {numHeads} heads, got {layerHeads.size}"
-    layers := layers.push layerHeads
-
-    -- Optional attention projection bias (c_proj.bias), applied once after combining heads.
-    let mut layerAttnBias : ConcreteMatrix := ConcreteMatrix.zeros 1 modelDim
-    if i < lines.size && lines[i]! = "ATTN_BIAS" then
-      i := i + 1
-      let mut biasFloats : Array Float := #[]
-      while i < lines.size && !lines[i]!.startsWith "MLP" do
-        for x in parseFloatLine lines[i]! do
-          biasFloats := biasFloats.push x
-        i := i + 1
-      layerAttnBias := buildMatrix 1 modelDim biasFloats
-    attnProjBias := attnProjBias.push layerAttnBias
-
-    -- Parse MLP
-    while i < lines.size && lines[i]! != "MLP" do
-      i := i + 1
-    i := i + 1
-
-    -- Parse W_in
-    while i < lines.size && lines[i]! != "W_in" do
-      i := i + 1
-    i := i + 1
-    let mut winFloats : Array Float := #[]
-    -- Support both MLP orderings:
-    -- (1) W_in, W_out, b_in, b_out  (legacy)
-    -- (2) W_in, b_in, W_out, b_out  (GPT-2 Conv1D export)
-    while i < lines.size &&
-          !lines[i]!.startsWith "W_out" &&
-          !lines[i]!.startsWith "b_in" do
-      for x in parseFloatLine lines[i]! do
-        winFloats := winFloats.push x
-      i := i + 1
-
-    if i >= lines.size then
-      return .error s!"Layer {l}: incomplete MLP section after W_in"
-
-    let mut woutFloats : Array Float := Array.mkEmpty (hiddenDim * modelDim)
-    let mut binFloats : Array Float := Array.mkEmpty hiddenDim
-
-    if lines[i]! = "b_in" then
-      -- Ordering (2): parse b_in then W_out.
-      i := i + 1
-      while i < lines.size && !lines[i]!.startsWith "W_out" do
-        for x in parseFloatLine lines[i]! do
-          binFloats := binFloats.push x
-        i := i + 1
-
-      if i >= lines.size then
-        return .error s!"Layer {l}: missing W_out after b_in"
-
-      i := i + 1
-      while i < lines.size && !lines[i]!.startsWith "b_out" do
-        for x in parseFloatLine lines[i]! do
-          woutFloats := woutFloats.push x
-        i := i + 1
-    else
-      -- Ordering (1): parse W_out then b_in.
-      if lines[i]! != "W_out" then
-        return .error s!"Layer {l}: expected W_out or b_in after W_in, got {lines[i]!}"
-
-      i := i + 1
-      while i < lines.size && !lines[i]!.startsWith "b_in" do
-        for x in parseFloatLine lines[i]! do
-          woutFloats := woutFloats.push x
-        i := i + 1
-
-      if i >= lines.size then
-        return .error s!"Layer {l}: missing b_in after W_out"
-
-      i := i + 1
-      while i < lines.size && !lines[i]!.startsWith "b_out" do
-        for x in parseFloatLine lines[i]! do
-          binFloats := binFloats.push x
-        i := i + 1
-
-    -- Parse b_out
-    i := i + 1
-    let mut boutFloats : Array Float := Array.mkEmpty modelDim
-    while i < lines.size &&
-          (if isV2 then !lines[i]!.startsWith "LN1_GAMMA"
-           else !lines[i]!.startsWith "LAYER" && !lines[i]!.startsWith "UNEMBEDDING") do
-      for x in parseFloatLine lines[i]! do
-        boutFloats := boutFloats.push x
-      i := i + 1
-
-    let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
-    mlps := mlps.push mlp
-
-    -- Parse LayerNorm params (Pre-LN)
-    if isV2 then
-      while i < lines.size && lines[i]!.trim.isEmpty do
-        i := i + 1
-
-      -- LN1_GAMMA
-      while i < lines.size && lines[i]! != "LN1_GAMMA" do
-        i := i + 1
-      if i >= lines.size then
-        return .error s!"Layer {l}: missing LN1_GAMMA section"
-      i := i + 1
-      let mut ln1GammaFloats : Array Float := Array.mkEmpty modelDim
-      while i < lines.size && !lines[i]!.startsWith "LN1_BETA" do
-        for x in parseFloatLine lines[i]! do
-          ln1GammaFloats := ln1GammaFloats.push x
-        i := i + 1
-
-      -- LN1_BETA
-      i := i + 1
-      let mut ln1BetaFloats : Array Float := Array.mkEmpty modelDim
-      while i < lines.size && !lines[i]!.startsWith "LN2_GAMMA" do
-        for x in parseFloatLine lines[i]! do
-          ln1BetaFloats := ln1BetaFloats.push x
-        i := i + 1
-
-      -- LN2_GAMMA
-      i := i + 1
-      let mut ln2GammaFloats : Array Float := Array.mkEmpty modelDim
-      while i < lines.size && !lines[i]!.startsWith "LN2_BETA" do
-        for x in parseFloatLine lines[i]! do
-          ln2GammaFloats := ln2GammaFloats.push x
-        i := i + 1
-
-      -- LN2_BETA
-      i := i + 1
-      let mut ln2BetaFloats : Array Float := Array.mkEmpty modelDim
-      while i < lines.size &&
-            !lines[i]!.startsWith "LAYER" &&
-            !lines[i]!.startsWith "LN_F_GAMMA" do
-        for x in parseFloatLine lines[i]! do
-          ln2BetaFloats := ln2BetaFloats.push x
-        i := i + 1
-
-      let ln1Params : ConcreteLayerNormParams := {
-        gamma := buildMatrix 1 modelDim ln1GammaFloats
-        beta := buildMatrix 1 modelDim ln1BetaFloats
-      }
-      let ln2Params : ConcreteLayerNormParams := {
-        gamma := buildMatrix 1 modelDim ln2GammaFloats
-        beta := buildMatrix 1 modelDim ln2BetaFloats
-      }
-      ln1 := ln1.push ln1Params
-      ln2 := ln2.push ln2Params
-    else
-      -- V1: no LayerNorm params present; treat as identity.
-      ln1 := ln1.push (ConcreteLayerNormParams.identity modelDim)
-      ln2 := ln2.push (ConcreteLayerNormParams.identity modelDim)
-
-  IO.println "[4/5] Loading unembedding matrix..."
-
-  let mut lnf : ConcreteLayerNormParams := ConcreteLayerNormParams.identity modelDim
-  if isV2 then
-    -- Parse final LayerNorm params (ln_f)
-    while i < lines.size && lines[i]!.trim.isEmpty do
-      i := i + 1
-
-    while i < lines.size && lines[i]! != "LN_F_GAMMA" do
-      i := i + 1
-    if i >= lines.size then
-      return .error "Missing LN_F_GAMMA section"
-    i := i + 1
-    let mut lnfGammaFloats : Array Float := Array.mkEmpty modelDim
-    while i < lines.size && !lines[i]!.startsWith "LN_F_BETA" do
-      for x in parseFloatLine lines[i]! do
-        lnfGammaFloats := lnfGammaFloats.push x
-      i := i + 1
-
-    i := i + 1
-    let mut lnfBetaFloats : Array Float := Array.mkEmpty modelDim
-    while i < lines.size && !lines[i]!.startsWith "UNEMBEDDING" do
-      for x in parseFloatLine lines[i]! do
-        lnfBetaFloats := lnfBetaFloats.push x
-      i := i + 1
-
-    lnf := {
-      gamma := buildMatrix 1 modelDim lnfGammaFloats
-      beta := buildMatrix 1 modelDim lnfBetaFloats
-    }
-
-  -- Parse unembedding
-  while i < lines.size && lines[i]! != "UNEMBEDDING" do
-    i := i + 1
-  i := i + 1
-  let mut unembFloats : Array Float := #[]
-  while i < lines.size do
-    for x in parseFloatLine lines[i]! do
-      unembFloats := unembFloats.push x
-    i := i + 1
-
-  let unembedding := buildMatrix modelDim vocabSize unembFloats
-
-  let model : ConcreteModel := {
-    numLayers := numLayers
-    layers := layers
-    attnProjBias := attnProjBias
-    mlps := mlps
-    ln1 := ln1
-    ln2 := ln2
-    lnf := lnf
-    seqLen := seqLen
-    inputTokens := inputTokens
-    inputEmbeddings := inputEmbeddings
-    unembedding := some unembedding
-  }
-
-  IO.println "[5/5] Model loaded successfully!\n"
-  return .ok model
-
-/-! ## Streaming `.nfpt` loading (faster) -/
+/-! ## Binary `.nfpt` loading (NFP_BINARY_V1) -/
 
 private def readLine? (h : IO.FS.Handle) : IO (Option String) := do
   let s ← h.getLine
@@ -825,441 +406,204 @@ private def readLine? (h : IO.FS.Handle) : IO (Option String) := do
   else
     return some s
 
-private partial def skipUntil (h : IO.FS.Handle) (line? : Option String) (p : String → Bool) :
-    IO (Option String) := do
-  match line? with
-  | none => return none
-  | some line =>
-      if p line then
-        return line?
-      else
-        let next ← readLine? h
-        skipUntil h next p
+private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
+  let mut out := ByteArray.empty
+  while out.size < n do
+    let chunk ← h.read (USize.ofNat (n - out.size))
+    if chunk.isEmpty then
+      throw (IO.userError "unexpected EOF")
+    out := out ++ chunk
+  return out
 
-/-- Load a model from the `.nfpt` text format using streaming `getLine`.
+private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
+  let b0 := (b[off]!).toUInt32
+  let b1 := (b[off + 1]!).toUInt32
+  let b2 := (b[off + 2]!).toUInt32
+  let b3 := (b[off + 3]!).toUInt32
+  b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
 
-This avoids `content.splitOn "\n"` (large intermediate allocations) and preserves the existing
-parsing semantics by following the same markers/section structure.
--/
-def loadFromTextHandle (h : IO.FS.Handle) : IO LoadResult := do
-  let some magicLine ← readLine? h
-    | return .error "Empty file"
-  let magic := magicLine.trim
-  let isV1 := magic = "NFP_TEXT_V1"
-  let isV2 := magic = "NFP_TEXT_V2"
-  if !(isV1 || isV2) then
-    return .error "Invalid magic: expected NFP_TEXT_V1 or NFP_TEXT_V2"
+private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
+  let b0 := (b[off]!).toUInt64
+  let b1 := (b[off + 1]!).toUInt64
+  let b2 := (b[off + 2]!).toUInt64
+  let b3 := (b[off + 3]!).toUInt64
+  let b4 := (b[off + 4]!).toUInt64
+  let b5 := (b[off + 5]!).toUInt64
+  let b6 := (b[off + 6]!).toUInt64
+  let b7 := (b[off + 7]!).toUInt64
+  b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24) |||
+    (b4 <<< 32) ||| (b5 <<< 40) ||| (b6 <<< 48) ||| (b7 <<< 56)
 
-  IO.println "[1/5] Parsing header..."
+private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
+  let u := u32FromLE b off
+  let half : UInt32 := 0x80000000
+  if u < half then
+    Int.ofNat u.toNat
+  else
+    let two32 : Int := Int.ofNat (Nat.pow 2 32)
+    (Int.ofNat u.toNat) - two32
 
-  let mut numLayers : Nat := 0
-  let mut numHeads : Nat := 0
-  let mut modelDim : Nat := 0
-  let mut headDim : Nat := 0
-  let mut hiddenDim : Nat := 0
-  let mut vocabSize : Nat := 0
-  let mut seqLen : Nat := 0
+private def floatFromLE (b : ByteArray) (off : Nat) : Float :=
+  Float.ofBits (u64FromLE b off)
 
-  let mut line? ← readLine? h
-  -- Header lines end at TOKENS or EMBEDDINGS.
-  while true do
-    match line? with
-    | none => break
-    | some line =>
-        let t := line.trim
-        if t = "TOKENS" || line.startsWith "EMBEDDINGS" then
-          break
-        if line.startsWith "num_layers=" then
-          numLayers := (line.drop 11 |>.trim).toNat!
-        else if line.startsWith "num_heads=" then
-          numHeads := (line.drop 10 |>.trim).toNat!
-        else if line.startsWith "model_dim=" then
-          modelDim := (line.drop 10 |>.trim).toNat!
-        else if line.startsWith "head_dim=" then
-          headDim := (line.drop 9 |>.trim).toNat!
-        else if line.startsWith "hidden_dim=" then
-          hiddenDim := (line.drop 11 |>.trim).toNat!
-        else if line.startsWith "vocab_size=" then
-          vocabSize := (line.drop 11 |>.trim).toNat!
-        else if line.startsWith "seq_len=" then
-          seqLen := (line.drop 8 |>.trim).toNat!
-        line? ← readLine? h
+private def readFloatArray (h : IO.FS.Handle) (count : Nat) : IO FloatArray := do
+  if count = 0 then
+    return FloatArray.empty
+  let bytes ← readExactly h (count * 8)
+  let data := Array.ofFn (fun i : Fin count =>
+    floatFromLE bytes (i.val * 8))
+  return .mk data
 
-  if modelDim = 0 || numLayers = 0 || numHeads = 0 then
-    return .error s!"Invalid header: modelDim={modelDim}, numLayers={numLayers}, \
-      numHeads={numHeads} (all must be > 0)"
+private def readI32Array (h : IO.FS.Handle) (count : Nat) : IO (Array Nat) := do
+  if count = 0 then
+    return #[]
+  let bytes ← readExactly h (count * 4)
+  let mut out : Array Nat := Array.mkEmpty count
+  for i in [:count] do
+    let v := i32FromLE bytes (i * 4)
+    if v < 0 then
+      throw (IO.userError s!"Negative token id at index {i}")
+    out := out.push v.toNat
+  return out
 
-  -- Skip blank lines.
-  while true do
-    match line? with
-    | some line =>
-        if line.trim.isEmpty then
-          line? ← readLine? h
-        else
-          break
-    | none => break
+/-- Load a model from the `.nfpt` binary format (NFP_BINARY_V1). -/
+def loadBinary (h : IO.FS.Handle) : IO LoadResult := do
+  try
+    let some magicLine ← readLine? h
+      | return .error "Empty file"
+    let magic := magicLine.trim
+    if magic != "NFP_BINARY_V1" then
+      return .error "Invalid magic: expected NFP_BINARY_V1"
 
-  -- Optional TOKENS section
-  let mut inputTokens : Option (Array Nat) := none
-  if line?.map (·.trim) = some "TOKENS" then
-    let mut toks : Array Nat := #[]
-    line? ← readLine? h
-    while line?.map (·.trim) != some "EMBEDDINGS" do
+    IO.println "[1/5] Parsing header..."
+
+    let mut numLayers : Nat := 0
+    let mut numHeads : Nat := 0
+    let mut modelDim : Nat := 0
+    let mut headDim : Nat := 0
+    let mut hiddenDim : Nat := 0
+    let mut vocabSize : Nat := 0
+    let mut seqLen : Nat := 0
+
+    let mut line? ← readLine? h
+    while true do
       match line? with
-      | none => return .error "Missing EMBEDDINGS section"
+      | none => return .error "Unexpected EOF while reading header"
       | some line =>
-          toks := appendNatsFromLine line toks
+          let t := line.trim
+          if t = "BINARY_START" then
+            break
+          if t.startsWith "num_layers=" then
+            numLayers := (t.drop 11).toNat!
+          else if t.startsWith "num_heads=" then
+            numHeads := (t.drop 10).toNat!
+          else if t.startsWith "model_dim=" then
+            modelDim := (t.drop 10).toNat!
+          else if t.startsWith "head_dim=" then
+            headDim := (t.drop 9).toNat!
+          else if t.startsWith "hidden_dim=" then
+            hiddenDim := (t.drop 11).toNat!
+          else if t.startsWith "vocab_size=" then
+            vocabSize := (t.drop 11).toNat!
+          else if t.startsWith "seq_len=" then
+            seqLen := (t.drop 8).toNat!
           line? ← readLine? h
-    if toks.size != seqLen then
-      return .error s!"TOKENS length mismatch: expected {seqLen}, got {toks.size}"
-    inputTokens := some toks
 
-  IO.println s!"[2/5] Loading input embeddings (seq_len={seqLen}, model_dim={modelDim})..."
+    if modelDim = 0 || numLayers = 0 || numHeads = 0 then
+      return .error s!"Invalid header: modelDim={modelDim}, numLayers={numLayers},         numHeads={numHeads} (all must be > 0)"
+    if headDim = 0 || hiddenDim = 0 || vocabSize = 0 || seqLen = 0 then
+      return .error "Invalid header: headDim/hiddenDim/vocabSize/seqLen must be > 0"
 
-  -- Ensure we are at EMBEDDINGS.
-  line? ← skipUntil h line? (fun s => s.trim = "EMBEDDINGS")
-  if line? = none then
-    return .error "Missing EMBEDDINGS section"
-  -- Consume EMBEDDINGS marker.
-  line? ← readLine? h
+    IO.println s!"[2/5] Loading input tokens + embeddings (seq_len={seqLen}, model_dim={modelDim})..."
 
-  let mut embFloats : Array Float := Array.mkEmpty (seqLen * modelDim)
-  while true do
-    match line? with
-    | none => break
-    | some line =>
-        if line.startsWith "LAYER" then
-          break
-        embFloats := appendFloatsFromLine line embFloats
-        line? ← readLine? h
+    let inputTokens : Array Nat ← readI32Array h seqLen
+    let embFloats ← readFloatArray h (seqLen * modelDim)
+    let inputEmbeddings := buildMatrix seqLen modelDim embFloats.data
 
-  let inputEmbeddings := buildMatrix seqLen modelDim embFloats
-  if inputEmbeddings.numRows != seqLen || inputEmbeddings.numCols != modelDim then
-    return .error s!"Input embeddings dimension mismatch: \
-      expected {seqLen}×{modelDim}, got {inputEmbeddings.numRows}×{inputEmbeddings.numCols}"
+    IO.println s!"[3/5] Loading {numLayers} layers with {numHeads} heads each..."
 
-  IO.println s!"[3/5] Loading {numLayers} layers with {numHeads} heads each..."
+    let mut layers : Array (Array ConcreteAttentionLayer) := #[]
+    let mut attnProjBias : Array ConcreteMatrix := #[]
+    let mut mlps : Array ConcreteMLPLayer := #[]
+    let mut ln1 : Array ConcreteLayerNormParams := #[]
+    let mut ln2 : Array ConcreteLayerNormParams := #[]
 
-  let mut layers : Array (Array ConcreteAttentionLayer) := #[]
-  let mut attnProjBias : Array ConcreteMatrix := #[]
-  let mut mlps : Array ConcreteMLPLayer := #[]
-  let mut ln1 : Array ConcreteLayerNormParams := #[]
-  let mut ln2 : Array ConcreteLayerNormParams := #[]
+    for l in [:numLayers] do
+      IO.println s!"  Loading layer {l}/{numLayers}..."
+      let mut layerHeads : Array ConcreteAttentionLayer := #[]
+      for _h in [:numHeads] do
+        let wq ← readFloatArray h (modelDim * headDim)
+        let bq ← readFloatArray h headDim
+        let wk ← readFloatArray h (modelDim * headDim)
+        let bk ← readFloatArray h headDim
+        let wv ← readFloatArray h (modelDim * headDim)
+        let bv ← readFloatArray h headDim
+        let wo ← readFloatArray h (headDim * modelDim)
+        let head := mkAttentionLayer modelDim headDim wq.data wk.data wv.data wo.data bq.data bk.data bv.data
+        layerHeads := layerHeads.push head
+      layers := layers.push layerHeads
 
-  for l in [:numLayers] do
-    IO.println s!"  Loading layer {l}/{numLayers}..."
-    -- Ensure we are at a LAYER marker.
-    line? ← skipUntil h line? (fun s => s.startsWith "LAYER")
-    if line? = none then
-      return .error s!"Missing LAYER {l} section"
-    line? ← readLine? h
+      let bias ← readFloatArray h modelDim
+      attnProjBias := attnProjBias.push (buildMatrix 1 modelDim bias.data)
 
-    let mut layerHeads : Array ConcreteAttentionLayer := #[]
-    for _h in [:numHeads] do
-      line? ← skipUntil h line? (fun s => s.startsWith "HEAD")
-      if line? = none then
-        return .error s!"Layer {l}: missing HEAD section"
-      line? ← readLine? h
+      let win ← readFloatArray h (modelDim * hiddenDim)
+      let bin ← readFloatArray h hiddenDim
+      let wout ← readFloatArray h (hiddenDim * modelDim)
+      let bout ← readFloatArray h modelDim
+      mlps := mlps.push (mkMLPLayer modelDim hiddenDim win.data wout.data bin.data bout.data)
 
-      line? ← skipUntil h line? (fun s => s.trim = "W_Q")
-      if line? = none then
-        return .error s!"Layer {l}: missing W_Q"
-      line? ← readLine? h
-      let mut wqLines : Array String := #[]
-      while line?.isSome &&
-            !(line?.get!.startsWith "b_Q") &&
-            !(line?.get!.startsWith "W_K") do
-        wqLines := wqLines.push (line?.get!)
-        line? ← readLine? h
-      let tWq := spawnParseFloats wqLines (modelDim * headDim)
-      let mut bqFloats : Array Float := Array.mkEmpty headDim
-      if line?.map (·.trim) = some "b_Q" then
-        line? ← readLine? h
-        let mut bqLines : Array String := #[]
-        while line?.isSome && !(line?.get!.startsWith "W_K") do
-          bqLines := bqLines.push (line?.get!)
-          line? ← readLine? h
-        bqFloats := parseFloatsFromLines bqLines headDim
-
-      if line? = none then
-        return .error s!"Layer {l}: missing W_K"
-      line? ← readLine? h
-      let mut wkLines : Array String := #[]
-      while line?.isSome &&
-            !(line?.get!.startsWith "b_K") &&
-            !(line?.get!.startsWith "W_V") do
-        wkLines := wkLines.push (line?.get!)
-        line? ← readLine? h
-      let tWk := spawnParseFloats wkLines (modelDim * headDim)
-      let mut bkFloats : Array Float := Array.mkEmpty headDim
-      if line?.map (·.trim) = some "b_K" then
-        line? ← readLine? h
-        let mut bkLines : Array String := #[]
-        while line?.isSome && !(line?.get!.startsWith "W_V") do
-          bkLines := bkLines.push (line?.get!)
-          line? ← readLine? h
-        bkFloats := parseFloatsFromLines bkLines headDim
-
-      if line? = none then
-        return .error s!"Layer {l}: missing W_V"
-      line? ← readLine? h
-      let mut wvLines : Array String := #[]
-      while line?.isSome &&
-            !(line?.get!.startsWith "b_V") &&
-            !(line?.get!.startsWith "W_O") do
-        wvLines := wvLines.push (line?.get!)
-        line? ← readLine? h
-      let tWv := spawnParseFloats wvLines (modelDim * headDim)
-      let mut bvFloats : Array Float := Array.mkEmpty headDim
-      if line?.map (·.trim) = some "b_V" then
-        line? ← readLine? h
-        let mut bvLines : Array String := #[]
-        while line?.isSome && !(line?.get!.startsWith "W_O") do
-          bvLines := bvLines.push (line?.get!)
-          line? ← readLine? h
-        bvFloats := parseFloatsFromLines bvLines headDim
-
-      if line? = none then
-        return .error s!"Layer {l}: missing W_O"
-      line? ← readLine? h
-      let mut woLines : Array String := #[]
-      while line?.isSome do
-        let line := line?.get!
-        if line.startsWith "HEAD" || line.startsWith "ATTN_BIAS" || line.startsWith "MLP" then
-          break
-        woLines := woLines.push line
-        line? ← readLine? h
-
-      let tWo := spawnParseFloats woLines (headDim * modelDim)
-
-      let wqFloats := tWq.get
-      let wkFloats := tWk.get
-      let wvFloats := tWv.get
-      let woFloats := tWo.get
-      let head := mkAttentionLayer modelDim headDim wqFloats wkFloats wvFloats woFloats bqFloats bkFloats bvFloats
-      layerHeads := layerHeads.push head
-
-    if layerHeads.size != numHeads then
-      return .error s!"Layer {l}: expected {numHeads} heads, got {layerHeads.size}"
-    layers := layers.push layerHeads
-
-    -- Optional attention projection bias (c_proj.bias), applied once after combining heads.
-    let mut layerAttnBias : ConcreteMatrix := ConcreteMatrix.zeros 1 modelDim
-    if line?.map (·.trim) = some "ATTN_BIAS" then
-      line? ← readLine? h
-      let mut biasLines : Array String := #[]
-      while line?.isSome && (line?.get!.trim != "MLP") do
-        biasLines := biasLines.push (line?.get!)
-        line? ← readLine? h
-      let biasFloats := parseFloatsFromLines biasLines modelDim
-      layerAttnBias := buildMatrix 1 modelDim biasFloats
-    attnProjBias := attnProjBias.push layerAttnBias
-
-    -- MLP section.
-    line? ← skipUntil h line? (fun s => s.trim = "MLP")
-    if line? = none then
-      return .error s!"Layer {l}: missing MLP section"
-    line? ← readLine? h
-
-    line? ← skipUntil h line? (fun s => s.trim = "W_in")
-    if line? = none then
-      return .error s!"Layer {l}: missing W_in"
-    line? ← readLine? h
-    let mut winLines : Array String := #[]
-    while line?.isSome do
-      let line := line?.get!
-      if line.startsWith "W_out" || line.startsWith "b_in" then
-        break
-      winLines := winLines.push line
-      line? ← readLine? h
-
-    if line? = none then
-      return .error s!"Layer {l}: incomplete MLP section after W_in"
-
-    let mut binFloats : Array Float := #[]
-    let mut tWout? : Option (Task (Array Float)) := none
-    let tWin := spawnParseFloats winLines (modelDim * hiddenDim)
-
-    if line?.map (·.trim) = some "b_in" then
-      -- Ordering (2): b_in then W_out.
-      line? ← readLine? h
-      let mut binLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "W_out") do
-        binLines := binLines.push (line?.get!)
-        line? ← readLine? h
-      binFloats := parseFloatsFromLines binLines hiddenDim
-      if line? = none then
-        return .error s!"Layer {l}: missing W_out after b_in"
-      line? ← readLine? h
-      let mut woutLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "b_out") do
-        woutLines := woutLines.push (line?.get!)
-        line? ← readLine? h
-      tWout? := some (spawnParseFloats woutLines (hiddenDim * modelDim))
-    else
-      if line?.map (·.trim) != some "W_out" then
-        return .error s!"Layer {l}: expected W_out or b_in after W_in"
-      line? ← readLine? h
-      let mut woutLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "b_in") do
-        woutLines := woutLines.push (line?.get!)
-        line? ← readLine? h
-      tWout? := some (spawnParseFloats woutLines (hiddenDim * modelDim))
-      if line? = none then
-        return .error s!"Layer {l}: missing b_in after W_out"
-      line? ← readLine? h
-      let mut binLines : Array String := #[]
-      while line?.isSome && !(line?.get!.startsWith "b_out") do
-        binLines := binLines.push (line?.get!)
-        line? ← readLine? h
-      binFloats := parseFloatsFromLines binLines hiddenDim
-
-    -- b_out
-    line? ← skipUntil h line? (fun s => s.startsWith "b_out")
-    if line? = none then
-      return .error s!"Layer {l}: missing b_out"
-    line? ← readLine? h
-    let mut boutLines : Array String := #[]
-    while line?.isSome do
-      let line := line?.get!
-      let stop :=
-        if isV2 then
-          line.startsWith "LN1_GAMMA"
-        else
-          line.startsWith "LAYER" || line.startsWith "UNEMBEDDING"
-      if stop then
-        break
-      boutLines := boutLines.push line
-      line? ← readLine? h
-
-    let winFloats := tWin.get
-    let woutFloats :=
-      match tWout? with
-      | some t => t.get
-      | none => #[]
-    let boutFloats := parseFloatsFromLines boutLines modelDim
-
-    let mlp := mkMLPLayer modelDim hiddenDim winFloats woutFloats binFloats boutFloats
-    mlps := mlps.push mlp
-
-    if isV2 then
-      -- LN1_GAMMA
-      line? ← skipUntil h line? (fun s => s.trim = "LN1_GAMMA")
-      if line? = none then
-        return .error s!"Layer {l}: missing LN1_GAMMA section"
-      line? ← readLine? h
-      let mut ln1GammaFloats : Array Float := #[]
-      while line?.isSome && !(line?.get!.startsWith "LN1_BETA") do
-        ln1GammaFloats := appendFloatsFromLine (line?.get!) ln1GammaFloats
-        line? ← readLine? h
-
-      -- LN1_BETA
-      if line? = none then
-        return .error s!"Layer {l}: missing LN1_BETA section"
-      line? ← readLine? h
-      let mut ln1BetaFloats : Array Float := #[]
-      while line?.isSome && !(line?.get!.startsWith "LN2_GAMMA") do
-        ln1BetaFloats := appendFloatsFromLine (line?.get!) ln1BetaFloats
-        line? ← readLine? h
-
-      -- LN2_GAMMA
-      if line? = none then
-        return .error s!"Layer {l}: missing LN2_GAMMA section"
-      line? ← readLine? h
-      let mut ln2GammaFloats : Array Float := #[]
-      while line?.isSome && !(line?.get!.startsWith "LN2_BETA") do
-        ln2GammaFloats := appendFloatsFromLine (line?.get!) ln2GammaFloats
-        line? ← readLine? h
-
-      -- LN2_BETA
-      if line? = none then
-        return .error s!"Layer {l}: missing LN2_BETA section"
-      line? ← readLine? h
-      let mut ln2BetaFloats : Array Float := #[]
-      while line?.isSome &&
-          !(line?.get!.startsWith "LAYER") &&
-          !(line?.get!.startsWith "LN_F_GAMMA") do
-        ln2BetaFloats := appendFloatsFromLine (line?.get!) ln2BetaFloats
-        line? ← readLine? h
-
-      let ln1Params : ConcreteLayerNormParams := {
-        gamma := buildMatrix 1 modelDim ln1GammaFloats
-        beta := buildMatrix 1 modelDim ln1BetaFloats
+      let ln1Gamma ← readFloatArray h modelDim
+      let ln1Beta ← readFloatArray h modelDim
+      ln1 := ln1.push {
+        gamma := buildMatrix 1 modelDim ln1Gamma.data
+        beta := buildMatrix 1 modelDim ln1Beta.data
       }
-      let ln2Params : ConcreteLayerNormParams := {
-        gamma := buildMatrix 1 modelDim ln2GammaFloats
-        beta := buildMatrix 1 modelDim ln2BetaFloats
+
+      let ln2Gamma ← readFloatArray h modelDim
+      let ln2Beta ← readFloatArray h modelDim
+      ln2 := ln2.push {
+        gamma := buildMatrix 1 modelDim ln2Gamma.data
+        beta := buildMatrix 1 modelDim ln2Beta.data
       }
-      ln1 := ln1.push ln1Params
-      ln2 := ln2.push ln2Params
-    else
-      ln1 := ln1.push (ConcreteLayerNormParams.identity modelDim)
-      ln2 := ln2.push (ConcreteLayerNormParams.identity modelDim)
 
-  IO.println "[4/5] Loading unembedding matrix..."
+    IO.println "[4/5] Loading final layernorm + unembedding..."
 
-  let mut lnf : ConcreteLayerNormParams := ConcreteLayerNormParams.identity modelDim
-  if isV2 then
-    line? ← skipUntil h line? (fun s => s.trim = "LN_F_GAMMA")
-    if line? = none then
-      return .error "Missing LN_F_GAMMA section"
-    line? ← readLine? h
-    let mut lnfGammaFloats : Array Float := #[]
-    while line?.isSome && !(line?.get!.startsWith "LN_F_BETA") do
-      lnfGammaFloats := appendFloatsFromLine (line?.get!) lnfGammaFloats
-      line? ← readLine? h
-
-    if line? = none then
-      return .error "Missing LN_F_BETA section"
-    line? ← readLine? h
-    let mut lnfBetaFloats : Array Float := #[]
-    while line?.isSome && !(line?.get!.startsWith "UNEMBEDDING") do
-      lnfBetaFloats := appendFloatsFromLine (line?.get!) lnfBetaFloats
-      line? ← readLine? h
-
-    lnf := {
-      gamma := buildMatrix 1 modelDim lnfGammaFloats
-      beta := buildMatrix 1 modelDim lnfBetaFloats
+    let lnfGamma ← readFloatArray h modelDim
+    let lnfBeta ← readFloatArray h modelDim
+    let lnf := {
+      gamma := buildMatrix 1 modelDim lnfGamma.data
+      beta := buildMatrix 1 modelDim lnfBeta.data
     }
 
-  line? ← skipUntil h line? (fun s => s.trim = "UNEMBEDDING")
-  if line? = none then
-    return .error "Missing UNEMBEDDING section"
-  line? ← readLine? h
-  let mut unembFloats : Array Float := Array.mkEmpty (modelDim * vocabSize)
-  while true do
-    match line? with
-    | none => break
-    | some line =>
-        unembFloats := appendFloatsFromLine line unembFloats
-        line? ← readLine? h
+    let unembFloats ← readFloatArray h (modelDim * vocabSize)
+    let unembedding := buildMatrix modelDim vocabSize unembFloats.data
 
-  let unembedding := buildMatrix modelDim vocabSize unembFloats
+    let model : ConcreteModel := {
+      numLayers := numLayers
+      layers := layers
+      attnProjBias := attnProjBias
+      mlps := mlps
+      ln1 := ln1
+      ln2 := ln2
+      lnf := lnf
+      seqLen := seqLen
+      inputTokens := some inputTokens
+      inputEmbeddings := inputEmbeddings
+      unembedding := some unembedding
+    }
 
-  let model : ConcreteModel := {
-    numLayers := numLayers
-    layers := layers
-    attnProjBias := attnProjBias
-    mlps := mlps
-    ln1 := ln1
-    ln2 := ln2
-    lnf := lnf
-    seqLen := seqLen
-    inputTokens := inputTokens
-    inputEmbeddings := inputEmbeddings
-    unembedding := some unembedding
-  }
-
-  IO.println "[5/5] Model loaded successfully!\n"
-  return .ok model
-
+    IO.println "[5/5] Model loaded successfully!
+"
+    return .ok model
+  catch e =>
+    return .error s!"Binary load failed: {e}"
 /-! ## File IO Operations -/
 
-/-- Load a model from a file path. Supports .nfpt (text) format. -/
+/-- Load a model from a file path. Supports .nfpt (binary) format. -/
 def loadModel (path : System.FilePath) : IO LoadResult := do
   if path.extension = some "nfpt" then
     IO.FS.withFile path .read fun h =>
-      loadFromTextHandle h
+      loadBinary h
   else
     return .error s!"Unsupported file format: {path.extension.getD "unknown"}"
 

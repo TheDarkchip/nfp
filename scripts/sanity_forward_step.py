@@ -30,26 +30,33 @@ except ImportError as e:
 
 
 def parse_tokens_from_nfpt(path: Path) -> list[int]:
-    lines = path.read_text().splitlines()
-    try:
-        tok_i = lines.index("TOKENS")
-    except ValueError:
-        raise SystemExit("No TOKENS section found (required for sanity check).")
-    try:
-        emb_i = lines.index("EMBEDDINGS")
-    except ValueError:
-        raise SystemExit("No EMBEDDINGS section found.")
-    toks: list[int] = []
-    for line in lines[tok_i + 1 : emb_i]:
-        line = line.strip()
-        if not line:
-            continue
-        toks.extend(int(x) for x in line.split())
-    return toks
+    with path.open("rb") as f:
+        magic = None
+        header: dict[str, int] = {}
+        while True:
+            line = f.readline()
+            if line == b"":
+                raise SystemExit("Unexpected EOF while reading header.")
+            text = line.decode("ascii").rstrip("\n")
+            if magic is None:
+                magic = text.strip()
+            if text.strip() == "BINARY_START":
+                break
+            if "=" in text:
+                key, value = text.split("=", 1)
+                header[key.strip()] = int(value.strip())
 
+        if magic != "NFP_BINARY_V1":
+            raise SystemExit(f"Unsupported magic header: {magic}")
+        if "seq_len" not in header:
+            raise SystemExit("Missing seq_len in header.")
 
-def has_attn_bias(path: Path) -> bool:
-    return "ATTN_BIAS" in path.read_text()
+        seq_len = header["seq_len"]
+        raw = f.read(seq_len * 4)
+        if len(raw) != seq_len * 4:
+            raise SystemExit("Unexpected EOF while reading TOKENS section.")
+        toks = np.frombuffer(raw, dtype="<i4").astype(np.int64, copy=False)
+        return toks.tolist()
 
 
 def run_lean_dump(model_path: Path, layer: int, pos: int, take: int) -> np.ndarray:
@@ -110,12 +117,6 @@ def main() -> None:
 
     if not args.model.exists():
         raise SystemExit(f"Missing file: {args.model}")
-    if not has_attn_bias(args.model):
-        raise SystemExit(
-            "This `.nfpt` appears to be missing ATTENTION biases (ATTN_BIAS).\n"
-            "Re-export with the updated exporter."
-        )
-
     tokens = parse_tokens_from_nfpt(args.model)
     if len(tokens) == 0:
         raise SystemExit("No tokens parsed from TOKENS section.")

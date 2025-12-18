@@ -31,19 +31,27 @@ except ImportError as e:
     )
 
 
-def write_matrix(f, m: np.ndarray) -> None:
-    for row in m:
-        f.write(" ".join(f"{float(x):.9g}" for x in row) + "\n")
+def write_header(f, **fields: int) -> None:
+    f.write(b"NFP_BINARY_V1\n")
+    for key, value in fields.items():
+        f.write(f"{key}={value}\n".encode("ascii"))
+    f.write(b"BINARY_START\n")
 
 
-def write_vector(f, v: np.ndarray) -> None:
-    f.write(" ".join(f"{float(x):.9g}" for x in v.reshape(-1)) + "\n")
+def write_i32(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<i4")
+    f.write(arr.tobytes(order="C"))
 
 
-def write_tokens(f, t: np.ndarray) -> None:
-    s = [str(int(x)) for x in t.reshape(-1)]
-    for i in range(0, len(s), 64):
-        f.write(" ".join(s[i : i + 64]) + "\n")
+def write_f64(f, data: np.ndarray) -> None:
+    arr = np.ascontiguousarray(data, dtype="<f8")
+    f.write(arr.tobytes(order="C"))
+
+
+def get_bias(param, size: int) -> np.ndarray:
+    if param is None:
+        return np.zeros(size, dtype=np.float64)
+    return param.detach().cpu().numpy()
 
 
 def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
@@ -63,29 +71,28 @@ def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
     wpe = model.wpe.weight.detach().cpu().numpy()
     embeddings = wte[tokens] + wpe[:seq_len]
 
-    with out_path.open("w") as f:
-        f.write("NFP_TEXT_V2\n")
-        f.write(f"num_layers={num_layers}\n")
-        f.write(f"num_heads={num_heads}\n")
-        f.write(f"model_dim={model_dim}\n")
-        f.write(f"head_dim={head_dim}\n")
-        f.write(f"hidden_dim={hidden_dim}\n")
-        f.write(f"vocab_size={vocab_size}\n")
-        f.write(f"seq_len={seq_len}\n\n")
+    with out_path.open("wb") as f:
+        write_header(
+            f,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            model_dim=model_dim,
+            head_dim=head_dim,
+            hidden_dim=hidden_dim,
+            vocab_size=vocab_size,
+            seq_len=seq_len,
+        )
 
-        f.write("TOKENS\n")
-        write_tokens(f, tokens)
-        f.write("\nEMBEDDINGS\n")
-        write_matrix(f, embeddings)
+        write_i32(f, tokens)
+        write_f64(f, embeddings)
 
         for layer_idx in range(num_layers):
             block = model.h[layer_idx]
-            f.write(f"LAYER {layer_idx}\n")
 
             c_attn_w = block.attn.c_attn.weight.detach().cpu().numpy()  # (d, 3d)
-            c_attn_b = block.attn.c_attn.bias.detach().cpu().numpy()  # (3d,)
+            c_attn_b = get_bias(block.attn.c_attn.bias, 3 * model_dim)  # (3d,)
             c_proj_w = block.attn.c_proj.weight.detach().cpu().numpy()  # (d, d)
-            c_proj_b = block.attn.c_proj.bias.detach().cpu().numpy()  # (d,)
+            c_proj_b = get_bias(block.attn.c_proj.bias, model_dim)  # (d,)
 
             W_Q_all = c_attn_w[:, 0:model_dim]
             W_K_all = c_attn_w[:, model_dim : 2 * model_dim]
@@ -96,50 +103,29 @@ def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
 
             for h in range(num_heads):
                 start, end = h * head_dim, (h + 1) * head_dim
-                f.write(f"HEAD {h}\n")
-                f.write("W_Q\n")
-                write_matrix(f, W_Q_all[:, start:end])
-                f.write("b_Q\n")
-                write_vector(f, b_Q_all[start:end])
-                f.write("W_K\n")
-                write_matrix(f, W_K_all[:, start:end])
-                f.write("b_K\n")
-                write_vector(f, b_K_all[start:end])
-                f.write("W_V\n")
-                write_matrix(f, W_V_all[:, start:end])
-                f.write("b_V\n")
-                write_vector(f, b_V_all[start:end])
-                f.write("W_O\n")
-                write_matrix(f, c_proj_w[start:end, :])
+                write_f64(f, W_Q_all[:, start:end])
+                write_f64(f, b_Q_all[start:end])
+                write_f64(f, W_K_all[:, start:end])
+                write_f64(f, b_K_all[start:end])
+                write_f64(f, W_V_all[:, start:end])
+                write_f64(f, b_V_all[start:end])
+                write_f64(f, c_proj_w[start:end, :])
 
-            f.write("ATTN_BIAS\n")
-            write_vector(f, c_proj_b)
+            write_f64(f, c_proj_b)
 
-            f.write("MLP\n")
-            f.write("W_in\n")
-            write_matrix(f, block.mlp.c_fc.weight.detach().cpu().numpy())
-            f.write("b_in\n")
-            write_vector(f, block.mlp.c_fc.bias.detach().cpu().numpy())
-            f.write("W_out\n")
-            write_matrix(f, block.mlp.c_proj.weight.detach().cpu().numpy())
-            f.write("b_out\n")
-            write_vector(f, block.mlp.c_proj.bias.detach().cpu().numpy())
+            write_f64(f, block.mlp.c_fc.weight.detach().cpu().numpy())
+            write_f64(f, get_bias(block.mlp.c_fc.bias, hidden_dim))
+            write_f64(f, block.mlp.c_proj.weight.detach().cpu().numpy())
+            write_f64(f, get_bias(block.mlp.c_proj.bias, model_dim))
 
-            f.write("LN1_GAMMA\n")
-            write_vector(f, block.ln_1.weight.detach().cpu().numpy())
-            f.write("LN1_BETA\n")
-            write_vector(f, block.ln_1.bias.detach().cpu().numpy())
-            f.write("LN2_GAMMA\n")
-            write_vector(f, block.ln_2.weight.detach().cpu().numpy())
-            f.write("LN2_BETA\n")
-            write_vector(f, block.ln_2.bias.detach().cpu().numpy())
+            write_f64(f, block.ln_1.weight.detach().cpu().numpy())
+            write_f64(f, get_bias(block.ln_1.bias, model_dim))
+            write_f64(f, block.ln_2.weight.detach().cpu().numpy())
+            write_f64(f, get_bias(block.ln_2.bias, model_dim))
 
-        f.write("LN_F_GAMMA\n")
-        write_vector(f, model.ln_f.weight.detach().cpu().numpy())
-        f.write("LN_F_BETA\n")
-        write_vector(f, model.ln_f.bias.detach().cpu().numpy())
-        f.write("UNEMBEDDING\n")
-        write_matrix(f, wte.T)
+        write_f64(f, model.ln_f.weight.detach().cpu().numpy())
+        write_f64(f, get_bias(model.ln_f.bias, model_dim))
+        write_f64(f, wte.T)
 
     return tokens
 
@@ -215,4 +201,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

@@ -123,8 +123,17 @@ This is used to decide whether `nfp certify --delta ...` can default to using th
 its own input source (so users don't have to pass `--input model.nfpt`). -/
 private def hasEmbeddingsBeforeLayers (path : System.FilePath) : IO Bool := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
-  -- Header: read until blank line.
+  let line ← h.getLine
+  if line.isEmpty then
+    return false
+  let s := line.trim
+  if s = "NFP_BINARY_V1" then
+    return true
+
+  -- Header: read until blank line (text format only).
   let mut seenHeader : Bool := false
+  if s.startsWith "NFP_TEXT" then
+    seenHeader := true
   while true do
     let line ← h.getLine
     if line.isEmpty then
