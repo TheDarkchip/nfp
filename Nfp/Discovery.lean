@@ -594,6 +594,9 @@ cannot increase the returned upper bound (up to tiny Float noise).
 structure BoundEffort where
   /-- Maximum Gram dimension allowed for materializing a (signed) Gram matrix. -/
   maxGramDim : Nat := 256
+  /-- Deterministic cost guard for materializing a `k×k` signed Gram matrix, measured as
+  `k*k*max(m,n)` where `m×n` is the matrix size and `k = min(m,n)`. -/
+  gramCostLimit : Nat := 200000000
   /-- Allow the absolute-Gram fallback (no materialized Gram). -/
   enableAbsGram : Bool := true
   /-- Allow materializing a signed Gram matrix when `gramDim ≤ maxGramDim`. -/
@@ -606,15 +609,27 @@ namespace BoundEffort
 
 /-- Tier-0: cheap bounds only. -/
 def tier0 : BoundEffort :=
-  { maxGramDim := 0, enableAbsGram := false, enableSignedGram := false, enableMoment := false }
+  { maxGramDim := 0
+    gramCostLimit := 0
+    enableAbsGram := false
+    enableSignedGram := false
+    enableMoment := false }
 
 /-- Tier-1: enable abs-Gram fallback; keep default signed-Gram cap. -/
 def tier1 : BoundEffort :=
-  { maxGramDim := 256, enableAbsGram := true, enableSignedGram := true, enableMoment := true }
+  { maxGramDim := 256
+    gramCostLimit := 200000000
+    enableAbsGram := true
+    enableSignedGram := true
+    enableMoment := true }
 
 /-- Tier-2: allow larger signed-Gram (may be expensive). -/
 def tier2 : BoundEffort :=
-  { maxGramDim := 768, enableAbsGram := true, enableSignedGram := true, enableMoment := true }
+  { maxGramDim := 768
+    gramCostLimit := 2000000000
+    enableAbsGram := true
+    enableSignedGram := true
+    enableMoment := true }
 
 /-- Tier-3: placeholder for future rigorous tightenings (currently same as tier2). -/
 def tier3 : BoundEffort := tier2
@@ -825,7 +840,7 @@ def opNormUpperBoundRectGramDiagEffort (A : ConcreteMatrix) (effort : BoundEffor
   let m := A.numRows
   let n := A.numCols
   let k := min m n
-  let costLimit : Nat := 200000000
+  let costLimit : Nat := effort.gramCostLimit
   let cost : Nat := k * k * (max m n)
 
   if k = 0 then
@@ -2961,6 +2976,27 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
         sq := sq.set! k (sq[k]! + w * w)
     (out, sq)
 
+  /-
+  Token-wise Frobenius scaling can be strictly tighter than using the coordinatewise maxima `dMax`:
+  the vector `dMax` may not be realized by any single token, but the MLP Jacobian is block-diagonal
+  across tokens, so `‖J‖₂ = max_token ‖J_token‖₂`.
+  -/
+  let (winScaledFrobTokMax, woutScaledFrobTokMax) : (Float × Float) := Id.run do
+    let mut winMaxSq : Float := 0.0
+    let mut woutMaxSq : Float := 0.0
+    for i in [:rows] do
+      let base := i * h
+      let mut winSq : Float := 0.0
+      let mut woutSq : Float := 0.0
+      for k in [:h] do
+        let a := Float.abs (geluDeriv.data[base + k]!)
+        let aa := a * a
+        winSq := winSq + aa * winColSqSum[k]!
+        woutSq := woutSq + aa * woutRowSqSum[k]!
+      winMaxSq := max winMaxSq winSq
+      woutMaxSq := max woutMaxSq woutSq
+    (Float.sqrt (max 0.0 winMaxSq), Float.sqrt (max 0.0 woutMaxSq))
+
   -- Fast candidates that exploit the full per-unit maxima `dMax[k]` (not just `max_k dMax[k]`):
   --
   --   ‖W_in·diag(d)·W_out‖₂ ≤ ‖W_in·diag(dMax)‖₂ · ‖W_out‖₂
@@ -2978,18 +3014,8 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
     for k in [:h] do
       m := max m (dMax[k]! * sOut[k]!)
     m
-  let winScaledFrob : Float := Id.run do
-    let mut s : Float := 0.0
-    for k in [:h] do
-      let dk := dMax[k]!
-      s := s + (dk * dk) * winColSqSum[k]!
-    Float.sqrt (max 0.0 s)
-  let woutScaledFrob : Float := Id.run do
-    let mut s : Float := 0.0
-    for k in [:h] do
-      let dk := dMax[k]!
-      s := s + (dk * dk) * woutRowSqSum[k]!
-    Float.sqrt (max 0.0 s)
+  let winScaledFrob : Float := winScaledFrobTokMax
+  let woutScaledFrob : Float := woutScaledFrobTokMax
 
   -- ‖J‖∞ upper bound via row sums.
   let (boundInf, maxWinRowScaled) : (Float × Float) := Id.run do
@@ -3209,6 +3235,22 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
         sq := sq.set! k (sq[k]! + w * w)
     (out, sq)
 
+  let (winScaledFrobTokMax, woutScaledFrobTokMax) : (Float × Float) := Id.run do
+    let mut winMaxSq : Float := 0.0
+    let mut woutMaxSq : Float := 0.0
+    for i in [:rows] do
+      let base := i * h
+      let mut winSq : Float := 0.0
+      let mut woutSq : Float := 0.0
+      for k in [:h] do
+        let a := Float.abs (geluDeriv.data[base + k]!)
+        let aa := a * a
+        winSq := winSq + aa * winColSqSum[k]!
+        woutSq := woutSq + aa * woutRowSqSum[k]!
+      winMaxSq := max winMaxSq winSq
+      woutMaxSq := max woutMaxSq woutSq
+    (Float.sqrt (max 0.0 winMaxSq), Float.sqrt (max 0.0 woutMaxSq))
+
   -- ‖J‖∞ upper bound via row sums.
   let boundInf : Float := Id.run do
     let mut maxRow : Float := 0.0
@@ -3238,18 +3280,8 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
 
   let absSchur : Float := Float.sqrt (max 0.0 (boundInf * boundOne))
 
-  let winScaledFrob : Float := Id.run do
-    let mut s : Float := 0.0
-    for k in [:h] do
-      let dk := dMax[k]!
-      s := s + (dk * dk) * winColSqSum[k]!
-    Float.sqrt (max 0.0 s)
-  let woutScaledFrob : Float := Id.run do
-    let mut s : Float := 0.0
-    for k in [:h] do
-      let dk := dMax[k]!
-      s := s + (dk * dk) * woutRowSqSum[k]!
-    Float.sqrt (max 0.0 s)
+  let winScaledFrob : Float := winScaledFrobTokMax
+  let woutScaledFrob : Float := woutScaledFrobTokMax
 
   let maxWinScaledCol : Float := Id.run do
     let mut m : Float := 0.0
@@ -3367,6 +3399,16 @@ structure PatternTermBoundInputs where
   attention : ConcreteAttentionWeights
   /-- Input embedding norm (‖X‖_F) -/
   inputNorm : Float
+  /-- Input embedding operator-norm upper bound (‖X‖₂), used for tighter pattern-term bounds. -/
+  inputOpBound : Float
+  /-- Optional direct Frobenius norm bound for Q = X·W_Q + b_Q, if available. -/
+  qFrobBound : Float := 0.0
+  /-- Optional direct Frobenius norm bound for K = X·W_K + b_K, if available. -/
+  kFrobBound : Float := 0.0
+  /-- Optional direct operator-norm bound for Q = X·W_Q + b_Q, if available. -/
+  qOpBoundAct : Float := 0.0
+  /-- Optional direct operator-norm bound for K = X·W_K + b_K, if available. -/
+  kOpBoundAct : Float := 0.0
   /-- Scaling factor (√d_head) -/
   scaleFactor : Float
   /-- Deterministic Float upper bound on ‖W_Q‖₂. -/
@@ -3411,17 +3453,51 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
   let softmaxBound := min inputs.attention.softmaxJacobianOpEst 0.5
   let n := inputs.attention.seqLen
   let sqrtN := Float.sqrt n.toFloat
-  -- Bias-aware Frobenius upper bounds on the concrete Q/K/V activations:
-  --   Q = X·W_Q + 1·b_Q, so ‖Q‖_F ≤ ‖X‖_F‖W_Q‖₂ + √n·‖b_Q‖₂ (and similarly for K, V).
-  let qFrobUb := inputs.inputNorm * inputs.wqOpBound + sqrtN * inputs.bqFrob
-  let kFrobUb := inputs.inputNorm * inputs.wkOpBound + sqrtN * inputs.bkFrob
+  -- Bias-aware Frobenius upper bounds on the concrete Q/K/V activations.
+  -- If the caller provides direct (data-dependent) bounds on ‖Q‖_F or ‖K‖_F, we
+  -- take the minimum (still a rigorous upper bound in exact ℝ arithmetic).
+  let qFrobUb0 := inputs.inputNorm * inputs.wqOpBound + sqrtN * inputs.bqFrob
+  let kFrobUb0 := inputs.inputNorm * inputs.wkOpBound + sqrtN * inputs.bkFrob
+  let qFrobUb :=
+    if inputs.qFrobBound ≤ 0.0 || Float.isNaN inputs.qFrobBound || Float.isInf inputs.qFrobBound then
+      qFrobUb0
+    else
+      min qFrobUb0 inputs.qFrobBound
+  let kFrobUb :=
+    if inputs.kFrobBound ≤ 0.0 || Float.isNaN inputs.kFrobBound || Float.isInf inputs.kFrobBound then
+      kFrobUb0
+    else
+      min kFrobUb0 inputs.kFrobBound
   let vFrobUb := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  -- Bias-aware operator-norm upper bounds on Q/K/V:
+  --   ‖X·W_Q + 1·b_Q‖₂ ≤ ‖X‖₂‖W_Q‖₂ + √n·‖b_Q‖₂.
+  let qOpUb0 := inputs.inputOpBound * inputs.wqOpBound + sqrtN * inputs.bqFrob
+  let kOpUb0 := inputs.inputOpBound * inputs.wkOpBound + sqrtN * inputs.bkFrob
+  let qOpUb :=
+    if inputs.qOpBoundAct ≤ 0.0 || Float.isNaN inputs.qOpBoundAct || Float.isInf inputs.qOpBoundAct then
+      qOpUb0
+    else
+      min qOpUb0 inputs.qOpBoundAct
+  let kOpUb :=
+    if inputs.kOpBoundAct ≤ 0.0 || Float.isNaN inputs.kOpBoundAct || Float.isInf inputs.kOpBoundAct then
+      kOpUb0
+    else
+      min kOpUb0 inputs.kOpBoundAct
+  let vOpUb := inputs.inputOpBound * inputs.wvOpBound + sqrtN * inputs.bvFrob
   -- Logits sensitivity:
   --   dS = (dQ)Kᵀ + Q(dK)ᵀ, with ‖dQ‖_F ≤ ‖dX‖_F‖W_Q‖₂ and ‖dK‖_F ≤ ‖dX‖_F‖W_K‖₂.
-  let sCoeff := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
-  -- Pattern term: dA·V·W_O, with ‖dA‖_F ≤ ‖J_softmax‖₂‖dS‖_F and
-  -- ‖dA·V·W_O‖_F ≤ ‖dA‖_F‖V‖_F‖W_O‖₂.
-  (softmaxBound * sCoeff) * vFrobUb * inputs.woOpBound
+  let sCoeffFrob := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
+  let sCoeffOp := (inputs.wqOpBound * kOpUb + inputs.wkOpBound * qOpUb) / inputs.scaleFactor
+  -- Two rigorous candidates:
+  -- (A) Frobenius-style activation bounds:
+  --   ‖dA·V·W_O‖_F ≤ ‖dA‖_F‖V‖_F‖W_O‖₂.
+  let candFrob := (softmaxBound * sCoeffFrob) * vFrobUb * inputs.woOpBound
+  -- (B) Operator-style activation bounds (often much tighter):
+  --   ‖dS‖_F ≤ ‖dX‖_F · (‖W_Q‖₂‖K‖₂ + ‖W_K‖₂‖Q‖₂)/scale,
+  --   ‖dA·V‖_F ≤ ‖dA‖_F‖V‖₂,
+  -- so ‖dA·V·W_O‖_F ≤ ‖J_softmax‖₂‖dS‖_F‖V‖₂‖W_O‖₂.
+  let candOp := (softmaxBound * sCoeffOp) * vOpUb * inputs.woOpBound
+  min candFrob candOp
 
 /-- Bound ‖patternTerm‖_F using the old pessimistic constant bound.
 
@@ -4047,6 +4123,7 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
     -- Attention pattern/value bounds are computed at the Pre-LN attention input.
     let attnInput := model.applyLn1 layerIdx x
     let inputNorm := attnInput.frobeniusNorm
+    let inputOpBound := attnInput.opNormUpperBoundOneInf
 
     -- Sum contributions from all heads in this layer
     for hidx in [:heads.size] do
@@ -4110,6 +4187,7 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
         let inputs : PatternTermBoundInputs := {
           attention := attn
           inputNorm := inputNorm
+          inputOpBound := inputOpBound
           scaleFactor := scaleFactor
           wqOpBound := bnds.wqOpGram
           wkOpBound := bnds.wkOpGram
@@ -4165,6 +4243,7 @@ def estimateAttentionLayerNormHeuristicPI (model : ConcreteModel) (fwdResult : F
     let ln2Bound := model.ln2OpBound layerIdx y
     let attnInput := model.applyLn1 layerIdx x
     let inputNorm := attnInput.frobeniusNorm
+    let inputOpBound := attnInput.opNormUpperBoundOneInf
 
     for hidx in [:heads.size] do
       if hh : hidx < heads.size then
@@ -4322,6 +4401,16 @@ structure PrecomputedHeadData where
   wvGram : ConcreteMatrix
   /-- Input norm ‖X‖_F for this layer -/
   inputNorm : Float
+  /-- Operator-norm upper bound ‖X‖₂ for this layer input (computed via 1/∞). -/
+  inputOpBound : Float
+  /-- Direct (data-dependent) Frobenius norm of `Q = X·W_Q + b_Q` for this head. -/
+  qFrobBound : Float
+  /-- Direct (data-dependent) Frobenius norm of `K = X·W_K + b_K` for this head. -/
+  kFrobBound : Float
+  /-- Direct (data-dependent) operator-norm upper bound on `Q` (computed via a small Gram). -/
+  qOpBoundAct : Float
+  /-- Direct (data-dependent) operator-norm upper bound on `K` (computed via a small Gram). -/
+  kOpBoundAct : Float
   /-- Operator-norm bound for ln_1 Jacobian at this layer input. -/
   ln1OpBound : Float
   /-- Scaling factor √d_head -/
@@ -4437,7 +4526,7 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
   let y := fwd.getPostAttnResidual layerIdx
   let ln2Bound := model.ln2OpBound layerIdx y
   let layerData := cache.headData.getD layerIdx #[]
-  let mut norm : Float := 0.0
+  let mut attnPart : Float := 0.0
   for d in layerData do
     let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
     let attnOpUb : Float := min attnFrob d.attentionOneInfBound
@@ -4445,6 +4534,11 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
     let inputs : PatternTermBoundInputs := {
       attention := d.attention
       inputNorm := d.inputNorm
+      inputOpBound := d.inputOpBound
+      qFrobBound := d.qFrobBound
+      kFrobBound := d.kFrobBound
+      qOpBoundAct := d.qOpBoundAct
+      kOpBoundAct := d.kOpBoundAct
       scaleFactor := d.scaleFactor
       wqOpBound := d.wqOpGram
       wkOpBound := d.wkOpGram
@@ -4455,7 +4549,7 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
       bvFrob := d.bvFrob
     }
     let patternTermUb : Float := computePatternTermBound inputs
-    norm := norm + d.ln1OpBound * (valueTermUb + patternTermUb)
+    attnPart := attnPart + d.ln1OpBound * (valueTermUb + patternTermUb)
 
   if hm : layerIdx < model.mlps.size then
     let mlp := model.mlps[layerIdx]'hm
@@ -4470,9 +4564,10 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
         let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
         let dAct := hidden.map geluDerivFloat
         computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winUb woutUb
-    norm := norm + ln2Bound * mlpUb
-
-  return norm
+    let mlpPart := ln2Bound * mlpUb
+    return attnPart + (1.0 + attnPart) * mlpPart
+  else
+    return attnPart
 
 /-- Compute all per-layer residual Jacobian upper bounds `C_l` under a uniform effort tier. -/
 def computeLayerNormBounds (cache : PrecomputedCache)
@@ -4507,152 +4602,175 @@ This precomputes all attention patterns, projections, and norms once.
     let layerInput := fwdResult.getLayerInput l
     let attnInput := model.applyLn1 l layerInput
     let inputNorm := computeInputNorm attnInput
+    -- Use a Gram-based bound here (tier-controlled) because the cheap 1/∞ estimate can be
+    -- extremely loose on dense `seqLen×modelDim` matrices and will not meaningfully tighten
+    -- the attention pattern-term bounds.
+    let inputOpBound := attnInput.opNormUpperBoundRectGramEffort layerNormEffort
     let ln1Bound := model.ln1OpBound l layerInput
 
     let layerHeadData : Array PrecomputedHeadData :=
       if h : l < model.layers.size then
-      let heads := model.layers[l]'h
-      let computeHead (hIdx : Nat) (head : ConcreteAttentionLayer) : PrecomputedHeadData := Id.run do
-        let attn := head.computeAttentionWeights attnInput causal
-        let softmaxDiag := attn.softmaxJacobianOpDiag
-        let softmaxOpBound := min softmaxDiag.opBound 0.5
-        let n := attn.seqLen
-        let mut attnFrobNormSq : Float := 0.0
-        let mut maxRowAbsSum : Float := 0.0
-        let mut colAbsSums : Array Float := Array.replicate n 0.0
-        for q in [:n] do
-          let rowBase := q * n
-          let mut rowAbsSum : Float := 0.0
+        let heads := model.layers[l]'h
+        let computeHead (hIdx : Nat) (head : ConcreteAttentionLayer) : PrecomputedHeadData := Id.run do
+          -- Compute Q/K once (needed for attention weights), and also cache tight, data-dependent
+          -- bounds on their norms for use in pattern-term bounds.
+          let queries := (attnInput.matmul head.W_Q).addBias head.b_Q
+          let keys := (attnInput.matmul head.W_K).addBias head.b_K
+          let scaleFactor := Float.sqrt head.headDim.toFloat
+          let attn := ConcreteAttentionWeights.compute queries keys scaleFactor attnInput.numRows causal
+          let qFrobBound : Float := queries.frobeniusNorm
+          let kFrobBound : Float := keys.frobeniusNorm
+          let smallEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1
+          let qOpBoundAct : Float := queries.opNormUpperBoundRectGramEffort smallEffort
+          let kOpBoundAct : Float := keys.opNormUpperBoundRectGramEffort smallEffort
+          let softmaxDiag := attn.softmaxJacobianOpDiag
+          let softmaxOpBound := min softmaxDiag.opBound 0.5
+          let n := attn.seqLen
+          let mut attnFrobNormSq : Float := 0.0
+          let mut maxRowAbsSum : Float := 0.0
+          let mut colAbsSums : Array Float := Array.replicate n 0.0
+          for q in [:n] do
+            let rowBase := q * n
+            let mut rowAbsSum : Float := 0.0
+            for k in [:n] do
+              let w := attn.weights[rowBase + k]!
+              attnFrobNormSq := attnFrobNormSq + w * w
+              let a := Float.abs w
+              rowAbsSum := rowAbsSum + a
+              colAbsSums := colAbsSums.set! k (colAbsSums[k]! + a)
+            if rowAbsSum > maxRowAbsSum then
+              maxRowAbsSum := rowAbsSum
+          let mut maxColAbsSum : Float := 0.0
           for k in [:n] do
-            let w := attn.weights[rowBase + k]!
-            attnFrobNormSq := attnFrobNormSq + w * w
-            let a := Float.abs w
-            rowAbsSum := rowAbsSum + a
-            colAbsSums := colAbsSums.set! k (colAbsSums[k]! + a)
-          if rowAbsSum > maxRowAbsSum then
-            maxRowAbsSum := rowAbsSum
-        let mut maxColAbsSum : Float := 0.0
-        for k in [:n] do
-          let s := colAbsSums[k]!
-          if s > maxColAbsSum then
-            maxColAbsSum := s
-        let attnOneInf : Float := Float.sqrt (max 0.0 (maxRowAbsSum * maxColAbsSum))
+            let s := colAbsSums[k]!
+            if s > maxColAbsSum then
+              maxColAbsSum := s
+          let attnOneInf : Float := Float.sqrt (max 0.0 (maxRowAbsSum * maxColAbsSum))
 
-        let prevTokenStrength : Float :=
-          if attn.seqLen < 2 then
-            0.0
-          else
-            Id.run do
-              let n := attn.seqLen
-              let w := attn.weights
-              let mut sum : Float := 0.0
-              for i in [:n - 1] do
-                sum := sum + w[(i + 1) * n + i]!
-              return sum / (n - 1).toFloat
+          let prevTokenStrength : Float :=
+            if attn.seqLen < 2 then
+              0.0
+            else
+              Id.run do
+                let n := attn.seqLen
+                let w := attn.weights
+                let mut sum : Float := 0.0
+                for i in [:n - 1] do
+                  sum := sum + w[(i + 1) * n + i]!
+                return sum / (n - 1).toFloat
 
-        -- No-dense scalar bounds: avoid allocating per-head `modelDim×modelDim` products.
-        let bnds := head.noDenseProductBounds
-        let wqGram := bnds.wqGram
-        let wvGram := bnds.wvGram
-        let qkNorm := bnds.qkDenseFrob
-        let voNorm := bnds.voDenseFrob
-        let qkOpBound := bnds.qkOpBound
-        let voOpBound := bnds.voOpBound
+          -- No-dense scalar bounds: avoid allocating per-head `modelDim×modelDim` products.
+          let bnds := head.noDenseProductBounds
+          let wqGram := bnds.wqGram
+          let wvGram := bnds.wvGram
+          let qkNorm := bnds.qkDenseFrob
+          let voNorm := bnds.voDenseFrob
+          let qkOpBound := bnds.qkOpBound
+          let voOpBound := bnds.voOpBound
 
-        let diag? : Option HeadDiagnosticsLazy :=
-          if storeDiagnostics then
-            let voProjT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.valueOutputProjection)
-            let qkAlignT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.queryKeyAlignment)
-            let voDenseSchurT : Thunk Float := Thunk.mk (fun _ => (voProjT.get).schurNormEst)
-            let qkDenseSchurT : Thunk Float := Thunk.mk (fun _ => (qkAlignT.get).schurNormEst)
-            some { voProj := voProjT, qkAlign := qkAlignT
-                   voDenseSchur := voDenseSchurT, qkDenseSchur := qkDenseSchurT }
-          else
-            none
+          let diag? : Option HeadDiagnosticsLazy :=
+            if storeDiagnostics then
+              let voProjT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.valueOutputProjection)
+              let qkAlignT : Thunk ConcreteMatrix := Thunk.mk (fun _ => head.queryKeyAlignment)
+              let voDenseSchurT : Thunk Float := Thunk.mk (fun _ => (voProjT.get).schurNormEst)
+              let qkDenseSchurT : Thunk Float := Thunk.mk (fun _ => (qkAlignT.get).schurNormEst)
+              some { voProj := voProjT, qkAlign := qkAlignT
+                     voDenseSchur := voDenseSchurT, qkDenseSchur := qkDenseSchurT }
+            else
+              none
 
-        let scaleFactor := Float.sqrt head.headDim.toFloat
-        let inputs : PatternTermBoundInputs := {
-          attention := attn
-          inputNorm := inputNorm
-          scaleFactor := scaleFactor
-          wqOpBound := bnds.wqOpGram
-          wkOpBound := bnds.wkOpGram
-          wvOpBound := bnds.wvOpGram
-          woOpBound := bnds.woOpGram
-          bqFrob := head.b_Q.frobeniusNorm
-          bkFrob := head.b_K.frobeniusNorm
-          bvFrob := head.b_V.frobeniusNorm
-        }
-        let patternBound : Float := computePatternTermBound inputs
-        let valueNorm : Float :=
-          Float.sqrt attnFrobNormSq * voNorm
-        let ratio : Float :=
-          if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
+          let inputs : PatternTermBoundInputs := {
+            attention := attn
+            inputNorm := inputNorm
+            inputOpBound := inputOpBound
+            qFrobBound := qFrobBound
+            kFrobBound := kFrobBound
+            qOpBoundAct := qOpBoundAct
+            kOpBoundAct := kOpBoundAct
+            scaleFactor := scaleFactor
+            wqOpBound := bnds.wqOpGram
+            wkOpBound := bnds.wkOpGram
+            wvOpBound := bnds.wvOpGram
+            woOpBound := bnds.woOpGram
+            bqFrob := head.b_Q.frobeniusNorm
+            bkFrob := head.b_K.frobeniusNorm
+            bvFrob := head.b_V.frobeniusNorm
+          }
+          let patternBound : Float := computePatternTermBound inputs
+          let valueNorm : Float :=
+            Float.sqrt attnFrobNormSq * voNorm
+          let ratio : Float :=
+            if valueNorm < 1e-10 then Float.inf else patternBound / valueNorm
 
-        return {
-          layerIdx := l
-          headIdx := hIdx
-          attention := attn
-          prevTokenStrength := prevTokenStrength
-          softmaxJacobianOpEst := softmaxOpBound
-          softmaxRowMaxP := softmaxDiag.maxRowMaxP
-          softmaxRowTraceBound := softmaxDiag.maxRowTraceBound
-          softmaxRowMomentBound := softmaxDiag.maxRowMomentBound
-          softmaxRowGershBound := softmaxDiag.maxRowGersh
-          softmaxRowBoundUsed := softmaxDiag.maxRowBoundUsed
-          softmaxRowsFallback := softmaxDiag.numRowsFallback
-          attentionFrobeniusNormSq := attnFrobNormSq
-          attentionOneInfBound := attnOneInf
-          patternTermBoundCached := patternBound
-          valueTermNormCached := valueNorm
-          faithfulnessRatioCached := ratio
-          diag? := diag?
-          wqGram := wqGram
-          wvGram := wvGram
-          inputNorm := inputNorm
-          ln1OpBound := ln1Bound
-          scaleFactor := scaleFactor
-          valueOutputProjNorm := voNorm
-          queryKeyAlignNorm := qkNorm
-          valueOutputProjSchurNorm := voOpBound
-          queryKeyAlignSchurNorm := qkOpBound
+          return {
+            layerIdx := l
+            headIdx := hIdx
+            attention := attn
+            prevTokenStrength := prevTokenStrength
+            softmaxJacobianOpEst := softmaxOpBound
+            softmaxRowMaxP := softmaxDiag.maxRowMaxP
+            softmaxRowTraceBound := softmaxDiag.maxRowTraceBound
+            softmaxRowMomentBound := softmaxDiag.maxRowMomentBound
+            softmaxRowGershBound := softmaxDiag.maxRowGersh
+            softmaxRowBoundUsed := softmaxDiag.maxRowBoundUsed
+            softmaxRowsFallback := softmaxDiag.numRowsFallback
+            attentionFrobeniusNormSq := attnFrobNormSq
+            attentionOneInfBound := attnOneInf
+            patternTermBoundCached := patternBound
+            valueTermNormCached := valueNorm
+            faithfulnessRatioCached := ratio
+            diag? := diag?
+            wqGram := wqGram
+            wvGram := wvGram
+            inputNorm := inputNorm
+            inputOpBound := inputOpBound
+            qFrobBound := qFrobBound
+            kFrobBound := kFrobBound
+            qOpBoundAct := qOpBoundAct
+            kOpBoundAct := kOpBoundAct
+            ln1OpBound := ln1Bound
+            scaleFactor := scaleFactor
+            valueOutputProjNorm := voNorm
+            queryKeyAlignNorm := qkNorm
+            valueOutputProjSchurNorm := voOpBound
+            queryKeyAlignSchurNorm := qkOpBound
 
-          qkDenseFrob := bnds.qkDenseFrob
-          qkDenseGram := bnds.qkDenseGram
-          qkDenseBrauer := bnds.qkDenseBrauer
-          qkFactorSchur := bnds.qkFactorSchur
-          qkFactorFrob := bnds.qkFactorFrob
+            qkDenseFrob := bnds.qkDenseFrob
+            qkDenseGram := bnds.qkDenseGram
+            qkDenseBrauer := bnds.qkDenseBrauer
+            qkFactorSchur := bnds.qkFactorSchur
+            qkFactorFrob := bnds.qkFactorFrob
 
-          wqOpGram := bnds.wqOpGram
-          wkOpGram := bnds.wkOpGram
-          bqFrob := head.b_Q.frobeniusNorm
-          bkFrob := head.b_K.frobeniusNorm
-          bvFrob := head.b_V.frobeniusNorm
-          qkFactorGram := bnds.qkFactorGram
+            wqOpGram := bnds.wqOpGram
+            wkOpGram := bnds.wkOpGram
+            bqFrob := head.b_Q.frobeniusNorm
+            bkFrob := head.b_K.frobeniusNorm
+            bvFrob := head.b_V.frobeniusNorm
+            qkFactorGram := bnds.qkFactorGram
 
-          voDenseFrob := bnds.voDenseFrob
-          voDenseGram := bnds.voDenseGram
-          voDenseBrauer := bnds.voDenseBrauer
-          voFactorSchur := bnds.voFactorSchur
-          voFactorFrob := bnds.voFactorFrob
-          wvOpGram := bnds.wvOpGram
-          woOpGram := bnds.woOpGram
-          voFactorGram := bnds.voFactorGram
-        }
+            voDenseFrob := bnds.voDenseFrob
+            voDenseGram := bnds.voDenseGram
+            voDenseBrauer := bnds.voDenseBrauer
+            voFactorSchur := bnds.voFactorSchur
+            voFactorFrob := bnds.voFactorFrob
+            wvOpGram := bnds.wvOpGram
+            woOpGram := bnds.woOpGram
+            voFactorGram := bnds.voFactorGram
+          }
 
-      let useParallelHeads := (!useParallelLayers) && heads.size >= 4
-      if useParallelHeads then
-        let tasks : Array (Task PrecomputedHeadData) :=
-          .ofFn fun i : Fin heads.size =>
-            Task.spawn (fun _ => computeHead i.val heads[i])
-        tasks.map Task.get
-      else
-        Id.run do
-          let mut out : Array PrecomputedHeadData := Array.mkEmpty heads.size
-          for h_idx in [:heads.size] do
-            if hh : h_idx < heads.size then
-              out := out.push (computeHead h_idx (heads[h_idx]'hh))
-          return out
+        let useParallelHeads := (!useParallelLayers) && heads.size >= 4
+        if useParallelHeads then
+          let tasks : Array (Task PrecomputedHeadData) :=
+            .ofFn fun i : Fin heads.size =>
+              Task.spawn (fun _ => computeHead i.val heads[i])
+          tasks.map Task.get
+        else
+          Id.run do
+            let mut out : Array PrecomputedHeadData := Array.mkEmpty heads.size
+            for h_idx in [:heads.size] do
+              if hh : h_idx < heads.size then
+                out := out.push (computeHead h_idx (heads[h_idx]'hh))
+            return out
       else
         #[]
 
@@ -4663,7 +4781,7 @@ This precomputes all attention patterns, projections, and norms once.
         Id.run do
           let y := fwdResult.getPostAttnResidual l
           let ln2Bound := model.ln2OpBound l y
-          let mut nrm : Float := 0.0
+          let mut attnPart : Float := 0.0
           for d in layerHeadData do
             let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
             let attnOpUb : Float := min attnFrob d.attentionOneInfBound
@@ -4671,6 +4789,7 @@ This precomputes all attention patterns, projections, and norms once.
             let inputs : PatternTermBoundInputs := {
               attention := d.attention
               inputNorm := d.inputNorm
+              inputOpBound := d.inputOpBound
               scaleFactor := d.scaleFactor
               wqOpBound := d.wqOpGram
               wkOpBound := d.wkOpGram
@@ -4681,7 +4800,7 @@ This precomputes all attention patterns, projections, and norms once.
               bvFrob := d.bvFrob
             }
             let patternTermUb : Float := computePatternTermBound inputs
-            nrm := nrm + d.ln1OpBound * (valueTermUb + patternTermUb)
+            attnPart := attnPart + d.ln1OpBound * (valueTermUb + patternTermUb)
 
           if hm : l < model.mlps.size then
             let mlp := model.mlps[l]'hm
@@ -4696,8 +4815,10 @@ This precomputes all attention patterns, projections, and norms once.
                 let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
                 let dAct := hidden.map geluDerivFloat
                 computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winNormUb woutNormUb
-            nrm := nrm + ln2Bound * mlpUb
-          return nrm
+            let mlpPart := ln2Bound * mlpUb
+            return attnPart + (1.0 + attnPart) * mlpPart
+          else
+            return attnPart
       else
         0.0
 
@@ -5268,6 +5389,10 @@ structure AdaptiveSchedulerResult where
 private structure AdaptiveUbCaches where
   winUb : Array (Array (Option Float))
   woutUb : Array (Array (Option Float))
+  /-- Cached operator-norm upper bounds `‖ln₁(X_l)‖₂` per layer and effort tier. -/
+  ln1InputOpUb : Array (Array (Option Float))
+  /-- Cached attention-only residual Jacobian upper bounds per layer and effort tier. -/
+  attnPartUb : Array (Array (Option Float))
   ubAt : Array (Array (Option Float))
   mlpCore : Array (Option MLPJacobianBoundCore)
   deriving Inhabited
@@ -5293,12 +5418,22 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     if cfg.krylovSteps = 0 then 0
     else max cfg.krylovSteps (min 32 (max 8 (cfg.krylovSteps * 4)))
 
-  -- Precompute attention-only and MLP-only factors so recomputation is localized.
+  -- Precompute tier-1 attention part and per-layer ln₂ Jacobian bound.
+  --
+  -- We cache tier-1 attention bounds directly from `cache.headData` to preserve the
+  -- current default behavior and avoid recomputing `‖ln₁(X_l)‖₂` up front.
   let nLayers := model.numLayers
   let useParallelInit := nLayers >= 4
-  let computeLayerInit (l : Nat) : (Float × Float) := Id.run do
+  let computeLayerInit (l : Nat) : (Float × Float × Float) := Id.run do
     let layerData := cache.headData.getD l #[]
     let mut a : Float := 0.0
+    let inputOpBoundTier1 : Float :=
+      if h : 0 < layerData.size then
+        (layerData[0]'h).inputOpBound
+      else
+        let emptyMat : ConcreteMatrix := { numRows := 0, numCols := 0, data := #[], size_eq := by simp }
+        let x := cache.ln1Inputs.getD l emptyMat
+        x.opNormUpperBoundRectGramEffort (tiers.getD startTier ConcreteMatrix.BoundEffort.tier1)
     for d in layerData do
       let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
       let attnOpUb : Float := min attnFrob d.attentionOneInfBound
@@ -5306,6 +5441,11 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
       let inputs : PatternTermBoundInputs := {
         attention := d.attention
         inputNorm := d.inputNorm
+        inputOpBound := inputOpBoundTier1
+        qFrobBound := d.qFrobBound
+        kFrobBound := d.kFrobBound
+        qOpBoundAct := d.qOpBoundAct
+        kOpBoundAct := d.kOpBoundAct
         scaleFactor := d.scaleFactor
         wqOpBound := d.wqOpGram
         wkOpBound := d.wkOpGram
@@ -5320,18 +5460,19 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
 
     let y := cache.forwardResult.getPostAttnResidual l
     let ln2Bound := model.ln2OpBound l y
-    return (a, ln2Bound)
+    return (a, ln2Bound, inputOpBoundTier1)
 
-  let init : Array (Float × Float) :=
+  let init : Array (Float × Float × Float) :=
     if useParallelInit then
-      let tasks : Array (Task (Float × Float)) :=
+      let tasks : Array (Task (Float × Float × Float)) :=
         .ofFn fun i : Fin nLayers => Task.spawn (fun _ => computeLayerInit i.val)
       tasks.map Task.get
     else
       .ofFn fun i : Fin nLayers => computeLayerInit i.val
 
-  let attnPart : Array Float := init.map (·.1)
-  let ln2Bound : Array Float := init.map (·.2)
+  let attnPartTier1 : Array Float := init.map (·.1)
+  let ln2Bound : Array Float := init.map (·.2.1)
+  let ln1InputOpTier1 : Array Float := init.map (·.2.2)
 
   let mut lbK : Array Nat := Array.replicate model.numLayers cfg.krylovSteps
   let mut lb : Array Float := Array.mkEmpty model.numLayers
@@ -5365,12 +5506,25 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     else
       min absSchur (min legacy scaled)
 
+  let initRow : Array (Option Float) := Array.replicate tiers.size none
   let initCaches : AdaptiveUbCaches :=
     { winUb := Array.replicate model.numLayers (Array.replicate tiers.size none)
       woutUb := Array.replicate model.numLayers (Array.replicate tiers.size none)
+      ln1InputOpUb := Array.replicate model.numLayers initRow
+      attnPartUb := Array.replicate model.numLayers initRow
       ubAt := Array.replicate model.numLayers (Array.replicate tiers.size none)
       mlpCore := Array.replicate model.numLayers none }
   let mut caches : AdaptiveUbCaches := initCaches
+
+  -- Seed tier-1 caches from precomputation (fast path).
+  for l in [:model.numLayers] do
+    if startTier < tiers.size then
+      let rowIn := (caches.ln1InputOpUb[l]!).set! startTier (some (ln1InputOpTier1.getD l 0.0))
+      let rowA := (caches.attnPartUb[l]!).set! startTier (some (attnPartTier1.getD l 0.0))
+      caches :=
+        { caches with
+          ln1InputOpUb := caches.ln1InputOpUb.set! l rowIn
+          attnPartUb := caches.attnPartUb.set! l rowA }
 
   let getWinWoutM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches (Float × Float) := do
     let st ← get
@@ -5424,6 +5578,71 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
         else
           return none
 
+  let rec getLn1InputOpUbM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches Float := do
+    let st ← get
+    if !(layerIdx < model.numLayers ∧ tierIdx < tiers.size) then
+      return 0.0
+    match st.ln1InputOpUb[layerIdx]![tierIdx]! with
+    | some v => return v
+    | none =>
+        -- Enforce monotonicity across tiers by always including the previous-tier bound.
+        let prev : Float ←
+          if tierIdx = 0 then
+            pure Float.inf
+          else
+            getLn1InputOpUbM layerIdx (tierIdx - 1)
+        let emptyMat : ConcreteMatrix := { numRows := 0, numCols := 0, data := #[], size_eq := by simp }
+        let x := cache.ln1Inputs.getD layerIdx emptyMat
+        let eff := tiers[tierIdx]!
+        let raw := x.opNormUpperBoundRectGramEffort eff
+        let v := min prev raw
+        let row := (st.ln1InputOpUb[layerIdx]!).set! tierIdx (some v)
+        set { st with ln1InputOpUb := st.ln1InputOpUb.set! layerIdx row }
+        return v
+
+  let rec getAttnPartUbM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches Float := do
+    let st ← get
+    if !(layerIdx < model.numLayers ∧ tierIdx < tiers.size) then
+      return 0.0
+    match st.attnPartUb[layerIdx]![tierIdx]! with
+    | some v => return v
+    | none =>
+        let prev : Float ←
+          if tierIdx = 0 then
+            pure Float.inf
+          else
+            getAttnPartUbM layerIdx (tierIdx - 1)
+        let inputOpBound ← getLn1InputOpUbM layerIdx tierIdx
+        let layerData := cache.headData.getD layerIdx #[]
+        let mut a : Float := 0.0
+        for d in layerData do
+          let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+          let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+          let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
+          let inputs : PatternTermBoundInputs := {
+            attention := d.attention
+            inputNorm := d.inputNorm
+            inputOpBound := inputOpBound
+            qFrobBound := d.qFrobBound
+            kFrobBound := d.kFrobBound
+            qOpBoundAct := d.qOpBoundAct
+            kOpBoundAct := d.kOpBoundAct
+            scaleFactor := d.scaleFactor
+            wqOpBound := d.wqOpGram
+            wkOpBound := d.wkOpGram
+            wvOpBound := d.wvOpGram
+            woOpBound := d.woOpGram
+            bqFrob := d.bqFrob
+            bkFrob := d.bkFrob
+            bvFrob := d.bvFrob
+          }
+          let patternTermUb : Float := computePatternTermBound inputs
+          a := a + d.ln1OpBound * (valueTermUb + patternTermUb)
+        let v := min prev a
+        let row := (st.attnPartUb[layerIdx]!).set! tierIdx (some v)
+        set { st with attnPartUb := st.attnPartUb.set! layerIdx row }
+        return v
+
   let computeUbAtM (layerIdx tierIdx : Nat) : StateM AdaptiveUbCaches Float := do
     let st ← get
     if !(layerIdx < model.numLayers ∧ tierIdx < tiers.size) then
@@ -5431,7 +5650,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     match st.ubAt[layerIdx]![tierIdx]! with
     | some v => return v
     | none =>
-        let base := attnPart.getD layerIdx 0.0
+        let base ← getAttnPartUbM layerIdx tierIdx
         let v : Float ←
           if hm : layerIdx < model.mlps.size then
             let mlp := model.mlps[layerIdx]'hm
@@ -5463,7 +5682,8 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
                       let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
                       let dAct := hidden.map geluDerivFloat
                       pure (computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct win wout)
-            pure (base + l2 * mlpUb)
+            let mlpPart := l2 * mlpUb
+            pure (base + (1.0 + base) * mlpPart)
           else
             pure base
         let row := (st.ubAt[layerIdx]!).set! tierIdx (some v)
@@ -5478,7 +5698,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     caches := st
     let baseUb : Float :=
       if cache.layerNormBoundsComputed then
-        cache.layerNormBounds.getD l v
+        min (cache.layerNormBounds.getD l v) v
       else
         v
     ub := ub.push baseUb
@@ -6570,6 +6790,7 @@ private def computeHeadMetricsForSAE
       let attnInput := model.applyLn1 layerIdx layerInput
       let attn := head.computeAttentionWeights attnInput false
       let inputNorm := computeInputNorm attnInput
+      let inputOpBound := attnInput.opNormUpperBoundOneInf
       let ln1Bound := model.ln1OpBound layerIdx layerInput
       let bnds := head.noDenseProductBounds
 
@@ -6577,6 +6798,7 @@ private def computeHeadMetricsForSAE
       let inputs : PatternTermBoundInputs := {
         attention := attn
         inputNorm := inputNorm
+        inputOpBound := inputOpBound
         scaleFactor := Float.sqrt head.headDim.toFloat
         wqOpBound := bnds.wqOpGram
         wkOpBound := bnds.wkOpGram
@@ -7190,6 +7412,7 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let attnInput := model.applyLn1 layerIdx layerInput
       let attn := head.computeAttentionWeights attnInput
       let inputNorm := attnInput.frobeniusNorm
+      let inputOpBound := attnInput.opNormUpperBoundOneInf
       let ln1Bound := model.ln1OpBound layerIdx layerInput
       let bnds := head.noDenseProductBounds
 
@@ -7198,6 +7421,7 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         inputNorm := inputNorm
+        inputOpBound := inputOpBound
         scaleFactor := Float.sqrt head.headDim.toFloat
         wqOpBound := bnds.wqOpGram
         wkOpBound := bnds.wkOpGram
@@ -7784,6 +8008,8 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let inputs : PatternTermBoundInputs := {
         attention := attn
         inputNorm := inputNorm
+        -- Conservative: `‖X‖₂ ≤ ‖X‖_F`.
+        inputOpBound := inputNorm
         scaleFactor := Float.sqrt head.headDim.toFloat
         wqOpBound := bnds.wqOpGram
         wkOpBound := bnds.wkOpGram
@@ -8032,6 +8258,7 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
     let layerInput := fwdResult.getLayerInput layerIdx
     let attnInput := model.applyLn1 layerIdx layerInput
     let inputNorm := attnInput.frobeniusNorm
+    let inputOpBound := attnInput.opNormUpperBoundOneInf
     let ln1Bound := model.ln1OpBound layerIdx layerInput
     let mut totalBound : Float := 0.0
 
@@ -8045,6 +8272,7 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
           let inputs : PatternTermBoundInputs := {
             attention := attn
             inputNorm := inputNorm
+            inputOpBound := inputOpBound
             scaleFactor := Float.sqrt head.headDim.toFloat
             wqOpBound := bnds.wqOpGram
             wkOpBound := bnds.wkOpGram

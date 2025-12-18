@@ -503,10 +503,20 @@ def runInduction (p : Parsed) : IO UInt32 := do
                   let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
                   let attnOpUb : Float := min attnFrob d.attentionOneInfBound
                   let valueTermUb : Float := d.ln1OpBound * (attnOpUb * d.valueOutputProjSchurNorm)
-                  let patternTermUb : Float :=
-                    d.ln1OpBound *
-                      ((d.softmaxJacobianOpEst / d.scaleFactor) * d.inputNorm *
-                        d.queryKeyAlignSchurNorm * d.valueOutputProjSchurNorm)
+                  let inputs : Nfp.PatternTermBoundInputs := {
+                    attention := d.attention
+                    inputNorm := d.inputNorm
+                    inputOpBound := d.inputOpBound
+                    scaleFactor := d.scaleFactor
+                    wqOpBound := d.wqOpGram
+                    wkOpBound := d.wkOpGram
+                    wvOpBound := d.wvOpGram
+                    woOpBound := d.woOpGram
+                    bqFrob := d.bqFrob
+                    bkFrob := d.bkFrob
+                    bvFrob := d.bvFrob
+                  }
+                  let patternTermUb : Float := d.ln1OpBound * (Nfp.computePatternTermBound inputs)
                   let contrib := valueTermUb + patternTermUb
                   a := a + contrib
                   if contrib > best then
@@ -516,14 +526,22 @@ def runInduction (p : Parsed) : IO UInt32 := do
                     bestPattern := patternTermUb
                   idx := idx + 1
                 (a, bestIdx, best, bestValue, bestPattern)
-              let mlpPart : Float := max 0.0 (ub - attnPart)
+              let mlpTotal : Float := max 0.0 (ub - attnPart)
+              let mlpOnly : Float :=
+                if 1.0 + attnPart > 1e-12 then
+                  mlpTotal / (1.0 + attnPart)
+                else
+                  mlpTotal
+              let cross : Float := max 0.0 (mlpTotal - mlpOnly)
               IO.println <|
-                s!"      contrib: attn≈{fmtFloat attnPart}  mlp≈{fmtFloat mlpPart}  " ++
+                s!"      contrib: attn≈{fmtFloat attnPart}  mlpOnly≈{fmtFloat mlpOnly}  " ++
+                  s!"cross≈{fmtFloat cross}  mlpTotal≈{fmtFloat mlpTotal}  " ++
                   s!"(maxHead=H{maxHeadIdx}≈{fmtFloat maxHeadContrib}, " ++
                   s!"value≈{fmtFloat maxHeadValue}, pattern≈{fmtFloat maxHeadPattern})"
               let mlpJacLegacy : Float :=
-                if ln2Bound > 1e-12 then
-                  mlpPart / ln2Bound
+                let denom := ln2Bound * (1.0 + attnPart)
+                if denom > 1e-12 then
+                  mlpTotal / denom
                 else
                   Float.nan
               let geluDeriv := cache.forwardResult.getMlpGeluDeriv l
