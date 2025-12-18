@@ -86,10 +86,33 @@ def mean (xs : Array RatInterval) : RatInterval :=
 
 /-- Sound lower bound on the variance of a coordinate-wise box.
 
-We compute a mean interval `μ ∈ [μ_lo, μ_hi]`, then for each coordinate interval `xᵢ` we bound
-`(xᵢ - μ)^2` from below by using `squareLowerBound` on the interval subtraction.
+We return a conservative lower bound on `var(x)` for all `x` in the box.
 
-If a centered interval contains 0, we take the square lower bound to be 0.
+We use two ingredients:
+
+1. **Range lower bound (fast, O(n))**.
+   If the intersection `⋂ᵢ [lᵢ,uᵢ]` is empty, then the box cannot contain a constant vector.
+   Let `δ := max(0, maxᵢ lᵢ - minᵢ uᵢ)`. Then every realization `x` has `max(x)-min(x) ≥ δ`.
+   The minimum variance among vectors of length `n` with range at least `δ` is
+   `(n-1) δ^2 / n^2`, attained (for exact range `δ`) by `(n-1)` entries at one extreme and one
+   entry at the other. Hence
+   `var(x) ≥ (n-1) δ^2 / n^2` for all `x` in the box.
+
+2. **Exact convex minimization (optional, tighter for small `n`)**.
+   For small dimension we can compute the exact minimum via a 1D convex minimization:
+
+`var(x) = (1/n) ∑ (xᵢ - mean(x))^2 = min_c (1/n) ∑ (xᵢ - c)^2`.
+
+Therefore,
+
+`min_{x∈box} var(x) = min_c (1/n) ∑ min_{xᵢ∈[lᵢ,uᵢ]} (xᵢ - c)^2`
+
+and for fixed `c` each coordinate minimization is `dist([lᵢ,uᵢ], c)^2` where `dist` is 0 if
+`c ∈ [lᵢ,uᵢ]` and otherwise the squared distance to the nearer endpoint.
+
+The resulting one-dimensional function of `c` is convex piecewise-quadratic, so we can find its
+global minimum by scanning the sorted breakpoints `{lᵢ,uᵢ}` and checking the unique stationary point
+in each region (plus the breakpoints themselves).
 -/
 def varianceLowerBound (xs : Array RatInterval) : Rat :=
   if xs.isEmpty then
@@ -98,12 +121,124 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
     Id.run do
       let n : Nat := xs.size
       let nRat : Rat := (n : Nat)
-      let μ := mean xs
-      let mut acc : Rat := 0
-      for x in xs do
-        let centered := sub x μ
-        acc := acc + squareLowerBound centered
-      return acc / nRat
+
+      -- Normalize endpoints defensively.
+      let normed : Array RatInterval :=
+        xs.map (fun x => { lo := min x.lo x.hi, hi := max x.lo x.hi })
+
+      -- Fast range-based lower bound.
+      if n < 2 then
+        return 0
+      let mut loMax : Rat := normed[0]!.lo
+      let mut hiMin : Rat := normed[0]!.hi
+      for x in normed do
+        loMax := max loMax x.lo
+        hiMin := min hiMin x.hi
+      let δ : Rat := max 0 (loMax - hiMin)
+      let δSq : Rat := ratSq δ
+      let rangeLB : Rat :=
+        if δSq = 0 then
+          0
+        else
+          let nMinus1 : Rat := ((n - 1 : Nat) : Rat)
+          (nMinus1 * δSq) / (nRat * nRat)
+
+      -- Build sorted breakpoint lists for `lo` and `hi` with squared endpoints for O(1) evaluation.
+      let mut enters : Array (Rat × Rat) := Array.mkEmpty n
+      let mut leaves : Array (Rat × Rat) := Array.mkEmpty n
+      let mut sumLeft : Rat := 0
+      let mut sumLeftSq : Rat := 0
+      for x in normed do
+        let lo := x.lo
+        let hi := x.hi
+        enters := enters.push (lo, ratSq lo)
+        leaves := leaves.push (hi, ratSq hi)
+        sumLeft := sumLeft + lo
+        sumLeftSq := sumLeftSq + ratSq lo
+
+      -- Exact minimization can be expensive; only enable for small dimension.
+      if n > 64 then
+        return rangeLB
+
+      let entersSorted := enters.qsort (fun a b => a.1 ≤ b.1)
+      let leavesSorted := leaves.qsort (fun a b => a.1 ≤ b.1)
+      let breaksAll :=
+        (entersSorted.map (fun p => p.1) ++ leavesSorted.map (fun p => p.1)).qsort (· ≤ ·)
+
+      -- Unique-ify breakpoints.
+      let mut breaks : Array Rat := Array.mkEmpty breaksAll.size
+      for b in breaksAll do
+        if breaks.isEmpty then
+          breaks := breaks.push b
+        else if breaks.back! = b then
+          pure ()
+        else
+          breaks := breaks.push b
+
+      let evalG (c : Rat) (leftCount rightCount : Nat)
+          (sumLeft sumLeftSq sumRight sumRightSq : Rat) : Rat :=
+        let cSq := ratSq c
+        let leftTerm :=
+          sumLeftSq - (2 : Rat) * c * sumLeft + ((leftCount : Nat) : Rat) * cSq
+        let rightTerm :=
+          ((rightCount : Nat) : Rat) * cSq - (2 : Rat) * c * sumRight + sumRightSq
+        leftTerm + rightTerm
+
+      -- State for scanning regions:
+      -- left set: intervals with `c < lo`
+      -- right set: intervals with `c > hi`
+      let mut leftCount : Nat := n
+      let mut rightCount : Nat := 0
+      let mut sumRight : Rat := 0
+      let mut sumRightSq : Rat := 0
+      let mut iEnter : Nat := 0
+      let mut iLeave : Nat := 0
+
+      let mut bestG : Rat := evalG (sumLeft / nRat) leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq
+      if !breaks.isEmpty then
+        bestG := min bestG (evalG breaks[0]! leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+
+      for bi in [:breaks.size] do
+        let b := breaks[bi]!
+        -- Process enters at `b` (at `c=b` these are already inside, so not in left).
+        while iEnter < entersSorted.size && entersSorted[iEnter]!.1 = b do
+          let (_, loSq) := entersSorted[iEnter]!
+          let lo := entersSorted[iEnter]!.1
+          leftCount := leftCount - 1
+          sumLeft := sumLeft - lo
+          sumLeftSq := sumLeftSq - loSq
+          iEnter := iEnter + 1
+
+        -- Evaluate at the breakpoint `c=b` (intervals with `hi=b` are still inside at `c=b`).
+        bestG := min bestG (evalG b leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+
+        -- After `b`, process leaves at `b` (those intervals become right for `c>b`).
+        while iLeave < leavesSorted.size && leavesSorted[iLeave]!.1 = b do
+          let (_, hiSq) := leavesSorted[iLeave]!
+          let hi := leavesSorted[iLeave]!.1
+          rightCount := rightCount + 1
+          sumRight := sumRight + hi
+          sumRightSq := sumRightSq + hiSq
+          iLeave := iLeave + 1
+
+        -- Check stationary point in the region `(b, nextB)` if there is a next breakpoint.
+        let outsideCount : Nat := leftCount + rightCount
+        if outsideCount = 0 then
+          -- There exists `c` contained in every interval, so the box intersects the constant line.
+          -- The exact minimum is 0.
+          return 0
+        let cStar : Rat := (sumLeft + sumRight) / ((outsideCount : Nat) : Rat)
+        if bi + 1 < breaks.size then
+          let bNext := breaks[bi + 1]!
+          if b < cStar ∧ cStar < bNext then
+            bestG := min bestG (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+        else
+          -- Last region `(b, +∞)`.
+          if b ≤ cStar then
+            bestG := min bestG (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+
+      let exactLB := bestG / nRat
+      return max rangeLB exactLB
 
 /-- Over-approximate GeLU on an interval without any transcendental facts.
 
