@@ -2802,8 +2802,10 @@ def reluFloat (x : Float) : Float := if x > 0.0 then x else 0.0
 /-- GeLU activation function (approximate) for Float. -/
 def geluFloat (x : Float) : Float :=
   let pi : Float := 3.14159265358979323846
-  let sqrt2pi := Float.sqrt (2.0 * pi)
-  0.5 * x * (1.0 + Float.tanh (sqrt2pi * (x + 0.044715 * x * x * x)))
+  -- GPT-2 uses the "gelu_new" tanh approximation:
+  --   0.5*x*(1 + tanh( sqrt(2/pi) * (x + 0.044715*x^3) ))
+  let a := Float.sqrt (2.0 / pi)
+  0.5 * x * (1.0 + Float.tanh (a * (x + 0.044715 * x * x * x)))
 
 /-- Derivative of `geluFloat` with respect to `x`.
 
@@ -2811,7 +2813,7 @@ This matches the tanh-based approximate GeLU used by `geluFloat`.
 -/
 def geluDerivFloat (x : Float) : Float :=
   let pi : Float := 3.14159265358979323846
-  let a := Float.sqrt (2.0 * pi)
+  let a := Float.sqrt (2.0 / pi)
   let b : Float := 0.044715
   let t := a * (x + b * x * x * x)
   let tanhT := Float.tanh t
