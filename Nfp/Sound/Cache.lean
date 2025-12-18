@@ -2,6 +2,7 @@
 
 import Std
 import Init.System.IO
+import Nfp.Sound.Decimal
 import Nfp.Sound.Fixed
 
 namespace Nfp.Sound
@@ -152,6 +153,22 @@ def cacheDir : System.FilePath := "sound_cache"
 def cachePath (modelPath : System.FilePath) (modelHash : UInt64) (scalePow10 : Nat) : System.FilePath :=
   let stem := modelPath.fileStem
   cacheDir / s!"{stem}_{modelHash.toNat}_p{scalePow10}.nfpc"
+
+/-- Total header size in bytes. -/
+def headerBytes : Nat :=
+  magic.size + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 + 4
+
+/-- Number of stored i32 values expected for the cached tensor stream. -/
+def expectedI32Count (hdr : Header) : Nat :=
+  let L := hdr.numLayers.toNat
+  let H := hdr.numHeads.toNat
+  let d := hdr.modelDim.toNat
+  let dh := hdr.headDim.toNat
+  let dhid := hdr.hiddenDim.toNat
+  let perHead := d * dh + dh + dh * d
+  let perLayer :=
+    (4 * d) + (H * perHead) + d + (d * dhid) + dhid + (dhid * d) + d
+  L * perLayer
 
 /-- Ensure the cache directory exists. -/
 def ensureCacheDir : IO Unit := do
@@ -536,6 +553,83 @@ def buildCacheFile
     IO.FS.removeFile cachePath
   IO.FS.rename tmpPath cachePath
   return .ok ()
+
+/-!
+## Consistency checks (for CI and debugging)
+-/
+
+private def isMaybeNumberStart (b : UInt8) : Bool :=
+  b = 45 || b = 43 || b = 46 || (48 ≤ b && b ≤ 57) -- - + . digit
+
+/-- Check that for each numeric token in the text file, its exact `Rat` value lies in the
+`±1`-ulp interval induced by `parseFixed10Rounded scalePow10`.
+
+This is a **soundness regression test**: it validates the rounding envelope used by the cache.
+It is intended for small fixture models (or large models with `maxTokens > 0`).
+-/
+def checkTextTokenEnvelope
+    (modelPath : System.FilePath)
+    (scalePow10 : Nat := 9)
+    (maxTokens : Nat := 0) : IO (Except String Unit) := do
+  let cfg : Fixed10Cfg := { scalePow10 := scalePow10 }
+  let S : Nat := cfg.scaleNat
+  let h ← IO.FS.Handle.mk modelPath IO.FS.Mode.read
+  let mut checked : Nat := 0
+  let mut done : Bool := false
+  while !done do
+    let line ← h.getLine
+    if line.isEmpty then
+      done := true
+    else
+      let s := line.trim
+      if s.isEmpty then
+        pure ()
+      else
+        let bytes := s.toUTF8
+        let mut i : Nat := 0
+        while i < bytes.size do
+          while i < bytes.size && (bytes[i]! = 32 || bytes[i]! = 9) do
+            i := i + 1
+          if i ≥ bytes.size then
+            i := bytes.size
+          let tokStart := i
+          while i < bytes.size && (bytes[i]! ≠ 32 && bytes[i]! ≠ 9) do
+            i := i + 1
+          let tokStop := i
+          if tokStart < tokStop && isMaybeNumberStart (bytes[tokStart]!) then
+            let tok := String.Pos.Raw.extract s ⟨tokStart⟩ ⟨tokStop⟩
+            match parseRat tok with
+            | .error _ =>
+                -- Not a number (e.g. "LAYER"); ignore.
+                pure ()
+            | .ok r =>
+                match parseFixed10Rounded scalePow10 bytes tokStart tokStop with
+                | .error e => return .error e
+                | .ok w =>
+                    let lo : Rat := Rat.normalize (w - 1) S (den_nz := by
+                      have h10pos : (0 : Nat) < 10 := by decide
+                      exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos))
+                    let hi : Rat := Rat.normalize (w + 1) S (den_nz := by
+                      have h10pos : (0 : Nat) < 10 := by decide
+                      exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos))
+                    if lo ≤ r ∧ r ≤ hi then
+                      checked := checked + 1
+                    else
+                      return .error s!"token '{tok}' out of envelope: {lo} ≤ {r} ≤ {hi} failed"
+                    if maxTokens ≠ 0 && checked ≥ maxTokens then
+                      done := true
+                      i := bytes.size
+  return .ok ()
+
+/-- Check that the cache file size matches the expected tensor stream length. -/
+def checkCacheFileSize (cachePath : System.FilePath) (hdr : Header) : IO (Except String Unit) := do
+  let mdata ← cachePath.metadata
+  let expectedBytes : UInt64 :=
+    UInt64.ofNat headerBytes + (UInt64.ofNat (expectedI32Count hdr) * (4 : UInt64))
+  if mdata.byteSize = expectedBytes then
+    return .ok ()
+  else
+    return .error s!"cache size mismatch: expected {expectedBytes}, got {mdata.byteSize}"
 
 /-!
 ## Cache reader (buffered)

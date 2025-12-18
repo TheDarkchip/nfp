@@ -3,6 +3,7 @@
 import Cli
 import Nfp.IO
 import Nfp.Linearization
+import Nfp.Sound.Cache
 import Nfp.Verification
 import Nfp.Sound.IO
 import Std.Time.Format
@@ -689,6 +690,47 @@ def runCertify (p : Parsed) : IO UInt32 := do
       IO.println s
     return 0
 
+/-- Regression test for SOUND fixed-point cache soundness and consistency.
+
+This is intended for CI and small fixtures. It:
+- builds a `.nfpc` cache (if needed),
+- checks cache size matches the expected tensor stream length,
+- checks the `±1`-ulp rounding envelope on up to `maxTokens` numeric tokens in the text file.
+-/
+def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
+  let maxTokens := p.flag? "maxTokens" |>.map (·.as! Nat) |>.getD 0
+  let modelFp : System.FilePath := ⟨modelPath⟩
+
+  let modelHash ← Nfp.Sound.SoundCache.fnv1a64File modelFp
+  let cacheFp := Nfp.Sound.SoundCache.cachePath modelFp modelHash scalePow10
+
+  match (← Nfp.Sound.SoundCache.buildCacheFile modelFp cacheFp scalePow10) with
+  | .error e =>
+      IO.eprintln s!"Error: cache build failed: {e}"
+      return 1
+  | .ok _ =>
+      let ch ← IO.FS.Handle.mk cacheFp IO.FS.Mode.read
+      let hdr ← Nfp.Sound.SoundCache.readHeader ch
+      if hdr.modelHash ≠ modelHash then
+        IO.eprintln "Error: cache hash mismatch"
+        return 1
+      match (← Nfp.Sound.SoundCache.checkCacheFileSize cacheFp hdr) with
+      | .error e =>
+          IO.eprintln s!"Error: {e}"
+          return 1
+      | .ok _ =>
+          match (← Nfp.Sound.SoundCache.checkTextTokenEnvelope modelFp scalePow10 maxTokens) with
+          | .error e =>
+              IO.eprintln s!"Error: {e}"
+              return 1
+          | .ok _ =>
+              IO.println <|
+                "OK: sound cache validated " ++
+                  s!"(scalePow10={scalePow10}, maxTokens={maxTokens})"
+              return 0
+
 /-- Run the rope command - print a proof-backed RoPE operator norm certificate. -/
 def runRoPE (p : Parsed) : IO UInt32 := do
   let seqLen := p.flag? "seqLen" |>.map (·.as! Nat) |>.getD 4
@@ -825,6 +867,19 @@ def certifyCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The sound-cache-check subcommand (CI regression test). -/
+def soundCacheCheckCmd : Cmd := `[Cli|
+  sound_cache_check VIA runSoundCacheCheck;
+  "Check SOUND fixed-point cache soundness (CI / small fixtures)."
+
+  FLAGS:
+    scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p (default: 9)"
+    maxTokens : Nat; "Check at most this many numeric tokens (0=all; default: 0)"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The rope subcommand. -/
 def ropeCmd : Cmd := `[Cli|
   rope VIA runRoPE;
@@ -859,6 +914,7 @@ def nfpCmd : Cmd := `[Cli|
     analyzeCmd;
     inductionCmd;
     certifyCmd;
+    soundCacheCheckCmd;
     ropeCmd;
     dumpCmd
 ]

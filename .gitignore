@@ -1,6 +1,7 @@
 /.lake
 models
 *.nfpt
+!tests/fixtures/*.nfpt
 .DS_Store
 logs/
 sound_cache/

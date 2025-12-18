@@ -34,6 +34,11 @@ jobs:
             lake build nfp -v --no-ansi --wfail
           }
 
+      - name: SOUND cache regression test (tiny fixture)
+        run: |
+          set -euo pipefail
+          lake exe nfp sound_cache_check --scalePow10 9 --maxTokens 0 tests/fixtures/tiny_sound_model.nfpt
+
       - name: Python setup
         uses: actions/setup-python@v5
         with:
