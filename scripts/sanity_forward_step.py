@@ -71,9 +71,13 @@ def run_lean_dump(model_path: Path, layer: int, pos: int, take: int) -> np.ndarr
     ]
     out = subprocess.check_output(cmd, text=True)
     lines = [ln.strip() for ln in out.splitlines() if ln.strip()]
-    if len(lines) < 3 or not lines[0].startswith("DUMP "):
+    dump_i = None
+    for i, ln in enumerate(lines):
+        if ln.startswith("DUMP "):
+            dump_i = i
+    if dump_i is None or dump_i + 2 >= len(lines):
         raise SystemExit(f"Unexpected Lean dump output:\n{out}")
-    vals = [float(x) for x in lines[2].split()]
+    vals = [float(x) for x in lines[dump_i + 2].split()]
     return np.asarray(vals, dtype=np.float64)
 
 
@@ -128,4 +132,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
