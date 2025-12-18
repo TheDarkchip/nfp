@@ -159,7 +159,8 @@ private def layerNormRowApprox (row : Array RatInterval) (gamma beta : Array Rat
       let varLB := RatInterval.varianceLowerBound row
       let invσUpper : Rat :=
         if varLB ≤ 0 then
-          0
+          -- Sound fallback for IBP propagation: `1/σ ≤ 1/eps` (conservative, but rigorous).
+          layerNormOpBoundConservative 1 eps
         else
           layerNormOpBoundLocal 1 varLB eps
       let mut out : Array RatInterval := Array.mkEmpty row.size
@@ -198,6 +199,53 @@ private def skipBlankLines (lines : Array String) (start : Nat) : Nat :=
       i := i + 1
     return i
 
+/-!
+### Fast skipping without parsing
+
+For local SOUND certification we do not need `W_Q`, `W_K`, `b_Q`, or `b_K` numerically
+(they don't affect the Jacobian bounds we certify in this streaming-only pass).
+
+Parsing decimals into `Rat` is expensive, so we skip these sections by **counting tokens**
+instead of calling `parseRat`.
+-/
+
+private def countWsTokens (s : String) : Nat :=
+  Id.run do
+    let bytes := s.toUTF8
+    let mut i : Nat := 0
+    let mut inTok : Bool := false
+    let mut cnt : Nat := 0
+    while i < bytes.size do
+      let b := bytes[i]!
+      let isWs : Bool := b = 32 || b = 9  -- ' ' or '\t'
+      if isWs then
+        inTok := false
+      else if !inTok then
+        inTok := true
+        cnt := cnt + 1
+      i := i + 1
+    return cnt
+
+private def consumeTokensSkipFast
+    (lines : Array String) (start : Nat) (numTokens : Nat) : Except String Nat :=
+  Id.run do
+    let mut iLine := start
+    let mut remaining := numTokens
+    while remaining > 0 do
+      if iLine ≥ lines.size then
+        return .error "unexpected end of file while skipping tokens"
+      let line := lines[iLine]!.trim
+      iLine := iLine + 1
+      if line.isEmpty then
+        pure ()
+      else
+        let c := countWsTokens line
+        if c ≥ remaining then
+          remaining := 0
+        else
+          remaining := remaining - c
+    return .ok iLine
+
 private def consumeMatrixSkip
     (lines : Array String)
     (start : Nat)
@@ -205,6 +253,18 @@ private def consumeMatrixSkip
   match foldRatTokens lines start (rows * cols) () (fun _ _ => ()) with
   | .error e => .error e
   | .ok (_, next) => .ok next
+
+private def consumeMatrixSkipFast
+    (lines : Array String)
+    (start : Nat)
+    (rows cols : Nat) : Except String Nat :=
+  consumeTokensSkipFast lines start (rows * cols)
+
+private def consumeVectorSkipFast
+    (lines : Array String)
+    (start : Nat)
+    (n : Nat) : Except String Nat :=
+  consumeTokensSkipFast lines start n
 
 /-!
 Streaming multiplication for row-major stored matrices.
@@ -530,8 +590,9 @@ private def collectLayerNormParams
 /-- Local (input-dependent) certificate path using streaming interval propagation.
 
 This is conservative in two key ways to remain streaming/memory-safe:
-- it keeps per-token residual intervals (`seqLen×modelDim`) so LayerNorm variances are meaningful,
-- but it uses **union boxes** for attention/MLP linear maps to avoid `seqLen×hiddenDim` blowups.
+- it uses a **union box** over tokens throughout (so we never hold `seqLen×modelDim` intervals),
+  which is sound (a superset) but can be looser than per-token tracking,
+- it uses union boxes for attention/MLP linear maps to avoid `seqLen×hiddenDim` blowups.
 -/
 private def certifyModelFileLocal
     (path : System.FilePath)
@@ -597,7 +658,8 @@ private def certifyModelFileLocal
   match residual0 with
   | .error e => return .error e
   | .ok residualRows0 =>
-      let mut residualRows := residualRows0
+      -- Use a single union box for all tokens (sound superset, much faster than `seqLen×modelDim`).
+      let mut residualUnion := unionRows residualRows0 d
 
       -- Start scanning at first layer marker.
       let mut pos : Nat := skipUntil lines 0 (fun s => s.startsWith "LAYER")
@@ -614,20 +676,14 @@ private def certifyModelFileLocal
 
         -- LN1: compute per-row outputs (for union) and min variance LB (for Jacobian bound).
         let p1 := ln1Params.getD l defLn
-        let mut ln1OutRows : Array (Array RatInterval) := Array.mkEmpty n
-        let mut ln1VarMin : Option Rat := none
-        for r in residualRows do
-          let (y, v) := layerNormRowApprox r p1.gamma p1.beta eps
-          ln1OutRows := ln1OutRows.push y
-          ln1VarMin := some (match ln1VarMin with | none => v | some b => min b v)
-        let ln1VarLB := ln1VarMin.getD 0
+        let (ln1Out, ln1VarLB) := layerNormRowApprox residualUnion p1.gamma p1.beta eps
         let ln1MaxAbsGamma := maxAbsOfVector p1.gamma
         let ln1Bound :=
           if ln1VarLB > 0 then
             layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
           else
             layerNormOpBoundConservative ln1MaxAbsGamma eps
-        let ln1Union := unionRows ln1OutRows d
+        let ln1Union := ln1Out
 
         -- Attention (streaming): use union input box.
         let mut attnUnion : Array RatInterval := zeroIntervals d
@@ -643,16 +699,28 @@ private def certifyModelFileLocal
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_Q") then
             return .error "missing W_Q"
-          match consumeMatrixSkip lines (pos + 1) d dh with
+          match consumeMatrixSkipFast lines (pos + 1) d dh with
           | .error e => return .error e
           | .ok next => pos := next
+          -- Optional per-head Q bias (does not affect Jacobian, but must be parsed to stay in sync).
+          pos := skipBlankLines lines pos
+          if pos < lines.size && lines[pos]!.trim = "b_Q" then
+            match consumeVectorSkipFast lines (pos + 1) dh with
+            | .error e => return .error e
+            | .ok next => pos := next
 
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_K") then
             return .error "missing W_K"
-          match consumeMatrixSkip lines (pos + 1) d dh with
+          match consumeMatrixSkipFast lines (pos + 1) d dh with
           | .error e => return .error e
           | .ok next => pos := next
+          -- Optional per-head K bias (does not affect Jacobian, but must be parsed to stay in sync).
+          pos := skipBlankLines lines pos
+          if pos < lines.size && lines[pos]!.trim = "b_K" then
+            match consumeVectorSkipFast lines (pos + 1) dh with
+            | .error e => return .error e
+            | .ok next => pos := next
 
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_V") then
@@ -661,35 +729,47 @@ private def certifyModelFileLocal
           | .error e => return .error e
           | .ok (vHidden, nv, nextV) =>
               pos := nextV
+              -- Optional per-head V bias (affects forward activations / variance, so we include it).
+              pos := skipBlankLines lines pos
+              let mut vHidden := vHidden
+              if pos < lines.size && lines[pos]!.trim = "b_V" then
+                match consumeVector lines (pos + 1) dh with
+                | .error e => return .error e
+                | .ok (bv, nextBv) =>
+                    pos := nextBv
+                    vHidden := addConstVec vHidden bv
 
               pos := skipBlankLines lines pos
               if !(pos < lines.size && lines[pos]!.trim = "W_O") then
                 return .error "missing W_O"
               match consumeMatrixMulAndNormInf lines (pos + 1) dh d vHidden with
               | .error e => return .error e
-              | .ok (vOut, no, nextO) =>
-                  pos := nextO
-                  attnUnion := addVecIntervals attnUnion vOut
-                  attnCoeff := attnCoeff + nv * no
+                  | .ok (vOut, no, nextO) =>
+                      pos := nextO
+                      attnUnion := addVecIntervals attnUnion vOut
+                      attnCoeff := attnCoeff + nv * no
 
-        residualRows := residualRows.map (fun r => addVecIntervals r attnUnion)
+        -- Shared attention projection bias (affects forward activations / variance, so we include it).
+        pos := skipBlankLines lines pos
+        if pos < lines.size && lines[pos]!.trim = "ATTN_BIAS" then
+          match consumeVector lines (pos + 1) d with
+          | .error e => return .error e
+          | .ok (bAttn, nextB) =>
+              pos := nextB
+              attnUnion := addConstVec attnUnion bAttn
+
+        residualUnion := addVecIntervals residualUnion attnUnion
 
         -- LN2: compute per-row outputs and min variance LB.
         let p2 := ln2Params.getD l defLn
-        let mut ln2OutRows : Array (Array RatInterval) := Array.mkEmpty n
-        let mut ln2VarMin : Option Rat := none
-        for r in residualRows do
-          let (y, v) := layerNormRowApprox r p2.gamma p2.beta eps
-          ln2OutRows := ln2OutRows.push y
-          ln2VarMin := some (match ln2VarMin with | none => v | some b => min b v)
-        let ln2VarLB := ln2VarMin.getD 0
+        let (ln2Out, ln2VarLB) := layerNormRowApprox residualUnion p2.gamma p2.beta eps
         let ln2MaxAbsGamma := maxAbsOfVector p2.gamma
         let ln2Bound :=
           if ln2VarLB > 0 then
             layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
           else
             layerNormOpBoundConservative ln2MaxAbsGamma eps
-        let ln2Union := unionRows ln2OutRows d
+        let ln2Union := ln2Out
 
         -- MLP (streaming): W_in, b_in, W_out, b_out.
         pos := skipBlankLines lines pos
@@ -731,7 +811,7 @@ private def certifyModelFileLocal
                     | .ok (bout, nextBout) =>
                         pos := nextBout
                         let mlpOut := addConstVec mlpOut0 bout
-                        residualRows := residualRows.map (fun r => addVecIntervals r mlpOut)
+                        residualUnion := addVecIntervals residualUnion mlpOut
 
                         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
                         let mlpCoeff := nWin * actDerivBound * nWout

@@ -83,30 +83,36 @@ def parseRat (s : String) : Except String Rat := do
   let fNat ← parseNat10OrZero fracPart
   let fracLen := fracPart.trim.length
 
-  let denomNat : Nat := Nat.pow 10 fracLen
-  let mantissaNat : Nat := iNat * denomNat + fNat
-
-  let baseNum : Int :=
-    let m : Int := Int.ofNat mantissaNat
-    if neg then -m else m
-
-  let base : Rat := (baseNum : Rat) / (denomNat : Rat)
-
   let expInt : Int ←
     match expStr? with
     | none => pure 0
     | some e => parseInt10 e
 
-  if expInt = 0 then
-    return base
-  else
-    let expNeg : Bool := expInt < 0
-    let expAbs : Nat := Int.natAbs expInt
-    let pow10 : Rat := (Nat.pow 10 expAbs : Nat)
-    if expNeg then
-      return (base / pow10)
-    else
-      return (base * pow10)
+  -- Construct `Rat` in a single normalization step (avoids repeated gcd normalization).
+  let denomBase : Nat := Nat.pow 10 fracLen
+  let mantissaNat : Nat := iNat * denomBase + fNat
+  let num0 : Int := if neg then -(Int.ofNat mantissaNat) else (Int.ofNat mantissaNat)
+  let expAbs : Nat := Int.natAbs expInt
+  let pow10Nat : Nat := Nat.pow 10 expAbs
+
+  let den : Nat :=
+    if expInt < 0 then denomBase * pow10Nat else denomBase
+  let num : Int :=
+    if expInt > 0 then num0 * (Int.ofNat pow10Nat) else num0
+
+  have den_nz : den ≠ 0 := by
+    have h10pos : (0 : Nat) < 10 := by decide
+    have hpow1 : denomBase ≠ 0 := by
+      exact Nat.ne_of_gt (Nat.pow_pos (n := fracLen) h10pos)
+    have hpow2 : pow10Nat ≠ 0 := by
+      exact Nat.ne_of_gt (Nat.pow_pos (n := expAbs) h10pos)
+    by_cases hneg : expInt < 0
+    · -- `den = denomBase * pow10Nat`
+      simpa [den, hneg] using Nat.mul_ne_zero hpow1 hpow2
+    · -- `den = denomBase`
+      simpa [den, hneg] using hpow1
+
+  return Rat.normalize num den (den_nz := den_nz)
 
 /-- Parse a line of space-separated rationals, failing on the first invalid token. -/
 def parseRatLine (line : String) : Except String (Array Rat) := do
