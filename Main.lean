@@ -853,7 +853,7 @@ def dumpCmd : Cmd := `[Cli|
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
-  "NFP: Neural Feature Pathway verification toolkit"
+  "NFP: Neural Formal Pathways verification toolkit"
 
   SUBCOMMANDS:
     analyzeCmd;

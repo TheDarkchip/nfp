@@ -2,6 +2,8 @@
 
 NFP is a Lean 4 project for **mathematically rigorous** reasoning about transformer-style computations, with a focus on mechanistic interpretability (e.g. induction heads) and provable norm/error bounds.
 
+NFP stands for **Neural Formal Pathways**.
+
 This repo contains:
 
 - A **Lean library** (under `Nfp/`) for finite probability and a lightweight “transformer semantics” layer.
