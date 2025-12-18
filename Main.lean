@@ -688,6 +688,60 @@ def runRoPE (p : Parsed) : IO UInt32 := do
       IO.eprintln "Error: --seqLen and --pairs must be positive."
       return 1
 
+/-- Dump a small slice of a forward pass for cross-implementation sanity checks. -/
+def runDump (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  setStdoutLogNameFromModelPath modelPath
+  let layer := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
+  let pos := p.flag? "pos" |>.map (·.as! Nat) |>.getD 0
+  let take := p.flag? "take" |>.map (·.as! Nat) |>.getD 16
+  let kind := p.flag? "kind" |>.map (·.as! String) |>.getD "afterLayer"
+
+  let loadResult ← loadModel ⟨modelPath⟩
+  match loadResult with
+  | .error msg =>
+      IO.eprintln s!"Error loading model: {msg}"
+      return 1
+  | .ok model0 =>
+      let model := model0.trimTrailingZeroEmbeddings
+      let fwd := model.runForward true
+
+      let X : ConcreteMatrix :=
+        match kind with
+        | "embeddings" => model.inputEmbeddings
+        | "layerInput" =>
+            fwd.getLayerInput layer
+        | "postAttn" =>
+            fwd.getPostAttnResidual layer
+        | "afterLayer" =>
+            fwd.getLayerInput (layer + 1)
+        | _ =>
+            fwd.getLayerInput (layer + 1)
+
+      if X.numRows = 0 || X.numCols = 0 then
+        IO.eprintln s!"Error: empty matrix for kind={kind}"
+        return 1
+      if pos ≥ X.numRows then
+        IO.eprintln s!"Error: pos={pos} out of bounds (rows={X.numRows})"
+        return 1
+
+      let n := min take X.numCols
+      let mut xs : Array Float := Array.mkEmpty n
+      let mut sum : Float := 0.0
+      let mut sumSq : Float := 0.0
+      for j in [:n] do
+        let v := X.get pos j
+        xs := xs.push v
+        sum := sum + v
+        sumSq := sumSq + v * v
+
+      IO.println <|
+        s!"DUMP kind={kind} layer={layer} pos={pos} take={n} " ++
+          s!"rows={X.numRows} cols={X.numCols}"
+      IO.println s!"sum={sum} sumSq={sumSq}"
+      IO.println (String.intercalate " " (xs.toList.map (fun x => s!"{x}")))
+      return 0
+
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
@@ -753,6 +807,21 @@ def ropeCmd : Cmd := `[Cli|
     pairs : Nat; "Number of RoPE pairs (>0); dimension is 2*pairs (default: 8)"
 ]
 
+/-- The dump subcommand. -/
+def dumpCmd : Cmd := `[Cli|
+  dump VIA runDump;
+  "Dump a small forward-pass slice (for PyTorch sanity checking)."
+
+  FLAGS:
+    layer : Nat; "Layer index (default: 0)"
+    pos : Nat; "Token position / row index (default: 0)"
+    take : Nat; "How many columns to dump from the start (default: 16)"
+    kind : String; "embeddings | layerInput | postAttn | afterLayer (default: afterLayer)"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
@@ -762,7 +831,8 @@ def nfpCmd : Cmd := `[Cli|
     analyzeCmd;
     inductionCmd;
     certifyCmd;
-    ropeCmd
+    ropeCmd;
+    dumpCmd
 ]
 
 /-- Main entry point. -/
