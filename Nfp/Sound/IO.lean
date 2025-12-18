@@ -11,15 +11,18 @@ namespace Nfp.Sound
 open IO
 
 /-!
-# Sound `.nfpt` loader (exact Rat parsing)
+# Sound `.nfpt` loader (exact Rat parsing, legacy text format)
 
-This is a minimal, *sound* loader intended for certification.
+This is a minimal, *sound* loader intended for certification on the legacy text format.
 
 It does **not** construct the full `ConcreteModel` (Float-based). Instead it parses only the
 weights needed for conservative amplification constants `Cᵢ`, using exact `Rat` arithmetic.
 
 It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
 LayerNorm certification on a bounded region around that input.
+
+Current limitation: this parser only accepts the legacy `NFP_TEXT_V1/V2` format.
+Binary (`NFP_BINARY_V1`) support is pending.
 
 Trusted base:
 - Parsing from text to `Rat` via `Nfp.Sound.parseRat`.

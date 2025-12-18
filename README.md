@@ -87,6 +87,9 @@ BINARY_START
 
 The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
 
+Note: the sound-mode certificate pipeline still uses the legacy text parser. Binary support
+there is pending.
+
 ### Exporting GPT-2 to `.nfpt`
 
 The export scripts use `torch` + `transformers`.
@@ -148,6 +151,8 @@ lake exe nfp induction models/gpt2_rigorous.nfpt \
 ### `certify`
 
 Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
+
+Note: the sound-mode parser currently accepts only legacy `NFP_TEXT_V1/V2` files.
 
 `certify` supports both:
 - **global certification** (weights only), and

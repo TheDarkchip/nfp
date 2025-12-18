@@ -175,9 +175,9 @@ def ensureCacheDir : IO Unit := do
   IO.FS.createDirAll cacheDir
 
 /-!
-## Cache writer (text → binary)
+## Cache writer (legacy text → binary)
 
-We currently build the cache by reading the `.nfpt` text file into an array of lines.
+We currently build the cache by reading the legacy `.nfpt` text file into an array of lines.
 This is memory-heavy but keeps implementation simple; once cached, repeated certifications
 avoid the text parse cost entirely.
 -/

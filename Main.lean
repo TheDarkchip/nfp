@@ -37,7 +37,7 @@ lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 lake exe nfp certify model.nfpt --eps 1e-5 --actDeriv 2
 
 # Local (input-dependent) sound-mode certificate report
-# (If the model `.nfpt` contains `EMBEDDINGS`, `--input` can be omitted.)
+# (NFP_BINARY_V1 always embeds inputs; legacy text requires an EMBEDDINGS section.)
 lake exe nfp certify model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
 
 # Instantiate RoPE bounds for a specific shape
@@ -750,8 +750,8 @@ def runCertify (p : Parsed) : IO UInt32 := do
               else
                 throw <|
                   "local certification requested via --delta, but the model file has no \
-EMBEDDINGS section before the first LAYER; pass --input <input.nfpt> (containing EMBEDDINGS) \
-or omit --delta for global certification."
+EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
+containing EMBEDDINGS or omit --delta for global certification."
     let cert ← ExceptT.mk <|
       Nfp.Sound.certifyModelFile ⟨modelPath⟩ eps actDeriv
         (inputPath? := inputPath?) (inputDelta := delta)
@@ -938,7 +938,7 @@ def certifyCmd : Cmd := `[Cli|
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust)."
 
   FLAGS:
-    input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS)"
+    input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local certification (default: 0; if --input is omitted, \
 uses EMBEDDINGS in the model file when present)"
     eps : String; "LayerNorm epsilon (default: 1e-5)"
