@@ -1371,6 +1371,10 @@ def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float 
 
   if maxInvStd ≤ 0.0 || Float.isNaN maxInvStd || Float.isInf maxInvStd then
     maxInvStd := 1.0 / Float.sqrt eps
+  else
+    let invStdMax := 1.0 / Float.sqrt eps
+    if maxInvStd > invStdMax then
+      maxInvStd := invStdMax
 
   return gammaMaxAbs * maxInvStd
 
