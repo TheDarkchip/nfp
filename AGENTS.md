@@ -216,6 +216,8 @@ but you **must** update this list in the same commit.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
 - `Sound/Decimal.lean`
   - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
+- `Sound/Binary.lean`
+  - Sound binary (`NFP_BINARY_V1`) helpers for global certification.
 - `Sound/Bounds.lean`
   - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
 - `Sound/Bridge.lean`

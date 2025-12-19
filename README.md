@@ -87,8 +87,8 @@ BINARY_START
 
 The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
 
-Note: the sound-mode certificate pipeline still uses the legacy text parser. Binary support
-there is pending.
+Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
+currently requires legacy `NFP_TEXT_V1/V2`.
 
 ### Exporting GPT-2 to `.nfpt`
 
@@ -105,6 +105,21 @@ If you prefer a locked Python environment, use `uv` or a venv and install depend
 ```bash
 uv run python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
 ```
+
+### GPT-2 sound demo (global)
+
+This demo downloads GPT-2 weights on demand, exports a binary `.nfpt`, and runs the
+global sound certificate.
+
+```bash
+./scripts/demo_gpt2_sound.sh
+```
+
+Artifacts:
+- `models/gpt2.nfpt` (binary export)
+- `reports/gpt2_sound_demo.txt` (sound certificate report)
+
+Local (input-dependent) sound certification for binary exports is not implemented yet.
 
 ## CLI overview
 
@@ -152,7 +167,8 @@ lake exe nfp induction models/gpt2_rigorous.nfpt \
 
 Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
 
-Note: the sound-mode parser currently accepts only legacy `NFP_TEXT_V1/V2` files.
+Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
+currently requires legacy `NFP_TEXT_V1/V2`.
 
 `certify` supports both:
 - **global certification** (weights only), and

@@ -2,6 +2,7 @@
 
 import Std
 import Nfp.Sound.Cert
+import Nfp.Sound.Binary
 import Nfp.Sound.Interval
 import Nfp.Sound.Cache
 import Nfp.Sound.Fixed
@@ -21,8 +22,8 @@ weights needed for conservative amplification constants `Cᵢ`, using exact `Rat
 It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
 LayerNorm certification on a bounded region around that input.
 
-Current limitation: this parser only accepts the legacy `NFP_TEXT_V1/V2` format.
-Binary (`NFP_BINARY_V1`) support is pending.
+Current limitation: local (input-dependent) certification still requires legacy `NFP_TEXT_V1/V2`.
+Global certification supports `NFP_BINARY_V1` via a sound fixed-point rounding bridge.
 
 Trusted base:
 - Parsing from text to `Rat` via `Nfp.Sound.parseRat`.
@@ -39,6 +40,8 @@ def parseHeaderLine (line : String) : Option (String × String) :=
     match line.splitOn "=" with
     | [k, v] => some (k.trim, v.trim)
     | _ => none
+
+private def defaultBinaryScalePow10 : Nat := 9
 
 /-- Read `count` rationals from lines starting at `start`, folding into `state`.
 
@@ -116,6 +119,149 @@ def consumeMaxAbs
 
 private def maxAbsOfVector (xs : Array Rat) : Rat :=
   xs.foldl (fun acc x => max acc (ratAbs x)) 0
+
+private def certifyModelFileGlobalBinary
+    (path : System.FilePath)
+    (eps : Rat := defaultEps)
+    (actDerivBound : Rat := defaultActDerivBound) : IO (Except String ModelCert) := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  match ← readBinaryHeader h with
+  | .error e => return .error e
+  | .ok hdr =>
+      let scalePow10 := defaultBinaryScalePow10
+
+      match ← skipI32Array h hdr.seqLen with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
+      | .error e => return .error e
+      | .ok _ => pure ()
+
+      let mut layers : Array LayerAmplificationCert := Array.mkEmpty hdr.numLayers
+      let mut totalAmp : Rat := 1
+
+      for l in [:hdr.numLayers] do
+        let mut attnSum : Rat := 0
+        for _h in [:hdr.numHeads] do
+          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+
+          let nvScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
+          let nvScaled ←
+            match nvScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let noScaledE ← readMatrixNormInfScaled h hdr.headDim hdr.modelDim scalePow10
+          let noScaled ←
+            match noScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+
+          let nv := ratOfScaledInt scalePow10 nvScaled
+          let no := ratOfScaledInt scalePow10 noScaled
+          attnSum := attnSum + nv * no
+
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+
+        let nWinScaledE ←
+          readMatrixNormInfScaled h hdr.modelDim hdr.hiddenDim scalePow10
+        let nWinScaled ←
+          match nWinScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← skipF64Array h hdr.hiddenDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let nWoutScaledE ←
+          readMatrixNormInfScaled h hdr.hiddenDim hdr.modelDim scalePow10
+        let nWoutScaled ←
+          match nWoutScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+
+        let ln1GammaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln1GammaScaled ←
+          match ln1GammaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let ln2GammaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln2GammaScaled ←
+          match ln2GammaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+
+        let ln1Max := ratOfScaledInt scalePow10 ln1GammaScaled
+        let ln2Max := ratOfScaledInt scalePow10 ln2GammaScaled
+        let nWin := ratOfScaledInt scalePow10 nWinScaled
+        let nWout := ratOfScaledInt scalePow10 nWoutScaled
+
+        let ln1Bound := layerNormOpBoundConservative ln1Max eps
+        let ln2Bound := layerNormOpBoundConservative ln2Max eps
+        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnSum
+        let mlpW := ln2Bound * (nWin * actDerivBound * nWout)
+        let C := attnW + mlpW
+
+        layers := layers.push {
+          layerIdx := l
+          ln1MaxAbsGamma := ln1Max
+          ln2MaxAbsGamma := ln2Max
+          ln1VarianceLowerBound? := none
+          ln2VarianceLowerBound? := none
+          ln1Bound := ln1Bound
+          ln2Bound := ln2Bound
+          attnWeightContribution := attnW
+          mlpWeightContribution := mlpW
+          C := C
+        }
+        totalAmp := totalAmp * (1 + C)
+
+      match ← skipF64Array h hdr.modelDim with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← skipF64Array h hdr.modelDim with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← skipF64Array h (hdr.modelDim * hdr.vocabSize) with
+      | .error e => return .error e
+      | .ok _ => pure ()
+
+      let cert : ModelCert := {
+        modelPath := path.toString
+        inputPath? := none
+        inputDelta := 0
+        eps := eps
+        actDerivBound := actDerivBound
+        softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
+        layers := layers
+        totalAmplificationFactor := totalAmp
+      }
+      if cert.check then
+        return .ok cert
+      return .error "sound certificate failed internal consistency checks"
 
 private def addVecIntervals (a b : Array RatInterval) : Array RatInterval :=
   Id.run do
@@ -1261,12 +1407,22 @@ def certifyModelFile
     (actDerivBound : Rat := defaultActDerivBound)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
-  match inputPath? with
-  | none =>
-      certifyModelFileGlobal path eps actDerivBound (inputPath? := none) (inputDelta := inputDelta)
-  | some ip =>
-      if inputDelta < 0 then
-        return .error "delta must be nonnegative"
-      certifyModelFileLocal path eps actDerivBound ip inputDelta
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let firstLine := (← h.getLine).trim
+  if firstLine = "NFP_BINARY_V1" then
+    if inputPath?.isSome || inputDelta ≠ 0 then
+      return .error
+        "local sound certification for NFP_BINARY_V1 is not implemented yet; \
+omit --delta or use legacy NFP_TEXT input for local certification"
+    certifyModelFileGlobalBinary path eps actDerivBound
+  else
+    match inputPath? with
+    | none =>
+        certifyModelFileGlobal path eps actDerivBound
+          (inputPath? := none) (inputDelta := inputDelta)
+    | some ip =>
+        if inputDelta < 0 then
+          return .error "delta must be nonnegative"
+        certifyModelFileLocal path eps actDerivBound ip inputDelta
 
 end Nfp.Sound
