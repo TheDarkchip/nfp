@@ -218,6 +218,8 @@ but you **must** update this list in the same commit.
   - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
 - `Sound/Bounds.lean`
   - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
+- `Sound/Bridge.lean`
+  - Lemmas connecting `Rat`-level bounds to `SignedMixer` operator-norm bounds.
 - `Sound/Cert.lean`
   - Certificate/report structures and pretty-printing for SOUND-mode output.
 - `Sound/IO.lean`

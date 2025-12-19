@@ -19,6 +19,7 @@ import Nfp.Discovery
 import Nfp.Verification
 import Nfp.IO
 import Nfp.Sound.IO
+import Nfp.Sound.Bridge
 import Nfp.Sound.Demo
 
 /-!

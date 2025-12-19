@@ -207,6 +207,11 @@ noncomputable def rowAbsSum (M : SignedMixer S T) (i : S) : ℝ := ∑ j, |M.w i
 /-- Total influence magnitude: sum of all absolute weights. -/
 noncomputable def totalInfluence (M : SignedMixer S T) : ℝ := ∑ i, M.rowAbsSum i
 
+/-- ℓ∞ operator norm bound: max row sum of absolute weights. -/
+noncomputable def operatorNormBound (M : SignedMixer S T) [Nonempty S] : ℝ :=
+  Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
+    ∑ j, |M.w i j|
+
 /-! ## Conversion to/from Mixer -/
 
 /-- Convert a nonnegative signed mixer with row sums = 1 to a Mixer.

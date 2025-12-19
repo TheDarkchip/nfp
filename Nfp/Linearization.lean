@@ -1215,9 +1215,7 @@ theorem deep_error_bounded_by_layer_errors (D : DeepLinearization (n := n) (d :=
 /-- Operator norm bound (submultiplicativity approximation). -/
 noncomputable def operatorNormBound [Nonempty n] [Nonempty d]
     (M : SignedMixer (n × d) (n × d)) : ℝ :=
-  -- Upper bound: max row sum of absolute values
-  Finset.sup' Finset.univ (Finset.univ_nonempty (α := n × d)) fun i =>
-    ∑ j : n × d, |M.w i j|
+  SignedMixer.operatorNormBound M
 
 /-! ### RoPE bounds -/
 
@@ -1230,87 +1228,88 @@ variable {pos pair : Type*}
 /-- **Certification lemma (ℓ∞ bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
 
 Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute values are ≤ 1. -/
-theorem rope_operatorNormBound_le_two (θ : pos → pair → ℝ) :
-    operatorNormBound (n := pos) (d := RoPEDim pair)
-        (ropeJacobian (pos := pos) (pair := pair) θ) ≤ (2 : ℝ) := by
-  classical
-  -- Reduce `sup' ≤ 2` to a per-row absolute row-sum bound.
-  simp [operatorNormBound, Finset.sup'_le_iff]
-  intro p k
-  have hrow (b : Bool) :
-      (∑ j : pos × RoPEDim pair,
-          |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|) ≤ (2 : ℝ) := by
-    -- Expand the row-sum over `pos × pair × Bool` and collapse the `pos`/`pair` sums using
-    -- `Fintype.sum_eq_single` (all other terms are zero by definition of `ropeJacobian`).
-    have hpos :
-        (∑ j : pos,
-              ∑ j' : RoPEDim pair,
+  theorem rope_operatorNormBound_le_two (θ : pos → pair → ℝ) :
+      operatorNormBound (n := pos) (d := RoPEDim pair)
+          (ropeJacobian (pos := pos) (pair := pair) θ) ≤ (2 : ℝ) := by
+    classical
+    -- Reduce `sup' ≤ 2` to a per-row absolute row-sum bound.
+    simp [operatorNormBound, SignedMixer.operatorNormBound]
+    intro p k
+    have hrow (b : Bool) :
+        (∑ j : pos × RoPEDim pair,
+            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|) ≤ (2 : ℝ) := by
+      -- Expand the row-sum over `pos × pair × Bool` and collapse the `pos`/`pair` sums using
+      -- `Fintype.sum_eq_single` (all other terms are zero by definition of `ropeJacobian`).
+      have hpos :
+          (∑ j : pos,
+                ∑ j' : RoPEDim pair,
                 |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (j, j')|)
             =
           ∑ j' : RoPEDim pair,
             |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')| := by
-      -- `Fintype.sum_eq_single` in mathlib now has a single side-condition.
-      have hzero :
-          ∀ x : pos,
-            x ≠ p →
-              (∑ j' : RoPEDim pair,
-                    |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (x, j')|) = 0 := by
-        intro x hx
-        have hpx : p ≠ x := by
-          simpa [eq_comm] using hx
-        simp [ropeJacobian, hpx]
-      simpa using
-        (Fintype.sum_eq_single (f := fun x : pos =>
-            ∑ j' : RoPEDim pair,
-              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (x, j')|) p hzero)
-    have hpair :
-        (∑ j' : RoPEDim pair,
-              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')|)
-            =
-          ∑ bb : Bool,
-            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := by
-      simp [RoPEDim, Fintype.sum_prod_type]
-      have hzero :
-          ∀ x : pair,
-            x ≠ k →
-              (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
-                    (p, (x, true))|)
-                +
-                  (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
-                        (p, (x, false))|) = 0 := by
-        intro x hx
-        have hkx : k ≠ x := by
-          simpa [eq_comm] using hx
-        simp [ropeJacobian, hkx]
-      -- Repackage into `Fintype.sum_eq_single` over `pair`.
-      simpa [Fintype.univ_bool] using
-        (Fintype.sum_eq_single (f := fun x : pair =>
-            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, true))| +
-              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, false))|)
-          k hzero)
-    have hbool :
-        (∑ bb : Bool,
-              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))|)
-          = |Real.cos (θ p k)| + |Real.sin (θ p k)| := by
-      cases b <;>
-      simp [ropeJacobian, RoPEDim, Fintype.univ_bool, abs_neg, add_comm]
-    calc
-      (∑ j : pos × RoPEDim pair,
-            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|)
-          =
-          (∑ j : pos,
+        -- `Fintype.sum_eq_single` in mathlib now has a single side-condition.
+        have hzero :
+            ∀ x : pos,
+              x ≠ p →
+                (∑ j' : RoPEDim pair,
+                      |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
+                          (x, j')|) = 0 := by
+          intro x hx
+          have hpx : p ≠ x := by
+            simpa [eq_comm] using hx
+          simp [ropeJacobian, hpx]
+        simpa using
+          (Fintype.sum_eq_single (f := fun x : pos =>
               ∑ j' : RoPEDim pair,
-                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (j, j')|) := by
-            simp [Fintype.sum_prod_type]
-      _ = ∑ j' : RoPEDim pair,
-            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')| := hpos
-      _ = ∑ bb : Bool,
-            |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := hpair
-      _ = |Real.cos (θ p k)| + |Real.sin (θ p k)| := hbool
-      _ ≤ 1 + 1 := by
-            exact add_le_add (Real.abs_cos_le_one _) (Real.abs_sin_le_one _)
-      _ = (2 : ℝ) := by norm_num
-  exact ⟨hrow false, hrow true⟩
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (x, j')|) p hzero)
+      have hpair :
+          (∑ j' : RoPEDim pair,
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')|)
+              =
+            ∑ bb : Bool,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := by
+        simp [RoPEDim, Fintype.sum_prod_type]
+        have hzero :
+            ∀ x : pair,
+              x ≠ k →
+                (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
+                      (p, (x, true))|)
+                  +
+                    (|(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b))
+                          (p, (x, false))|) = 0 := by
+          intro x hx
+          have hkx : k ≠ x := by
+            simpa [eq_comm] using hx
+          simp [ropeJacobian, hkx]
+        -- Repackage into `Fintype.sum_eq_single` over `pair`.
+        simpa [Fintype.univ_bool] using
+          (Fintype.sum_eq_single (f := fun x : pair =>
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, true))| +
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (x, false))|)
+            k hzero)
+      have hbool :
+          (∑ bb : Bool,
+                |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))|)
+            = |Real.cos (θ p k)| + |Real.sin (θ p k)| := by
+        cases b <;>
+        simp [ropeJacobian, RoPEDim, Fintype.univ_bool, abs_neg, add_comm]
+      calc
+        (∑ j : pos × RoPEDim pair,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|)
+            =
+            (∑ j : pos,
+                ∑ j' : RoPEDim pair,
+                  |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (j, j')|) := by
+              simp [Fintype.sum_prod_type]
+        _ = ∑ j' : RoPEDim pair,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, j')| := hpos
+        _ = ∑ bb : Bool,
+              |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := hpair
+        _ = |Real.cos (θ p k)| + |Real.sin (θ p k)| := hbool
+        _ ≤ 1 + 1 := by
+              exact add_le_add (Real.abs_cos_le_one _) (Real.abs_sin_le_one _)
+        _ = (2 : ℝ) := by norm_num
+    exact ⟨hrow false, hrow true⟩
 
 end RoPEBounds
 
