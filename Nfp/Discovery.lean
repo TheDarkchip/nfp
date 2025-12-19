@@ -5408,7 +5408,8 @@ private def safeSlack (ub lb : Float) : Float :=
 Correctness: every `ub[l]` returned is a minimum of **rigorous** upper bound candidates.
 The adaptive logic only changes which candidates are computed; it never relaxes the final bound.
 -/
-def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConfig) :
+def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConfig)
+    (activeLayers? : Option (Array Bool) := none) :
     AdaptiveSchedulerResult := Id.run do
   let model := cache.model
   let tiers := ConcreteMatrix.BoundEffort.tiers
@@ -5417,6 +5418,12 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let maxKrylov : Nat :=
     if cfg.krylovSteps = 0 then 0
     else max cfg.krylovSteps (min 32 (max 8 (cfg.krylovSteps * 4)))
+  let active : Array Bool :=
+    match activeLayers? with
+    | some layers =>
+        if layers.size = model.numLayers then layers
+        else Array.replicate model.numLayers true
+    | none => Array.replicate model.numLayers true
 
   -- Precompute tier-1 attention part and per-layer ln₂ Jacobian bound.
   --
@@ -5425,6 +5432,8 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let nLayers := model.numLayers
   let useParallelInit := nLayers >= 4
   let computeLayerInit (l : Nat) : (Float × Float × Float) := Id.run do
+    if !active[l]! then
+      return (0.0, 0.0, 0.0)
     let layerData := cache.headData.getD l #[]
     let mut a : Float := 0.0
     let inputOpBoundTier1 : Float :=
@@ -5474,18 +5483,28 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let ln2Bound : Array Float := init.map (·.2.1)
   let ln1InputOpTier1 : Array Float := init.map (·.2.2)
 
-  let mut lbK : Array Nat := Array.replicate model.numLayers cfg.krylovSteps
-  let mut lb : Array Float := Array.mkEmpty model.numLayers
+  let mut lbK : Array Nat := Array.replicate model.numLayers 0
+  for l in [:model.numLayers] do
+    if active[l]! then
+      lbK := lbK.set! l cfg.krylovSteps
+  let mut lb : Array Float := Array.replicate model.numLayers 0.0
   let useParallelLb := model.numLayers >= 4 && cfg.krylovSteps > 0
   if useParallelLb then
-    let tasks : Array (Task Float) :=
-      .ofFn fun i : Fin model.numLayers =>
-        Task.spawn (fun _ =>
-          layerResidualJacobianLowerBound cache i.val cfg.krylovSteps (parallelHeads := true))
-    lb := tasks.map Task.get
+    let mut tasks : Array (Option (Task Float)) := Array.replicate model.numLayers none
+    for l in [:model.numLayers] do
+      if active[l]! then
+        tasks := tasks.set! l (some (Task.spawn (fun _ =>
+          layerResidualJacobianLowerBound cache l cfg.krylovSteps (parallelHeads := true))))
+    let mut out : Array Float := Array.replicate model.numLayers 0.0
+    for l in [:model.numLayers] do
+      match tasks[l]! with
+      | some t => out := out.set! l t.get
+      | none => pure ()
+    lb := out
   else
     for l in [:model.numLayers] do
-      lb := lb.push (layerResidualJacobianLowerBound cache l cfg.krylovSteps (parallelHeads := true))
+      if active[l]! then
+        lb := lb.set! l (layerResidualJacobianLowerBound cache l cfg.krylovSteps (parallelHeads := true))
 
   let mlpUbFromCore (core : MLPJacobianBoundCore) (winUb woutUb : Float) : Float :=
     let legacy := winUb * core.globalDmax * woutUb
@@ -5518,7 +5537,7 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
 
   -- Seed tier-1 caches from precomputation (fast path).
   for l in [:model.numLayers] do
-    if startTier < tiers.size then
+    if active[l]! && startTier < tiers.size then
       let rowIn := (caches.ln1InputOpUb[l]!).set! startTier (some (ln1InputOpTier1.getD l 0.0))
       let rowA := (caches.attnPartUb[l]!).set! startTier (some (attnPartTier1.getD l 0.0))
       caches :=
@@ -5694,18 +5713,21 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
   let mut tier : Array Nat := Array.replicate model.numLayers startTier
   let mut ub : Array Float := Array.mkEmpty model.numLayers
   for l in [:model.numLayers] do
-    let (v, st) := (computeUbAtM l startTier).run caches
-    caches := st
-    let baseUb : Float :=
-      if cache.layerNormBoundsComputed then
-        min (cache.layerNormBounds.getD l v) v
-      else
-        v
-    ub := ub.push baseUb
+    if active[l]! then
+      let (v, st) := (computeUbAtM l startTier).run caches
+      caches := st
+      let baseUb : Float :=
+        if cache.layerNormBoundsComputed then
+          min (cache.layerNormBounds.getD l v) v
+        else
+          v
+      ub := ub.push baseUb
+    else
+      ub := ub.push 0.0
 
   let mut steps : Array AdaptiveSchedulerStep := #[]
-  let mut stalledUb : Array Bool := Array.replicate model.numLayers false
-  let mut stalledLb : Array Bool := Array.replicate model.numLayers false
+  let mut stalledUb : Array Bool := Array.ofFn fun i : Fin model.numLayers => !active[i.val]!
+  let mut stalledLb : Array Bool := Array.ofFn fun i : Fin model.numLayers => !active[i.val]!
   let mut upgradesUsed : Nat := 0
   let epsNoise : Float := 1e-6
 
@@ -5716,6 +5738,8 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
     let mut bestUb : Float := 0.0
     let mut found : Bool := false
     for l in [:model.numLayers] do
+      if !active[l]! then
+        continue
       let t := tier[l]!
       let canUb := (!stalledUb[l]!) && (t + 1 < tiers.size)
       let canLb := (!stalledLb[l]!) && (lbStep > 0) && (lbK[l]! < maxKrylov)

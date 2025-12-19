@@ -308,9 +308,9 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let diagnostics := p.hasFlag "diagnostics"
   let adaptive := p.hasFlag "adaptive"
   let targetSlackStr := p.flag? "targetSlack" |>.map (·.as! String) |>.getD "8.0"
-  let maxUpgrades := p.flag? "maxUpgrades" |>.map (·.as! Nat) |>.getD 200
+  let maxUpgrades := p.flag? "maxUpgrades" |>.map (·.as! Nat) |>.getD 120
   let minRelImproveStr := p.flag? "minRelImprove" |>.map (·.as! String) |>.getD "0.01"
-  let krylovSteps := p.flag? "krylovSteps" |>.map (·.as! Nat) |>.getD 4
+  let krylovSteps := p.flag? "krylovSteps" |>.map (·.as! Nat) |>.getD 2
   let adaptiveScopeStr := p.flag? "adaptiveScope" |>.map (·.as! String) |>.getD "layernorm"
   let diagTop := p.flag? "diagTop" |>.map (·.as! Nat) |>.getD 5
   let some minEffect := Nfp.parseFloat thresholdStr
@@ -404,6 +404,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
 
       let needSched := adaptive && (verbose || diagnostics)
+      let schedActive? : Option (Array Bool) := none
       let sched? : Option Nfp.AdaptiveSchedulerResult :=
         if needSched then
           let cfg : Nfp.AdaptiveSchedulerConfig :=
@@ -413,7 +414,7 @@ def runInduction (p : Parsed) : IO UInt32 := do
               krylovSteps := krylovSteps
               scope := adaptiveScope
               debugMonotone := diagnostics }
-          some (Nfp.runAdaptiveScheduler cache cfg)
+          some (Nfp.runAdaptiveScheduler cache cfg schedActive?)
         else
           none
 
@@ -923,9 +924,9 @@ def inductionCmd : Cmd := `[Cli|
     diagTop : Nat; "How many top candidates get diagnostics (default: 5)"
     adaptive; "Enable adaptive bound scheduler (rigorous; deterministic)"
     targetSlack : String; "Stop when ub/lb ≤ targetSlack (default: 8.0)"
-    maxUpgrades : Nat; "Maximum adaptive upgrades (default: 200)"
+    maxUpgrades : Nat; "Maximum adaptive upgrades (default: 120)"
     minRelImprove : String; "Stop upgrading a layer if improvement < this fraction (default: 0.01)"
-    krylovSteps : Nat; "Krylov steps for LOWER bounds only (default: 4)"
+    krylovSteps : Nat; "Krylov steps for LOWER bounds only (default: 2)"
     adaptiveScope : String; "Adaptive scope: layernorm | all (default: layernorm)"
 
   ARGS:
@@ -938,7 +939,8 @@ def certifyCmd : Cmd := `[Cli|
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust)."
 
   FLAGS:
-    input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS for legacy text)"
+    input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS \
+for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local certification (default: 0; if --input is omitted, \
 uses EMBEDDINGS in the model file when present)"
     eps : String; "LayerNorm epsilon (default: 1e-5)"
