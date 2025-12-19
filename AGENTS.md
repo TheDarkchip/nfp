@@ -220,6 +220,8 @@ but you **must** update this list in the same commit.
   - Sound binary (`NFP_BINARY_V1`) helpers for global certification.
 - `Sound/Bounds.lean`
   - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
+- `Sound/HeadCert.lean`
+  - Sound per-head contribution certificate structures.
 - `Sound/Bridge.lean`
   - Lemmas connecting `Rat`-level bounds to `SignedMixer` operator-norm bounds.
 - `Sound/Cert.lean`

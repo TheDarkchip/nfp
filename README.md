@@ -88,7 +88,7 @@ BINARY_START
 The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
 
 Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
-currently requires legacy `NFP_TEXT_V1/V2`.
+supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
 
 ### Exporting GPT-2 to `.nfpt`
 
@@ -119,7 +119,18 @@ Artifacts:
 - `models/gpt2.nfpt` (binary export)
 - `reports/gpt2_sound_demo.txt` (sound certificate report)
 
-Local (input-dependent) sound certification for binary exports is not implemented yet.
+### Tiny local binary demo
+
+This demo converts the tiny text fixtures into a binary `.nfpt` and runs a local
+sound certificate (with `--delta`).
+
+```bash
+./scripts/demo_tiny_local_binary.sh
+```
+
+Artifacts:
+- `tests/fixtures/tiny_sound_binary.nfpt` (binary fixture)
+- `reports/tiny_sound_local_binary.txt` (local sound certificate report)
 
 ## CLI overview
 
@@ -168,7 +179,7 @@ lake exe nfp induction models/gpt2_rigorous.nfpt \
 Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
 
 Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
-currently requires legacy `NFP_TEXT_V1/V2`.
+supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
 
 `certify` supports both:
 - **global certification** (weights only), and

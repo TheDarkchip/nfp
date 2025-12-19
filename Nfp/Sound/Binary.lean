@@ -126,7 +126,8 @@ private def ceilDivNat (a : Int) (d : Nat) : Int :=
   let di : Int := Int.ofNat d
   let q := a.ediv di
   let r := a.emod di
-  if r = 0 then q else q + 1
+    if r = 0 then q else q + 1
+
 
 private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
   let expBits : UInt64 := (bits >>> 52) &&& 0x7ff
@@ -156,6 +157,16 @@ private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except Strin
       let denPow := pow2Nat (-expVal).toNat
       let num := mInt * Int.ofNat scale
       .ok (ceilDivNat num denPow)
+
+private def floatScaledCeilSigned (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
+  match floatAbsCeilScaled scalePow10 bits with
+  | .error e => .error e
+  | .ok absScaled =>
+      let signNeg : Bool := (bits >>> 63) = (1 : UInt64)
+      if signNeg then
+        .ok (-absScaled)
+      else
+        .ok absScaled
 
 def skipBytes (h : IO.FS.Handle) (n : Nat) : IO (Except String Unit) := do
   let mut remaining := n
@@ -221,6 +232,76 @@ def readMatrixNormInfScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :
                 maxRowSum := curRowSum
               curRowSum := 0
       return .ok maxRowSum
+
+def readScaledFloatArray (h : IO.FS.Handle) (count scalePow10 : Nat) :
+    IO (Except String (Array Int)) := do
+  if count = 0 then
+    return .ok #[]
+  let bytesE : Except String ByteArray ←
+    try
+      pure (Except.ok (← readExactly h (count * 8)))
+    catch
+      | _ => pure (Except.error "unexpected EOF")
+  match bytesE with
+  | .error e => return .error e
+  | .ok bytes =>
+      let mut out : Array Int := Array.mkEmpty count
+      for i in [:count] do
+        let bits := u64FromLE bytes (i * 8)
+        match floatScaledCeilSigned scalePow10 bits with
+        | .error e => return .error e
+        | .ok v => out := out.push v
+      return .ok out
+
+def readMatrixNormOneInfScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :
+    IO (Except String (Nat × Nat)) := do
+  if rows = 0 || cols = 0 then
+    return .ok (0, 0)
+  let count := rows * cols
+  let bytesE : Except String ByteArray ←
+    try
+      pure (Except.ok (← readExactly h (count * 8)))
+    catch
+      | _ => pure (Except.error "unexpected EOF")
+  match bytesE with
+  | .error e => return .error e
+  | .ok bytes =>
+      let mut maxRowSum : Nat := 0
+      let mut curRowSum : Nat := 0
+      let mut colSums : Array Nat := Array.replicate cols 0
+      for i in [:count] do
+        let bits := u64FromLE bytes (i * 8)
+        match floatAbsCeilScaled scalePow10 bits with
+        | .error e => return .error e
+        | .ok absScaled =>
+            let absNat := Int.toNat absScaled
+            curRowSum := curRowSum + absNat
+            let colIdx := i % cols
+            colSums := colSums.set! colIdx (colSums[colIdx]! + absNat)
+            if (i + 1) % cols = 0 then
+              if curRowSum > maxRowSum then
+                maxRowSum := curRowSum
+              curRowSum := 0
+      let mut maxColSum : Nat := 0
+      for c in colSums do
+        if c > maxColSum then
+          maxColSum := c
+      return .ok (maxRowSum, maxColSum)
+
+def opBoundScaledFromOneInf (rowSum colSum : Nat) : Nat :=
+  max rowSum colSum
+
+def readMatrixOpBoundScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :
+    IO (Except String Nat) := do
+  match ← readMatrixNormOneInfScaled h rows cols scalePow10 with
+  | .error e => return .error e
+  | .ok (rowSum, colSum) =>
+      return .ok (opBoundScaledFromOneInf rowSum colSum)
+
+def ratOfScaledNat (scalePow10 : Nat) (x : Nat) : Rat :=
+  Rat.normalize (Int.ofNat x) (Nat.pow 10 scalePow10) (den_nz := by
+    have h10pos : (0 : Nat) < 10 := by decide
+    exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos))
 
 def ratOfScaledInt (scalePow10 : Nat) (x : Int) : Rat :=
   Rat.normalize x (Nat.pow 10 scalePow10) (den_nz := by
