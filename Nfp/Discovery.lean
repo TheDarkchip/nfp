@@ -4913,7 +4913,11 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
       for c in [:cols] do
         let d := X.data[rowBase + c]! - μ
         varSum := varSum + d * d
-      let var := varSum / cols.toFloat
+      let varRaw := varSum / cols.toFloat
+      -- Clamp for numerical stability (avoid NaN from tiny negative float noise).
+      let var :=
+        if Float.isNaN varRaw || Float.isInf varRaw then 0.0
+        else max 0.0 varRaw
       let invσ := 1.0 / Float.sqrt (var + eps)
       means := means.push μ
       invStds := invStds.push invσ

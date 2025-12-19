@@ -78,22 +78,6 @@ This bound is universal (independent of sequence length).
 -/
 def softmaxJacobianNormInfWorst : Rat := (1 : Rat) / 2
 
-/-- Conservative bound for the operator norm of a row-wise LayerNorm Jacobian.
-
-In exact real arithmetic one can show `‖J‖₂ ≤ max |γ| / σ` with `σ = sqrt(var + eps)`.
-For sound certification without `sqrt`, we use the very conservative inequality:
-
-`1/σ ≤ 1/eps` (since `σ ≥ sqrt(eps)` and for `eps ∈ (0,1]`, `1/eps ≥ 1/sqrt(eps)`).
-
-So we certify using `maxAbsGamma / eps`.
-
-For tighter **local** certification (weights + a bounded input region), use
-`layerNormOpBoundLocal`, which replaces `1/eps` with a sound upper bound on
-`1/sqrt(varianceLowerBound + eps)`.
--/
-def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
-  if eps ≤ 0 then 0 else maxAbsGamma / eps
-
 /-! ### Local (input-dependent) LayerNorm bounds
 
 We want a sound upper bound on `max |γ| / sqrt(var + eps)` using exact `Rat` arithmetic,
@@ -135,6 +119,31 @@ private def sqrtLowerDyadic (x : Rat) (precBits : Nat := 20) : Rat :=
         else
           hi := mid
       return Rat.normalize (Int.ofNat lo) (pow2 precBits) (den_nz := by simp [pow2])
+
+/-- Conservative bound for the operator norm of a row-wise LayerNorm Jacobian.
+
+In exact real arithmetic one can show `‖J‖₂ ≤ max |γ| / σ` with `σ = sqrt(var + eps)`.
+For sound certification without real `sqrt`, we compute a dyadic lower bound `s ≤ sqrt(eps)`
+and use `maxAbsGamma / s`, which is a **valid upper bound** on `maxAbsGamma / sqrt(eps)`.
+
+When `eps ≤ 1`, we may also use `maxAbsGamma / eps`, and take the minimum of the two
+sound bounds for a tighter result. For `eps > 1`, `maxAbsGamma / eps` is **not** sound,
+so we only use the dyadic bound.
+
+For tighter **local** certification (weights + a bounded input region), use
+`layerNormOpBoundLocal`, which replaces `eps` with a proven variance lower bound.
+-/
+def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
+  if eps ≤ 0 then
+    0
+  else
+    let raw := maxAbsGamma / eps
+    let s := sqrtLowerDyadic eps 20
+    if s ≤ 0 then
+      if eps ≤ 1 then raw else maxAbsGamma
+    else
+      let sBound := maxAbsGamma / s
+      if eps ≤ 1 then min raw sBound else sBound
 
 /-- Local upper bound on the operator norm of a row-wise LayerNorm Jacobian.
 
