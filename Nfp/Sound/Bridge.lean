@@ -3,8 +3,6 @@
 import Mathlib.Data.Rat.BigOperators
 import Mathlib.Data.Rat.Cast.Order
 import Mathlib.Data.Finset.Lattice.Fold
-import Mathlib.Data.Fintype.Basic
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Nfp.SignedMixer
 import Nfp.Sound.Bounds
 
@@ -12,26 +10,13 @@ namespace Nfp.Sound
 
 open scoped BigOperators
 
-/-- A rational-weighted matrix on finite types. -/
-structure RatMatrix (S T : Type*) [Fintype S] [Fintype T] where
-  w : S → T → Rat
-
 namespace RatMatrix
 
-variable {S T : Type*} [Fintype S] [Fintype T]
+variable {S T : Type*} [Fintype S] [Fintype T] [DecidableEq S] [DecidableEq T]
 
 /-- Cast a rational matrix to a real SignedMixer. -/
 noncomputable def toSignedMixer (M : RatMatrix S T) : SignedMixer S T :=
   ⟨fun i j => (M.w i j : ℝ)⟩
-
-/-- Row sum of absolute values in `Rat`. -/
-noncomputable def rowAbsSum (M : RatMatrix S T) (i : S) : Rat :=
-  ∑ j, ratAbs (M.w i j)
-
-/-- ℓ∞ operator norm bound in `Rat` (max row sum). -/
-noncomputable def operatorNormBound (M : RatMatrix S T) [Nonempty S] : Rat :=
-  Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
-    rowAbsSum M i
 
 lemma ratAbs_eq_abs (x : Rat) : ratAbs x = |x| := by
   by_cases h : x < 0
@@ -74,6 +59,15 @@ theorem operatorNormBound_cast (M : RatMatrix S T) [Nonempty S] :
     _ = SignedMixer.operatorNormBound (M.toSignedMixer) := by
           simp [SignedMixer.operatorNormBound, rowAbsSum, toSignedMixer,
             ratAbs_eq_abs, Rat.cast_sum, Rat.cast_abs]
+
+/-- Casted row-major bound agrees with the `SignedMixer` operator norm bound. -/
+theorem matrixNormInfOfRowMajor_cast (rows cols : Nat) (data : Array Rat)
+    [Nonempty (Fin rows)] (h : rows ≠ 0) :
+    (matrixNormInfOfRowMajor rows cols data : ℝ) =
+      SignedMixer.operatorNormBound (RatMatrix.ofRowMajor rows cols data).toSignedMixer := by
+  classical
+  simpa [matrixNormInfOfRowMajor, h] using
+    (operatorNormBound_cast (M := RatMatrix.ofRowMajor rows cols data))
 
 end RatMatrix
 

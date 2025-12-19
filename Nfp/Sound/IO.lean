@@ -74,6 +74,14 @@ def foldRatTokens {α : Type}
         return .error "unexpected end of file while reading numbers"
     return .ok (st, i)
 
+/-- Consume a vector of length `n` into an array. Returns `(xs, nextLineIndex)`. -/
+def consumeVector
+    (lines : Array String)
+    (start : Nat)
+    (n : Nat) : Except String (Array Rat × Nat) :=
+  let step := fun (acc : Array Rat) (x : Rat) => acc.push x
+  foldRatTokens lines start n (Array.mkEmpty n) step
+
 /-- Consume a matrix in row-major order and return its exact `‖·‖∞` row-sum norm.
 
 Returns `(normInf, nextLineIndex)`.
@@ -83,11 +91,17 @@ def consumeMatrixNormInf
     (start : Nat)
     (rows cols : Nat) : Except String (Rat × Nat) :=
   let count := rows * cols
-  let init : RowSumAcc := { rows := rows, cols := cols }
-  let step := fun (acc : RowSumAcc) (x : Rat) => acc.feed x
-  match foldRatTokens lines start count init step with
+  match consumeVector lines start count with
   | .error e => .error e
-  | .ok (acc, next) => .ok (acc.finish, next)
+  | .ok (xs, next) => .ok (matrixNormInfOfRowMajor rows cols xs, next)
+
+/-- Parsed matrix norm is definitionally the spec-level bound on the parsed data. -/
+theorem consumeMatrixNormInf_spec
+    (lines : Array String) (start rows cols : Nat) (xs : Array Rat) (next : Nat)
+    (h : consumeVector lines start (rows * cols) = .ok (xs, next)) :
+    consumeMatrixNormInf lines start rows cols =
+      .ok (matrixNormInfOfRowMajor rows cols xs, next) := by
+  simp [consumeMatrixNormInf, h]
 
 /-- Consume a vector of length `n` and return `max |xᵢ|`.
 
@@ -99,14 +113,6 @@ def consumeMaxAbs
     (n : Nat) : Except String (Rat × Nat) :=
   let step := fun (m : Rat) (x : Rat) => max m (ratAbs x)
   foldRatTokens lines start n 0 step
-
-/-- Consume a vector of length `n` into an array. Returns `(xs, nextLineIndex)`. -/
-def consumeVector
-    (lines : Array String)
-    (start : Nat)
-    (n : Nat) : Except String (Array Rat × Nat) :=
-  let step := fun (acc : Array Rat) (x : Rat) => acc.push x
-  foldRatTokens lines start n (Array.mkEmpty n) step
 
 private def maxAbsOfVector (xs : Array Rat) : Rat :=
   xs.foldl (fun acc x => max acc (ratAbs x)) 0
@@ -956,7 +962,8 @@ private def certifyModelFileLocalText
           match consumeMatrixSkipFast lines (pos + 1) d dh with
           | .error e => return .error e
           | .ok next => pos := next
-          -- Optional per-head Q bias (does not affect Jacobian, but must be parsed to stay in sync).
+          -- Optional per-head Q bias (does not affect Jacobian,
+          -- but must be parsed to stay in sync).
           pos := skipBlankLines lines pos
           if pos < lines.size && lines[pos]!.trim = "b_Q" then
             match consumeVectorSkipFast lines (pos + 1) dh with
@@ -969,7 +976,8 @@ private def certifyModelFileLocalText
           match consumeMatrixSkipFast lines (pos + 1) d dh with
           | .error e => return .error e
           | .ok next => pos := next
-          -- Optional per-head K bias (does not affect Jacobian, but must be parsed to stay in sync).
+          -- Optional per-head K bias (does not affect Jacobian,
+          -- but must be parsed to stay in sync).
           pos := skipBlankLines lines pos
           if pos < lines.size && lines[pos]!.trim = "b_K" then
             match consumeVectorSkipFast lines (pos + 1) dh with
@@ -983,7 +991,8 @@ private def certifyModelFileLocalText
           | .error e => return .error e
           | .ok (vHidden, nv, nextV) =>
               pos := nextV
-              -- Optional per-head V bias (affects forward activations / variance, so we include it).
+              -- Optional per-head V bias (affects forward activations / variance,
+              -- so we include it).
               pos := skipBlankLines lines pos
               let mut vHidden := vHidden
               if pos < lines.size && lines[pos]!.trim = "b_V" then
@@ -1003,7 +1012,8 @@ private def certifyModelFileLocalText
                       attnUnion := addVecIntervals attnUnion vOut
                       attnCoeff := attnCoeff + nv * no
 
-        -- Shared attention projection bias (affects forward activations / variance, so we include it).
+        -- Shared attention projection bias (affects forward activations / variance,
+        -- so we include it).
         pos := skipBlankLines lines pos
         if pos < lines.size && lines[pos]!.trim = "ATTN_BIAS" then
           match consumeVector lines (pos + 1) d with
@@ -1151,15 +1161,18 @@ private def certifyModelFileLocal
                 layerNormOpBoundConservative ln1MaxAbsGamma eps
 
             -- Attention (streaming from cache)
-            let mut attnUnion : Array Fixed10Interval := Array.replicate modelDim { lo := 0, hi := 0 }
+            let mut attnUnion : Array Fixed10Interval :=
+              Array.replicate modelDim { lo := 0, hi := 0 }
             let mut attnCoeff : Rat := 0
             for _h in [:H] do
-              let (vHidden0, nWv, rrV) ← consumeMatrixMulAndNormInfFixed cfg slack rr modelDim headDim ln1Out
+              let (vHidden0, nWv, rrV) ←
+                consumeMatrixMulAndNormInfFixed cfg slack rr modelDim headDim ln1Out
               rr := rrV
               let (bV, rrBv) ← readVecIntervals rr headDim slack
               rr := rrBv
               let vHidden := addVecFixed vHidden0 bV
-              let (vOut, nWo, rrO) ← consumeMatrixMulAndNormInfFixed cfg slack rr headDim modelDim vHidden
+              let (vOut, nWo, rrO) ←
+                consumeMatrixMulAndNormInfFixed cfg slack rr headDim modelDim vHidden
               rr := rrO
               attnUnion := addVecFixed attnUnion vOut
               attnCoeff := attnCoeff + nWv * nWo
@@ -1182,13 +1195,15 @@ private def certifyModelFileLocal
                 layerNormOpBoundConservative ln2MaxAbsGamma eps
 
             -- MLP
-            let (hidden0, nWin, rrWin) ← consumeMatrixMulAndNormInfFixed cfg slack rr modelDim hiddenDim ln2Out
+            let (hidden0, nWin, rrWin) ←
+              consumeMatrixMulAndNormInfFixed cfg slack rr modelDim hiddenDim ln2Out
             rr := rrWin
             let (bIn, rrBin) ← readVecIntervals rr hiddenDim slack
             rr := rrBin
             let hiddenB := addVecFixed hidden0 bIn
             let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
-            let (mlpOut0, nWout, rrWout) ← consumeMatrixMulAndNormInfFixed cfg slack rr hiddenDim modelDim actHidden
+            let (mlpOut0, nWout, rrWout) ←
+              consumeMatrixMulAndNormInfFixed cfg slack rr hiddenDim modelDim actHidden
             rr := rrWout
             let (bOut, rrBout) ← readVecIntervals rr modelDim slack
             rr := rrBout

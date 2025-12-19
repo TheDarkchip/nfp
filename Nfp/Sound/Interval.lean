@@ -194,9 +194,11 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
       let mut iEnter : Nat := 0
       let mut iLeave : Nat := 0
 
-      let mut bestG : Rat := evalG (sumLeft / nRat) leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq
+      let mut bestG : Rat :=
+        evalG (sumLeft / nRat) leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq
       if !breaks.isEmpty then
-        bestG := min bestG (evalG breaks[0]! leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+        bestG := min bestG
+          (evalG breaks[0]! leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
 
       for bi in [:breaks.size] do
         let b := breaks[bi]!
@@ -231,11 +233,13 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
         if bi + 1 < breaks.size then
           let bNext := breaks[bi + 1]!
           if b < cStar ∧ cStar < bNext then
-            bestG := min bestG (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+            bestG := min bestG
+              (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
         else
           -- Last region `(b, +∞)`.
           if b ≤ cStar then
-            bestG := min bestG (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
+            bestG := min bestG
+              (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
 
       let exactLB := bestG / nRat
       return max rangeLB exactLB
