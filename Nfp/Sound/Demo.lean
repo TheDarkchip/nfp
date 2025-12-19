@@ -3,6 +3,7 @@
 import Mathlib.Tactic.Linarith
 import Mathlib.Tactic.NormNum
 import Nfp.Linearization
+import Nfp.Sound.Cert
 
 namespace Nfp.Sound
 
@@ -58,5 +59,21 @@ theorem demo_operatorNormBound_le :
       simp [Fintype.sum_prod_type, Fin.sum_univ_two]
       norm_num
     nlinarith [hsum]
+
+/-! ## Executable checker sanity test -/
+
+/-- A tiny inconsistent certificate used to sanity-check the boolean checker. -/
+def demoBadCert : ModelCert :=
+  { modelPath := ""
+    inputPath? := none
+    inputDelta := 0
+    eps := defaultEps
+    actDerivBound := defaultActDerivBound
+    softmaxJacobianNormInfWorst := 0
+    layers := #[]
+    totalAmplificationFactor := 1 }
+
+theorem demoBadCert_check : ModelCert.check demoBadCert = false := by
+  simp [ModelCert.check, ModelCert.Valid, demoBadCert, softmaxJacobianNormInfWorst]
 
 end Nfp.Sound

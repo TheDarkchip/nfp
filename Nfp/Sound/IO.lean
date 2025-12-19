@@ -490,7 +490,7 @@ def certifyModelFileGlobal
     }
     totalAmp := totalAmp * (1 + C)
 
-  return .ok {
+  let cert : ModelCert := {
     modelPath := path.toString
     inputPath? := inputPath?.map (·.toString)
     inputDelta := inputDelta
@@ -500,6 +500,9 @@ def certifyModelFileGlobal
     layers := layers
     totalAmplificationFactor := totalAmp
   }
+  if cert.check then
+    return .ok cert
+  return .error "sound certificate failed internal consistency checks"
 
 /-- Parse input `EMBEDDINGS` from an `.nfpt` file and return intervals `xᵢ ∈ [xᵢ-δ, xᵢ+δ]`
 as an array of rows (`seqLen` rows, each of length `modelDim`). -/
@@ -1097,7 +1100,7 @@ private def certifyModelFileLocalText
                         totalAmp := totalAmp * (1 + C)
                         pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
 
-      return .ok {
+      let cert : ModelCert := {
         modelPath := path.toString
         inputPath? := some inputPath.toString
         inputDelta := inputDelta
@@ -1107,6 +1110,9 @@ private def certifyModelFileLocalText
         layers := layers
         totalAmplificationFactor := totalAmp
       }
+      if cert.check then
+        return .ok cert
+      return .error "sound certificate failed internal consistency checks"
 
 private def certifyModelFileLocal
     (path : System.FilePath)
@@ -1229,7 +1235,7 @@ private def certifyModelFileLocal
             }
             totalAmp := totalAmp * (1 + C)
 
-          return .ok {
+          let cert : ModelCert := {
             modelPath := path.toString
             inputPath? := some inputPath.toString
             inputDelta := inputDelta
@@ -1239,6 +1245,9 @@ private def certifyModelFileLocal
             layers := layers
             totalAmplificationFactor := totalAmp
           }
+          if cert.check then
+            return .ok cert
+          return .error "sound certificate failed internal consistency checks"
 
 /-- Soundly compute certification bounds from a `.nfpt` model file.
 
