@@ -823,6 +823,8 @@ containing EMBEDDINGS or omit --delta for global head bounds."
               s!"ln1MaxAbsGamma={h.ln1MaxAbsGamma}, " ++
               s!"ln1VarLB={h.ln1VarianceLowerBound}, " ++
               s!"ln1Bound={h.ln1Bound}, " ++
+              s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
+              s!"qk={h.qkFactorBound}, " ++
               s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
               s!"attn={h.attnWeightContribution}\n") ""
       return header ++ body

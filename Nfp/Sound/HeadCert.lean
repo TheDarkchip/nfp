@@ -52,8 +52,11 @@ structure HeadLocalContributionCert where
   ln1MaxAbsGamma : Rat
   ln1VarianceLowerBound : Rat
   ln1Bound : Rat
+  wqOpBound : Rat
+  wkOpBound : Rat
   wvOpBound : Rat
   woOpBound : Rat
+  qkFactorBound : Rat
   attnWeightContribution : Rat
   deriving Repr
 
@@ -66,6 +69,7 @@ def Valid (eps : Rat) (c : HeadLocalContributionCert) : Prop :=
         layerNormOpBoundLocal c.ln1MaxAbsGamma c.ln1VarianceLowerBound eps
       else
         layerNormOpBoundConservative c.ln1MaxAbsGamma eps) ∧
+    c.qkFactorBound = c.wqOpBound * c.wkOpBound ∧
     c.attnWeightContribution =
       c.ln1Bound * softmaxJacobianNormInfWorst * c.wvOpBound * c.woOpBound
 

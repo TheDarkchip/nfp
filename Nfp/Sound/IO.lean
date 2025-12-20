@@ -1865,9 +1865,13 @@ private def certifyHeadBoundsLocalBinary
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
 
       for hIdx in [:hdr.numHeads] do
-        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let wqScaledE ←
+          ExceptT.mk (readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10)
+        let wqOp := ratOfScaledNat scalePow10 wqScaledE
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
-        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let wkScaledE ←
+          ExceptT.mk (readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10)
+        let wkOp := ratOfScaledNat scalePow10 wkScaledE
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
         let (vHidden0, nWv) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
@@ -1886,8 +1890,11 @@ private def certifyHeadBoundsLocalBinary
           ln1MaxAbsGamma := ln1MaxAbsGamma
           ln1VarianceLowerBound := ln1VarLB
           ln1Bound := ln1Bound
+          wqOpBound := wqOp
+          wkOpBound := wkOp
           wvOpBound := nWv
           woOpBound := nWo
+          qkFactorBound := wqOp * wkOp
           attnWeightContribution := attnW
         }
         if cert.check eps then
