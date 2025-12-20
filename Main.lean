@@ -462,7 +462,8 @@ def runInduction (p : Parsed) : IO UInt32 := do
               s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
               s!"δ: {h.delta} | " ++
               s!"Error: {c.combinedError} | " ++
-              s!"‖X₂‖_F: {h.layer2InputNorm} | ‖ln₁(X₂)‖_F: {h.layer2Ln1InputNorm} " ++
+              s!"‖X₂‖_F: {h.layer2InputNorm} | " ++
+              s!"‖ln₁(X₂)‖_F: {h.layer2Ln1InputNorm} " ++
               s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
         else
           IO.println <|
@@ -868,8 +869,12 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
   let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
-  let tightPattern := p.hasFlag "tightPattern"
+  let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
+  let tightPatternLayers := tightPatternLayers?.getD 1
+  let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
+  let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
   let bestMatch := p.hasFlag "bestMatch"
+  let sweep := p.hasFlag "sweep"
   let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
@@ -900,25 +905,48 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
               "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
     let s ←
       if bestMatch then
-        let cert ← ExceptT.mk <|
-          Nfp.Sound.certifyHeadPatternBestMatchLocal ⟨modelPath⟩ layerIdx headIdx
-            (queryPos? := queryPos) (eps := eps) (inputPath? := inputPath?)
-            (inputDelta := delta) (targetOffset := offset) (maxSeqLen := maxSeqLen)
-            (tightPattern := tightPattern)
-        pure <|
-          "SOUND head pattern (best-match): " ++
-            s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
-              s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
-            s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
-              s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
-              s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
-            s!"marginLB={cert.marginLowerBound}, " ++
-              s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
+        if sweep then
+          let certs ← ExceptT.mk <|
+            Nfp.Sound.certifyHeadPatternBestMatchLocalSweep ⟨modelPath⟩ layerIdx headIdx
+              (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+              (targetOffset := offset) (maxSeqLen := maxSeqLen)
+              (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
+              (perRowPatternLayers := perRowPatternLayers)
+          let header :=
+            "SOUND head pattern sweep (best-match): " ++
+              s!"layer={layerIdx}, head={headIdx}, offset={offset}\n"
+          let body :=
+            certs.foldl (fun acc cert =>
+              acc ++
+                s!"queryPos={cert.queryPos} targetTok={cert.targetToken} " ++
+                  s!"marginLB={cert.marginLowerBound} " ++
+                  s!"weightLB={cert.bestMatchWeightLowerBound}\n") ""
+          pure (header ++ body)
+        else
+          let cert ← ExceptT.mk <|
+            Nfp.Sound.certifyHeadPatternBestMatchLocal ⟨modelPath⟩ layerIdx headIdx
+              (queryPos? := queryPos) (eps := eps) (inputPath? := inputPath?)
+              (inputDelta := delta) (targetOffset := offset) (maxSeqLen := maxSeqLen)
+              (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
+              (perRowPatternLayers := perRowPatternLayers)
+          pure <|
+            "SOUND head pattern (best-match): " ++
+              s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
+                s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
+              s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
+                s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
+                s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
+              s!"marginLB={cert.marginLowerBound}, " ++
+                s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
       else
+        if sweep then
+          throw "use --sweep with --bestMatch"
         let cert ← ExceptT.mk <|
           Nfp.Sound.certifyHeadPatternLocal ⟨modelPath⟩ layerIdx headIdx
             (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
-            (targetOffset := offset) (maxSeqLen := maxSeqLen) (tightPattern := tightPattern)
+            (targetOffset := offset) (maxSeqLen := maxSeqLen)
+            (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
+            (perRowPatternLayers := perRowPatternLayers)
         pure <|
           "SOUND head pattern (local): " ++
             s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
@@ -943,7 +971,7 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
       IO.println s
     return 0
 
-set_option maxHeartbeats 2000000 in
+set_option maxHeartbeats 8000000 in
 -- Heartbeats bumped to avoid elaboration timeout for this CLI entrypoint.
 /-- Run the induction-cert command - compute a sound induction head certificate. -/
 def runInductionCert (p : Parsed) : IO UInt32 := do
@@ -957,7 +985,10 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
   let offset2 := p.flag? "offset2" |>.map (·.as! Int) |>.getD (-1)
   let targetToken := p.flag? "target" |>.map (·.as! Nat)
   let negativeToken := p.flag? "negative" |>.map (·.as! Nat)
-  let tightPattern := p.hasFlag "tightPattern"
+  let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
+  let tightPatternLayers := tightPatternLayers?.getD 1
+  let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
+  let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
   let bestMatch := p.hasFlag "bestMatch"
   let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
@@ -995,6 +1026,8 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
             (queryPos? := queryPos) (eps := eps) (inputPath? := inputPath?)
             (inputDelta := delta) (offset1 := offset1) (offset2 := offset2)
             (maxSeqLen := maxSeqLen) (tightPattern := tightPattern)
+            (tightPatternLayers := tightPatternLayers)
+            (perRowPatternLayers := perRowPatternLayers)
             (targetToken? := targetToken) (negativeToken? := negativeToken)
         let p1 := cert.layer1Pattern
         let p2 := cert.layer2Pattern
@@ -1028,7 +1061,8 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
             layer1 head1 layer2 head2 coord
             (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
             (offset1 := offset1) (offset2 := offset2) (maxSeqLen := maxSeqLen)
-            (tightPattern := tightPattern)
+            (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
+            (perRowPatternLayers := perRowPatternLayers)
             (targetToken? := targetToken) (negativeToken? := negativeToken)
         let p1 := cert.layer1Pattern
         let p2 := cert.layer2Pattern
@@ -1123,7 +1157,8 @@ def runRoPE (p : Parsed) : IO UInt32 := do
               (Nfp.ropeJacobian (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
             ≤ (2 : ℝ) := by
         simpa using
-          (Nfp.rope_operatorNormBound_le_two (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
+          (Nfp.rope_operatorNormBound_le_two
+            (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
 
       IO.println "RoPE certificate (static):"
       IO.println s!"  seqLen={seqLen}, pairs={pairs}, dim={2 * pairs}"
@@ -1236,8 +1271,8 @@ def certifyCmd : Cmd := `[Cli|
   FLAGS:
     input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS \
 for legacy text)"
-    delta : String; "Input ℓ∞ radius δ for local certification (default: 0; if --input is omitted, \
-uses EMBEDDINGS in the model file when present)"
+    delta : String; "Input ℓ∞ radius δ for local certification (default: 0; \
+if --input is omitted, uses EMBEDDINGS in the model file when present)"
     eps : String; "LayerNorm epsilon (default: 1e-5)"
     actDeriv : String; "Activation derivative bound (default: 2)"
     o, output : String; "Write report to file instead of stdout"
@@ -1274,7 +1309,10 @@ def headPatternCmd : Cmd := `[Cli|
     head : Nat; "Head index (default: 0)"
     offset : Int; "Token-match offset (default: -1 for previous token, 0 for self)"
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
+    tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
+    perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
     bestMatch; "Use best-match (single-query) pattern bounds"
+    sweep; "Sweep best-match bounds across all valid query positions"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
@@ -1303,6 +1341,8 @@ def inductionCertCmd : Cmd := `[Cli|
     target : Nat; "Target token ID for logit-diff bound (optional; requires --negative)"
     negative : Nat; "Negative token ID for logit-diff bound (optional; requires --target)"
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
+    tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
+    perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
     bestMatch; "Use best-match (single-query) pattern bounds"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \

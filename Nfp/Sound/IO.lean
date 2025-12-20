@@ -450,7 +450,8 @@ private def minVarAcrossRows (rows : Array (Array RatInterval)) : Rat :=
       best := some (match best with | none => v | some b => min b v)
     best.getD 0
 
-private def findLineIdxFrom (lines : Array String) (start : Nat) (p : String → Bool) : Option Nat :=
+private def findLineIdxFrom
+    (lines : Array String) (start : Nat) (p : String → Bool) : Option Nat :=
   Id.run do
     let mut i := start
     while i < lines.size do
@@ -1133,6 +1134,34 @@ private def addRowsFixed
     for i in [:rows.size] do
       out := out.push (addVecFixed rows[i]! adds[i]!)
     return out
+
+private def mlpRowFromScaled
+    (cfg : Fixed10Cfg)
+    (slack : Int)
+    (modelDim hiddenDim : Nat)
+    (wIn wOut : Array Int)
+    (bIn bOut : Array Fixed10Interval)
+    (row : Array Fixed10Interval) : Array Fixed10Interval :=
+  let hidden0 := matMulIntervalsFromScaled cfg slack modelDim hiddenDim wIn row
+  let hiddenB := addVecFixed hidden0 bIn
+  let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+  let mlpOut0 := matMulIntervalsFromScaled cfg slack hiddenDim modelDim wOut actHidden
+  addVecFixed mlpOut0 bOut
+
+private def mlpRowsFromScaled
+    (cfg : Fixed10Cfg)
+    (slack : Int)
+    (modelDim hiddenDim : Nat)
+    (wIn wOut : Array Int)
+    (bIn bOut : Array Fixed10Interval)
+    (rows : Array (Array Fixed10Interval)) : Array (Array Fixed10Interval) :=
+  let useTasks := rows.size > 32
+  if useTasks then
+    let tasks := rows.map (fun row =>
+      Task.spawn (fun _ => mlpRowFromScaled cfg slack modelDim hiddenDim wIn wOut bIn bOut row))
+    tasks.map (fun t => t.get)
+  else
+    rows.map (mlpRowFromScaled cfg slack modelDim hiddenDim wIn wOut bIn bOut)
 
 private def groupUnionRowsByToken
     (rows : Array (Array Fixed10Interval))
@@ -1976,7 +2005,8 @@ private def certifyModelFileLocalText
   match residual0 with
   | .error e => return .error e
   | .ok residualRows0 =>
-      -- Use a single union box for all tokens (sound superset, much faster than `seqLen×modelDim`).
+      -- Use a single union box for all tokens (sound superset, much faster than
+      -- `seqLen×modelDim`).
       let mut residualUnion := unionRows residualRows0 d
 
       -- Start scanning at first layer marker.
@@ -2554,6 +2584,8 @@ private def certifyHeadPatternLocalBinary
     (targetOffset : Int)
     (maxSeqLen : Nat)
     (tightPattern : Bool)
+    (tightPatternLayers : Nat)
+    (perRowPatternLayers : Nat)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadPatternCert) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
@@ -2725,8 +2757,9 @@ private def certifyHeadPatternLocalBinary
           return cert
         throw "head pattern certificate failed internal consistency checks"
       else
-        let tightLayers : Nat := 1
-        if layerIdx ≤ l + tightLayers then
+        let tightLayers : Nat :=
+          if tightPattern then Nat.max 1 tightPatternLayers else 0
+        if tightLayers > 0 && layerIdx ≤ l + tightLayers then
           let mut attnUnion : Array Fixed10Interval :=
             Array.replicate hdr.modelDim { lo := 0, hi := 0 }
           let groupRows := groupUnionRowsByToken ln1Rows tokens
@@ -2760,19 +2793,31 @@ private def certifyHeadPatternLocalBinary
             let (ln2Out, _ln2VarLB) :=
               fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
             ln2Rows := ln2Rows.push ln2Out
-          let ln2Union := unionRowsFixed ln2Rows
-          let (hidden0, _nWin) ←
-            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
-              hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
-          let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
-          let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
-          let (mlpOut0, _nWout) ←
-            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
-              hdr.hiddenDim hdr.modelDim actHidden scalePow10)
-          let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
-          let mlpOut := addVecFixed mlpOut0 bOut
-          residuals := addVecFixedRows residuals mlpOut
+          let perRowLayers : Nat := perRowPatternLayers
+          if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
+            let wIn ←
+              ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.hiddenDim) scalePow10
+            let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+            let wOut ←
+              ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
+            let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+            let mlpRows :=
+              mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            residuals := addRowsFixed residuals mlpRows
+          else
+            let ln2Union := unionRowsFixed ln2Rows
+            let (hidden0, _nWin) ←
+              ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+                hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
+            let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+            let hiddenB := addVecFixed hidden0 bIn
+            let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+            let (mlpOut0, _nWout) ←
+              ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+                hdr.hiddenDim hdr.modelDim actHidden scalePow10)
+            let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+            let mlpOut := addVecFixed mlpOut0 bOut
+            residuals := addVecFixedRows residuals mlpOut
 
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
@@ -2839,6 +2884,8 @@ private def certifyHeadPatternBestMatchLocalBinary
     (targetOffset : Int)
     (maxSeqLen : Nat)
     (tightPattern : Bool)
+    (tightPatternLayers : Nat)
+    (perRowPatternLayers : Nat)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadBestMatchPatternCert) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
@@ -2974,8 +3021,9 @@ private def certifyHeadPatternBestMatchLocalBinary
           return cert
         throw "best-match head pattern certificate failed internal consistency checks"
       else
-        let tightLayers : Nat := 1
-        if tightPattern && layerIdx ≤ l + tightLayers then
+        let tightLayers : Nat :=
+          if tightPattern then Nat.max 1 tightPatternLayers else 0
+        if tightLayers > 0 && layerIdx ≤ l + tightLayers then
           let mut attnUnion : Array Fixed10Interval :=
             Array.replicate hdr.modelDim { lo := 0, hi := 0 }
           let groupRows := groupUnionRowsByToken ln1Rows tokens
@@ -3030,19 +3078,293 @@ private def certifyHeadPatternBestMatchLocalBinary
           let (ln2Out, _ln2VarLB) :=
             fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
           ln2Rows := ln2Rows.push ln2Out
-        let ln2Union := unionRowsFixed ln2Rows
-        let (hidden0, _nWin) ←
-          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
-            hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
-        let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
-        let hiddenB := addVecFixed hidden0 bIn
-        let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
-        let (mlpOut0, _nWout) ←
-          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
-            hdr.hiddenDim hdr.modelDim actHidden scalePow10)
-        let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
-        let mlpOut := addVecFixed mlpOut0 bOut
-        residuals := addVecFixedRows residuals mlpOut
+        let perRowLayers : Nat := perRowPatternLayers
+        if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
+          let wIn ←
+            ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.hiddenDim) scalePow10
+          let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+          let wOut ←
+            ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
+          let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          let mlpRows :=
+            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+          residuals := addRowsFixed residuals mlpRows
+        else
+          let ln2Union := unionRowsFixed ln2Rows
+          let (hidden0, _nWin) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
+          let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+          let hiddenB := addVecFixed hidden0 bIn
+          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let (mlpOut0, _nWout) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.hiddenDim hdr.modelDim actHidden scalePow10)
+          let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          let mlpOut := addVecFixed mlpOut0 bOut
+          residuals := addVecFixedRows residuals mlpOut
+
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+
+    throw "target layer not reached"
+  action.run
+
+/-- Compute local head best-match pattern bounds for all valid query positions (binary only). -/
+private def certifyHeadPatternBestMatchLocalBinarySweep
+    (path : System.FilePath)
+    (layerIdx headIdx : Nat)
+    (eps : Rat)
+    (inputPath : System.FilePath)
+    (inputDelta : Rat)
+    (targetOffset : Int)
+    (maxSeqLen : Nat)
+    (tightPattern : Bool)
+    (tightPatternLayers : Nat)
+    (perRowPatternLayers : Nat)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String (Array HeadBestMatchPatternCert)) := do
+  let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
+  let slack : Int := fixedUlpSlack
+  let action : ExceptT String IO (Array HeadBestMatchPatternCert) := do
+    let (hdr, ln1Params, ln2Params) ←
+      ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
+    if layerIdx ≥ hdr.numLayers then
+      throw s!"layer index {layerIdx} out of range"
+    if headIdx ≥ hdr.numHeads then
+      throw s!"head index {headIdx} out of range"
+    if hdr.seqLen > maxSeqLen then
+      throw s!"seq_len {hdr.seqLen} exceeds maxSeqLen {maxSeqLen}"
+    let residuals0 ←
+      ExceptT.mk
+        (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
+    let (hdrTok, tokens) ← ExceptT.mk (loadTokensBinary inputPath)
+    if hdrTok.seqLen ≠ hdr.seqLen then
+      throw "token/embedding seq_len mismatch"
+    let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+    let _ ← ExceptT.mk (readBinaryHeader h)
+    let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
+    let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
+
+    let defP : LayerNormParamsFixed := {
+      gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+      beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+    }
+    let mut residuals := residuals0
+    for l in [:hdr.numLayers] do
+      let p1 := ln1Params.getD l defP
+      let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+      for row in residuals do
+        let (ln1Out, _ln1VarLB) :=
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+        ln1Rows := ln1Rows.push ln1Out
+      if l = layerIdx then
+        let mut wq? : Option (Array Int) := none
+        let mut wk? : Option (Array Int) := none
+        for hIdx in [:hdr.numHeads] do
+          if hIdx = headIdx then
+            let wq ←
+              ExceptT.mk <|
+                readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
+            wq? := some wq
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let wk ←
+              ExceptT.mk <|
+                readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
+            wk? := some wk
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          else
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
+        let wq ←
+          match wq? with
+          | none => throw "missing W_Q for requested head"
+          | some xs => pure xs
+        let wk ←
+          match wk? with
+          | none => throw "missing W_K for requested head"
+          | some xs => pure xs
+
+        let mut qRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        for row in ln1Rows do
+          qRows := qRows.push (matMulIntervalsFromScaled cfg slack
+            hdr.modelDim hdr.headDim wq row)
+          kRows := kRows.push (matMulIntervalsFromScaled cfg slack
+            hdr.modelDim hdr.headDim wk row)
+
+        let validPositions : Array Nat := Id.run do
+          let mut out : Array Nat := Array.mkEmpty hdr.seqLen
+          for i in [:hdr.seqLen] do
+            let ti : Int := (Int.ofNat i) + targetOffset
+            if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
+              pure ()
+            else
+              out := out.push i
+          out
+        if validPositions.isEmpty then
+          throw "no valid query positions for the requested offset"
+
+        let computeCert : Nat → Except String HeadBestMatchPatternCert := fun queryPos => do
+          let ti : Int := (Int.ofNat queryPos) + targetOffset
+          if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
+            throw "query position has no valid target offset"
+          let tIdx : Nat := Int.toNat ti
+          let targetTok := tokens[tIdx]!
+          let qRow := qRows[queryPos]!
+          let mut bestMatchLower? : Option Int := none
+          let mut bestNonmatchUpper? : Option Int := none
+          for j in [:hdr.seqLen] do
+            let dot := fixedDotInterval cfg qRow (kRows[j]!)
+            if tokens[j]! = targetTok then
+              bestMatchLower? :=
+                match bestMatchLower? with
+                | none => some dot.lo
+                | some m => some (max m dot.lo)
+            else
+              bestNonmatchUpper? :=
+                match bestNonmatchUpper? with
+                | none => some dot.hi
+                | some m => some (max m dot.hi)
+          let bestMatchLower ←
+            match bestMatchLower? with
+            | none => throw "no matching keys for the requested offset"
+            | some v => pure v
+          let bestNonmatchUpper :=
+            match bestNonmatchUpper? with
+            | none => bestMatchLower
+            | some v => v
+
+          let marginInt : Int := bestMatchLower - bestNonmatchUpper
+          let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
+          let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
+          let margin := ratOfScaledInt scalePow10 marginInt
+          let weightLB : Rat :=
+            if marginInt > 0 then
+              (1 + margin) / ((hdr.seqLen : Rat) + margin)
+            else
+              0
+          let cert : HeadBestMatchPatternCert := {
+            layerIdx := layerIdx
+            headIdx := headIdx
+            seqLen := hdr.seqLen
+            queryPos := queryPos
+            targetOffset := targetOffset
+            targetToken := targetTok
+            bestMatchLogitLowerBound := bestMatchLowerRat
+            bestNonmatchLogitUpperBound := bestNonmatchUpperRat
+            marginLowerBound := margin
+            bestMatchWeightLowerBound := weightLB
+          }
+          if cert.check then
+            return cert
+          throw "best-match head pattern certificate failed internal consistency checks"
+
+        let useTasks := validPositions.size > 32
+        let mut certs : Array HeadBestMatchPatternCert := Array.mkEmpty validPositions.size
+        if useTasks then
+          let tasks := validPositions.map (fun i =>
+            Task.spawn (fun _ => computeCert i))
+          for t in tasks do
+            match t.get with
+            | .ok cert => certs := certs.push cert
+            | .error e => throw e
+        else
+          for i in validPositions do
+            match computeCert i with
+            | .ok cert => certs := certs.push cert
+            | .error e => throw e
+        return certs
+      else
+        let tightLayers : Nat :=
+          if tightPattern then Nat.max 1 tightPatternLayers else 0
+        if tightLayers > 0 && layerIdx ≤ l + tightLayers then
+          let mut attnUnion : Array Fixed10Interval :=
+            Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+          let groupRows := groupUnionRowsByToken ln1Rows tokens
+          for _h in [:hdr.numHeads] do
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let wv ← ExceptT.mk <|
+              readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
+            let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
+            let wo ← ExceptT.mk <|
+              readScaledFloatArray h (hdr.headDim * hdr.modelDim) scalePow10
+            let mut vOutRows : Array (Array Fixed10Interval) := Array.mkEmpty groupRows.size
+            for row in groupRows do
+              let vHidden0 := matMulIntervalsFromScaled cfg slack
+                hdr.modelDim hdr.headDim wv row
+              let vHidden := addVecFixed vHidden0 bV
+              let vOut := matMulIntervalsFromScaled cfg slack
+                hdr.headDim hdr.modelDim wo vHidden
+              vOutRows := vOutRows.push vOut
+            let vUnion := unionRowsFixed vOutRows
+            attnUnion := addVecFixed attnUnion vUnion
+          let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          attnUnion := addVecFixed attnUnion attnBias
+          residuals := addVecFixedRows residuals attnUnion
+        else
+          let ln1Union := unionRowsFixed ln1Rows
+          let mut attnUnion : Array Fixed10Interval :=
+            Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+          for _h in [:hdr.numHeads] do
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+            let (vHidden0, _nWv) ←
+              ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+                hdr.modelDim hdr.headDim ln1Union scalePow10)
+            let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
+            let vHidden := addVecFixed vHidden0 bV
+            let (vOut, _nWo) ←
+              ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+                hdr.headDim hdr.modelDim vHidden scalePow10)
+            attnUnion := addVecFixed attnUnion vOut
+          let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          attnUnion := addVecFixed attnUnion attnBias
+          residuals := addVecFixedRows residuals attnUnion
+
+        let p2 := ln2Params.getD l defP
+        let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        for row in residuals do
+          let (ln2Out, _ln2VarLB) :=
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+          ln2Rows := ln2Rows.push ln2Out
+        let perRowLayers : Nat := perRowPatternLayers
+        if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
+          let wIn ←
+            ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.hiddenDim) scalePow10
+          let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+          let wOut ←
+            ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
+          let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          let mlpRows :=
+            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+          residuals := addRowsFixed residuals mlpRows
+        else
+          let ln2Union := unionRowsFixed ln2Rows
+          let (hidden0, _nWin) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
+          let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+          let hiddenB := addVecFixed hidden0 bIn
+          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let (mlpOut0, _nWout) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.hiddenDim hdr.modelDim actHidden scalePow10)
+          let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+          let mlpOut := addVecFixed mlpOut0 bOut
+          residuals := addVecFixedRows residuals mlpOut
 
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
@@ -3567,6 +3889,8 @@ def certifyHeadPatternLocal
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadPatternCert) := do
   if inputDelta < 0 then
@@ -3576,7 +3900,7 @@ def certifyHeadPatternLocal
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
-      targetOffset maxSeqLen tightPattern scalePow10
+      targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
@@ -3591,6 +3915,8 @@ def certifyHeadPatternBestMatchLocal
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadBestMatchPatternCert) := do
   if inputDelta < 0 then
@@ -3600,7 +3926,34 @@ def certifyHeadPatternBestMatchLocal
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     certifyHeadPatternBestMatchLocalBinary path layerIdx headIdx queryPos? eps inputPath
-      inputDelta targetOffset maxSeqLen tightPattern scalePow10
+      inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers
+      perRowPatternLayers scalePow10
+  else
+    return .error "head pattern bounds require NFP_BINARY_V1"
+
+/-- Compute local best-match pattern bounds for all valid query positions (binary only). -/
+def certifyHeadPatternBestMatchLocalSweep
+    (path : System.FilePath)
+    (layerIdx headIdx : Nat)
+    (eps : Rat := defaultEps)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (targetOffset : Int := -1)
+    (maxSeqLen : Nat := 256)
+    (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String (Array HeadBestMatchPatternCert)) := do
+  if inputDelta < 0 then
+    return .error "delta must be nonnegative"
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let firstLine := (← h.getLine).trim
+  if firstLine = "NFP_BINARY_V1" then
+    let inputPath := inputPath?.getD path
+    certifyHeadPatternBestMatchLocalBinarySweep path layerIdx headIdx eps inputPath
+      inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers
+      scalePow10
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
@@ -3614,6 +3967,8 @@ def certifyHeadValueLowerBoundLocal
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadValueLowerBoundCert) := do
   if inputDelta < 0 then
@@ -3624,7 +3979,7 @@ def certifyHeadValueLowerBoundLocal
     let inputPath := inputPath?.getD path
     let patternE ←
       certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
-        targetOffset maxSeqLen tightPattern scalePow10
+        targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match patternE with
     | .error e => return .error e
     | .ok pattern =>
@@ -3643,6 +3998,8 @@ def certifyHeadLogitDiffLowerBoundLocal
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String HeadLogitDiffLowerBoundCert) := do
   if inputDelta < 0 then
@@ -3653,7 +4010,7 @@ def certifyHeadLogitDiffLowerBoundLocal
     let inputPath := inputPath?.getD path
     let patternE ←
       certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
-        targetOffset maxSeqLen tightPattern scalePow10
+        targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match patternE with
     | .error e => return .error e
     | .ok pattern =>
@@ -3674,6 +4031,8 @@ def certifyInductionSound
     (maxSeqLen : Nat := 256)
     (scalePow10 : Nat := defaultBinaryScalePow10)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
     (negativeToken? : Option Nat := none) :
     IO (Except String InductionHeadSoundCert) := do
@@ -3685,13 +4044,13 @@ def certifyInductionSound
     let inputPath := inputPath?.getD path
     let p1E ←
       certifyHeadPatternLocalBinary path layer1 head1 eps inputPath inputDelta
-        offset1 maxSeqLen tightPattern scalePow10
+        offset1 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
           certifyHeadPatternLocalBinary path layer2 head2 eps inputPath inputDelta
-            offset2 maxSeqLen tightPattern scalePow10
+            offset2 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
         match p2E with
         | .error e => return .error e
         | .ok p2 =>
@@ -3741,6 +4100,8 @@ def certifyInductionSoundBestMatch
     (maxSeqLen : Nat := 256)
     (scalePow10 : Nat := defaultBinaryScalePow10)
     (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
     (negativeToken? : Option Nat := none) :
     IO (Except String InductionHeadBestMatchSoundCert) := do
@@ -3752,13 +4113,14 @@ def certifyInductionSoundBestMatch
     let inputPath := inputPath?.getD path
     let p1E ←
       certifyHeadPatternBestMatchLocalBinary path layer1 head1 queryPos? eps inputPath
-        inputDelta offset1 maxSeqLen tightPattern scalePow10
+        inputDelta offset1 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
           certifyHeadPatternBestMatchLocalBinary path layer2 head2 queryPos? eps inputPath
-            inputDelta offset2 maxSeqLen tightPattern scalePow10
+            inputDelta offset2 maxSeqLen tightPattern tightPatternLayers
+            perRowPatternLayers scalePow10
         match p2E with
         | .error e => return .error e
         | .ok p2 =>

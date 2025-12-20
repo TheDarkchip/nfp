@@ -121,6 +121,8 @@ def main() -> int:
     parser.add_argument("--offset2", type=int, default=-1)
     parser.add_argument("--maxSeqLen", type=int, default=256)
     parser.add_argument("--tightPattern", action="store_true")
+    parser.add_argument("--tightPatternLayers", type=int)
+    parser.add_argument("--perRowPatternLayers", type=int)
     parser.add_argument("--bestMatch", action="store_true")
     parser.add_argument("--queryPos", type=int)
     parser.add_argument("--output", default="reports/gpt2_induction_sound_scan.txt")
@@ -189,6 +191,10 @@ def main() -> int:
         ]
         if args.tightPattern:
             cmd.append("--tightPattern")
+        if args.tightPatternLayers is not None:
+            cmd.extend(["--tightPatternLayers", str(args.tightPatternLayers)])
+        if args.perRowPatternLayers is not None:
+            cmd.extend(["--perRowPatternLayers", str(args.perRowPatternLayers)])
         if args.bestMatch:
             cmd.append("--bestMatch")
         if args.queryPos is not None:
@@ -210,7 +216,11 @@ def main() -> int:
         f.write("SOUND induction scan (logitDiffLB ranking)\n")
         f.write(f"model={model_path}\n")
         f.write(f"target={target} negative={negative}\n")
-        f.write(f"bestMatch={args.bestMatch} queryPos={args.queryPos}\n")
+        f.write(
+            f"bestMatch={args.bestMatch} queryPos={args.queryPos} "
+            f"tightPatternLayers={args.tightPatternLayers} "
+            f"perRowPatternLayers={args.perRowPatternLayers}\n"
+        )
         f.write(f"top={args.top} delta={args.delta} eps={args.eps}\n")
         for rank, (lb, (l1, h1, l2, h2)) in enumerate(results, start=1):
             f.write(
