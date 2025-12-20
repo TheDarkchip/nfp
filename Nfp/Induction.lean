@@ -168,6 +168,17 @@ theorem weight_lower_bound_pos_of_margin_pos
     exact div_pos hcount' hseq'
   simpa [hweight] using hdiv
 
+/-- Either the margin is nonpositive (so the bound is zero),
+or the bound is positive when the match count is positive. -/
+theorem weight_lower_bound_dichotomy
+    (p : TokenMatchPattern) (h : p.Valid) (hcount : 0 < p.targetCountLowerBound) :
+    p.marginLowerBound ≤ 0 ∨ 0 < p.targetWeightLowerBound := by
+  by_cases hm : p.marginLowerBound > 0
+  · right
+    exact weight_lower_bound_pos_of_margin_pos p h hm hcount
+  · left
+    exact not_lt.mp hm
+
 end TokenMatchPattern
 
 /-! ## Verification Theorems -/
