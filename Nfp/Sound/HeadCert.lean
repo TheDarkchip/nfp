@@ -87,4 +87,41 @@ theorem check_iff (eps : Rat) (c : HeadLocalContributionCert) :
 
 end HeadLocalContributionCert
 
+/-- Local per-head attention pattern certificate (target logit dominance). -/
+structure HeadPatternCert where
+  layerIdx : Nat
+  headIdx : Nat
+  seqLen : Nat
+  targetOffset : Int
+  targetLogitLowerBound : Rat
+  otherLogitUpperBound : Rat
+  marginLowerBound : Rat
+  targetWeightLowerBound : Rat
+  deriving Repr
+
+namespace HeadPatternCert
+
+/-- Internal consistency checks for pattern bounds. -/
+def Valid (c : HeadPatternCert) : Prop :=
+  c.seqLen > 0 ∧
+    c.marginLowerBound = c.targetLogitLowerBound - c.otherLogitUpperBound ∧
+    c.targetWeightLowerBound =
+      (if c.marginLowerBound > 0 then
+        (1 : Rat) / (c.seqLen : Rat)
+      else
+        0)
+
+instance (c : HeadPatternCert) : Decidable (Valid c) := by
+  unfold Valid
+  infer_instance
+
+/-- Boolean checker for `Valid`. -/
+def check (c : HeadPatternCert) : Bool :=
+  decide (Valid c)
+
+theorem check_iff (c : HeadPatternCert) : c.check = true ↔ c.Valid := by
+  simp [check]
+
+end HeadPatternCert
+
 end Nfp.Sound

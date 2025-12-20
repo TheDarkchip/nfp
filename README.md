@@ -224,6 +224,19 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5
 - `--scalePow10` controls fixed-point scaling for global bounds (default: `9`).
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
+### `head_pattern`
+
+Computes a sound local attention pattern bound for a single head (binary only).
+Currently this certifies target-logit dominance using only layer-0 inputs.
+
+```bash
+lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 1/100 --offset -1
+```
+
+- `--offset` selects the target key position relative to the query (default: `-1` for previous token).
+- `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
+- `--eps` and `--delta` match the local LayerNorm/input radius used for bounds.
+
 ### `rope`
 
 Generates RoPE-related linearization bounds used by the certificate/checking pipeline.

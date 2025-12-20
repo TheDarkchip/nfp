@@ -43,6 +43,9 @@ lake exe nfp certify model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
 # Sound per-head contribution bounds (global or local with --delta)
 lake exe nfp head_bounds model.nfpt --delta 1/100 --eps 1e-5
 
+# Sound attention pattern bounds for a single head (binary only)
+lake exe nfp head_pattern model.nfpt --layer 0 --head 0 --delta 1/100 --offset -1
+
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
 
@@ -855,6 +858,66 @@ containing EMBEDDINGS or omit --delta for global head bounds."
       IO.println s
     return 0
 
+/-- Run the head-pattern command - compute per-head attention pattern bounds in sound mode. -/
+def runHeadPattern (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
+  let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
+  let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
+  let inputPath := p.flag? "input" |>.map (·.as! String)
+  let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
+  let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
+  let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
+  let outputPath := p.flag? "output" |>.map (·.as! String)
+
+  let action : ExceptT String IO String := do
+    let eps ←
+      match Nfp.Sound.parseRat epsStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --eps '{epsStr}': {e}"
+    let delta ←
+      match Nfp.Sound.parseRat deltaStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
+
+    let inputPath? : Option System.FilePath ←
+      match inputPath with
+      | some s => pure (some ⟨s⟩)
+      | none =>
+          let hasEmbeddings ←
+            hasEmbeddingsBeforeLayers ⟨modelPath⟩
+          if hasEmbeddings then
+            pure (some ⟨modelPath⟩)
+          else
+            throw <|
+              "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyHeadPatternLocal ⟨modelPath⟩ layerIdx headIdx
+        (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+        (targetOffset := offset) (maxSeqLen := maxSeqLen)
+    let s :=
+      "SOUND head pattern (local): " ++
+        s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
+        s!"seqLen={cert.seqLen}, " ++
+        s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
+        s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
+        s!"marginLB={cert.marginLowerBound}, " ++
+        s!"targetWeightLB={cert.targetWeightLowerBound}\n"
+    return s
+
+  match ← action.run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok s =>
+    match outputPath with
+    | some path =>
+      IO.FS.writeFile ⟨path⟩ s
+      IO.println s!"Report written to {path}"
+    | none =>
+      IO.println s
+    return 0
+
 /-- Regression test for SOUND fixed-point cache soundness and consistency.
 
 This is intended for CI and small fixtures. It:
@@ -1052,6 +1115,26 @@ uses EMBEDDINGS in the model file when present)"
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The head-pattern subcommand. -/
+def headPatternCmd : Cmd := `[Cli|
+  head_pattern VIA runHeadPattern;
+  "SOUND mode: compute per-head attention pattern bounds (binary only)."
+
+  FLAGS:
+    layer : Nat; "Layer index (default: 0)"
+    head : Nat; "Head index (default: 0)"
+    offset : Int; "Target offset (default: -1 for previous token, 0 for self)"
+    input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
+for legacy text)"
+    delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
+    eps : String; "LayerNorm epsilon (default: 1e-5)"
+    maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
+    o, output : String; "Write report to file instead of stdout"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The sound-cache-check subcommand (CI regression test). -/
 def soundCacheCheckCmd : Cmd := `[Cli|
   sound_cache_check VIA runSoundCacheCheck;
@@ -1100,6 +1183,7 @@ def nfpCmd : Cmd := `[Cli|
     inductionCmd;
     certifyCmd;
     headBoundsCmd;
+    headPatternCmd;
     soundCacheCheckCmd;
     ropeCmd;
     dumpCmd
