@@ -142,6 +142,13 @@ theorem toTokenMatchPattern_valid (c : HeadPatternCert) (h : c.Valid) :
   rcases h with ⟨hseq, _hmargin, hweight⟩
   exact ⟨hseq, by simpa [toTokenMatchPattern] using hweight⟩
 
+def toInductionPatternWitness
+    (c : HeadPatternCert) (h : c.Valid) (hm : c.marginLowerBound > 0)
+    (hcount : 0 < c.targetCountLowerBound) (hoff : c.targetOffset = -1) :
+    Nfp.InductionPatternWitness :=
+  Nfp.TokenMatchPattern.toInductionPatternWitness
+    (toTokenMatchPattern c) (toTokenMatchPattern_valid c h) hm hcount hoff
+
 end HeadPatternCert
 
 end Nfp.Sound

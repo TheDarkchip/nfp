@@ -181,6 +181,33 @@ theorem weight_lower_bound_dichotomy
 
 end TokenMatchPattern
 
+/-! ## Sound induction witnesses -/
+
+/-- A minimal sound witness for an induction-style attention pattern. -/
+structure InductionPatternWitness where
+  /-- Token-match pattern data (sound certificate output). -/
+  tokenMatch : TokenMatchPattern
+  /-- The pattern targets the previous-token offset. -/
+  prevOffset : tokenMatch.targetOffset = -1
+  /-- Certified nontrivial attention mass on matching tokens. -/
+  positiveMass : 0 < tokenMatch.targetWeightLowerBound
+  deriving Repr
+
+namespace TokenMatchPattern
+
+/-- Build an induction-style witness from a valid token-match pattern plus explicit assumptions. -/
+def toInductionPatternWitness
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
+    (hcount : 0 < p.targetCountLowerBound) (hoff : p.targetOffset = -1) :
+    InductionPatternWitness :=
+  {
+    tokenMatch := p
+    prevOffset := hoff
+    positiveMass := weight_lower_bound_pos_of_margin_pos p h hm hcount
+  }
+
+end TokenMatchPattern
+
 /-! ## Verification Theorems -/
 
 omit [DecidableEq n] [DecidableEq d] in
