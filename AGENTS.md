@@ -65,6 +65,17 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - DAG / acyclicity assumptions are not silently violated
 - Finiteness assumptions (`[Fintype _]`) are used intentionally and consistently
 
+### 1.5 Trusted Code Verification (Total Soundness)
+**All code** in trusted namespaces (e.g., `Nfp.Sound.*`) must be **verified**.
+- **Requirement:** Every pure definition in the trusted scope must be characterized by a theorem or return a proof-carrying structure.
+    - *Example (Bad):* `def addOne (x : Nat) := x + 1` (Unverified logic)
+    - *Example (Good):* `def addOne (x : Nat) : { y // y > x } := ⟨x + 1, Nat.lt_succ_self _⟩`
+    - *Example (Good):* `def addOne ...` followed immediately by `theorem addOne_gt_input ...`
+- **Scope:** This applies to **everything**: parsers, converters, arithmetic helpers, and bound computations.
+- **IO Exception:** Low-level IO primitives (reading bytes/files) cannot be "proven" correct but must be kept **logic-free**.
+    - IO code should only read data and pass it to verified Pure code.
+    - No mathematical transformations or complex branching allowed in IO functions.
+
 ---
 
 ## 2. Design Principles (Strong Preferences)
@@ -82,6 +93,10 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - Search for existing lemmas before inventing new ones.
 - If you introduce a lemma that feels “standard”, consider whether mathlib already has it
   (or whether it belongs in a more general file in this repo).
+
+### 2.4 Verify, Don't Trust
+- Distinguish between **witness generation** (untrusted, can use heuristics) and **verification** (trusted, must contain proofs).
+- The trusted kernel should only check that a candidate witness is valid; it should not be responsible for finding it if the search is complex.
 
 ---
 
@@ -264,6 +279,7 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] `lake build -q --wfail` succeeds.
 - [ ] No `sorry`.
 - [ ] No new axioms were introduced.
+- [ ] **Total Soundness:** Every pure definition in the trusted section is verified/proven.
 - [ ] No linters were disabled (`set_option linter.* false` is absent).
 - [ ] New nontrivial definitions/theorems have short, accurate docstrings.
 - [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are preserved and, where possible, explicitly proved.
