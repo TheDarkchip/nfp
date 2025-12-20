@@ -133,6 +133,24 @@ def check (p : TokenMatchPattern) : Bool :=
 theorem check_iff (p : TokenMatchPattern) : p.check = true ↔ p.Valid := by
   simp [check, Valid]
 
+/-- If the margin is positive, the weight lower bound matches the uniform share
+of matching tokens. -/
+theorem weight_lower_bound_of_margin_pos
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0) :
+    p.targetWeightLowerBound =
+      (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
+  rcases h with ⟨_hseq, hweight⟩
+  simpa [hm] using hweight
+
+/-- If the margin is nonpositive, the weight lower bound is zero. -/
+theorem weight_lower_bound_of_margin_nonpos
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound ≤ 0) :
+    p.targetWeightLowerBound = 0 := by
+  rcases h with ⟨_hseq, hweight⟩
+  have hm' : ¬ p.marginLowerBound > 0 := by
+    exact not_lt.mpr hm
+  simpa [hm'] using hweight
+
 end TokenMatchPattern
 
 /-! ## Verification Theorems -/
