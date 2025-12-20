@@ -618,6 +618,8 @@ theorem encodeHeader_magic_prefix (hdr : Header) :
     (encodeHeader hdr).extract 0 magic.size = magic := by
   simp [encodeHeader, ByteArray.append_assoc, ByteArray.extract_append_eq_left]
 
+-- TODO: Prove round-trip lemmas for `u32FromLE`/`u64FromLE` and `decodeHeader (encodeHeader _)`.
+
 /-! ### Specs -/
 
 theorem version_spec_cache_pure : version = version := rfl
