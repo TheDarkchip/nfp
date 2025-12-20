@@ -30,6 +30,7 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
     model = GPT2Model.from_pretrained("gpt2")
     tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
     config = model.config
+    layer_norm_eps = float(config.layer_norm_epsilon)
 
     # 1. Define a vocabulary of common, distinct English nouns
     # These token IDs are single-token words in GPT-2 (e.g., " apple", " logic")
@@ -91,6 +92,7 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
             hidden_dim=config.n_inner or 4 * 768,
             vocab_size=config.vocab_size,
             seq_len=seq_len,
+            layer_norm_eps=layer_norm_eps,
         )
 
         write_i32(f, full_sequence)
@@ -141,7 +143,7 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
     print("Done.")
 
 
-def write_header(f, **fields: int) -> None:
+def write_header(f, **fields: object) -> None:
     f.write(b"NFP_BINARY_V1\n")
     for key, value in fields.items():
         f.write(f"{key}={value}\n".encode("ascii"))

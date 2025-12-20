@@ -40,8 +40,8 @@ def ensure_model(model_path: Path) -> None:
     subprocess.run(generator, check=True)
 
 
-def read_header_and_tokens(path: Path) -> tuple[dict[str, int], list[int]]:
-    header: dict[str, int] = {}
+def read_header_and_tokens(path: Path) -> tuple[dict[str, str], list[int]]:
+    header: dict[str, str] = {}
     with path.open("rb") as f:
         while True:
             line = f.readline()
@@ -52,10 +52,11 @@ def read_header_and_tokens(path: Path) -> tuple[dict[str, int], list[int]]:
                 break
             if "=" in text:
                 key, value = text.split("=", 1)
-                header[key.strip()] = int(value.strip())
-        seq_len = header.get("seq_len")
-        if seq_len is None:
+                header[key.strip()] = value.strip()
+        seq_len_raw = header.get("seq_len")
+        if seq_len_raw is None:
             raise ValueError("header missing seq_len")
+        seq_len = int(seq_len_raw)
         token_bytes = f.read(seq_len * 4)
         if len(token_bytes) != seq_len * 4:
             raise ValueError("unexpected EOF while reading tokens")
@@ -115,7 +116,6 @@ def main() -> int:
     parser.add_argument("--model", default="models/gpt2_rigorous.nfpt")
     parser.add_argument("--top", type=int, default=8)
     parser.add_argument("--delta", default="0.01")
-    parser.add_argument("--eps", default="1e-5")
     parser.add_argument("--coord", type=int, default=0)
     parser.add_argument("--offset1", type=int, default=-1)
     parser.add_argument("--offset2", type=int, default=-1)
@@ -132,9 +132,10 @@ def main() -> int:
     ensure_model(model_path)
 
     header, tokens = read_header_and_tokens(model_path)
-    if header.get("seq_len", 0) > args.maxSeqLen:
+    seq_len = int(header.get("seq_len", "0"))
+    if seq_len > args.maxSeqLen:
         print(
-            f"Error: seq_len {header['seq_len']} exceeds maxSeqLen {args.maxSeqLen}",
+            f"Error: seq_len {seq_len} exceeds maxSeqLen {args.maxSeqLen}",
             file=sys.stderr,
         )
         return 1
@@ -180,8 +181,6 @@ def main() -> int:
             str(args.offset2),
             "--delta",
             args.delta,
-            "--eps",
-            args.eps,
             "--maxSeqLen",
             str(args.maxSeqLen),
             "--target",
@@ -221,7 +220,8 @@ def main() -> int:
             f"tightPatternLayers={args.tightPatternLayers} "
             f"perRowPatternLayers={args.perRowPatternLayers}\n"
         )
-        f.write(f"top={args.top} delta={args.delta} eps={args.eps}\n")
+        eps_header = header.get("layer_norm_eps") or header.get("eps") or "unknown"
+        f.write(f"top={args.top} delta={args.delta} eps={eps_header}\n")
         for rank, (lb, (l1, h1, l2, h2)) in enumerate(results, start=1):
             f.write(
                 f"{rank:02d} L{l1}H{h1} -> L{l2}H{h2} logitDiffLB={lb}\n"

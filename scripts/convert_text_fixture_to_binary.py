@@ -7,13 +7,13 @@ from pathlib import Path
 from typing import Callable, Dict, List, Tuple
 
 
-def parse_header(lines: List[str], path: Path) -> Tuple[Dict[str, int], int]:
+def parse_header(lines: List[str], path: Path) -> Tuple[Dict[str, str], int]:
     if not lines:
         raise ValueError(f"{path}: empty file")
     magic = lines[0].strip()
     if not magic.startswith("NFP_TEXT"):
         raise ValueError(f"{path}: unexpected header '{magic}'")
-    header: Dict[str, int] = {}
+    header: Dict[str, str] = {}
     i = 1
     while i < len(lines):
         line = lines[i].strip()
@@ -22,7 +22,7 @@ def parse_header(lines: List[str], path: Path) -> Tuple[Dict[str, int], int]:
             break
         if "=" in line:
             key, value = line.split("=", 1)
-            header[key.strip()] = int(value.strip())
+            header[key.strip()] = value.strip()
     return header, i
 
 
@@ -73,11 +73,11 @@ def read_numbers(
     return out, i
 
 
-def read_input_embeddings(path: Path) -> Tuple[Dict[str, int], List[int], List[float]]:
+def read_input_embeddings(path: Path) -> Tuple[Dict[str, str], List[int], List[float]]:
     lines = path.read_text().splitlines()
     header, i = parse_header(lines, path)
-    seq_len = header["seq_len"]
-    model_dim = header["model_dim"]
+    seq_len = int(header["seq_len"])
+    model_dim = int(header["model_dim"])
     i = expect_line(lines, i, "TOKENS", path)
     tokens_f, i = read_numbers(lines, i, seq_len, path, int)
     tokens = [int(t) for t in tokens_f]
@@ -86,14 +86,14 @@ def read_input_embeddings(path: Path) -> Tuple[Dict[str, int], List[int], List[f
     return header, tokens, embeddings_f
 
 
-def read_model_weights(path: Path) -> Tuple[Dict[str, int], Dict[str, object]]:
+def read_model_weights(path: Path) -> Tuple[Dict[str, str], Dict[str, object]]:
     lines = path.read_text().splitlines()
     header, i = parse_header(lines, path)
-    num_layers = header["num_layers"]
-    num_heads = header["num_heads"]
-    model_dim = header["model_dim"]
-    head_dim = header["head_dim"]
-    hidden_dim = header["hidden_dim"]
+    num_layers = int(header["num_layers"])
+    num_heads = int(header["num_heads"])
+    model_dim = int(header["model_dim"])
+    head_dim = int(header["head_dim"])
+    hidden_dim = int(header["hidden_dim"])
 
     layers: List[Dict[str, object]] = []
     for _ in range(num_layers):
@@ -203,10 +203,16 @@ def main() -> None:
     input_header, tokens, embeddings = read_input_embeddings(input_path)
     model_header, model_payload = read_model_weights(model_path)
 
-    if input_header["model_dim"] != model_header["model_dim"]:
+    if int(input_header["model_dim"]) != int(model_header["model_dim"]):
         raise ValueError("input/model model_dim mismatch")
-    if input_header["seq_len"] != model_header["seq_len"]:
+    if int(input_header["seq_len"]) != int(model_header["seq_len"]):
         raise ValueError("input/model seq_len mismatch")
+    input_eps = input_header.get("layer_norm_eps") or input_header.get("eps")
+    model_eps = model_header.get("layer_norm_eps") or model_header.get("eps")
+    if model_eps is None:
+        raise ValueError("model header missing layer_norm_eps")
+    if input_eps is not None and input_eps != model_eps:
+        raise ValueError("input/model layer_norm_eps mismatch")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("wb") as f:
@@ -221,6 +227,7 @@ def main() -> None:
             "seq_len",
         ]:
             f.write(f"{key}={model_header[key]}\n".encode("ascii"))
+        f.write(f"layer_norm_eps={model_eps}\n".encode("ascii"))
         f.write(b"BINARY_START\n")
 
         write_i32(f, tokens)
@@ -246,8 +253,8 @@ def main() -> None:
             write_f64(f, layer["ln2_gamma"])
             write_f64(f, layer["ln2_beta"])
 
-        model_dim = model_header["model_dim"]
-        vocab_size = model_header["vocab_size"]
+        model_dim = int(model_header["model_dim"])
+        vocab_size = int(model_header["vocab_size"])
         write_f64(f, [1.0] * model_dim)
         write_f64(f, [0.0] * model_dim)
         write_f64(f, [0.0] * (model_dim * vocab_size))

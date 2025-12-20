@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Std
+import Nfp.Sound.Decimal
 
 namespace Nfp.Sound
 
@@ -19,6 +20,7 @@ structure BinaryHeader where
   hiddenDim : Nat
   vocabSize : Nat
   seqLen : Nat
+  eps : Rat
   deriving Repr
 
 private def parseHeaderLine (line : String) : Option (String × String) :=
@@ -49,6 +51,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
   let mut hiddenDim : Option Nat := none
   let mut vocabSize : Option Nat := none
   let mut seqLen : Option Nat := none
+  let mut eps : Option Rat := none
 
   for line in lines do
     let t := line.trim
@@ -67,6 +70,14 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
           | "hidden_dim", some n => hiddenDim := some n
           | "vocab_size", some n => vocabSize := some n
           | "seq_len", some n => seqLen := some n
+          | "layer_norm_eps", _ =>
+              match parseRat v with
+              | .error e => throw s!"invalid layer_norm_eps '{v}': {e}"
+              | .ok r => eps := some r
+          | "eps", _ =>
+              match parseRat v with
+              | .error e => throw s!"invalid layer_norm_eps '{v}': {e}"
+              | .ok r => eps := some r
           | _, _ => pure ()
 
   let some L := numLayers | throw "missing num_layers"
@@ -76,6 +87,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
   let some dhid := hiddenDim | throw "missing hidden_dim"
   let some v := vocabSize | throw "missing vocab_size"
   let some n := seqLen | throw "missing seq_len"
+  let some epsVal := eps | throw "missing layer_norm_eps"
   if L = 0 || H = 0 || d = 0 || dh = 0 || dhid = 0 || v = 0 || n = 0 then
     throw "invalid header: dimensions must be > 0"
   return {
@@ -86,6 +98,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
     hiddenDim := dhid
     vocabSize := v
     seqLen := n
+    eps := epsVal
   }
 
 private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=

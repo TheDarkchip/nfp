@@ -239,7 +239,7 @@ def certifyHeadBoundsBinary
 
 private def certifyModelFileGlobalBinary
     (path : System.FilePath)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (actDerivBound : Rat := defaultActDerivBound) : IO (Except String ModelCert) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   match ← readBinaryHeader h with
@@ -599,7 +599,7 @@ private def consumeMatrixMulAndNormInf
 /-- Soundly compute conservative per-layer amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
     (path : System.FilePath)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (actDerivBound : Rat := defaultActDerivBound)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
@@ -3823,7 +3823,7 @@ Otherwise it falls back to the weight-only global certificate.
 -/
 def certifyModelFile
     (path : System.FilePath)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (actDerivBound : Rat := defaultActDerivBound)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
@@ -3865,7 +3865,7 @@ def certifyHeadBounds
 /-- Compute local per-head attention contribution bounds for a `.nfpt` model file. -/
 def certifyHeadBoundsLocal
     (path : System.FilePath)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
@@ -3884,7 +3884,7 @@ def certifyHeadBoundsLocal
 def certifyHeadPatternLocal
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3910,7 +3910,7 @@ def certifyHeadPatternBestMatchLocal
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
     (queryPos? : Option Nat := none)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3936,7 +3936,7 @@ def certifyHeadPatternBestMatchLocal
 def certifyHeadPatternBestMatchLocalSweep
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3962,7 +3962,7 @@ def certifyHeadPatternBestMatchLocalSweep
 def certifyHeadValueLowerBoundLocal
     (path : System.FilePath)
     (layerIdx headIdx coord : Nat)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3993,7 +3993,7 @@ def certifyHeadValueLowerBoundLocal
 def certifyHeadLogitDiffLowerBoundLocal
     (path : System.FilePath)
     (layerIdx headIdx targetToken negativeToken : Nat)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -4024,7 +4024,7 @@ def certifyHeadLogitDiffLowerBoundLocal
 def certifyInductionSound
     (path : System.FilePath)
     (layer1 head1 layer2 head2 coord : Nat)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (offset1 : Int := -1)
@@ -4093,7 +4093,7 @@ def certifyInductionSoundBestMatch
     (path : System.FilePath)
     (layer1 head1 layer2 head2 coord : Nat)
     (queryPos? : Option Nat := none)
-    (eps : Rat := defaultEps)
+    (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (offset1 : Int := -1)

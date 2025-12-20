@@ -31,7 +31,7 @@ except ImportError as e:
     )
 
 
-def write_header(f, **fields: int) -> None:
+def write_header(f, **fields: object) -> None:
     f.write(b"NFP_BINARY_V1\n")
     for key, value in fields.items():
         f.write(f"{key}={value}\n".encode("ascii"))
@@ -62,6 +62,7 @@ def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
     head_dim = model_dim // num_heads
     hidden_dim = int(cfg.n_inner or 4 * model_dim)
     vocab_size = int(cfg.vocab_size)
+    layer_norm_eps = float(cfg.layer_norm_epsilon)
 
     # Deterministic token sequence.
     tokens = (np.arange(seq_len, dtype=np.int64) % min(32, vocab_size)).astype(np.int64)
@@ -81,6 +82,7 @@ def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
             hidden_dim=hidden_dim,
             vocab_size=vocab_size,
             seq_len=seq_len,
+            layer_norm_eps=layer_norm_eps,
         )
 
         write_i32(f, tokens)

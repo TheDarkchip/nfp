@@ -32,7 +32,7 @@ except ImportError as e:
 def parse_tokens_from_nfpt(path: Path) -> list[int]:
     with path.open("rb") as f:
         magic = None
-        header: dict[str, int] = {}
+        header: dict[str, str] = {}
         while True:
             line = f.readline()
             if line == b"":
@@ -44,14 +44,15 @@ def parse_tokens_from_nfpt(path: Path) -> list[int]:
                 break
             if "=" in text:
                 key, value = text.split("=", 1)
-                header[key.strip()] = int(value.strip())
+                header[key.strip()] = value.strip()
 
         if magic != "NFP_BINARY_V1":
             raise SystemExit(f"Unsupported magic header: {magic}")
-        if "seq_len" not in header:
+        seq_len_raw = header.get("seq_len")
+        if seq_len_raw is None:
             raise SystemExit("Missing seq_len in header.")
 
-        seq_len = header["seq_len"]
+        seq_len = int(seq_len_raw)
         raw = f.read(seq_len * 4)
         if len(raw) != seq_len * 4:
             raise SystemExit("Unexpected EOF while reading TOKENS section.")

@@ -23,6 +23,7 @@ def export_induction_weights(output_path: str = "models/gpt2_induction.nfpt"):
     print("Loading GPT-2 Small...")
     model = GPT2Model.from_pretrained("gpt2")
     config = model.config
+    layer_norm_eps = float(config.layer_norm_epsilon)
 
     # Fixed parameters for GPT-2 Small
     seq_len = 256
@@ -64,6 +65,7 @@ def export_induction_weights(output_path: str = "models/gpt2_induction.nfpt"):
             hidden_dim=config.n_inner or 4 * model_dim,
             vocab_size=config.vocab_size,
             seq_len=seq_len,
+            layer_norm_eps=layer_norm_eps,
         )
 
         write_i32(f, sample_tokens)
@@ -118,7 +120,7 @@ def export_induction_weights(output_path: str = "models/gpt2_induction.nfpt"):
     print("Done.")
 
 
-def write_header(f, **fields: int) -> None:
+def write_header(f, **fields: object) -> None:
     f.write(b"NFP_BINARY_V1\n")
     for key, value in fields.items():
         f.write(f"{key}={value}\n".encode("ascii"))

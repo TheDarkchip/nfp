@@ -231,6 +231,8 @@ but you **must** update this list in the same commit.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
 - `Sound/Decimal.lean`
   - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
+- `Sound/ModelHeader.lean`
+  - Pure header parsing helpers for SOUND metadata (e.g., LayerNorm epsilon).
 - `Sound/BinaryPure.lean`
   - Pure binary parsing/decoding helpers (IO-free, used by untrusted IO wrappers).
 - `Sound/CachePure.lean`

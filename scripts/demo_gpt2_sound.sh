@@ -14,5 +14,5 @@ if [ ! -f "$MODEL_PATH" ]; then
   fi
 fi
 
-lake exe nfp certify "$MODEL_PATH" --eps 1e-5 --actDeriv 2 --output "$REPORT_PATH"
+lake exe nfp certify "$MODEL_PATH" --actDeriv 2 --output "$REPORT_PATH"
 echo "Report written to $REPORT_PATH"

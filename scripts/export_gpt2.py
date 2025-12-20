@@ -52,6 +52,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
     head_dim = model_dim // num_heads  # 64
     hidden_dim = config.n_inner or 4 * model_dim  # 3072
     vocab_size = config.vocab_size  # 50257
+    layer_norm_eps = float(config.layer_norm_epsilon)
 
     print("Model configuration:")
     print(f"  Layers: {num_layers}")
@@ -79,6 +80,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             hidden_dim=hidden_dim,
             vocab_size=vocab_size,
             seq_len=seq_len,
+            layer_norm_eps=layer_norm_eps,
         )
 
         # Sample input embeddings for analysis
@@ -208,7 +210,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
     print(f"  Output: {output_path}")
 
 
-def write_header(f, **fields: int) -> None:
+def write_header(f, **fields: object) -> None:
     f.write(b"NFP_BINARY_V1\n")
     for key, value in fields.items():
         f.write(f"{key}={value}\n".encode("ascii"))

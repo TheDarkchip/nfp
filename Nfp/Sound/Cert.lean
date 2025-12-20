@@ -13,8 +13,6 @@ These values are meant to be *trusted* (up to Lean's kernel/runtime), but may be
 much looser than the Float-based heuristic analysis.
 -/
 
-/-- Default LayerNorm epsilon used by exported GPT-style models. -/
-def defaultEps : Rat := (1 : Rat) / 100000
 
 /-- Conservative upper bound on GeLU derivative for certification.
 
@@ -152,7 +150,6 @@ end ModelCert
 
 /-! ### Specs -/
 
-theorem defaultEps_spec : defaultEps = defaultEps := rfl
 theorem defaultActDerivBound_spec : defaultActDerivBound = defaultActDerivBound := rfl
 
 end Nfp.Sound

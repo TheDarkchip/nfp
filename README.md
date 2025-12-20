@@ -211,19 +211,19 @@ supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --eps 1e-5 --actDeriv 2 --output cert.txt
+  --actDeriv 2 --output cert.txt
 ```
 
 - For local (input-dependent) LayerNorm certification, pass an ℓ∞ radius `δ`:
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --delta 0.01 --eps 1e-5 --actDeriv 2
+  --delta 0.01 --actDeriv 2
 ```
 
 If you want to override the embedded input, pass a separate input `.nfpt`:
 
-- `--eps` sets the LayerNorm ε (default: `1e-5`).
+- LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `--actDeriv` bounds the activation derivative (default: `2`).
 - `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
 - `--input` optionally provides an input `.nfpt` file used for local certification.
@@ -240,11 +240,11 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt
 For local bounds (uses input embeddings in the model file when present):
 
 ```bash
-lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01 --eps 1e-5
+lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01
 ```
 
 - `--delta` enables local head bounds; `--input` can override the embedded input.
-- `--eps` sets the LayerNorm ε used for local bounds (default: `1e-5`).
+- LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `--scalePow10` controls fixed-point scaling for global bounds (default: `9`).
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
@@ -261,7 +261,7 @@ lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 0
 
 - `--offset` selects the target key position relative to the query (default: `-1` for previous token).
 - `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
-- `--eps` and `--delta` match the local LayerNorm/input radius used for bounds.
+- `--delta` sets the local input radius; LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `--tightPattern` enables a slower but tighter pattern bound near the target layer.
 - `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).
 - `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).

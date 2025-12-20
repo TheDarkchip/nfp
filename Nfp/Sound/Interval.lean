@@ -112,8 +112,7 @@ and for fixed `c` each coordinate minimization is `dist([lᵢ,uᵢ], c)^2` where
 
 The resulting one-dimensional function of `c` is convex piecewise-quadratic, so we can find its
 global minimum by scanning the sorted breakpoints `{lᵢ,uᵢ}` and checking the unique stationary point
-in each region (plus the breakpoints themselves). For `n ≤ 64` we return this exact minimum; for
-larger `n` we fall back to the fast range bound.
+in each region (plus the breakpoints themselves).
 -/
 def varianceLowerBound (xs : Array RatInterval) : Rat :=
   if xs.isEmpty then
@@ -127,21 +126,8 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
       let normed : Array RatInterval :=
         xs.map (fun x => { lo := min x.lo x.hi, hi := max x.lo x.hi })
 
-      -- Fast range-based lower bound.
       if n < 2 then
         return 0
-      let mut loMax : Rat := normed[0]!.lo
-      let mut hiMin : Rat := normed[0]!.hi
-      for x in normed do
-        loMax := max loMax x.lo
-        hiMin := min hiMin x.hi
-      let δ : Rat := max 0 (loMax - hiMin)
-      let δSq : Rat := ratSq δ
-      let rangeLB : Rat :=
-        if δSq = 0 then
-          0
-        else
-          δSq / ((2 : Rat) * nRat)
 
       -- Build sorted breakpoint lists for `lo` and `hi` with squared endpoints for O(1) evaluation.
       let mut enters : Array (Rat × Rat) := Array.mkEmpty n
@@ -156,9 +142,7 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
         sumLeft := sumLeft + lo
         sumLeftSq := sumLeftSq + ratSq lo
 
-      -- Exact minimization can be expensive; only enable for small dimension.
-      if n > 64 then
-        return rangeLB
+      -- Exact minimization over the breakpoints (O(n log n)).
 
       let entersSorted := enters.qsort (fun a b => a.1 ≤ b.1)
       let leavesSorted := leaves.qsort (fun a b => a.1 ≤ b.1)
