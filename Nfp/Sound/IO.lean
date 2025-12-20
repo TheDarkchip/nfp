@@ -2582,4 +2582,52 @@ def certifyHeadValueLowerBoundLocal
   else
     return .error "head value bounds require NFP_BINARY_V1"
 
+/-- Compute a combined sound certificate for an induction-style head pair (binary only). -/
+def certifyInductionSound
+    (path : System.FilePath)
+    (layer1 head1 layer2 head2 coord : Nat)
+    (eps : Rat := defaultEps)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (offset1 : Int := -1)
+    (offset2 : Int := -1)
+    (maxSeqLen : Nat := 256)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String InductionHeadSoundCert) := do
+  if inputDelta < 0 then
+    return .error "delta must be nonnegative"
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let firstLine := (← h.getLine).trim
+  if firstLine = "NFP_BINARY_V1" then
+    let inputPath := inputPath?.getD path
+    let p1E ←
+      certifyHeadPatternLocalBinary path layer1 head1 eps inputPath inputDelta
+        offset1 maxSeqLen scalePow10
+    match p1E with
+    | .error e => return .error e
+    | .ok p1 =>
+        let p2E ←
+          certifyHeadPatternLocalBinary path layer2 head2 eps inputPath inputDelta
+            offset2 maxSeqLen scalePow10
+        match p2E with
+        | .error e => return .error e
+        | .ok p2 =>
+            let vE ←
+              certifyHeadValueLowerBoundLocalBinary path p2 coord eps inputPath inputDelta
+                maxSeqLen scalePow10
+            match vE with
+            | .error e => return .error e
+            | .ok v =>
+                let cert : InductionHeadSoundCert := {
+                  layer1Pattern := p1
+                  layer2Pattern := p2
+                  layer2Value := v
+                  deltaLowerBound := v.outputCoordLowerBound
+                }
+                if cert.check then
+                  return .ok cert
+                return .error "induction head certificate failed internal consistency checks"
+  else
+    return .error "induction sound cert requires NFP_BINARY_V1"
+
 end Nfp.Sound

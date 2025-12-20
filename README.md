@@ -132,6 +132,17 @@ Artifacts:
 - `tests/fixtures/tiny_sound_binary.nfpt` (binary fixture)
 - `reports/tiny_sound_local_binary.txt` (local sound certificate report)
 
+### Tiny induction cert demo
+
+This demo computes a minimal induction head certificate on the tiny fixture.
+
+```bash
+./scripts/demo_tiny_induction_cert.sh
+```
+
+Artifacts:
+- `reports/tiny_induction_cert.txt` (induction cert report)
+
 ## CLI overview
 
 The main entrypoint is:
@@ -238,6 +249,21 @@ lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 1
 - `--offset` selects the target key position relative to the query (default: `-1` for previous token).
 - `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
 - `--eps` and `--delta` match the local LayerNorm/input radius used for bounds.
+
+### `induction_cert`
+
+Computes a minimal sound induction-head certificate by combining two pattern
+certificates and a value-coordinate lower bound (binary only).
+
+```bash
+lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
+  --layer1 0 --head1 0 --layer2 1 --head2 0 --coord 0 --delta 1/100
+```
+
+- `--layer1/--head1` selects the previous-token head; `--layer2/--head2` selects the
+  token-match head.
+- `--coord` chooses the output coordinate used for the value lower bound.
+- `--offset1/--offset2` adjust the token-match offsets (default: `-1`).
 
 ### `rope`
 

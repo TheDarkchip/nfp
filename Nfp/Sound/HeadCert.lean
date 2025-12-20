@@ -185,4 +185,39 @@ def toInductionPatternWitness
 
 end HeadPatternCert
 
+/-! ## Induction head sound certificates -/
+
+/-- Combined sound certificate for an induction-style head pair. -/
+structure InductionHeadSoundCert where
+  layer1Pattern : HeadPatternCert
+  layer2Pattern : HeadPatternCert
+  layer2Value : HeadValueLowerBoundCert
+  deltaLowerBound : Rat
+  deriving Repr
+
+namespace InductionHeadSoundCert
+
+/-- Internal consistency checks for the combined certificate. -/
+def Valid (c : InductionHeadSoundCert) : Prop :=
+  HeadPatternCert.Valid c.layer1Pattern ∧
+    HeadPatternCert.Valid c.layer2Pattern ∧
+    HeadValueLowerBoundCert.Valid c.layer2Value ∧
+    c.layer2Value.layerIdx = c.layer2Pattern.layerIdx ∧
+    c.layer2Value.headIdx = c.layer2Pattern.headIdx ∧
+    c.layer2Value.matchWeightLowerBound = c.layer2Pattern.targetWeightLowerBound ∧
+    c.deltaLowerBound = c.layer2Value.outputCoordLowerBound
+
+instance (c : InductionHeadSoundCert) : Decidable (Valid c) := by
+  unfold Valid
+  infer_instance
+
+/-- Boolean checker for `Valid`. -/
+def check (c : InductionHeadSoundCert) : Bool :=
+  decide (Valid c)
+
+theorem check_iff (c : InductionHeadSoundCert) : c.check = true ↔ c.Valid := by
+  simp [check, Valid]
+
+end InductionHeadSoundCert
+
 end Nfp.Sound

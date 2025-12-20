@@ -46,6 +46,10 @@ lake exe nfp head_bounds model.nfpt --delta 1/100 --eps 1e-5
 # Sound attention pattern bounds for a single head (binary only)
 lake exe nfp head_pattern model.nfpt --layer 0 --head 0 --delta 1/100 --offset -1
 
+# Sound induction head certificate (binary only)
+lake exe nfp induction_cert model.nfpt --layer1 0 --head1 0 --layer2 1 --head2 0 \
+  --coord 0 --delta 1/100 --offset1 -1 --offset2 -1
+
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
 
@@ -919,6 +923,76 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
       IO.println s
     return 0
 
+/-- Run the induction-cert command - compute a sound induction head certificate. -/
+def runInductionCert (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let layer1 := p.flag? "layer1" |>.map (·.as! Nat) |>.getD 0
+  let head1 := p.flag? "head1" |>.map (·.as! Nat) |>.getD 0
+  let layer2 := p.flag? "layer2" |>.map (·.as! Nat) |>.getD 1
+  let head2 := p.flag? "head2" |>.map (·.as! Nat) |>.getD 0
+  let coord := p.flag? "coord" |>.map (·.as! Nat) |>.getD 0
+  let offset1 := p.flag? "offset1" |>.map (·.as! Int) |>.getD (-1)
+  let offset2 := p.flag? "offset2" |>.map (·.as! Int) |>.getD (-1)
+  let inputPath := p.flag? "input" |>.map (·.as! String)
+  let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
+  let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
+  let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
+  let outputPath := p.flag? "output" |>.map (·.as! String)
+
+  let action : ExceptT String IO String := do
+    let eps ←
+      match Nfp.Sound.parseRat epsStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --eps '{epsStr}': {e}"
+    let delta ←
+      match Nfp.Sound.parseRat deltaStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
+
+    let inputPath? : Option System.FilePath ←
+      match inputPath with
+      | some s => pure (some ⟨s⟩)
+      | none =>
+          let hasEmbeddings ←
+            hasEmbeddingsBeforeLayers ⟨modelPath⟩
+          if hasEmbeddings then
+            pure (some ⟨modelPath⟩)
+          else
+            throw <|
+              "induction cert requires EMBEDDINGS; pass --input for legacy text models."
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyInductionSound ⟨modelPath⟩
+        layer1 head1 layer2 head2 coord
+        (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+        (offset1 := offset1) (offset2 := offset2) (maxSeqLen := maxSeqLen)
+    let p1 := cert.layer1Pattern
+    let p2 := cert.layer2Pattern
+    let v := cert.layer2Value
+    let s :=
+      "SOUND induction cert:\n" ++
+        s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+          s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
+        s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+          s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
+        s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
+          s!"matchCoordLB={v.matchCoordLowerBound} " ++
+          s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
+        s!"deltaLB={cert.deltaLowerBound}\n"
+    return s
+
+  match ← action.run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok s =>
+    match outputPath with
+    | some path =>
+      IO.FS.writeFile ⟨path⟩ s
+      IO.println s!"Report written to {path}"
+    | none =>
+      IO.println s
+    return 0
+
 /-- Regression test for SOUND fixed-point cache soundness and consistency.
 
 This is intended for CI and small fixtures. It:
@@ -1136,6 +1210,30 @@ for legacy text)"
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The induction-cert subcommand. -/
+def inductionCertCmd : Cmd := `[Cli|
+  induction_cert VIA runInductionCert;
+  "SOUND mode: compute a minimal induction head certificate (binary only)."
+
+  FLAGS:
+    layer1 : Nat; "Layer index for the previous-token head (default: 0)"
+    head1 : Nat; "Head index for the previous-token head (default: 0)"
+    layer2 : Nat; "Layer index for the token-match head (default: 1)"
+    head2 : Nat; "Head index for the token-match head (default: 0)"
+    coord : Nat; "Output coordinate for the value bound (default: 0)"
+    offset1 : Int; "Token-match offset for layer1 (default: -1)"
+    offset2 : Int; "Token-match offset for layer2 (default: -1)"
+    input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
+for legacy text)"
+    delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
+    eps : String; "LayerNorm epsilon (default: 1e-5)"
+    maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
+    o, output : String; "Write report to file instead of stdout"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The sound-cache-check subcommand (CI regression test). -/
 def soundCacheCheckCmd : Cmd := `[Cli|
   sound_cache_check VIA runSoundCacheCheck;
@@ -1185,6 +1283,7 @@ def nfpCmd : Cmd := `[Cli|
     certifyCmd;
     headBoundsCmd;
     headPatternCmd;
+    inductionCertCmd;
     soundCacheCheckCmd;
     ropeCmd;
     dumpCmd
