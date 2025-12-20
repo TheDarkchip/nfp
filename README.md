@@ -205,6 +205,25 @@ If you want to override the embedded input, pass a separate input `.nfpt`:
 - `--input` optionally provides an input `.nfpt` file used for local certification.
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
+### `head_bounds`
+
+Computes sound per-head contribution bounds (global weight-only, or local with `--delta`).
+
+```bash
+lake exe nfp head_bounds models/gpt2_rigorous.nfpt
+```
+
+For local bounds (uses input embeddings in the model file when present):
+
+```bash
+lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5
+```
+
+- `--delta` enables local head bounds; `--input` can override the embedded input.
+- `--eps` sets the LayerNorm ε used for local bounds (default: `1e-5`).
+- `--scalePow10` controls fixed-point scaling for global bounds (default: `9`).
+- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
+
 ### `rope`
 
 Generates RoPE-related linearization bounds used by the certificate/checking pipeline.

@@ -40,6 +40,9 @@ lake exe nfp certify model.nfpt --eps 1e-5 --actDeriv 2
 # (NFP_BINARY_V1 always embeds inputs; legacy text requires an EMBEDDINGS section.)
 lake exe nfp certify model.nfpt --delta 1/100 --eps 1e-5 --actDeriv 2
 
+# Sound per-head contribution bounds (global or local with --delta)
+lake exe nfp head_bounds model.nfpt --delta 1/100 --eps 1e-5
+
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
 
@@ -772,6 +775,84 @@ containing EMBEDDINGS or omit --delta for global certification."
       IO.println s
     return 0
 
+/-- Run the head-bounds command - compute per-head contribution bounds in sound mode. -/
+def runHeadBounds (p : Parsed) : IO UInt32 := do
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let inputPath := p.flag? "input" |>.map (·.as! String)
+  let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
+  let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
+  let deltaStr := deltaFlag?.getD "0"
+  let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
+  let outputPath := p.flag? "output" |>.map (·.as! String)
+
+  let action : ExceptT String IO String := do
+    let eps ←
+      match Nfp.Sound.parseRat epsStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --eps '{epsStr}': {e}"
+    let delta ←
+      match Nfp.Sound.parseRat deltaStr with
+      | .ok r => pure r
+      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
+
+    let useLocal := (inputPath.isSome || deltaFlag?.isSome)
+    if useLocal then
+      let inputPath? : Option System.FilePath ←
+        match inputPath with
+        | some s => pure (some ⟨s⟩)
+        | none =>
+            let hasEmbeddings ←
+              hasEmbeddingsBeforeLayers ⟨modelPath⟩
+            if hasEmbeddings then
+              pure (some ⟨modelPath⟩)
+            else
+              throw <|
+                "local head bounds requested via --delta, but the model file has no \
+EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
+containing EMBEDDINGS or omit --delta for global head bounds."
+      let heads ← ExceptT.mk <|
+        Nfp.Sound.certifyHeadBoundsLocal ⟨modelPath⟩
+          (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+      let header :=
+        "SOUND per-head bounds (local): " ++
+          s!"eps={eps}, delta={delta}, input={inputPath?.getD ⟨modelPath⟩}\n"
+      let body :=
+        heads.foldl (fun acc h =>
+          acc ++
+            s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
+              s!"ln1MaxAbsGamma={h.ln1MaxAbsGamma}, " ++
+              s!"ln1VarLB={h.ln1VarianceLowerBound}, " ++
+              s!"ln1Bound={h.ln1Bound}, " ++
+              s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
+              s!"attn={h.attnWeightContribution}\n") ""
+      return header ++ body
+    else
+      let heads ← ExceptT.mk <|
+        Nfp.Sound.certifyHeadBounds ⟨modelPath⟩ (scalePow10 := scalePow10)
+      let header :=
+        s!"SOUND per-head bounds (weight-only): scalePow10={scalePow10}\n"
+      let body :=
+        heads.foldl (fun acc h =>
+          acc ++
+            s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
+              s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
+              s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
+              s!"qk={h.qkFactorBound}, vo={h.voFactorBound}\n") ""
+      return header ++ body
+
+  match ← action.run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok s =>
+    match outputPath with
+    | some path =>
+      IO.FS.writeFile ⟨path⟩ s
+      IO.println s!"Report written to {path}"
+    | none =>
+      IO.println s
+    return 0
+
 /-- Regression test for SOUND fixed-point cache soundness and consistency.
 
 This is intended for CI and small fixtures. It:
@@ -951,6 +1032,24 @@ uses EMBEDDINGS in the model file when present)"
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The head-bounds subcommand. -/
+def headBoundsCmd : Cmd := `[Cli|
+  head_bounds VIA runHeadBounds;
+  "SOUND mode: compute per-head contribution bounds."
+
+  FLAGS:
+    input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
+for legacy text)"
+    delta : String; "Input ℓ∞ radius δ for local bounds (default: 0; if --input is omitted, \
+uses EMBEDDINGS in the model file when present)"
+    eps : String; "LayerNorm epsilon (default: 1e-5)"
+    scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p for global bounds (default: 9)"
+    o, output : String; "Write report to file instead of stdout"
+
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The sound-cache-check subcommand (CI regression test). -/
 def soundCacheCheckCmd : Cmd := `[Cli|
   sound_cache_check VIA runSoundCacheCheck;
@@ -998,6 +1097,7 @@ def nfpCmd : Cmd := `[Cli|
     analyzeCmd;
     inductionCmd;
     certifyCmd;
+    headBoundsCmd;
     soundCacheCheckCmd;
     ropeCmd;
     dumpCmd
