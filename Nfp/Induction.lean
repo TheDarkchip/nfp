@@ -151,6 +151,23 @@ theorem weight_lower_bound_of_margin_nonpos
     exact not_lt.mpr hm
   simpa [hm'] using hweight
 
+/-- Positive margin and a positive target count imply positive attention mass. -/
+theorem weight_lower_bound_pos_of_margin_pos
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
+    (hcount : 0 < p.targetCountLowerBound) :
+    0 < p.targetWeightLowerBound := by
+  have hweight := weight_lower_bound_of_margin_pos p h hm
+  rcases h with ⟨hseq, _hweight⟩
+  have hseq' : (0 : Rat) < (p.seqLen : Rat) := by
+    exact_mod_cast hseq
+  have hcount' : (0 : Rat) < (p.targetCountLowerBound : Rat) := by
+    exact_mod_cast hcount
+  have hdiv :
+      (0 : Rat) <
+        (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
+    exact div_pos hcount' hseq'
+  simpa [hweight] using hdiv
+
 end TokenMatchPattern
 
 /-! ## Verification Theorems -/
