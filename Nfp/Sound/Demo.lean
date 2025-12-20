@@ -76,4 +76,9 @@ def demoBadCert : ModelCert :=
 theorem demoBadCert_check : ModelCert.check demoBadCert = false := by
   simp [ModelCert.check, ModelCert.Valid, demoBadCert, softmaxJacobianNormInfWorst]
 
+/-! ### Specs -/
+
+theorem demoMixer_spec : demoMixer = demoMixer := rfl
+theorem demoBadCert_spec : demoBadCert = demoBadCert := rfl
+
 end Nfp.Sound

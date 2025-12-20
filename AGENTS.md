@@ -231,8 +231,14 @@ but you **must** update this list in the same commit.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
 - `Sound/Decimal.lean`
   - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
-- `Sound/Binary.lean`
-  - Sound binary (`NFP_BINARY_V1`) helpers for global certification.
+- `Sound/BinaryPure.lean`
+  - Pure binary parsing/decoding helpers (IO-free, used by untrusted IO wrappers).
+- `Sound/CachePure.lean`
+  - Pure cache parsing/encoding helpers used by untrusted IO wrappers.
+- `Untrusted/SoundBinary.lean`
+  - IO wrappers for the SOUND binary path (untrusted).
+- `Untrusted/SoundCacheIO.lean`
+  - IO wrappers for the SOUND fixed-point cache (untrusted).
 - `Sound/Bounds.lean`
   - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
 - `Sound/HeadCert.lean`
@@ -242,7 +248,9 @@ but you **must** update this list in the same commit.
 - `Sound/Cert.lean`
   - Certificate/report structures and pretty-printing for SOUND-mode output.
 - `Sound/IO.lean`
-  - Minimal `.nfpt` scanner for sound certification (parses only what is needed).
+  - Trusted IO wrappers: read inputs, call untrusted computation, and verify certificates.
+- `Untrusted/SoundCompute.lean`
+  - IO-heavy witness generation for sound certificates (untrusted; verified by `Sound/IO`).
 - `Sound/Demo.lean`
   - Tiny end-to-end lemma demo bridging to `Linearization.operatorNormBound`.
 - `Verification.lean`

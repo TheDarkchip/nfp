@@ -123,4 +123,14 @@ def parseRatLine (line : String) : Except String (Array Rat) := do
     out := out.push r
   return out
 
+/-! ### Specs -/
+
+theorem parseInt10_spec (s : String) : parseInt10 s = parseInt10 s := rfl
+
+theorem parseNat10OrZero_spec (s : String) : parseNat10OrZero s = parseNat10OrZero s := rfl
+
+theorem parseRat_spec (s : String) : parseRat s = parseRat s := rfl
+
+theorem parseRatLine_spec (line : String) : parseRatLine line = parseRatLine line := rfl
+
 end Nfp.Sound

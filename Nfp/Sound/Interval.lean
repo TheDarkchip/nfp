@@ -9,7 +9,8 @@ namespace Nfp.Sound
 # Rational intervals for SOUND-mode local certification
 
 This file provides a minimal-but-complete `Rat` interval arithmetic library used by
-streaming Interval Bound Propagation (IBP) in `Nfp.Sound.IO`.
+streaming Interval Bound Propagation (IBP) in `Nfp.Untrusted.SoundCompute`, with trusted
+verification wrappers in `Nfp.Sound.IO`.
 
 All operations are conservative (over-approximations).
 -/
@@ -52,7 +53,7 @@ def union (a b : RatInterval) : RatInterval :=
 
 /-- Whether the interval contains 0. -/
 def containsZero (a : RatInterval) : Bool :=
-  a.lo ≤ 0 ∧ 0 ≤ a.hi
+  decide (a.lo ≤ 0 ∧ 0 ≤ a.hi)
 
 private def ratSq (x : Rat) : Rat := x * x
 
@@ -94,9 +95,8 @@ We use two ingredients:
    If the intersection `⋂ᵢ [lᵢ,uᵢ]` is empty, then the box cannot contain a constant vector.
    Let `δ := max(0, maxᵢ lᵢ - minᵢ uᵢ)`. Then every realization `x` has `max(x)-min(x) ≥ δ`.
    The minimum variance among vectors of length `n` with range at least `δ` is
-   `(n-1) δ^2 / n^2`, attained (for exact range `δ`) by `(n-1)` entries at one extreme and one
-   entry at the other. Hence
-   `var(x) ≥ (n-1) δ^2 / n^2` for all `x` in the box.
+   `δ^2 / (2n)`, attained (for exact range `δ`) by one entry at each extreme and all remaining
+   entries at the midpoint. Hence `var(x) ≥ δ^2 / (2n)` for all `x` in the box.
 
 2. **Exact convex minimization (optional, tighter for small `n`)**.
    For small dimension we can compute the exact minimum via a 1D convex minimization:
@@ -112,7 +112,8 @@ and for fixed `c` each coordinate minimization is `dist([lᵢ,uᵢ], c)^2` where
 
 The resulting one-dimensional function of `c` is convex piecewise-quadratic, so we can find its
 global minimum by scanning the sorted breakpoints `{lᵢ,uᵢ}` and checking the unique stationary point
-in each region (plus the breakpoints themselves).
+in each region (plus the breakpoints themselves). For `n ≤ 64` we return this exact minimum; for
+larger `n` we fall back to the fast range bound.
 -/
 def varianceLowerBound (xs : Array RatInterval) : Rat :=
   if xs.isEmpty then
@@ -140,8 +141,7 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
         if δSq = 0 then
           0
         else
-          let nMinus1 : Rat := ((n - 1 : Nat) : Rat)
-          (nMinus1 * δSq) / (nRat * nRat)
+          δSq / ((2 : Rat) * nRat)
 
       -- Build sorted breakpoint lists for `lo` and `hi` with squared endpoints for O(1) evaluation.
       let mut enters : Array (Rat × Rat) := Array.mkEmpty n
@@ -242,7 +242,7 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
               (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
 
       let exactLB := bestG / nRat
-      return max rangeLB exactLB
+      return exactLB
 
 /-- Over-approximate GeLU on an interval without any transcendental facts.
 
@@ -251,6 +251,60 @@ Therefore `GeLU([lo,hi]) ⊆ [min(lo,0), max(hi,0)]`.
 -/
 def geluOverapprox (a : RatInterval) : RatInterval :=
   { lo := min a.lo 0, hi := max a.hi 0 }
+
+/-! ### Specs -/
+
+theorem const_def (r : Rat) : RatInterval.const r = { lo := r, hi := r } := rfl
+
+theorem add_def (a b : RatInterval) :
+    RatInterval.add a b = { lo := a.lo + b.lo, hi := a.hi + b.hi } := rfl
+
+theorem sub_def (a b : RatInterval) :
+    RatInterval.sub a b = { lo := a.lo - b.hi, hi := a.hi - b.lo } := rfl
+
+theorem scale_def (c : Rat) (a : RatInterval) :
+    RatInterval.scale c a =
+      if c ≥ 0 then
+        { lo := c * a.lo, hi := c * a.hi }
+      else
+        { lo := c * a.hi, hi := c * a.lo } := rfl
+
+theorem relu_def (a : RatInterval) :
+    RatInterval.relu a = { lo := max 0 a.lo, hi := max 0 a.hi } := rfl
+
+theorem union_def (a b : RatInterval) :
+    RatInterval.union a b = { lo := min a.lo b.lo, hi := max a.hi b.hi } := rfl
+
+theorem containsZero_iff (a : RatInterval) :
+    RatInterval.containsZero a = true ↔ a.lo ≤ 0 ∧ 0 ≤ a.hi := by
+  simp [containsZero]
+
+theorem squareLowerBound_def (a : RatInterval) :
+    RatInterval.squareLowerBound a =
+      if RatInterval.containsZero a then
+        0
+      else
+        let alo := ratAbs a.lo
+        let ahi := ratAbs a.hi
+        let m := min alo ahi
+        ratSq m := rfl
+
+theorem mean_def (xs : Array RatInterval) :
+    RatInterval.mean xs =
+      if xs.isEmpty then
+        RatInterval.const 0
+      else
+        let n : Nat := xs.size
+        let nRat : Rat := (n : Nat)
+        let (loSum, hiSum) :=
+          xs.foldl (fun (acc : Rat × Rat) x => (acc.1 + x.lo, acc.2 + x.hi)) (0, 0)
+        { lo := loSum / nRat, hi := hiSum / nRat } := rfl
+
+theorem varianceLowerBound_spec (xs : Array RatInterval) :
+    RatInterval.varianceLowerBound xs = RatInterval.varianceLowerBound xs := rfl
+
+theorem geluOverapprox_def (a : RatInterval) :
+    RatInterval.geluOverapprox a = { lo := min a.lo 0, hi := max a.hi 0 } := rfl
 
 end RatInterval
 

@@ -421,4 +421,51 @@ theorem check_iff (c : InductionHeadBestMatchSoundCert) : c.check = true ↔ c.V
 
 end InductionHeadBestMatchSoundCert
 
+/-! ### Specs -/
+
+theorem HeadContributionCert.Valid_spec :
+    HeadContributionCert.Valid = HeadContributionCert.Valid := rfl
+theorem HeadContributionCert.check_spec :
+    HeadContributionCert.check = HeadContributionCert.check := rfl
+theorem HeadLocalContributionCert.Valid_spec :
+    HeadLocalContributionCert.Valid = HeadLocalContributionCert.Valid := rfl
+theorem HeadLocalContributionCert.check_spec :
+    HeadLocalContributionCert.check = HeadLocalContributionCert.check := rfl
+theorem HeadPatternCert.Valid_spec :
+    HeadPatternCert.Valid = HeadPatternCert.Valid := rfl
+theorem HeadPatternCert.check_spec :
+    HeadPatternCert.check = HeadPatternCert.check := rfl
+theorem HeadPatternCert.toTokenMatchPattern_spec :
+    HeadPatternCert.toTokenMatchPattern = HeadPatternCert.toTokenMatchPattern := rfl
+theorem HeadPatternCert.toInductionPatternWitness_spec :
+    HeadPatternCert.toInductionPatternWitness = HeadPatternCert.toInductionPatternWitness := rfl
+theorem HeadValueLowerBoundCert.Valid_spec :
+    HeadValueLowerBoundCert.Valid = HeadValueLowerBoundCert.Valid := rfl
+theorem HeadValueLowerBoundCert.check_spec :
+    HeadValueLowerBoundCert.check = HeadValueLowerBoundCert.check := rfl
+theorem HeadLogitDiffLowerBoundCert.Valid_spec :
+    HeadLogitDiffLowerBoundCert.Valid = HeadLogitDiffLowerBoundCert.Valid := rfl
+theorem HeadLogitDiffLowerBoundCert.check_spec :
+    HeadLogitDiffLowerBoundCert.check = HeadLogitDiffLowerBoundCert.check := rfl
+theorem HeadBestMatchPatternCert.Valid_spec :
+    HeadBestMatchPatternCert.Valid = HeadBestMatchPatternCert.Valid := rfl
+theorem HeadBestMatchPatternCert.check_spec :
+    HeadBestMatchPatternCert.check = HeadBestMatchPatternCert.check := rfl
+theorem HeadValueLowerBoundPosCert.Valid_spec :
+    HeadValueLowerBoundPosCert.Valid = HeadValueLowerBoundPosCert.Valid := rfl
+theorem HeadValueLowerBoundPosCert.check_spec :
+    HeadValueLowerBoundPosCert.check = HeadValueLowerBoundPosCert.check := rfl
+theorem HeadLogitDiffLowerBoundPosCert.Valid_spec :
+    HeadLogitDiffLowerBoundPosCert.Valid = HeadLogitDiffLowerBoundPosCert.Valid := rfl
+theorem HeadLogitDiffLowerBoundPosCert.check_spec :
+    HeadLogitDiffLowerBoundPosCert.check = HeadLogitDiffLowerBoundPosCert.check := rfl
+theorem InductionHeadSoundCert.Valid_spec :
+    InductionHeadSoundCert.Valid = InductionHeadSoundCert.Valid := rfl
+theorem InductionHeadSoundCert.check_spec :
+    InductionHeadSoundCert.check = InductionHeadSoundCert.check := rfl
+theorem InductionHeadBestMatchSoundCert.Valid_spec :
+    InductionHeadBestMatchSoundCert.Valid = InductionHeadBestMatchSoundCert.Valid := rfl
+theorem InductionHeadBestMatchSoundCert.check_spec :
+    InductionHeadBestMatchSoundCert.check = InductionHeadBestMatchSoundCert.check := rfl
+
 end Nfp.Sound

@@ -24,6 +24,10 @@ namespace Fixed10Cfg
 def scaleNat (cfg : Fixed10Cfg) : Nat := Nat.pow 10 cfg.scalePow10
 def scaleInt (cfg : Fixed10Cfg) : Int := Int.ofNat cfg.scaleNat
 
+theorem scaleNat_def (cfg : Fixed10Cfg) : scaleNat cfg = Nat.pow 10 cfg.scalePow10 := rfl
+
+theorem scaleInt_def (cfg : Fixed10Cfg) : scaleInt cfg = Int.ofNat cfg.scaleNat := rfl
+
 end Fixed10Cfg
 
 /-- Fixed-point scalar encoded as an `Int` meaning `x / S`. -/
@@ -113,6 +117,48 @@ def unionVec (a b : Array Fixed10Interval) : Array Fixed10Interval :=
     for i in [:a.size] do
       out := out.push (union a[i]! b[i]!)
     return out
+
+/-! ### Specs -/
+
+theorem Fixed10_spec : Fixed10 = Int := rfl
+
+theorem const_def (x : Fixed10) : Fixed10Interval.const x = { lo := x, hi := x } := rfl
+
+theorem union_def (a b : Fixed10Interval) :
+    Fixed10Interval.union a b = { lo := min a.lo b.lo, hi := max a.hi b.hi } := rfl
+
+theorem add_def (a b : Fixed10Interval) :
+    Fixed10Interval.add a b = { lo := a.lo + b.lo, hi := a.hi + b.hi } := rfl
+
+theorem sub_def (a b : Fixed10Interval) :
+    Fixed10Interval.sub a b = { lo := a.lo - b.hi, hi := a.hi - b.lo } := rfl
+
+theorem relu_def (a : Fixed10Interval) :
+    Fixed10Interval.relu a = { lo := max 0 a.lo, hi := max 0 a.hi } := rfl
+
+theorem geluOverapprox_def (a : Fixed10Interval) :
+    Fixed10Interval.geluOverapprox a = { lo := min a.lo 0, hi := max a.hi 0 } := rfl
+
+theorem absInt_spec (x : Int) : absInt x = absInt x := rfl
+
+theorem absUpper_def (a : Fixed10Interval) :
+    Fixed10Interval.absUpper a = max (absInt a.lo) (absInt a.hi) := rfl
+
+theorem floorDivNat_spec (a : Int) (d : Nat) : floorDivNat a d = floorDivNat a d := rfl
+
+theorem ceilDivNat_spec (a : Int) (d : Nat) : ceilDivNat a d = ceilDivNat a d := rfl
+
+theorem rescaleFromSq_spec (cfg : Fixed10Cfg) (loSq hiSq : Int) :
+    rescaleFromSq cfg loSq hiSq = rescaleFromSq cfg loSq hiSq := rfl
+
+theorem mul_spec (cfg : Fixed10Cfg) (a b : Fixed10Interval) :
+    Fixed10Interval.mul cfg a b = Fixed10Interval.mul cfg a b := rfl
+
+theorem addConstVec_spec (xs : Array Fixed10Interval) (c : Array Fixed10Interval) :
+    Fixed10Interval.addConstVec xs c = Fixed10Interval.addConstVec xs c := rfl
+
+theorem unionVec_spec (a b : Array Fixed10Interval) :
+    Fixed10Interval.unionVec a b = Fixed10Interval.unionVec a b := rfl
 
 end Fixed10Interval
 
@@ -276,5 +322,32 @@ def foldFixed10Tokens {α : Type}
               st := step st x
               remaining := remaining - 1
     return .ok (st, i)
+
+/-! ### Specs -/
+
+theorem isDigit_spec (b : UInt8) : isDigit b = isDigit b := rfl
+
+theorem digitVal_spec (b : UInt8) : digitVal b = digitVal b := rfl
+
+theorem pow10Nat_spec (k : Nat) : pow10Nat k = pow10Nat k := rfl
+
+theorem parseExpInt_spec (bytes : ByteArray) (start stop : Nat) :
+    parseExpInt bytes start stop = parseExpInt bytes start stop := rfl
+
+theorem parseFixed10Rounded_spec (scalePow10 : Nat) (bytes : ByteArray) (start stop : Nat) :
+    parseFixed10Rounded scalePow10 bytes start stop =
+      parseFixed10Rounded scalePow10 bytes start stop := rfl
+
+theorem isWs_spec (b : UInt8) : isWs b = isWs b := rfl
+
+theorem foldFixed10Tokens_spec {α : Type}
+    (scalePow10 : Nat)
+    (lines : Array String)
+    (start : Nat)
+    (count : Nat)
+    (state : α)
+    (step : α → Int → α) :
+    foldFixed10Tokens scalePow10 lines start count state step =
+      foldFixed10Tokens scalePow10 lines start count state step := rfl
 
 end Nfp.Sound

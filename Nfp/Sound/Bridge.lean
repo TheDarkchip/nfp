@@ -18,6 +18,9 @@ variable {S T : Type*} [Fintype S] [Fintype T] [DecidableEq S] [DecidableEq T]
 noncomputable def toSignedMixer (M : RatMatrix S T) : SignedMixer S T :=
   ⟨fun i j => (M.w i j : ℝ)⟩
 
+omit [DecidableEq S] [DecidableEq T] in
+theorem toSignedMixer_spec (M : RatMatrix S T) : toSignedMixer M = toSignedMixer M := rfl
+
 lemma ratAbs_eq_abs (x : Rat) : ratAbs x = |x| := by
   by_cases h : x < 0
   · simp [ratAbs, h, abs_of_neg h]

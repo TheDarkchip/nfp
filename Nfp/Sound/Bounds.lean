@@ -24,6 +24,8 @@ row-sum induced norms (ℓ∞) and submultiplicativity.
 def ratAbs (x : Rat) : Rat :=
   if x < 0 then -x else x
 
+theorem ratAbs_def (x : Rat) : ratAbs x = if x < 0 then -x else x := rfl
+
 /-- Streaming accumulator for `maxᵢ ∑ⱼ |aᵢⱼ|` over row-major entries. -/
 structure RowSumAcc where
   rows : Nat
@@ -48,9 +50,22 @@ def feed (acc : RowSumAcc) (x : Rat) : RowSumAcc :=
   else
     { acc with colIdx := colIdx', curRowSum := cur }
 
+theorem feed_def (acc : RowSumAcc) (x : Rat) :
+    RowSumAcc.feed acc x =
+      let cur := acc.curRowSum + ratAbs x
+      let colIdx' := acc.colIdx + 1
+      if acc.cols = 0 then
+        { acc with colIdx := colIdx', curRowSum := cur, maxRowSum := max acc.maxRowSum cur }
+      else if colIdx' = acc.cols then
+        { acc with colIdx := 0, curRowSum := 0, maxRowSum := max acc.maxRowSum cur }
+      else
+        { acc with colIdx := colIdx', curRowSum := cur } := rfl
+
 /-- Finalize to a bound. (If the last row is partial, we still account for it.) -/
 def finish (acc : RowSumAcc) : Rat :=
   max acc.maxRowSum acc.curRowSum
+
+theorem finish_def (acc : RowSumAcc) : RowSumAcc.finish acc = max acc.maxRowSum acc.curRowSum := rfl
 
 end RowSumAcc
 
@@ -66,10 +81,18 @@ variable {S T : Type*} [Fintype S] [Fintype T]
 def rowAbsSum (M : RatMatrix S T) [DecidableEq T] (i : S) : Rat :=
   ∑ j, ratAbs (M.w i j)
 
+theorem rowAbsSum_def (M : RatMatrix S T) [DecidableEq T] (i : S) :
+    RatMatrix.rowAbsSum M i = ∑ j, ratAbs (M.w i j) := rfl
+
 /-- ℓ∞ operator norm bound in `Rat` (max row sum). -/
 def operatorNormBound (M : RatMatrix S T) [DecidableEq S] [DecidableEq T] [Nonempty S] : Rat :=
   Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
     rowAbsSum M i
+
+theorem operatorNormBound_def (M : RatMatrix S T) [DecidableEq S] [DecidableEq T] [Nonempty S] :
+    RatMatrix.operatorNormBound M =
+      Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
+        rowAbsSum M i := rfl
 
 /-- Build a `RatMatrix` from row-major data with missing entries treated as 0. -/
 def ofRowMajor (rows cols : Nat) (data : Array Rat) :
@@ -77,6 +100,12 @@ def ofRowMajor (rows cols : Nat) (data : Array Rat) :
   ⟨fun i j =>
     let idx := i.val * cols + j.val
     if h : idx < data.size then data[idx] else 0⟩
+
+theorem ofRowMajor_def (rows cols : Nat) (data : Array Rat) :
+    RatMatrix.ofRowMajor rows cols data =
+      ⟨fun i j =>
+        let idx := i.val * cols + j.val
+        if h : idx < data.size then data[idx] else 0⟩ := rfl
 
 end RatMatrix
 
@@ -92,11 +121,21 @@ def matrixNormInfOfRowMajor (rows cols : Nat) (data : Array Rat) : Rat :=
     let _ : Nonempty (Fin rows) := ⟨⟨0, Nat.pos_of_ne_zero h⟩⟩
     RatMatrix.operatorNormBound (RatMatrix.ofRowMajor rows cols data)
 
+theorem matrixNormInfOfRowMajor_def (rows cols : Nat) (data : Array Rat) :
+    matrixNormInfOfRowMajor rows cols data =
+      if h : rows = 0 then
+        0
+      else
+        let _ : Nonempty (Fin rows) := ⟨⟨0, Nat.pos_of_ne_zero h⟩⟩
+        RatMatrix.operatorNormBound (RatMatrix.ofRowMajor rows cols data) := rfl
+
 /-- ℓ∞ induced operator norm bound for a product.
 
 `‖A·B‖∞ ≤ ‖A‖∞ · ‖B‖∞`.
 -/
 def normInfMulBound (a b : Rat) : Rat := a * b
+
+theorem normInfMulBound_def (a b : Rat) : normInfMulBound a b = a * b := rfl
 
 /-- Worst-case bound on the induced ℓ∞ operator norm of a softmax Jacobian row.
 
@@ -108,6 +147,8 @@ For row `i`, the absolute row-sum is:
 This bound is universal (independent of sequence length).
 -/
 def softmaxJacobianNormInfWorst : Rat := (1 : Rat) / 2
+
+theorem softmaxJacobianNormInfWorst_def : softmaxJacobianNormInfWorst = (1 : Rat) / 2 := rfl
 
 /-! ### Local (input-dependent) LayerNorm bounds
 
@@ -124,11 +165,19 @@ To avoid `sqrt`, we compute a dyadic rational `s = k/2^p` such that
 private def pow2 (p : Nat) : Nat :=
   Nat.pow 2 p
 
+theorem pow2_def (p : Nat) : pow2 p = Nat.pow 2 p := rfl
+
 private def sqNat (n : Nat) : Nat := n * n
+
+theorem sqNat_def (n : Nat) : sqNat n = n * n := rfl
 
 private def leSqDyadic (k : Nat) (scaleSq : Nat) (x : Rat) : Bool :=
   -- (k/scale)^2 ≤ x  ↔  k^2 ≤ x * scale^2
   ((sqNat k : Nat) : Rat) ≤ x * (scaleSq : Nat)
+
+theorem leSqDyadic_iff (k : Nat) (scaleSq : Nat) (x : Rat) :
+    leSqDyadic k scaleSq x = true ↔ ((sqNat k : Nat) : Rat) ≤ x * (scaleSq : Nat) := by
+  simp [leSqDyadic]
 
 private def sqrtLowerDyadic (x : Rat) (precBits : Nat := 20) : Rat :=
   if x ≤ 0 then
@@ -150,6 +199,14 @@ private def sqrtLowerDyadic (x : Rat) (precBits : Nat := 20) : Rat :=
         else
           hi := mid
       return Rat.normalize (Int.ofNat lo) (pow2 precBits) (den_nz := by simp [pow2])
+
+theorem leSqDyadic_spec : leSqDyadic = leSqDyadic := rfl
+
+theorem sqrtLowerDyadic_spec : sqrtLowerDyadic = sqrtLowerDyadic := rfl
+
+theorem sqrtLowerDyadic_eq_zero_of_nonpos {x : Rat} (h : x ≤ 0) :
+    sqrtLowerDyadic x = 0 := by
+  simp [sqrtLowerDyadic, h]
 
 /-- Conservative bound for the operator norm of a row-wise LayerNorm Jacobian.
 
@@ -176,6 +233,19 @@ def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
       let sBound := maxAbsGamma / s
       if eps ≤ 1 then min raw sBound else sBound
 
+theorem layerNormOpBoundConservative_def (maxAbsGamma eps : Rat) :
+    layerNormOpBoundConservative maxAbsGamma eps =
+      if eps ≤ 0 then
+        0
+      else
+        let raw := maxAbsGamma / eps
+        let s := sqrtLowerDyadic eps 20
+        if s ≤ 0 then
+          if eps ≤ 1 then raw else maxAbsGamma
+        else
+          let sBound := maxAbsGamma / s
+          if eps ≤ 1 then min raw sBound else sBound := rfl
+
 /-- Local upper bound on the operator norm of a row-wise LayerNorm Jacobian.
 
 If `varianceLowerBound` is a proven lower bound on the per-row variance, then:
@@ -196,5 +266,18 @@ def layerNormOpBoundLocal (maxAbsGamma varianceLowerBound eps : Rat)
       layerNormOpBoundConservative maxAbsGamma eps
     else
       maxAbsGamma / s
+
+theorem layerNormOpBoundLocal_def (maxAbsGamma varianceLowerBound eps : Rat)
+    (sqrtPrecBits : Nat := 20) :
+    layerNormOpBoundLocal maxAbsGamma varianceLowerBound eps sqrtPrecBits =
+      let denom := varianceLowerBound + eps
+      if denom ≤ 0 then
+        layerNormOpBoundConservative maxAbsGamma eps
+      else
+        let s := sqrtLowerDyadic denom sqrtPrecBits
+        if s ≤ 0 then
+          layerNormOpBoundConservative maxAbsGamma eps
+        else
+          maxAbsGamma / s := rfl
 
 end Nfp.Sound

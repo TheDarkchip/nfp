@@ -3,7 +3,7 @@
 import Cli
 import Nfp.IO
 import Nfp.Linearization
-import Nfp.Sound.Cache
+import Nfp.Untrusted.SoundCacheIO
 import Nfp.Verification
 import Nfp.Sound.IO
 import Std.Time.Format
@@ -1114,25 +1114,27 @@ def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
   let maxTokens := p.flag? "maxTokens" |>.map (·.as! Nat) |>.getD 0
   let modelFp : System.FilePath := ⟨modelPath⟩
 
-  let modelHash ← Nfp.Sound.SoundCache.fnv1a64File modelFp
+  let modelHash ← Nfp.Untrusted.SoundCacheIO.fnv1a64File modelFp
   let cacheFp := Nfp.Sound.SoundCache.cachePath modelFp modelHash scalePow10
 
-  match (← Nfp.Sound.SoundCache.buildCacheFile modelFp cacheFp scalePow10) with
+  match (← Nfp.Untrusted.SoundCacheIO.buildCacheFile modelFp cacheFp scalePow10) with
   | .error e =>
       IO.eprintln s!"Error: cache build failed: {e}"
       return 1
   | .ok _ =>
       let ch ← IO.FS.Handle.mk cacheFp IO.FS.Mode.read
-      let hdr ← Nfp.Sound.SoundCache.readHeader ch
+      let hdr ← Nfp.Untrusted.SoundCacheIO.readHeader ch
       if hdr.modelHash ≠ modelHash then
         IO.eprintln "Error: cache hash mismatch"
         return 1
-      match (← Nfp.Sound.SoundCache.checkCacheFileSize cacheFp hdr) with
+      match (← Nfp.Untrusted.SoundCacheIO.checkCacheFileSize cacheFp hdr) with
       | .error e =>
           IO.eprintln s!"Error: {e}"
           return 1
       | .ok _ =>
-          match (← Nfp.Sound.SoundCache.checkTextTokenEnvelope modelFp scalePow10 maxTokens) with
+          match
+            (← Nfp.Untrusted.SoundCacheIO.checkTextTokenEnvelope
+              modelFp scalePow10 maxTokens) with
           | .error e =>
               IO.eprintln s!"Error: {e}"
               return 1

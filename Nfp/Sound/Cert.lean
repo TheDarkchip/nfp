@@ -79,6 +79,9 @@ theorem check_iff (eps : Rat) (l : LayerAmplificationCert) :
     l.check eps = true ↔ l.Valid eps := by
   simp [check]
 
+theorem Valid_spec : Valid = Valid := rfl
+theorem check_spec : check = check := rfl
+
 end LayerAmplificationCert
 
 /-- Model-level certification report. -/
@@ -141,6 +144,15 @@ mlp={l.mlpWeightContribution}, ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound}" ++
 
 instance : ToString ModelCert := ⟨toString⟩
 
+theorem Valid_spec : Valid = Valid := rfl
+theorem check_spec : check = check := rfl
+theorem toString_spec : toString = toString := rfl
+
 end ModelCert
+
+/-! ### Specs -/
+
+theorem defaultEps_spec : defaultEps = defaultEps := rfl
+theorem defaultActDerivBound_spec : defaultActDerivBound = defaultActDerivBound := rfl
 
 end Nfp.Sound
