@@ -899,6 +899,7 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
       "SOUND head pattern (local): " ++
         s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
         s!"seqLen={cert.seqLen}, " ++
+        s!"targetCountLB={cert.targetCountLowerBound}, " ++
         s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
         s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
         s!"marginLB={cert.marginLowerBound}, " ++
@@ -1123,7 +1124,7 @@ def headPatternCmd : Cmd := `[Cli|
   FLAGS:
     layer : Nat; "Layer index (default: 0)"
     head : Nat; "Head index (default: 0)"
-    offset : Int; "Target offset (default: -1 for previous token, 0 for self)"
+    offset : Int; "Token-match offset (default: -1 for previous token, 0 for self)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"

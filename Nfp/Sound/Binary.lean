@@ -120,6 +120,20 @@ private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24) |||
     (b4 <<< 32) ||| (b5 <<< 40) ||| (b6 <<< 48) ||| (b7 <<< 56)
 
+private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
+  let b0 := (b[off]!).toUInt32
+  let b1 := (b[off + 1]!).toUInt32
+  let b2 := (b[off + 2]!).toUInt32
+  let b3 := (b[off + 3]!).toUInt32
+  b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
+
+private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
+  let u := u32FromLE b off
+  if u ≤ 0x7fffffff then
+    Int.ofNat u.toNat
+  else
+    Int.ofNat u.toNat - (Int.ofNat (Nat.pow 2 32))
+
 private def pow2Nat (k : Nat) : Nat := Nat.pow 2 k
 
 private def ceilDivNat (a : Int) (d : Nat) : Int :=
@@ -251,6 +265,24 @@ def readScaledFloatArray (h : IO.FS.Handle) (count scalePow10 : Nat) :
         match floatScaledCeilSigned scalePow10 bits with
         | .error e => return .error e
         | .ok v => out := out.push v
+      return .ok out
+
+def readI32Array (h : IO.FS.Handle) (count : Nat) :
+    IO (Except String (Array Int)) := do
+  if count = 0 then
+    return .ok #[]
+  let bytesE : Except String ByteArray ←
+    try
+      pure (Except.ok (← readExactly h (count * 4)))
+    catch
+      | _ => pure (Except.error "unexpected EOF")
+  match bytesE with
+  | .error e => return .error e
+  | .ok bytes =>
+      let mut out : Array Int := Array.mkEmpty count
+      for i in [:count] do
+        let v := i32FromLE bytes (i * 4)
+        out := out.push v
       return .ok out
 
 def readMatrixNormOneInfScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :

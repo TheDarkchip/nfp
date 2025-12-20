@@ -1361,6 +1361,16 @@ private def loadEmbeddingsIntervalsBinary
             rows := rows.push row
           return .ok rows
 
+private def loadTokensBinary
+    (path : System.FilePath) : IO (Except String (BinaryHeader × Array Int)) := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  match ← readBinaryHeader h with
+  | .error e => return .error e
+  | .ok hdr =>
+      match ← readI32Array h hdr.seqLen with
+      | .error e => return .error e
+      | .ok toks => return .ok (hdr, toks)
+
 private def ensureSoundCache
     (modelPath : System.FilePath)
     (scalePow10 : Nat := defaultFixedScalePow10) :
@@ -2046,6 +2056,9 @@ private def certifyHeadPatternLocalBinary
     let residuals0 ←
       ExceptT.mk
         (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
+    let (hdrTok, tokens) ← ExceptT.mk (loadTokensBinary inputPath)
+    if hdrTok.seqLen ≠ hdr.seqLen then
+      throw "token/embedding seq_len mismatch"
     let h ← IO.FS.Handle.mk path IO.FS.Mode.read
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
@@ -2106,19 +2119,26 @@ private def certifyHeadPatternLocalBinary
 
         let mut minTargetLower? : Option Int := none
         let mut maxOtherUpper? : Option Int := none
+        let mut minTargetCount? : Option Nat := none
         for i in [:hdr.seqLen] do
           let ti : Int := (Int.ofNat i) + targetOffset
           if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
             pure ()
           else
             let tIdx : Nat := Int.toNat ti
+            let targetTok := tokens[tIdx]!
             let qRow := qRows[i]!
             let mut targetLower? : Option Int := none
             let mut maxOtherUpperRow? : Option Int := none
+            let mut targetCount : Nat := 0
             for j in [:hdr.seqLen] do
               let dot := fixedDotInterval cfg qRow (kRows[j]!)
-              if j = tIdx then
-                targetLower? := some dot.lo
+              if tokens[j]! = targetTok then
+                targetCount := targetCount + 1
+                targetLower? :=
+                  match targetLower? with
+                  | none => some dot.lo
+                  | some m => some (min m dot.lo)
               else
                 let cur := dot.hi
                 maxOtherUpperRow? :=
@@ -2128,23 +2148,31 @@ private def certifyHeadPatternLocalBinary
             match targetLower? with
             | none => pure ()
             | some targetLower =>
-                let maxOtherUpperRow :=
-                  match maxOtherUpperRow? with
-                  | none => targetLower
-                  | some v => v
-                minTargetLower? :=
-                  match minTargetLower? with
-                  | none => some targetLower
-                  | some m => some (min m targetLower)
-                maxOtherUpper? :=
-                  match maxOtherUpper? with
-                  | none => some maxOtherUpperRow
-                  | some m => some (max m maxOtherUpperRow)
+              let maxOtherUpperRow :=
+                match maxOtherUpperRow? with
+                | none => targetLower
+                | some v => v
+              minTargetLower? :=
+                match minTargetLower? with
+                | none => some targetLower
+                | some m => some (min m targetLower)
+              maxOtherUpper? :=
+                match maxOtherUpper? with
+                | none => some maxOtherUpperRow
+                | some m => some (max m maxOtherUpperRow)
+              minTargetCount? :=
+                match minTargetCount? with
+                | none => some targetCount
+                | some m => some (min m targetCount)
 
         let minTargetLower ←
           match minTargetLower? with
           | none => throw "no valid target positions for the requested offset"
           | some v => pure v
+        let minTargetCount : Nat :=
+          match minTargetCount? with
+          | none => 0
+          | some v => v
         let maxOtherUpper :=
           match maxOtherUpper? with
           | none => minTargetLower
@@ -2156,7 +2184,7 @@ private def certifyHeadPatternLocalBinary
         let margin := ratOfScaledInt scalePow10 marginInt
         let weightLB : Rat :=
           if marginInt > 0 then
-            (1 : Rat) / (hdr.seqLen : Rat)
+            (minTargetCount : Rat) / (hdr.seqLen : Rat)
           else
             0
         let cert : HeadPatternCert := {
@@ -2164,6 +2192,7 @@ private def certifyHeadPatternLocalBinary
           headIdx := headIdx
           seqLen := hdr.seqLen
           targetOffset := targetOffset
+          targetCountLowerBound := minTargetCount
           targetLogitLowerBound := targetLower
           otherLogitUpperBound := otherUpper
           marginLowerBound := margin

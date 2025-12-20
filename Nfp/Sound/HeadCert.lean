@@ -93,6 +93,7 @@ structure HeadPatternCert where
   headIdx : Nat
   seqLen : Nat
   targetOffset : Int
+  targetCountLowerBound : Nat
   targetLogitLowerBound : Rat
   otherLogitUpperBound : Rat
   marginLowerBound : Rat
@@ -107,7 +108,7 @@ def Valid (c : HeadPatternCert) : Prop :=
     c.marginLowerBound = c.targetLogitLowerBound - c.otherLogitUpperBound ∧
     c.targetWeightLowerBound =
       (if c.marginLowerBound > 0 then
-        (1 : Rat) / (c.seqLen : Rat)
+        (c.targetCountLowerBound : Rat) / (c.seqLen : Rat)
       else
         0)
 
