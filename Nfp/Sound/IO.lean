@@ -1118,6 +1118,27 @@ private def addVecFixed (a b : Array Fixed10Interval) : Array Fixed10Interval :=
       out := out.push (Fixed10Interval.add a[i]! b[i]!)
     return out
 
+private def addVecFixedRows
+    (rows : Array (Array Fixed10Interval))
+    (v : Array Fixed10Interval) : Array (Array Fixed10Interval) :=
+  rows.map (fun row => addVecFixed row v)
+
+private def unionRowsFixed
+    (rows : Array (Array Fixed10Interval)) : Array Fixed10Interval :=
+  if rows.isEmpty then
+    #[]
+  else
+    Id.run do
+      let mut out := rows[0]!
+      for i in [1:rows.size] do
+        let row := rows[i]!
+        if row.size = out.size then
+          for j in [:out.size] do
+            let cur := out[j]!
+            let r := row[j]!
+            out := out.set! j { lo := min cur.lo r.lo, hi := max cur.hi r.hi }
+      return out
+
 private def consumeMatrixMulAndNormInfFixed
     (cfg : Fixed10Cfg)
     (slack : Int)
@@ -2000,115 +2021,7 @@ private def certifyHeadBoundsLocalBinary
     return heads
   action.run
 
-/-- Read W_Q and W_K weights for a specific layer/head from a binary `.nfpt`. -/
-private def readHeadQKBinary
-    (path : System.FilePath)
-    (layerIdx headIdx : Nat)
-    (scalePow10 : Nat) :
-    IO (Except String (BinaryHeader × Array Int × Array Int)) := do
-  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
-  match ← readBinaryHeader h with
-  | .error e => return .error e
-  | .ok hdr =>
-      if layerIdx ≥ hdr.numLayers then
-        return .error s!"layer index {layerIdx} out of range"
-      if headIdx ≥ hdr.numHeads then
-        return .error s!"head index {headIdx} out of range"
-      match ← skipI32Array h hdr.seqLen with
-      | .error e => return .error e
-      | .ok _ => pure ()
-      match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
-      | .error e => return .error e
-      | .ok _ => pure ()
-
-      for _l in [:layerIdx] do
-        for _h in [:hdr.numHeads] do
-          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h hdr.headDim with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h hdr.headDim with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h hdr.headDim with
-          | .error e => return .error e
-          | .ok _ => pure ()
-          match ← skipF64Array h (hdr.headDim * hdr.modelDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
-
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h (hdr.modelDim * hdr.hiddenDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.hiddenDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h (hdr.hiddenDim * hdr.modelDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-
-      for _h in [:headIdx] do
-        match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.headDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.headDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h hdr.headDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
-        match ← skipF64Array h (hdr.headDim * hdr.modelDim) with
-        | .error e => return .error e
-        | .ok _ => pure ()
-
-      let wqE ← readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
-      let wq ←
-        match wqE with
-        | .error e => return .error e
-        | .ok xs => pure xs
-      match ← skipF64Array h hdr.headDim with
-      | .error e => return .error e
-      | .ok _ => pure ()
-      let wkE ← readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
-      let wk ←
-        match wkE with
-        | .error e => return .error e
-        | .ok xs => pure xs
-      return .ok (hdr, wq, wk)
-
-/-- Compute local attention pattern bounds for a specific binary head (layer 0 only). -/
+/-- Compute local attention pattern bounds for a specific binary head. -/
 private def certifyHeadPatternLocalBinary
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
@@ -2122,105 +2035,191 @@ private def certifyHeadPatternLocalBinary
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
   let action : ExceptT String IO HeadPatternCert := do
-    let (hdr, ln1Params, _ln2Params) ←
+    let (hdr, ln1Params, ln2Params) ←
       ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
-    if layerIdx ≠ 0 then
-      throw "pattern bounds currently support layer 0 only"
+    if layerIdx ≥ hdr.numLayers then
+      throw s!"layer index {layerIdx} out of range"
+    if headIdx ≥ hdr.numHeads then
+      throw s!"head index {headIdx} out of range"
     if hdr.seqLen > maxSeqLen then
       throw s!"seq_len {hdr.seqLen} exceeds maxSeqLen {maxSeqLen}"
-    let embeddings ←
-      ExceptT.mk (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
-    let (hdr2, wq, wk) ←
-      ExceptT.mk (readHeadQKBinary path layerIdx headIdx scalePow10)
-    if hdr2.seqLen ≠ hdr.seqLen then
-      throw "header mismatch while reading head weights"
-
+    let residuals0 ←
+      ExceptT.mk
+        (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
+    let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+    let _ ← ExceptT.mk (readBinaryHeader h)
+    let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
+    let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
     }
-    let p1 := ln1Params.getD 0 defP
-    let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
-    for row in embeddings do
-      let (ln1Out, _ln1VarLB) := fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
-      ln1Rows := ln1Rows.push ln1Out
-
-    let mut qRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
-    let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
-    for row in ln1Rows do
-      qRows := qRows.push (matMulIntervalsFromScaled cfg slack
-        hdr.modelDim hdr.headDim wq row)
-      kRows := kRows.push (matMulIntervalsFromScaled cfg slack
-        hdr.modelDim hdr.headDim wk row)
-
-    let mut minTargetLower? : Option Int := none
-    let mut maxOtherUpper? : Option Int := none
-    for i in [:hdr.seqLen] do
-      let ti : Int := (Int.ofNat i) + targetOffset
-      if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
-        pure ()
-      else
-        let tIdx : Nat := Int.toNat ti
-        let qRow := qRows[i]!
-        let mut targetLower? : Option Int := none
-        let mut maxOtherUpperRow? : Option Int := none
-        for j in [:hdr.seqLen] do
-          let dot := fixedDotInterval cfg qRow (kRows[j]!)
-          if j = tIdx then
-            targetLower? := some dot.lo
+    let mut residuals := residuals0
+    for l in [:hdr.numLayers] do
+      let p1 := ln1Params.getD l defP
+      let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+      for row in residuals do
+        let (ln1Out, _ln1VarLB) :=
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+        ln1Rows := ln1Rows.push ln1Out
+      if l = layerIdx then
+        let mut wq? : Option (Array Int) := none
+        let mut wk? : Option (Array Int) := none
+        for hIdx in [:hdr.numHeads] do
+          if hIdx = headIdx then
+            let wq ←
+              ExceptT.mk <|
+                readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
+            wq? := some wq
           else
-            let cur := dot.hi
-            maxOtherUpperRow? :=
-              match maxOtherUpperRow? with
-              | none => some cur
-              | some m => some (max m cur)
-        match targetLower? with
-        | none => pure ()
-        | some targetLower =>
-            let maxOtherUpperRow :=
-              match maxOtherUpperRow? with
-              | none => targetLower
-              | some v => v
-            minTargetLower? :=
-              match minTargetLower? with
-              | none => some targetLower
-              | some m => some (min m targetLower)
-            maxOtherUpper? :=
-              match maxOtherUpper? with
-              | none => some maxOtherUpperRow
-              | some m => some (max m maxOtherUpperRow)
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            pure ()
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          if hIdx = headIdx then
+            let wk ←
+              ExceptT.mk <|
+                readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
+            wk? := some wk
+          else
+            let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+            pure ()
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
+        let wq ←
+          match wq? with
+          | none => throw "missing W_Q for requested head"
+          | some xs => pure xs
+        let wk ←
+          match wk? with
+          | none => throw "missing W_K for requested head"
+          | some xs => pure xs
 
-    let minTargetLower ←
-      match minTargetLower? with
-      | none => throw "no valid target positions for the requested offset"
-      | some v => pure v
-    let maxOtherUpper :=
-      match maxOtherUpper? with
-      | none => minTargetLower
-      | some v => v
+        let mut qRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        for row in ln1Rows do
+          qRows := qRows.push (matMulIntervalsFromScaled cfg slack
+            hdr.modelDim hdr.headDim wq row)
+          kRows := kRows.push (matMulIntervalsFromScaled cfg slack
+            hdr.modelDim hdr.headDim wk row)
 
-    let marginInt : Int := minTargetLower - maxOtherUpper
-    let targetLower := ratOfScaledInt scalePow10 minTargetLower
-    let otherUpper := ratOfScaledInt scalePow10 maxOtherUpper
-    let margin := ratOfScaledInt scalePow10 marginInt
-    let weightLB : Rat :=
-      if marginInt > 0 then
-        (1 : Rat) / (hdr.seqLen : Rat)
+        let mut minTargetLower? : Option Int := none
+        let mut maxOtherUpper? : Option Int := none
+        for i in [:hdr.seqLen] do
+          let ti : Int := (Int.ofNat i) + targetOffset
+          if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
+            pure ()
+          else
+            let tIdx : Nat := Int.toNat ti
+            let qRow := qRows[i]!
+            let mut targetLower? : Option Int := none
+            let mut maxOtherUpperRow? : Option Int := none
+            for j in [:hdr.seqLen] do
+              let dot := fixedDotInterval cfg qRow (kRows[j]!)
+              if j = tIdx then
+                targetLower? := some dot.lo
+              else
+                let cur := dot.hi
+                maxOtherUpperRow? :=
+                  match maxOtherUpperRow? with
+                  | none => some cur
+                  | some m => some (max m cur)
+            match targetLower? with
+            | none => pure ()
+            | some targetLower =>
+                let maxOtherUpperRow :=
+                  match maxOtherUpperRow? with
+                  | none => targetLower
+                  | some v => v
+                minTargetLower? :=
+                  match minTargetLower? with
+                  | none => some targetLower
+                  | some m => some (min m targetLower)
+                maxOtherUpper? :=
+                  match maxOtherUpper? with
+                  | none => some maxOtherUpperRow
+                  | some m => some (max m maxOtherUpperRow)
+
+        let minTargetLower ←
+          match minTargetLower? with
+          | none => throw "no valid target positions for the requested offset"
+          | some v => pure v
+        let maxOtherUpper :=
+          match maxOtherUpper? with
+          | none => minTargetLower
+          | some v => v
+
+        let marginInt : Int := minTargetLower - maxOtherUpper
+        let targetLower := ratOfScaledInt scalePow10 minTargetLower
+        let otherUpper := ratOfScaledInt scalePow10 maxOtherUpper
+        let margin := ratOfScaledInt scalePow10 marginInt
+        let weightLB : Rat :=
+          if marginInt > 0 then
+            (1 : Rat) / (hdr.seqLen : Rat)
+          else
+            0
+        let cert : HeadPatternCert := {
+          layerIdx := layerIdx
+          headIdx := headIdx
+          seqLen := hdr.seqLen
+          targetOffset := targetOffset
+          targetLogitLowerBound := targetLower
+          otherLogitUpperBound := otherUpper
+          marginLowerBound := margin
+          targetWeightLowerBound := weightLB
+        }
+        if cert.check then
+          return cert
+        throw "head pattern certificate failed internal consistency checks"
       else
-        0
-    let cert : HeadPatternCert := {
-      layerIdx := layerIdx
-      headIdx := headIdx
-      seqLen := hdr.seqLen
-      targetOffset := targetOffset
-      targetLogitLowerBound := targetLower
-      otherLogitUpperBound := otherUpper
-      marginLowerBound := margin
-      targetWeightLowerBound := weightLB
-    }
-    if cert.check then
-      return cert
-    throw "head pattern certificate failed internal consistency checks"
+        let ln1Union := unionRowsFixed ln1Rows
+        let mut attnUnion : Array Fixed10Interval :=
+          Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+        for _h in [:hdr.numHeads] do
+          let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+          let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+          let (vHidden0, _nWv) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.modelDim hdr.headDim ln1Union scalePow10)
+          let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
+          let vHidden := addVecFixed vHidden0 bV
+          let (vOut, _nWo) ←
+            ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+              hdr.headDim hdr.modelDim vHidden scalePow10)
+          attnUnion := addVecFixed attnUnion vOut
+        let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+        attnUnion := addVecFixed attnUnion attnBias
+        residuals := addVecFixedRows residuals attnUnion
+
+        let p2 := ln2Params.getD l defP
+        let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
+        for row in residuals do
+          let (ln2Out, _ln2VarLB) :=
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+          ln2Rows := ln2Rows.push ln2Out
+        let ln2Union := unionRowsFixed ln2Rows
+        let (hidden0, _nWin) ←
+          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+            hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
+        let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+        let hiddenB := addVecFixed hidden0 bIn
+        let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+        let (mlpOut0, _nWout) ←
+          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+            hdr.hiddenDim hdr.modelDim actHidden scalePow10)
+        let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+        let mlpOut := addVecFixed mlpOut0 bOut
+        residuals := addVecFixedRows residuals mlpOut
+
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+        let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+
+    throw "target layer not reached"
   action.run
 
 /-- Soundly compute certification bounds from a `.nfpt` model file.

@@ -226,8 +226,8 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5
 
 ### `head_pattern`
 
-Computes a sound local attention pattern bound for a single head (binary only).
-Currently this certifies target-logit dominance using only layer-0 inputs.
+Computes a sound local attention pattern bound for a single head (binary only),
+propagating per-position intervals up to the target layer (bounded by `maxSeqLen`).
 
 ```bash
 lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 1/100 --offset -1
