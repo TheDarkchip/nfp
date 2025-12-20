@@ -48,7 +48,7 @@ lake exe nfp head_pattern model.nfpt --layer 0 --head 0 --delta 1/100 --offset -
 
 # Sound induction head certificate (binary only)
 lake exe nfp induction_cert model.nfpt --layer1 0 --head1 0 --layer2 1 --head2 0 \
-  --coord 0 --delta 1/100 --offset1 -1 --offset2 -1
+  --coord 0 --delta 1/100 --offset1 -1 --offset2 -1 --target 42 --negative 17
 
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
@@ -868,6 +868,9 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
   let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
+  let tightPattern := p.hasFlag "tightPattern"
+  let bestMatch := p.hasFlag "bestMatch"
+  let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
@@ -895,19 +898,36 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
           else
             throw <|
               "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
-    let cert ← ExceptT.mk <|
-      Nfp.Sound.certifyHeadPatternLocal ⟨modelPath⟩ layerIdx headIdx
-        (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
-        (targetOffset := offset) (maxSeqLen := maxSeqLen)
-    let s :=
-      "SOUND head pattern (local): " ++
-        s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
-        s!"seqLen={cert.seqLen}, " ++
-        s!"targetCountLB={cert.targetCountLowerBound}, " ++
-        s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
-        s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
-        s!"marginLB={cert.marginLowerBound}, " ++
-        s!"targetWeightLB={cert.targetWeightLowerBound}\n"
+    let s ←
+      if bestMatch then
+        let cert ← ExceptT.mk <|
+          Nfp.Sound.certifyHeadPatternBestMatchLocal ⟨modelPath⟩ layerIdx headIdx
+            (queryPos? := queryPos) (eps := eps) (inputPath? := inputPath?)
+            (inputDelta := delta) (targetOffset := offset) (maxSeqLen := maxSeqLen)
+            (tightPattern := tightPattern)
+        pure <|
+          "SOUND head pattern (best-match): " ++
+            s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
+              s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
+            s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
+              s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
+              s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
+            s!"marginLB={cert.marginLowerBound}, " ++
+              s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
+      else
+        let cert ← ExceptT.mk <|
+          Nfp.Sound.certifyHeadPatternLocal ⟨modelPath⟩ layerIdx headIdx
+            (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+            (targetOffset := offset) (maxSeqLen := maxSeqLen) (tightPattern := tightPattern)
+        pure <|
+          "SOUND head pattern (local): " ++
+            s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
+            s!"seqLen={cert.seqLen}, " ++
+            s!"targetCountLB={cert.targetCountLowerBound}, " ++
+            s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
+            s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
+            s!"marginLB={cert.marginLowerBound}, " ++
+            s!"targetWeightLB={cert.targetWeightLowerBound}\n"
     return s
 
   match ← action.run with
@@ -923,6 +943,8 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
       IO.println s
     return 0
 
+set_option maxHeartbeats 2000000 in
+-- Heartbeats bumped to avoid elaboration timeout for this CLI entrypoint.
 /-- Run the induction-cert command - compute a sound induction head certificate. -/
 def runInductionCert (p : Parsed) : IO UInt32 := do
   let modelPath := p.positionalArg! "model" |>.as! String
@@ -933,6 +955,11 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
   let coord := p.flag? "coord" |>.map (·.as! Nat) |>.getD 0
   let offset1 := p.flag? "offset1" |>.map (·.as! Int) |>.getD (-1)
   let offset2 := p.flag? "offset2" |>.map (·.as! Int) |>.getD (-1)
+  let targetToken := p.flag? "target" |>.map (·.as! Nat)
+  let negativeToken := p.flag? "negative" |>.map (·.as! Nat)
+  let tightPattern := p.hasFlag "tightPattern"
+  let bestMatch := p.hasFlag "bestMatch"
+  let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let epsStr := p.flag? "eps" |>.map (·.as! String) |>.getD "1e-5"
@@ -960,24 +987,71 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
           else
             throw <|
               "induction cert requires EMBEDDINGS; pass --input for legacy text models."
-    let cert ← ExceptT.mk <|
-      Nfp.Sound.certifyInductionSound ⟨modelPath⟩
-        layer1 head1 layer2 head2 coord
-        (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
-        (offset1 := offset1) (offset2 := offset2) (maxSeqLen := maxSeqLen)
-    let p1 := cert.layer1Pattern
-    let p2 := cert.layer2Pattern
-    let v := cert.layer2Value
-    let s :=
-      "SOUND induction cert:\n" ++
-        s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
-          s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
-        s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
-          s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
-        s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
-          s!"matchCoordLB={v.matchCoordLowerBound} " ++
-          s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
-        s!"deltaLB={cert.deltaLowerBound}\n"
+    let s ←
+      if bestMatch then
+        let cert ← ExceptT.mk <|
+          Nfp.Sound.certifyInductionSoundBestMatch ⟨modelPath⟩
+            layer1 head1 layer2 head2 coord
+            (queryPos? := queryPos) (eps := eps) (inputPath? := inputPath?)
+            (inputDelta := delta) (offset1 := offset1) (offset2 := offset2)
+            (maxSeqLen := maxSeqLen) (tightPattern := tightPattern)
+            (targetToken? := targetToken) (negativeToken? := negativeToken)
+        let p1 := cert.layer1Pattern
+        let p2 := cert.layer2Pattern
+        let v := cert.layer2Value
+        let logitLine : String :=
+          match cert.layer2Logit? with
+          | none => ""
+          | some logit =>
+              s!"logitDiffLB={logit.logitDiffLowerBound} " ++
+                s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
+                s!"logitMatchLB={logit.matchLogitLowerBound} " ++
+                s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
+        pure <|
+          "SOUND induction cert (best-match):\n" ++
+            s!"queryPos={p2.queryPos}\n" ++
+            s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+              s!"targetTok={p1.targetToken} " ++
+              s!"marginLB={p1.marginLowerBound} " ++
+              s!"weightLB={p1.bestMatchWeightLowerBound}\n" ++
+            s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+              s!"targetTok={p2.targetToken} " ++
+              s!"marginLB={p2.marginLowerBound} " ++
+              s!"weightLB={p2.bestMatchWeightLowerBound}\n" ++
+            s!"coord={v.coord} matchCoordLB={v.matchCoordLowerBound} " ++
+              s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
+            s!"deltaLB={cert.deltaLowerBound}\n" ++
+            logitLine
+      else
+        let cert ← ExceptT.mk <|
+          Nfp.Sound.certifyInductionSound ⟨modelPath⟩
+            layer1 head1 layer2 head2 coord
+            (eps := eps) (inputPath? := inputPath?) (inputDelta := delta)
+            (offset1 := offset1) (offset2 := offset2) (maxSeqLen := maxSeqLen)
+            (tightPattern := tightPattern)
+            (targetToken? := targetToken) (negativeToken? := negativeToken)
+        let p1 := cert.layer1Pattern
+        let p2 := cert.layer2Pattern
+        let v := cert.layer2Value
+        let logitLine : String :=
+          match cert.layer2Logit? with
+          | none => ""
+          | some logit =>
+              s!"logitDiffLB={logit.logitDiffLowerBound} " ++
+                s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
+                s!"logitMatchLB={logit.matchLogitLowerBound} " ++
+                s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
+        pure <|
+          "SOUND induction cert:\n" ++
+            s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+              s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
+            s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+              s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
+            s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
+              s!"matchCoordLB={v.matchCoordLowerBound} " ++
+              s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
+            s!"deltaLB={cert.deltaLowerBound}\n" ++
+            logitLine
     return s
 
   match ← action.run with
@@ -1199,6 +1273,9 @@ def headPatternCmd : Cmd := `[Cli|
     layer : Nat; "Layer index (default: 0)"
     head : Nat; "Head index (default: 0)"
     offset : Int; "Token-match offset (default: -1 for previous token, 0 for self)"
+    tightPattern; "Use tighter (slower) pattern bounds near the target layer"
+    bestMatch; "Use best-match (single-query) pattern bounds"
+    queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
@@ -1223,6 +1300,11 @@ def inductionCertCmd : Cmd := `[Cli|
     coord : Nat; "Output coordinate for the value bound (default: 0)"
     offset1 : Int; "Token-match offset for layer1 (default: -1)"
     offset2 : Int; "Token-match offset for layer2 (default: -1)"
+    target : Nat; "Target token ID for logit-diff bound (optional; requires --negative)"
+    negative : Nat; "Negative token ID for logit-diff bound (optional; requires --target)"
+    tightPattern; "Use tighter (slower) pattern bounds near the target layer"
+    bestMatch; "Use best-match (single-query) pattern bounds"
+    queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"

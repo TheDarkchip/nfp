@@ -119,6 +119,19 @@ Artifacts:
 - `models/gpt2.nfpt` (binary export)
 - `reports/gpt2_sound_demo.txt` (sound certificate report)
 
+### GPT-2 induction sound scan
+
+This demo builds the rigorous induction dataset (if needed), finds candidate
+induction head pairs, and ranks them by sound logit-diff lower bounds.
+
+```bash
+./scripts/demo_gpt2_induction_sound.sh
+```
+
+Artifacts:
+- `models/gpt2_rigorous.nfpt` (binary export)
+- `reports/gpt2_induction_sound_scan.txt` (sound scan report)
+
 ### Tiny local binary demo
 
 This demo converts the tiny text fixtures into a binary `.nfpt` and runs a local
@@ -205,7 +218,7 @@ lake exe nfp certify models/gpt2_rigorous.nfpt \
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --delta 1/100 --eps 1e-5 --actDeriv 2
+  --delta 0.01 --eps 1e-5 --actDeriv 2
 ```
 
 If you want to override the embedded input, pass a separate input `.nfpt`:
@@ -227,7 +240,7 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt
 For local bounds (uses input embeddings in the model file when present):
 
 ```bash
-lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 1/100 --eps 1e-5
+lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01 --eps 1e-5
 ```
 
 - `--delta` enables local head bounds; `--input` can override the embedded input.
@@ -243,12 +256,15 @@ The pattern compares logits for keys whose token matches the query’s offset to
 (e.g., `--offset -1` matches the previous token).
 
 ```bash
-lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 1/100 --offset -1
+lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 0.01 --offset -1
 ```
 
 - `--offset` selects the target key position relative to the query (default: `-1` for previous token).
 - `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
 - `--eps` and `--delta` match the local LayerNorm/input radius used for bounds.
+- `--tightPattern` enables a slower but tighter pattern bound near the target layer.
+- `--bestMatch` switches to a single-query best-match bound (default query: last position).
+- `--queryPos` chooses the query position for best-match bounds (default: last position).
 
 ### `induction_cert`
 
@@ -257,13 +273,18 @@ certificates and a value-coordinate lower bound (binary only).
 
 ```bash
 lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
-  --layer1 0 --head1 0 --layer2 1 --head2 0 --coord 0 --delta 1/100
+  --layer1 0 --head1 0 --layer2 1 --head2 0 --coord 0 --delta 0.01 \
+  --target 42 --negative 17
 ```
 
 - `--layer1/--head1` selects the previous-token head; `--layer2/--head2` selects the
   token-match head.
 - `--coord` chooses the output coordinate used for the value lower bound.
 - `--offset1/--offset2` adjust the token-match offsets (default: `-1`).
+- `--target/--negative` optionally add a logit-diff lower bound using unembedding columns.
+- `--tightPattern` enables a slower but tighter pattern bound near the target layer.
+- `--bestMatch` switches to single-query best-match bounds (default query: last position).
+- `--queryPos` chooses the query position for best-match bounds (default: last position).
 
 ### `rope`
 

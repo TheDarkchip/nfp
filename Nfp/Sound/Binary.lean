@@ -267,6 +267,20 @@ def readScaledFloatArray (h : IO.FS.Handle) (count scalePow10 : Nat) :
         | .ok v => out := out.push v
       return .ok out
 
+def readScaledFloat (h : IO.FS.Handle) (scalePow10 : Nat) : IO (Except String Int) := do
+  let bytesE : Except String ByteArray ←
+    try
+      pure (Except.ok (← readExactly h 8))
+    catch
+      | _ => pure (Except.error "unexpected EOF")
+  match bytesE with
+  | .error e => return .error e
+  | .ok bytes =>
+      let bits := u64FromLE bytes 0
+      match floatScaledCeilSigned scalePow10 bits with
+      | .error e => return .error e
+      | .ok v => return .ok v
+
 def readI32Array (h : IO.FS.Handle) (count : Nat) :
     IO (Except String (Array Int)) := do
   if count = 0 then

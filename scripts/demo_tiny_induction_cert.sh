@@ -15,6 +15,7 @@ python scripts/convert_text_fixture_to_binary.py \
 
 lake exe nfp induction_cert "$BINARY_PATH" \
   --layer1 0 --head1 0 --layer2 0 --head2 0 --coord 0 \
-  --offset1 -1 --offset2 -1 --delta 0.05 --output "$REPORT_PATH"
+  --offset1 -1 --offset2 -1 --target 2 --negative 1 \
+  --delta 0.05 --output "$REPORT_PATH"
 
 echo "Report written to $REPORT_PATH"
