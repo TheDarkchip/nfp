@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Std
+import Nfp.Induction
 import Nfp.Sound.Bounds
 
 namespace Nfp.Sound
@@ -122,6 +123,19 @@ def check (c : HeadPatternCert) : Bool :=
 
 theorem check_iff (c : HeadPatternCert) : c.check = true ↔ c.Valid := by
   simp [check]
+
+end HeadPatternCert
+
+namespace HeadPatternCert
+
+/-- Convert a sound head pattern certificate into a token-match witness. -/
+def toTokenMatchPattern (c : HeadPatternCert) : Nfp.TokenMatchPattern := {
+  seqLen := c.seqLen
+  targetOffset := c.targetOffset
+  targetCountLowerBound := c.targetCountLowerBound
+  targetWeightLowerBound := c.targetWeightLowerBound
+  marginLowerBound := c.marginLowerBound
+}
 
 end HeadPatternCert
 

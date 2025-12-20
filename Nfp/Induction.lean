@@ -95,6 +95,22 @@ structure TrueInductionHead where
   /-- Delta is nonnegative (can't guarantee negative output) -/
   delta_nonneg : 0 ≤ delta
 
+/-! ## Sound pattern witnesses -/
+
+/-- Minimal token-match pattern witness used by the sound certification path. -/
+structure TokenMatchPattern where
+  /-- Sequence length for the certificate. -/
+  seqLen : Nat
+  /-- Target offset (e.g. `-1` for previous token). -/
+  targetOffset : Int
+  /-- Lower bound on the number of matching-token keys. -/
+  targetCountLowerBound : Nat
+  /-- Lower bound on total attention weight assigned to matching tokens. -/
+  targetWeightLowerBound : Rat
+  /-- Lower bound on logit margin between matching vs non-matching keys. -/
+  marginLowerBound : Rat
+  deriving Repr
+
 /-! ## Verification Theorems -/
 
 omit [DecidableEq n] [DecidableEq d] in
