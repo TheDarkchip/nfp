@@ -126,6 +126,40 @@ theorem check_iff (c : HeadPatternCert) : c.check = true ↔ c.Valid := by
 
 end HeadPatternCert
 
+/-! ## Local value-direction bounds -/
+
+/-- Local per-head output lower bound for a single coordinate. -/
+structure HeadValueLowerBoundCert where
+  layerIdx : Nat
+  headIdx : Nat
+  coord : Nat
+  matchWeightLowerBound : Rat
+  matchCoordLowerBound : Rat
+  nonmatchCoordLowerBound : Rat
+  outputCoordLowerBound : Rat
+  deriving Repr
+
+namespace HeadValueLowerBoundCert
+
+/-- Internal consistency checks for the coordinate lower bound. -/
+def Valid (c : HeadValueLowerBoundCert) : Prop :=
+  c.outputCoordLowerBound =
+    c.matchWeightLowerBound * c.matchCoordLowerBound +
+      (1 - c.matchWeightLowerBound) * c.nonmatchCoordLowerBound
+
+instance (c : HeadValueLowerBoundCert) : Decidable (Valid c) := by
+  unfold Valid
+  infer_instance
+
+/-- Boolean checker for `Valid`. -/
+def check (c : HeadValueLowerBoundCert) : Bool :=
+  decide (Valid c)
+
+theorem check_iff (c : HeadValueLowerBoundCert) : c.check = true ↔ c.Valid := by
+  simp [check, Valid]
+
+end HeadValueLowerBoundCert
+
 namespace HeadPatternCert
 
 /-- Convert a sound head pattern certificate into a token-match witness. -/
