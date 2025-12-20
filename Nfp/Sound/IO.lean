@@ -1819,6 +1819,111 @@ private def certifyModelFileLocalBinary
     throw "sound certificate failed internal consistency checks"
   action.run
 
+/-- Compute local per-head attention contribution bounds from a binary `.nfpt`. -/
+private def certifyHeadBoundsLocalBinary
+    (path : System.FilePath)
+    (eps : Rat)
+    (inputPath : System.FilePath)
+    (inputDelta : Rat)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String (Array HeadLocalContributionCert)) := do
+  let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
+  let slack : Int := fixedUlpSlack
+  let action : ExceptT String IO (Array HeadLocalContributionCert) := do
+    let (hdr, ln1Params, ln2Params) ←
+      ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
+    let residualUnion0 ←
+      ExceptT.mk (loadEmbeddingsUnionFixedBinary inputPath hdr.modelDim inputDelta scalePow10)
+    let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+    let _ ← ExceptT.mk (readBinaryHeader h)
+    let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
+    let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
+
+    let defP : LayerNormParamsFixed := {
+      gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+      beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+    }
+
+    let mut residualUnion := residualUnion0
+    let mut heads : Array HeadLocalContributionCert :=
+      Array.mkEmpty (hdr.numLayers * hdr.numHeads)
+
+    for l in [:hdr.numLayers] do
+      let p1 := ln1Params.getD l defP
+      let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps
+      let ln1MaxAbsGamma : Rat :=
+        Rat.normalize (maxAbsVecFixed p1.gamma) cfg.scaleNat (den_nz := by
+          have h10pos : (0 : Nat) < 10 := by decide
+          exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+      let ln1Bound :=
+        if ln1VarLB > 0 then
+          layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+        else
+          layerNormOpBoundConservative ln1MaxAbsGamma eps
+
+      let mut attnUnion : Array Fixed10Interval :=
+        Array.replicate hdr.modelDim { lo := 0, hi := 0 }
+
+      for hIdx in [:hdr.numHeads] do
+        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
+        let (vHidden0, nWv) ←
+          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+            hdr.modelDim hdr.headDim ln1Out scalePow10)
+        let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
+        let vHidden := addVecFixed vHidden0 bV
+        let (vOut, nWo) ←
+          ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+            hdr.headDim hdr.modelDim vHidden scalePow10)
+        attnUnion := addVecFixed attnUnion vOut
+
+        let attnW := ln1Bound * softmaxJacobianNormInfWorst * nWv * nWo
+        let cert : HeadLocalContributionCert := {
+          layerIdx := l
+          headIdx := hIdx
+          ln1MaxAbsGamma := ln1MaxAbsGamma
+          ln1VarianceLowerBound := ln1VarLB
+          ln1Bound := ln1Bound
+          wvOpBound := nWv
+          woOpBound := nWo
+          attnWeightContribution := attnW
+        }
+        if cert.check eps then
+          heads := heads.push cert
+        else
+          throw "local head contribution certificate failed internal checks"
+
+      let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+      attnUnion := addVecFixed attnUnion attnBias
+      residualUnion := addVecFixed residualUnion attnUnion
+
+      let p2 := ln2Params.getD l defP
+      let (ln2Out, _ln2VarLB) :=
+        fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps
+
+      let (hidden0, _nWin) ←
+        ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+          hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
+      let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
+      let hiddenB := addVecFixed hidden0 bIn
+      let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+      let (mlpOut0, _nWout) ←
+        ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
+          hdr.hiddenDim hdr.modelDim actHidden scalePow10)
+      let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
+      let mlpOut := addVecFixed mlpOut0 bOut
+      residualUnion := addVecFixed residualUnion mlpOut
+
+      let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+      let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+      let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+      let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
+
+    return heads
+  action.run
+
 /-- Soundly compute certification bounds from a `.nfpt` model file.
 
 If an input is provided via `inputPath?`, the certificate uses streaming rational IBP to obtain
@@ -1865,5 +1970,23 @@ def certifyHeadBounds
     certifyHeadBoundsBinary path scalePow10
   else
     return .error "head contribution bounds require NFP_BINARY_V1"
+
+/-- Compute local per-head attention contribution bounds for a `.nfpt` model file. -/
+def certifyHeadBoundsLocal
+    (path : System.FilePath)
+    (eps : Rat := defaultEps)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String (Array HeadLocalContributionCert)) := do
+  if inputDelta < 0 then
+    return .error "delta must be nonnegative"
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let firstLine := (← h.getLine).trim
+  if firstLine = "NFP_BINARY_V1" then
+    let inputPath := inputPath?.getD path
+    certifyHeadBoundsLocalBinary path eps inputPath inputDelta scalePow10
+  else
+    return .error "local head contribution bounds require NFP_BINARY_V1"
 
 end Nfp.Sound
