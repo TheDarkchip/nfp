@@ -8,3 +8,5 @@ sound_cache/
 lean-reference-manual/
 inductionhead_papers/
 nfp.zip
+reports/
+tests/fixtures/tiny_sound_binary.nfpt
