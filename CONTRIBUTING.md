@@ -4,7 +4,7 @@ Thank you for your interest in NFP. This project is a Lean 4 library for **mathe
 
 ## Contribution Policy
 
-To maintain strict scientific soundness and clear copyright for the underlying research grant, **I generally do not accept external Pull Requests for core logic.**
+To maintain strict scientific soundness and clear copyright for any future research grant, **I generally do not accept external Pull Requests for core logic.**
 
 Instead of submitting code, please **open an Issue** to report bugs or suggest features:
 * If you have found a bug, please describe how to reproduce it.
