@@ -111,6 +111,30 @@ structure TokenMatchPattern where
   marginLowerBound : Rat
   deriving Repr
 
+namespace TokenMatchPattern
+
+/-- Soundness invariant for token-match pattern witnesses. -/
+def Valid (p : TokenMatchPattern) : Prop :=
+  p.seqLen > 0 ∧
+    p.targetWeightLowerBound =
+      (if p.marginLowerBound > 0 then
+        (p.targetCountLowerBound : Rat) / (p.seqLen : Rat)
+      else
+        0)
+
+instance (p : TokenMatchPattern) : Decidable (Valid p) := by
+  unfold Valid
+  infer_instance
+
+/-- Boolean checker for `Valid`. -/
+def check (p : TokenMatchPattern) : Bool :=
+  decide (Valid p)
+
+theorem check_iff (p : TokenMatchPattern) : p.check = true ↔ p.Valid := by
+  simp [check, Valid]
+
+end TokenMatchPattern
+
 /-! ## Verification Theorems -/
 
 omit [DecidableEq n] [DecidableEq d] in

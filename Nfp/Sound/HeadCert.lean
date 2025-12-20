@@ -137,6 +137,11 @@ def toTokenMatchPattern (c : HeadPatternCert) : Nfp.TokenMatchPattern := {
   marginLowerBound := c.marginLowerBound
 }
 
+theorem toTokenMatchPattern_valid (c : HeadPatternCert) (h : c.Valid) :
+    (toTokenMatchPattern c).Valid := by
+  rcases h with ⟨hseq, _hmargin, hweight⟩
+  exact ⟨hseq, by simpa [toTokenMatchPattern] using hweight⟩
+
 end HeadPatternCert
 
 end Nfp.Sound
