@@ -336,15 +336,6 @@ lake exe nfp induction models/gpt2_rigorous.nfpt -v -d | sed -n '1,220p'
 - `scripts/` — Python helpers to export models and generate induction datasets.
 - `models/` — local model files (not versioned here if large; author’s setup may have used local symlinks).
 
-## Contributing
-
-- Keep the **bound-producing** code path free of heuristic numeric methods.
-- Prefer changes that either:
-  - tighten a bound via a proven inequality, or
-  - add a *checked* certificate that justifies a tighter constant.
-
-If you add a heuristic for exploration, keep it clearly labelled and gated behind diagnostics/debug flags.
-
 ## License
 
 This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See the LICENSE file.
