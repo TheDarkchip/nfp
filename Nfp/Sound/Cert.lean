@@ -21,7 +21,8 @@ We use `2` as a simple, obviously-safe constant to avoid importing heavy analysi
 -/
 def defaultActDerivBound : Rat := 2
 
-/-- Per-layer conservative amplification constant `Cᵢ` and its components. -/
+/-- Per-layer conservative residual amplification constant `Cᵢ`
+(bounds ‖layerJacobian - I‖) and its components. -/
 structure LayerAmplificationCert where
   layerIdx : Nat
   ln1MaxAbsGamma : Rat

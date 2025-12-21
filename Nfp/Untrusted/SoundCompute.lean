@@ -20,7 +20,8 @@ open Nfp.Untrusted.SoundBinary
 This is a minimal, *sound* loader intended for certification on the legacy text format.
 
 It does **not** construct the full `ConcreteModel` (Float-based). Instead it parses only the
-weights needed for conservative amplification constants `Cᵢ`, using exact `Rat` arithmetic.
+weights needed for conservative residual amplification constants `Cᵢ` (bounds ‖layerJacobian - I‖),
+using exact `Rat` arithmetic.
 
 It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
 LayerNorm certification on a bounded region around that input.
@@ -596,7 +597,7 @@ private def consumeMatrixMulAndNormInf
     maxRowAbs := max maxRowAbs curRowAbs
     return .ok (out, maxRowAbs, iLine)
 
-/-- Soundly compute conservative per-layer amplification constants from a `.nfpt` file. -/
+/-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
     (path : System.FilePath)
     (eps : Rat)

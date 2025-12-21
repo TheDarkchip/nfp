@@ -3607,7 +3607,7 @@ structure DeepCircuitCandidate where
   headIndices : Array Nat
   /-- Per-layer pattern term bounds (εᵢ) -/
   patternBounds : Array Float
-  /-- Per-layer operator norm upper bounds (Cᵢ) -/
+  /-- Per-layer residual operator norm upper bounds (Cᵢ) -/
   operatorNormUbs : Array Float
   /-- Simple error sum: Σᵢ εᵢ (no amplification) -/
   simpleErrorSum : Float
@@ -6094,7 +6094,8 @@ For a 2-layer induction head with layers l1 < l2:
 - Layer l1 contributes: ε₁ · (1 + C_l2) · (1 + C_{l2+1}) · ...
 - Layer l2 contributes: ε₂ · (1 + C_{l2+1}) · ...
 
-The amplification factors Cⱼ are estimated from the layer Jacobian norms.
+The amplification factors Cⱼ are estimated from residual Jacobian norms
+(`layerJacobian - I`).
 -/
 def findDeepCircuitCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
@@ -8354,7 +8355,7 @@ def estimateLayerAblationError (model : ConcreteModel) (fwdResult : ForwardPassR
 This is the main function that bridges theoretical bounds to practical verification.
 It computes:
 1. Per-layer pattern term bounds (εᵢ)
-2. Per-layer operator norm bounds (Cᵢ)
+2. Per-layer residual operator norm bounds (Cᵢ)
 3. Suffix amplification factors
 4. Total amplified error using the N-layer composition formula
 
@@ -8369,7 +8370,7 @@ def verifyDeepCircuit (model : ConcreteModel)
   -- Run forward pass to get layer-wise inputs
   let fwdResult := model.runForward
 
-  -- Step 1: Compute per-layer operator norm bounds
+  -- Step 1: Compute per-layer residual operator norm bounds
   let mut normBounds : Array Float := #[]
   for l in [:model.numLayers] do
     let norm := estimateAttentionLayerNorm model fwdResult l true
