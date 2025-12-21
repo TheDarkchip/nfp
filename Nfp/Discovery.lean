@@ -4784,7 +4784,7 @@ This precomputes all attention patterns, projections, and norms once.
 
     let norm : Float :=
       if computeLayerNormBounds then
-        -- OPTIMIZATION: compute per-layer Jacobian upper bounds from cached head data,
+        -- OPTIMIZATION: compute per-layer residual Jacobian upper bounds from cached head data,
         -- avoiding recomputation of attention weights / projections.
         Id.run do
           let y := fwdResult.getPostAttnResidual l

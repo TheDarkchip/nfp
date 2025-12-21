@@ -1344,7 +1344,7 @@ def isLayerFaithful (L : AttentionLinearization n d) (ε : ℝ) : Prop :=
 def isDeepFaithful (D : DeepLinearization (n := n) (d := d)) (ε : ℝ) : Prop :=
   frobeniusNorm (DeepPatternTerm D) ≤ ε
 
-/-- The key bound constant: amplification from Jacobian norms. -/
+/-- The key bound constant: amplification from residual Jacobian norms. -/
 noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) : ℝ :=
   -- Product of (1 + ‖layerJacobian - I‖) for all layers
   (List.range D.numLayers).foldl
@@ -1356,8 +1356,8 @@ noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) 
 
 /-- **Two-layer composition theorem**: Explicit bound for 2-layer case.
 
-If Layer 1 is ε₁-faithful and Layer 2 is ε₂-faithful, and both layers have
-Jacobian operator norms bounded by C, then the composition is approximately
+If Layer 1 is ε₁-faithful and Layer 2 is ε₂-faithful, and both residual layer
+maps `(I + fullJacobian)` have operator norm bounded by C, then the composition is approximately
 (ε₁ · C + ε₂ · C + ε₁ · ε₂)-faithful.
 
 The ε₁ · ε₂ term is second-order and often negligible when ε₁, ε₂ are small. -/
