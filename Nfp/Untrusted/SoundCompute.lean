@@ -89,7 +89,8 @@ def consumeVector
   let step := fun (acc : Array Rat) (x : Rat) => acc.push x
   foldRatTokens lines start n (Array.mkEmpty n) step
 
-/-- Consume a matrix in row-major order and return its exact `‖·‖∞` row-sum norm.
+/-- Consume a matrix in row-major order and return its exact row-sum norm
+(`‖·‖∞` in column-vector convention, `‖·‖₁` in row-vector convention).
 
 Returns `(normInf, nextLineIndex)`.
 -/
