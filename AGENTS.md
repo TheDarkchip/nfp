@@ -7,6 +7,8 @@ with an executable `nfp` CLI for analysis and verification.
 
 You are an automated agent extending a *library* (with a small CLI shell), not an app.
 
+**Lean version note:** The Lean version is pinned by `lean-toolchain`.
+
 The design may evolve. If an abstraction is genuinely painful, you may refactor it—
 but keep the core invariants and the “no fake proofs” ethos.
 
@@ -48,6 +50,10 @@ Before you finish any change:
   - or refactor the structure so the proof becomes natural.
   - Do **not** “paper over” gaps.
 
+> Lean 4.26+ exploration tools (`finish?`, `try?`, `grind => finish?`, etc.) may *suggest* scripts that
+> contain `sorry` (useful for debugging). Treat those suggestions as **scratch** only.
+> **No `sorry` may reach the branch.**
+
 ### 1.2 Linting stays on
 - **Never** disable linters globally or locally.
 - **Forbidden:** any `set_option linter.* false` (including e.g. `linter.unnecessarySimpa`).
@@ -67,7 +73,8 @@ The library’s claims rest on these being preserved (preferably with explicit l
 
 ### 1.5 Trusted Code Verification (Total Soundness)
 **All code** in trusted namespaces (e.g., `Nfp.Sound.*`) must be **verified**.
-- **Requirement:** Every pure definition in the trusted scope must be characterized by a theorem or return a proof-carrying structure.
+- **Requirement:** Every pure definition in the trusted scope must be characterized by a theorem
+  or return a proof-carrying structure.
     - *Example (Bad):* `def addOne (x : Nat) := x + 1` (Unverified logic)
     - *Example (Good):* `def addOne (x : Nat) : { y // y > x } := ⟨x + 1, Nat.lt_succ_self _⟩`
     - *Example (Good):* `def addOne ...` followed immediately by `theorem addOne_gt_input ...`
@@ -88,6 +95,10 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - Prefer: `simp`, `rw`, `linarith`/`nlinarith` when appropriate, small `calc` blocks,
   and restrained `aesop` usage backed by named helper lemmas.
 - Avoid huge opaque “mega proofs”. If a proof is long, factor it.
+
+> Lean 4.26+ note for agents:
+> - Use stronger automation (`simp?`, `finish?`, `grind`, `try?`) primarily as **proof discovery** tools.
+> - The final committed proof should be **explicit, minimal, and stable** (often: a small lemma + `simp [..]` / `rw [..]`).
 
 ### 2.3 Don’t duplicate mathlib
 - Search for existing lemmas before inventing new ones.
@@ -113,6 +124,8 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - If you add a new definition/theorem:
   - add a short docstring (what it is + why it exists),
   - and (when relevant) state the invariant it preserves/uses.
+- Prefer *local* changes that keep compilation and elaboration fast:
+  - small lemmas, smaller proof terms, fewer global simp rules.
 
 ### 3.3 After coding
 - Ensure `lake build -q --wfail` passes.
@@ -136,6 +149,7 @@ The library’s claims rest on these being preserved (preferably with explicit l
   - non-explosive,
   - and broadly safe.
 - Prefer `simp [foo]` over global simp-set growth.
+- Prefer `simp?` **only to discover** what `simp [..]` should be.
 
 ### 4.3 Tactic usage
 - `aesop` is allowed, but:
@@ -148,6 +162,39 @@ The library’s claims rest on these being preserved (preferably with explicit l
   - update all call sites,
   - leave a brief comment (or commit message rationale),
   - keep the module map (§5) accurate.
+
+### 4.5 Lean 4.26+ proof exploration toolkit (for LLM agents)
+These tools can dramatically reduce “stuck time” for lemma discovery. Use them like a **search assistant**.
+They are *not* a substitute for readable proofs.
+
+**Allowed for exploration (scratch / development):**
+- `simp?` (optionally with suggestions, if available)
+- `finish?`
+- `grind` / `grind?`, and `grind => finish?`
+- `try?` (as a hint generator)
+
+**Rules for using exploration tools:**
+1. **Never commit generated `sorry`.** If an exploration tactic suggests a script with `sorry`, treat it as debugging output and delete it.
+2. **Never commit giant opaque scripts.** If a generated script is long:
+   - identify the key lemmas it used,
+   - create named helper lemmas,
+   - replace the script with a small proof built from those lemmas.
+3. **Minimize lemma sets.**
+   - If `simp?` / `finish?` / `grind` suggests many lemmas, shrink to the smallest stable subset.
+4. **Prefer stable shapes:**
+   - a short `calc` block,
+   - or a couple of `simp [..]` / `rw [..]` steps,
+   - plus one helper lemma if necessary.
+5. **Keep it local.** Prefer adding lemmas to the local simp set (`simp [foo, bar]`) over tagging globally `[simp]`.
+
+**Agent “proof playbook” (recommended loop):**
+- Step A: Try the obvious: `simp`, `simp [defs]`, `rw [defs]`, `linarith`, `nlinarith`, `ring`, `field_simp` (as appropriate).
+- Step B: If stuck, run `simp?` to discover missing rewrite/simp lemmas.
+- Step C: If still stuck, use `finish?` or `grind => finish?` to learn the *shape* of the proof and which lemmas matter.
+- Step D: Replace the discovered script with:
+  - a helper lemma (named + documented) capturing the crucial step,
+  - and a short final proof using `simp`/`rw`/`calc`.
+- Step E: Re-run `lake build -q --wfail`.
 
 ---
 
@@ -295,6 +342,7 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are preserved and, where possible, explicitly proved.
 - [ ] §5 Module Map is accurate (updated in the same commit if needed).
 - [ ] If CLI behavior changed: `lake build nfp -q --wfail` succeeds and basic `nfp ... --help` works.
+- [ ] If you used Lean 4.26+ exploration tools, the final committed proof is short, explicit, and stable (no giant generated scripts).
 
 When forced to choose between:
 - “slightly breaking but conceptually clean redesign”
