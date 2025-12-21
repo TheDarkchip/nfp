@@ -169,20 +169,20 @@ This represents the "attention rollout" approximation as a causal DAG. -/
 noncomputable def DeepLinearization.toLocalSystem
     (D : DeepLinearization (n := n) (d := d))
     {k : ℕ} (e : n ≃ Fin k)
-    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e j < e i) :
+    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e i < e j) :
     LocalSystem k := by
   classical
   let posOf : Fin k → n := e.symm
   exact {
     Pa := fun idx =>
       Finset.univ.filter fun u : Fin k =>
-        (positionMixer (DeepValueTerm D)).w (posOf idx) (posOf u) ≠ 0
+        (positionMixer (DeepValueTerm D)).w (posOf u) (posOf idx) ≠ 0
     c := fun idx u =>
-      positionFlowMagnitude (DeepValueTerm D) (posOf idx) (posOf u)
+      positionFlowMagnitude (DeepValueTerm D) (posOf u) (posOf idx)
     topo := by
       intro idx u hu
       have hmem := Finset.mem_filter.mp hu
-      have hweight : (positionMixer (DeepValueTerm D)).w (posOf idx) (posOf u) ≠ 0 := hmem.2
+      have hweight : (positionMixer (DeepValueTerm D)).w (posOf u) (posOf idx) ≠ 0 := hmem.2
       have htopo : e (posOf u) < e (posOf idx) := acyclic _ _ hweight
       simpa [posOf] using htopo
   }
@@ -191,20 +191,20 @@ noncomputable def DeepLinearization.toLocalSystem
 theorem DeepLinearization.toLocalSystem_Pa
     (D : DeepLinearization (n := n) (d := d))
     {k : ℕ} (e : n ≃ Fin k)
-    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e j < e i)
+    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e i < e j)
     (idx : Fin k) :
     (D.toLocalSystem e acyclic).Pa idx =
       Finset.univ.filter fun u : Fin k =>
-        (positionMixer (DeepValueTerm D)).w (e.symm idx) (e.symm u) ≠ 0 := rfl
+        (positionMixer (DeepValueTerm D)).w (e.symm u) (e.symm idx) ≠ 0 := rfl
 
 /-- The coefficient for parent `u` of position `idx` in the extracted LocalSystem. -/
 theorem DeepLinearization.toLocalSystem_c
     (D : DeepLinearization (n := n) (d := d))
     {k : ℕ} (e : n ≃ Fin k)
-    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e j < e i)
+    (acyclic : ∀ i j : n, (positionMixer (DeepValueTerm D)).w i j ≠ 0 → e i < e j)
     (idx u : Fin k) :
     (D.toLocalSystem e acyclic).c idx u =
-      positionFlowMagnitude (DeepValueTerm D) (e.symm idx) (e.symm u) := rfl
+      positionFlowMagnitude (DeepValueTerm D) (e.symm u) (e.symm idx) := rfl
 
 end Projection
 
@@ -234,7 +234,7 @@ theorem causal_consistency_bound
     (blocked : Set (n × d)) [DecidablePred blocked]
     (v : (n × d) → ℝ) (j : n × d) :
     ablationDiscrepancy D blocked v j ≤
-      ∑ i : n × d, |v i| * |(DeepPatternTerm D).w i j| := by
+      ∑ i : n × d, if blocked i then 0 else |v i| * |(DeepPatternTerm D).w i j| := by
   simp only [ablationDiscrepancy]
   -- The key insight: ablation error = ablated pattern term
   have h := D.ablationError_eq_ablatedPatternTerm blocked
@@ -253,14 +253,12 @@ theorem causal_consistency_bound
         simp only [SignedMixer.apply_ablate]
     _ ≤ ∑ i : n × d, |if blocked i then 0 else v i * (DeepPatternTerm D).w i j| :=
         abs_sum_le_sum_abs _ _
-    _ ≤ ∑ i : n × d, |v i| * |(DeepPatternTerm D).w i j| := by
-        apply Finset.sum_le_sum
+    _ = ∑ i : n × d, if blocked i then 0 else |v i| * |(DeepPatternTerm D).w i j| := by
+        apply Finset.sum_congr rfl
         intro i _
-        split_ifs with hb
-        · simp only [abs_zero]
-          exact mul_nonneg (abs_nonneg _) (abs_nonneg _)
-        · simp only [abs_mul]
-          exact le_refl _
+        by_cases hb : blocked i
+        · simp [hb]
+        · simp [hb, abs_mul]
 
 /-- **Simplified Frobenius-style bound**:
 
@@ -286,7 +284,16 @@ theorem causal_consistency_frobenius_simple
           calc -(∑ i : n × d, |v i| * |(DeepPatternTerm D).w i j|)
               ≤ 0 := neg_nonpos.mpr hnn
             _ ≤ ablationDiscrepancy D blocked v j := abs_nonneg _
-        · exact causal_consistency_bound D blocked v j
+        · have hbound := causal_consistency_bound D blocked v j
+          refine le_trans hbound ?_
+          apply Finset.sum_le_sum
+          intro i _
+          by_cases hb : blocked i
+          · have hnonneg :
+                0 ≤ |v i| * |(DeepPatternTerm D).w i j| :=
+              mul_nonneg (abs_nonneg _) (abs_nonneg _)
+            simpa [hb] using hnonneg
+          · simp [hb]
     _ ≤ ∑ j : n × d, (∑ i : n × d, (v i) ^ 2) * (∑ i : n × d, ((DeepPatternTerm D).w i j) ^ 2) := by
         apply Finset.sum_le_sum
         intro j _
