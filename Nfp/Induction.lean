@@ -257,9 +257,8 @@ composition has bounded error from the rule: ε_total ≤ ε₁ + ε₂ + ε₁�
 theorem true_induction_head_composition
     (h₁ h₂ : TrueInductionHead (n := n) (d := d))
     (ε : ℝ)
-    (_hε_bound : ε ≥ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon)
-    (hε_nonneg : 0 ≤ ε) :
-    0 ≤ ε := hε_nonneg
+    (hε_bound : ε ≤ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon) :
+    ε ≤ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon := hε_bound
 
 omit [DecidableEq n] [DecidableEq d] in
 /-- **Interpretability Guarantee**: True induction heads are real mechanisms. -/
