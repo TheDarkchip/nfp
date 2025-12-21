@@ -13,7 +13,8 @@ import Nfp.SignedMixer
 
 A **True Induction Head** is a rigorously certified mechanism that combines three components:
 
-1. **Structure**: The attention patterns match an induction head (previous-token + induction)
+1. **Structure**: The attention patterns match an induction head (previous-token + induction),
+   with the previous-token leg modeled by a self-attention placeholder due to abstract indexing.
 2. **Faithfulness**: The virtual head approximation (attention rollout) is ε-certified
 3. **Function**: The mechanism effectively increases logit scores for the correct token by ≥ δ
 
@@ -52,7 +53,8 @@ noncomputable def inner_product (u v : (n × d) → ℝ) : ℝ :=
 An induction head is "true" if it simultaneously satisfies three conditions:
 
 1. **Structural Pattern**: The attention weights exhibit the induction head
-   structure (Layer 1 attends to previous tokens, Layer 2 attends to matching tokens).
+   structure (Layer 1 uses a previous-token pattern, modeled as self-attention; Layer 2
+   uses a nonnegativity placeholder for token-matching).
    This is captured by an `InductionHeadPattern`.
 
 2. **Faithful Approximation**: The virtual head (composition of value terms,

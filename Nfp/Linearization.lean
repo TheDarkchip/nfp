@@ -1664,9 +1664,10 @@ def isCertifiedVirtualHead
   frobeniusNorm (composedJacobian - VirtualHead L₂ L₁) ≤ ε
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- **Virtual head certification from layer faithfulness**.
+/-- **Virtual head error budget from layer faithfulness**.
 
-If both layers are faithful, their virtual head is certified. -/
+This packages a combined ε bound (ε ≤ ε₁ + ε₂ + ε₁·ε₂); it does not
+assert `isCertifiedVirtualHead` for a specific composed Jacobian. -/
 theorem virtual_head_certification
     (L₂ L₁ : AttentionLinearization n d)
     (ε₁ ε₂ : ℝ)
@@ -1678,11 +1679,12 @@ theorem virtual_head_certification
 
 /-! ### Induction Head Formalization -/
 
-/-- **Induction Head Pattern**: Layer 2 attends to tokens that Layer 1 attended to.
+/-- **Induction Head Pattern**: Layer 2 follows the attention structure created by Layer 1.
 
 An induction head occurs when:
-- Layer 1 (previous-token head): A₁[i, i-1] is high (attends to previous token)
-- Layer 2 (induction head): A₂[q, k] is high when token[k+1] = token[q]
+- Layer 1 (previous-token head, simplified): A₁[i, i] is high (self-attention stand-in for i-1)
+- Layer 2 (induction head, simplified): attention weights are nonnegative (softmax),
+  with token-matching handled by external witnesses.
 
 The composed pattern A₂ · A₁ creates "in-context learning" behavior. -/
 structure InductionHeadPattern where
@@ -1693,7 +1695,7 @@ structure InductionHeadPattern where
   /-- Layer 1 strongly attends to previous position -/
   prevTokenStrong : ∀ i : n, 0.5 ≤ layer1.state.attentionWeights i i
     -- In practice, this would be i attending to i-1, but we simplify
-  /-- Layer 2 pattern matches tokens -/
+  /-- Layer 2 has nonnegative attention weights (softmax); token matching is handled elsewhere. -/
   inductionStrong : ∀ q k : n, layer2.state.attentionWeights q k ≥ 0
 
 /-- The effective "induction pattern" created by composing the heads. -/
@@ -1702,11 +1704,10 @@ noncomputable def inductionPattern (H : InductionHeadPattern (n := n) (d := d)) 
   PositionVirtualHead H.layer2 H.layer1
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- **Induction head certification**: The discovered induction pattern is valid
-within error bounds determined by the pattern terms.
+/-- **Induction head error budget**: combine per-layer bounds into ε.
 
-This turns the intuition "this looks like an induction head" into a
-certifiable statement: "this IS an induction head, up to error ε." -/
+This provides a concrete ε bound (ε ≤ ε₁ + ε₂ + ε₁·ε₂); it does not, by itself,
+certify a specific composed Jacobian. -/
 theorem induction_head_certified (H : InductionHeadPattern (n := n) (d := d))
     (ε₁ ε₂ : ℝ)
     (_hε₁ : isLayerFaithful H.layer1 ε₁)
