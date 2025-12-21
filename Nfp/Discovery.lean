@@ -406,7 +406,8 @@ def psdLambdaMaxUpperMoment (n : Nat) (tr f2 : Float) : Float :=
     max 0.0 ((tr + root) / nF)
 
 
-/-- Estimate maximum absolute row sum (L∞ induced norm).
+/-- Estimate maximum absolute row sum (induced ℓ1 for row-vector convention,
+induced ℓ∞ for column-vector convention).
 
 Mathematically, the real-valued quantity `maxᵢ Σⱼ |M[i,j]|` is an induced matrix norm.
 This function computes a `Float` approximation and is therefore a heuristic estimate.
@@ -421,7 +422,8 @@ def maxAbsRowSumEst (M : ConcreteMatrix) : Float := Id.run do
   maxSum
 
 
-/-- Estimate maximum absolute column sum (L1 induced norm).
+/-- Estimate maximum absolute column sum (induced ℓ∞ for row-vector convention,
+induced ℓ1 for column-vector convention).
 
 Mathematically, the real-valued quantity `maxⱼ Σᵢ |M[i,j]|` is an induced matrix norm.
 This function computes a `Float` approximation and is therefore a heuristic estimate.
@@ -441,7 +443,8 @@ def maxAbsColSumEst (M : ConcreteMatrix) : Float := Id.run do
 In exact real arithmetic:
 `‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)`.
 
-We compute the induced 1/∞ norms from the stored Float entries.
+We compute max row/column sums from the stored Float entries; `‖·‖₁`/`‖·‖∞`
+swap under transpose, so the bound is convention-agnostic.
 -/
 def opNormUpperBoundOneInf (M : ConcreteMatrix) : Float :=
   Float.sqrt (M.maxAbsRowSumEst * M.maxAbsColSumEst)
