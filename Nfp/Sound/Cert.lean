@@ -26,6 +26,10 @@ structure LayerAmplificationCert where
   ln2VarianceLowerBound? : Option Rat
   ln1Bound : Rat
   ln2Bound : Rat
+  /-- Lower bound on the softmax probability interval used for Jacobian bounds. -/
+  softmaxProbLo : Rat
+  /-- Upper bound on the softmax probability interval used for Jacobian bounds. -/
+  softmaxProbHi : Rat
   attnCoeff : Rat
   mlpCoeff : Rat
   /-- Upper bound on the max GeLU derivative over this layer's preactivations. -/
@@ -46,6 +50,8 @@ instance : Inhabited LayerAmplificationCert :=
     ln2VarianceLowerBound? := none
     ln1Bound := 0
     ln2Bound := 0
+    softmaxProbLo := 0
+    softmaxProbHi := 1
     attnCoeff := 0
     mlpCoeff := 0
     mlpActDerivBound := 0
@@ -65,7 +71,9 @@ def Valid (eps : Rat) (sqrtPrecBits : Nat) (l : LayerAmplificationCert) : Prop :
        | some v => layerNormOpBoundLocal l.ln2MaxAbsGamma v eps sqrtPrecBits
        | none => layerNormOpBoundConservative l.ln2MaxAbsGamma eps sqrtPrecBits) ∧
     l.attnWeightContribution =
-      l.ln1Bound * softmaxJacobianNormInfWorst * l.attnCoeff ∧
+      l.ln1Bound *
+        softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi *
+        l.attnCoeff ∧
     l.mlpWeightContribution =
       l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) ∧
     l.C = l.attnWeightContribution + l.mlpWeightContribution

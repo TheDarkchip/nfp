@@ -335,6 +335,8 @@ private def certifyModelFileGlobalBinary
           ln2VarianceLowerBound? := none
           ln1Bound := ln1Bound
           ln2Bound := ln2Bound
+          softmaxProbLo := 0
+          softmaxProbHi := 1
           attnCoeff := attnCoeff
           mlpCoeff := mlpCoeff
           mlpActDerivBound := mlpActDerivBound
@@ -738,6 +740,8 @@ def certifyModelFileGlobal
       ln2VarianceLowerBound? := ln2Var?
       ln1Bound := ln1Bound
       ln2Bound := ln2Bound
+      softmaxProbLo := 0
+      softmaxProbHi := 1
       attnCoeff := attnCoeff
       mlpCoeff := mlpCoeff
       mlpActDerivBound := mlpActDerivBound
@@ -2126,6 +2130,8 @@ private def certifyModelFileLocalText
                           ln2VarianceLowerBound? := some ln2VarLB
                           ln1Bound := ln1Bound
                           ln2Bound := ln2Bound
+                          softmaxProbLo := 0
+                          softmaxProbHi := 1
                           attnCoeff := attnCoeff
                           mlpCoeff := mlpCoeff
                           mlpActDerivBound := mlpActDerivBound
@@ -2263,6 +2269,8 @@ private def certifyModelFileLocal
               ln2VarianceLowerBound? := some ln2VarLB
               ln1Bound := ln1Bound
               ln2Bound := ln2Bound
+              softmaxProbLo := 0
+              softmaxProbHi := 1
               attnCoeff := attnCoeff
               mlpCoeff := mlpCoeff
               mlpActDerivBound := mlpActDerivBound
@@ -2386,6 +2394,8 @@ private def certifyModelFileLocalBinary
         ln2VarianceLowerBound? := some ln2VarLB
         ln1Bound := ln1Bound
         ln2Bound := ln2Bound
+        softmaxProbLo := 0
+        softmaxProbHi := 1
         attnCoeff := attnCoeff
         mlpCoeff := mlpCoeff
         mlpActDerivBound := mlpActDerivBound
