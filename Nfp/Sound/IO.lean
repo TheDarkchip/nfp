@@ -67,13 +67,14 @@ def certifyModelFileGlobal
     (path : System.FilePath)
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
-    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+    (inputDelta : Rat := 0)
+    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
   match ← readModelHeader path with
   | .error e => return .error e
   | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFileGlobal
-            path eps geluTarget soundnessBits inputPath? inputDelta with
+            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then
@@ -91,13 +92,14 @@ def certifyModelFile
     (path : System.FilePath)
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
-    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+    (inputDelta : Rat := 0)
+    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
   match ← readModelHeader path with
   | .error e => return .error e
   | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFile
-            path eps geluTarget soundnessBits inputPath? inputDelta with
+            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then

@@ -812,6 +812,7 @@ private structure CertifyArgs where
   modelPathStr : String
   inputPath? : Option System.FilePath
   soundnessBits : Nat
+  partitionDepth : Nat
   deltaFlag? : Option String
   deltaStr : String
   outputPath? : Option System.FilePath
@@ -820,6 +821,7 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
   let modelPathStr := p.positionalArg! "model" |>.as! String
   let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
+  let partitionDepth := p.flag? "partitionDepth" |>.map (·.as! Nat) |>.getD 0
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
@@ -827,6 +829,7 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
     modelPathStr := modelPathStr
     inputPath? := inputPath?
     soundnessBits := soundnessBits
+    partitionDepth := partitionDepth
     deltaFlag? := deltaFlag?
     deltaStr := deltaStr
     outputPath? := outputPath? }
@@ -857,7 +860,7 @@ EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <in
 containing EMBEDDINGS or omit --delta for global certification."
   let cert ← ExceptT.mk <|
     Nfp.Sound.certifyModelFile args.modelPath args.soundnessBits
-      (inputPath? := inputPath?) (inputDelta := delta)
+      (inputPath? := inputPath?) (inputDelta := delta) (partitionDepth := args.partitionDepth)
   return cert
 
 private structure HeadBoundsArgs where
@@ -1515,6 +1518,7 @@ for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local certification (default: 0; \
 if --input is omitted, uses EMBEDDINGS in the model file when present)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
+    partitionDepth : Nat; "Partition depth for input splitting (default: 0; >0 scaffold only)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"

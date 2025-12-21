@@ -226,6 +226,7 @@ If you want to override the embedded input, pass a separate input `.nfpt`:
 - LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `gelu_kind` in the model header selects the GeLU derivative target (`tanh` or `exact`).
 - `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
+- `--partitionDepth` requests input partitioning depth (default: `0`; scaffold only, must remain `0` for now).
 - `--input` optionally provides an input `.nfpt` file used for local certification.
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 

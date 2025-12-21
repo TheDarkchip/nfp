@@ -232,7 +232,10 @@ private def certifyModelFileGlobalBinary
     (path : System.FilePath)
     (eps : Rat)
     (geluDerivTarget : GeluDerivTarget)
-    (soundnessBits : Nat) : IO (Except String ModelCert) := do
+    (soundnessBits : Nat)
+    (partitionDepth : Nat) : IO (Except String ModelCert) := do
+  if partitionDepth ≠ 0 then
+    return .error "partitionDepth > 0 not yet implemented"
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   match ← readBinaryHeader h with
   | .error e => return .error e
@@ -601,7 +604,10 @@ def certifyModelFileGlobal
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
-    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+    (inputDelta : Rat := 0)
+    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
+  if partitionDepth ≠ 0 then
+    return .error "partitionDepth > 0 not yet implemented"
   let actDerivBound := geluDerivBoundGlobal geluDerivTarget
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
@@ -1918,8 +1924,11 @@ private def certifyModelFileLocalText
     (eps : Rat)
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
+    (partitionDepth : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
+  if partitionDepth ≠ 0 then
+    return .error "partitionDepth > 0 not yet implemented"
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
   -- Header
@@ -2163,12 +2172,16 @@ private def certifyModelFileLocal
     (eps : Rat)
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
+    (partitionDepth : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
+  if partitionDepth ≠ 0 then
+    return .error "partitionDepth > 0 not yet implemented"
   -- Prefer cached fixed-point path; fall back to the (slow) Rat-based path on any cache error.
   match (← ensureSoundCache path) with
   | .error _ =>
-      certifyModelFileLocalText path eps geluDerivTarget soundnessBits inputPath inputDelta
+      certifyModelFileLocalText path eps geluDerivTarget soundnessBits partitionDepth
+        inputPath inputDelta
   | .ok (cpath, hdr) =>
       let cfg : Fixed10Cfg := scaleCfgOfPow10 hdr.scalePow10.toNat
       let slack : Int := fixedUlpSlack
@@ -2301,8 +2314,11 @@ private def certifyModelFileLocalBinary
     (eps : Rat)
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
+    (partitionDepth : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
+  if partitionDepth ≠ 0 then
+    return .error "partitionDepth > 0 not yet implemented"
   let scalePow10 := defaultBinaryScalePow10
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
@@ -3741,7 +3757,8 @@ def certifyModelFile
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
-    (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+    (inputDelta : Rat := 0)
+    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
@@ -3750,20 +3767,22 @@ def certifyModelFile
     match inputPath? with
     | none =>
         if inputDelta = 0 then
-          certifyModelFileGlobalBinary path eps geluDerivTarget soundnessBits
+          certifyModelFileGlobalBinary path eps geluDerivTarget soundnessBits partitionDepth
         else
-          certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits path inputDelta
+          certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits partitionDepth
+            path inputDelta
     | some ip =>
-        certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits ip inputDelta
+        certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits partitionDepth
+          ip inputDelta
   else
     match inputPath? with
     | none =>
         certifyModelFileGlobal path eps geluDerivTarget soundnessBits
-          (inputPath? := none) (inputDelta := inputDelta)
+          (inputPath? := none) (inputDelta := inputDelta) (partitionDepth := partitionDepth)
     | some ip =>
         if inputDelta < 0 then
           return .error "delta must be nonnegative"
-        certifyModelFileLocal path eps geluDerivTarget soundnessBits ip inputDelta
+        certifyModelFileLocal path eps geluDerivTarget soundnessBits partitionDepth ip inputDelta
 
 /-- Compute weight-only per-head contribution bounds for a `.nfpt` model file. -/
 def certifyHeadBounds

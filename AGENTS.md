@@ -292,6 +292,8 @@ but you **must** update this list in the same commit.
   - IO wrappers for the SOUND fixed-point cache (untrusted).
 - `Sound/Bounds.lean`
   - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
+- `Sound/Affine.lean`
+  - Affine-form scaffolding for future local soundness improvements.
 - `Sound/HeadCert.lean`
   - Sound per-head contribution certificate structures.
 - `Sound/Bridge.lean`
