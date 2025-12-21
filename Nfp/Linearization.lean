@@ -1040,17 +1040,12 @@ theorem integratedGradients_linear_complete
   ext i
   ring
 
-/-- **Key theorem**: For piecewise-linear networks (like ReLU networks),
-Integrated Gradients is a weighted sum of linearizations at each piece.
-
-If the path from x₀ to x crosses k linear regions with fractions t₁,...,tₖ,
-then IG = Σⱼ tⱼ · (linearization at region j). -/
-theorem integratedGradients_piecewise_linear
+/-- Placeholder: the full piecewise-linear IG statement is not yet formalized. -/
+theorem integratedGradients_piecewise_linear_placeholder
     (_regions : List (Linearization n n))
     (_weights : List ℝ)
     (_hWeightSum : _weights.sum = 1) :
-    -- IG is a convex combination of per-region linearizations
-    True := trivial  -- This would require formalizing path integration
+    True := trivial
 
 end IntegratedGradients
 
