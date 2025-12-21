@@ -3025,7 +3025,7 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
   let winScaledFrob : Float := winScaledFrobTokMax
   let woutScaledFrob : Float := woutScaledFrobTokMax
 
-  -- ‖J‖∞ upper bound via row sums.
+  -- Max row-sum bound (‖J‖₁ in row-vector convention).
   let (boundInf, maxWinRowScaled) : (Float × Float) := Id.run do
     let mut maxRow : Float := 0.0
     let mut maxScaled : Float := 0.0
@@ -3044,7 +3044,7 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
         maxScaled := sScaled
     (maxRow, maxScaled)
 
-  -- ‖J‖₁ upper bound via column sums.
+  -- Max column-sum bound (‖J‖∞ in row-vector convention).
   let (boundOne, maxWoutColScaled) : (Float × Float) := Id.run do
     let mut maxCol : Float := 0.0
     let mut maxScaled : Float := 0.0
@@ -3259,7 +3259,7 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
       woutMaxSq := max woutMaxSq woutSq
     (Float.sqrt (max 0.0 winMaxSq), Float.sqrt (max 0.0 woutMaxSq))
 
-  -- ‖J‖∞ upper bound via row sums.
+  -- Max row-sum bound (‖J‖₁ in row-vector convention).
   let boundInf : Float := Id.run do
     let mut maxRow : Float := 0.0
     for r in [:d] do
@@ -3273,7 +3273,7 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
         maxRow := s
     maxRow
 
-  -- ‖J‖₁ upper bound via column sums.
+  -- Max column-sum bound (‖J‖∞ in row-vector convention).
   let boundOne : Float := Id.run do
     let mut maxCol : Float := 0.0
     for c in [:d] do
