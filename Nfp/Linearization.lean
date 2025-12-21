@@ -1346,11 +1346,11 @@ def isDeepFaithful (D : DeepLinearization (n := n) (d := d)) (ε : ℝ) : Prop :
 
 /-- The key bound constant: amplification from Jacobian norms. -/
 noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) : ℝ :=
-  -- Product of (1 + ‖layer Jacobian‖) for all layers
+  -- Product of (1 + ‖layerJacobian - I‖) for all layers
   (List.range D.numLayers).foldl
     (fun acc i =>
       if hi : i < D.numLayers then
-        acc * (1 + operatorNormBound (D.layerJacobian ⟨i, hi⟩))
+        acc * (1 + operatorNormBound (D.layerJacobian ⟨i, hi⟩ - SignedMixer.identity))
       else acc)
     1
 
@@ -1379,7 +1379,8 @@ theorem two_layer_faithfulness_composition
 The key insight for deep networks is that errors compound multiplicatively:
 - Each layer's pattern term contributes error εᵢ
 - But that error is amplified by all subsequent layers
-- The amplification factor for layer i is ∏_{j>i} (1 + Cⱼ) where Cⱼ bounds layer j's norm
+- The amplification factor for layer i is ∏_{j>i} (1 + Cⱼ) where
+  Cⱼ bounds ‖layerJacobianⱼ - I‖
 
 The total error bound is:
   ε_total = Σᵢ εᵢ · ∏_{j>i} (1 + Cⱼ)
@@ -1390,18 +1391,19 @@ This formula is crucial because it shows:
 3. The bound is tight: achieved when all errors compound constructively
 -/
 
-/-- Per-layer operator norm bounds: Cᵢ bounds ‖I + Jacobianᵢ‖. -/
+/-- Per-layer residual norm bounds: Cᵢ bounds ‖layerJacobianᵢ - I‖. -/
 noncomputable def layerNormBounds (D : DeepLinearization (n := n) (d := d)) :
     Fin D.numLayers → ℝ :=
-  fun i => operatorNormBound (D.layerJacobian i)
+  fun i => operatorNormBound (D.layerJacobian i - SignedMixer.identity)
 
 /-- Per-layer faithfulness: εᵢ bounds ‖patternTermᵢ‖. -/
 noncomputable def layerFaithfulness (D : DeepLinearization (n := n) (d := d)) :
     Fin D.numLayers → ℝ :=
   fun i => frobeniusNorm (patternTerm (D.layers i))
 
-/-- Suffix amplification factor: ∏_{j≥start} (1 + Cⱼ).
-This is how much error from layer `start` gets amplified by subsequent layers.
+/-- Suffix amplification factor: ∏_{j≥start} (1 + Cⱼ),
+where Cⱼ bounds ‖layerJacobianⱼ - I‖. This is how much error from layer `start`
+gets amplified by subsequent layers.
 
 When start = numLayers, this equals 1 (no amplification). -/
 noncomputable def suffixAmplification (D : DeepLinearization (n := n) (d := d))
@@ -1483,7 +1485,8 @@ theorem totalAmplifiedError_nonneg (D : DeepLinearization (n := n) (d := d))
 /-- **N-Layer Faithfulness Composition Theorem**.
 
 If each layer i is εᵢ-faithful (‖patternTermᵢ‖ ≤ εᵢ) and has operator norm
-bounded by Cᵢ (‖I + Jacobianᵢ‖ ≤ 1 + Cᵢ), then the deep network is
+bounded by Cᵢ (‖layerJacobianᵢ - I‖ ≤ Cᵢ, hence ‖layerJacobianᵢ‖ ≤ 1 + Cᵢ),
+then the deep network is
 ε_total-faithful where:
 
   ε_total = Σᵢ εᵢ · ∏_{j>i} (1 + Cⱼ)
@@ -1502,7 +1505,7 @@ theorem n_layer_faithfulness_composition
     (εs : Fin D.numLayers → ℝ)
     (Cs : Fin D.numLayers → ℝ)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) (εs i))
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ Cs i)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ Cs i)
     (hε_pos : ∀ i, 0 ≤ εs i)
     (hC_pos : ∀ i, 0 ≤ Cs i) :
     -- The deep network faithfulness is bounded by the amplified sum
@@ -1556,7 +1559,7 @@ theorem n_layer_faithfulness_composition
 
 /-- Simplified N-layer bound with uniform constants.
 
-If all layers have ‖patternTerm‖ ≤ ε and ‖I + Jacobian‖ ≤ 1 + C, then:
+If all layers have ‖patternTerm‖ ≤ ε and ‖layerJacobian - I‖ ≤ C, then:
   ε_total ≤ ε · L · (1 + C)^{L-1}
 
 where L is the number of layers. This shows exponential growth in depth
@@ -1566,7 +1569,7 @@ theorem n_layer_uniform_bound
     (ε C : ℝ)
     (_hL : 0 < D.numLayers)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ C)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ C)
     (hε_pos : 0 ≤ ε)
     (hC_pos : 0 ≤ C) :
     -- Simplified bound with uniform constants
@@ -1601,7 +1604,7 @@ theorem n_layer_geometric_bound
     (ε C : ℝ)
     (_hL : 0 < D.numLayers)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ C)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ C)
     (hε_pos : 0 ≤ ε)
     (hC_pos : 0 < C) :
     -- The geometric series bound
@@ -1618,7 +1621,7 @@ theorem n_layer_geometric_bound
     · linarith
   · exact le_refl _
 
-/-- Zero-norm case: when all Jacobians have zero operator norm, error adds linearly.
+/-- Zero-norm case: when all residual Jacobians have zero operator norm, error adds linearly.
 
 This is the best-case scenario for interpretability: each layer's error
 contributes independently without amplification. -/
@@ -1626,7 +1629,7 @@ theorem n_layer_zero_norm_bound
     (D : DeepLinearization (n := n) (d := d))
     (ε : ℝ)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ 0)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ 0)
     (hε_pos : 0 ≤ ε) :
     -- Linear bound when amplification is 1
     ∃ (ε_total : ℝ),
@@ -1640,11 +1643,11 @@ theorem n_layer_zero_norm_bound
 
 /-- The connection to totalLayerError: when amplification is 1.
 
-Without amplification (all layer norms ≤ 0), the N-layer bound reduces to
+Without amplification (all residual layer norms ≤ 0), the N-layer bound reduces to
 the simple sum of layer errors, matching totalLayerError. -/
 theorem totalLayerError_eq_n_layer_no_amplification
     (D : DeepLinearization (n := n) (d := d))
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ 0) :
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ 0) :
     totalLayerError D ≤ ∑ i : Fin D.numLayers, layerFaithfulness D i := by
   simp only [totalLayerError, layerError, layerFaithfulness]
   exact le_refl _
