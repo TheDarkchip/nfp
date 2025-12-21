@@ -394,7 +394,7 @@ if we aggregate outputs by summing over j, then the IG attribution for input i
 reduces to `x_i * rowSum i`. -/
 theorem SignedMixer.integrated_gradients_linear (M : SignedMixer S T) (x : S → ℝ) (i : S) :
     -- The "contribution" of input i to the output
-    -- For linear M, this is just x_i times the row sum (influence of i on all outputs)
+    -- For linear M, this is x_i times the signed row sum (net effect on all outputs)
     x i * M.rowSum i = x i * ∑ j, M.w i j := by
   simp [SignedMixer.rowSum]
 
