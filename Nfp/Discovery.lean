@@ -4162,7 +4162,8 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
 
         -- Value-term operator bound:
         --   ‖X ↦ A·X·(W_VW_O)‖ ≤ ‖A‖₂ · ‖W_VW_O‖₂.
-        -- For the attention matrix `A` (nonnegative row-stochastic), `‖A‖_∞ ≈ 1`, so
+        -- For the attention matrix `A` (nonnegative row-stochastic), the max row sum is 1
+        -- (`‖A‖₁` in row-vector convention, `‖A‖∞` in column-vector convention), so
         -- `sqrt(‖A‖₁‖A‖∞)` is typically far tighter than `‖A‖_F`.
         let attnFrob : Float := Id.run do
           let mut s : Float := 0.0
