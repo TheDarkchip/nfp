@@ -3,13 +3,13 @@
 
 """
 Generate a "Rigorous Induction" dataset for NFP verification.
-Constructs a sequence of random English words repeated K times.
+Constructs a sequence of random single-token words repeated in a fixed pattern.
 
-Mathematical Guarantee:
-- Probability of semantic prediction P(next|prev) ≈ 0 (random sequence)
-- Probability of induction prediction P(next|prev_occurrence) = 1.0 (deterministic repetition)
+Dataset intent (heuristic, model-agnostic):
+- The next token is deterministically defined by a previous occurrence in the sequence.
+- Randomized content reduces semantic cues but does not guarantee model probabilities.
 
-This isolates the induction head mechanism from semantic completion.
+This aims to isolate induction-style copying from semantic completion.
 """
 
 import sys
@@ -44,8 +44,7 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
             vocab_candidates.append(tid)
 
     # 2. Construct the Random Repeated Sequence
-    # Pattern length L=30, Repeats K=10 -> Total 300 tokens
-    # We truncate to 256 for the model.
+    # Pattern length L=20, repeated to fill seq_len (256 tokens).
     seq_len = 256
     pattern_len = 20
 
