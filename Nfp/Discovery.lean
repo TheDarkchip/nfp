@@ -457,15 +457,14 @@ This implementation uses `Float`, so it should be treated as an estimate.
 def schurNormEst (M : ConcreteMatrix) : Float :=
   M.opNormUpperBoundOneInf
 
-/-- Cheap, provably-valid operator-norm upper bound for a concrete real matrix.
+/-- Cheap operator-norm upper bound formula for a concrete real matrix.
 
 In exact real arithmetic, we have the standard inequalities:
 - `‖M‖₂ ≤ ‖M‖_F`
 - `‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)`
 
-We compute both in `Float` and interpret the resulting expression as a real-number
-quantity over the stored Float entries (the same convention used throughout this file).
-Taking `min` can only tighten a valid upper bound.
+In exact real arithmetic, taking `min` can only tighten a valid upper bound.
+Here we compute both in `Float`, so treat the result as an estimate.
 -/
 def opNormUpperBoundCheap (M : ConcreteMatrix) : Float :=
   let frob := M.frobeniusNorm
