@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Std
+import Nfp.Sound.Activation
 import Nfp.Sound.Decimal
 
 namespace Nfp.Sound
@@ -21,6 +22,7 @@ structure BinaryHeader where
   vocabSize : Nat
   seqLen : Nat
   eps : Rat
+  geluDerivTarget : GeluDerivTarget
   deriving Repr
 
 private def parseHeaderLine (line : String) : Option (String × String) :=
@@ -52,6 +54,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
   let mut vocabSize : Option Nat := none
   let mut seqLen : Option Nat := none
   let mut eps : Option Rat := none
+  let mut gelu? : Option GeluDerivTarget := none
 
   for line in lines do
     let t := line.trim
@@ -78,6 +81,14 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
               match parseRat v with
               | .error e => throw s!"invalid layer_norm_eps '{v}': {e}"
               | .ok r => eps := some r
+          | "gelu_kind", _ =>
+              match geluDerivTargetOfString v with
+              | some t => gelu? := some t
+              | none => throw s!"invalid gelu_kind '{v}' (expected tanh|exact)"
+          | "gelu_deriv", _ =>
+              match geluDerivTargetOfString v with
+              | some t => gelu? := some t
+              | none => throw s!"invalid gelu_deriv '{v}' (expected tanh|exact)"
           | _, _ => pure ()
 
   let some L := numLayers | throw "missing num_layers"
@@ -88,6 +99,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
   let some v := vocabSize | throw "missing vocab_size"
   let some n := seqLen | throw "missing seq_len"
   let some epsVal := eps | throw "missing layer_norm_eps"
+  let some geluVal := gelu? | throw "missing gelu_kind"
   if L = 0 || H = 0 || d = 0 || dh = 0 || dhid = 0 || v = 0 || n = 0 then
     throw "invalid header: dimensions must be > 0"
   return {
@@ -99,6 +111,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
     vocabSize := v
     seqLen := n
     eps := epsVal
+    geluDerivTarget := geluVal
   }
 
 private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=

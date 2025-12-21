@@ -83,6 +83,7 @@ def export_nfpt(model: GPT2Model, seq_len: int, out_path: Path) -> np.ndarray:
             vocab_size=vocab_size,
             seq_len=seq_len,
             layer_norm_eps=layer_norm_eps,
+            gelu_kind="tanh",
         )
 
         write_i32(f, tokens)

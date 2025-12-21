@@ -18,24 +18,36 @@ This module is intentionally thin: it delegates witness generation to
 `Nfp.Untrusted.SoundCompute` and **verifies** returned certificates locally.
 -/
 
-private def readTextModelEps (path : System.FilePath) : IO (Except String Rat) := do
+private def readTextModelHeader (path : System.FilePath) :
+    IO (Except String TextHeader) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
-  return Nfp.Sound.parseTextHeaderEps lines
+  return Nfp.Sound.parseTextHeader lines
 
-private def readBinaryModelEps (path : System.FilePath) : IO (Except String Rat) := do
+private def readBinaryModelHeader (path : System.FilePath) :
+    IO (Except String Nfp.Sound.BinaryHeader) := do
   IO.FS.withFile path IO.FS.Mode.read fun h => do
     match ← Nfp.Untrusted.SoundBinary.readBinaryHeader h with
     | .error e => return .error e
-    | .ok hdr => return .ok hdr.eps
+    | .ok hdr => return .ok hdr
 
-private def readModelEps (path : System.FilePath) : IO (Except String Rat) := do
+private def readModelHeader (path : System.FilePath) :
+    IO (Except String (Rat × GeluDerivTarget)) := do
   let firstLine ←
     IO.FS.withFile path IO.FS.Mode.read fun h => h.getLine
   if firstLine.trim = "NFP_BINARY_V1" then
-    readBinaryModelEps path
+    match ← readBinaryModelHeader path with
+    | .error e => return .error e
+    | .ok hdr => return .ok (hdr.eps, hdr.geluDerivTarget)
   else
-    readTextModelEps path
+    match ← readTextModelHeader path with
+    | .error e => return .error e
+    | .ok hdr => return .ok (hdr.eps, hdr.geluDerivTarget)
+
+private def readModelEps (path : System.FilePath) : IO (Except String Rat) := do
+  match ← readModelHeader path with
+  | .error e => return .error e
+  | .ok (eps, _) => return .ok eps
 
 /-- Compute weight-only per-head contribution bounds from a binary `.nfpt`. -/
 def certifyHeadBoundsBinary
@@ -53,19 +65,23 @@ def certifyHeadBoundsBinary
 /-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
     (path : System.FilePath)
-    (actDerivBound : Rat := defaultActDerivBound)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
-  match ← readModelEps path with
+  match ← readModelHeader path with
   | .error e => return .error e
-  | .ok eps =>
+  | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFileGlobal
-            path eps actDerivBound inputPath? inputDelta with
+            path eps geluTarget soundnessBits inputPath? inputDelta with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then
             return .error "model header eps mismatch"
+          if cert.soundnessBits ≠ soundnessBits then
+            return .error "soundness bits mismatch"
+          if cert.geluDerivTarget ≠ geluTarget then
+            return .error "model header gelu_kind mismatch"
           if cert.check then
             return .ok cert
           return .error "sound certificate failed internal consistency checks"
@@ -73,19 +89,23 @@ def certifyModelFileGlobal
 /-- Entry point for sound certification (global or local). -/
 def certifyModelFile
     (path : System.FilePath)
-    (actDerivBound : Rat := defaultActDerivBound)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
-  match ← readModelEps path with
+  match ← readModelHeader path with
   | .error e => return .error e
-  | .ok eps =>
+  | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFile
-            path eps actDerivBound inputPath? inputDelta with
+            path eps geluTarget soundnessBits inputPath? inputDelta with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then
             return .error "model header eps mismatch"
+          if cert.soundnessBits ≠ soundnessBits then
+            return .error "soundness bits mismatch"
+          if cert.geluDerivTarget ≠ geluTarget then
+            return .error "model header gelu_kind mismatch"
           if cert.check then
             return .ok cert
           return .error "sound certificate failed internal consistency checks"
@@ -108,6 +128,7 @@ def certifyHeadBoundsLocal
     (path : System.FilePath)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (scalePow10 : Nat := 9) :
     IO (Except String (Array HeadLocalContributionCert)) := do
   match ← readModelEps path with
@@ -115,10 +136,12 @@ def certifyHeadBoundsLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadBoundsLocal
-            path eps inputPath? inputDelta scalePow10 with
+            path eps inputPath? inputDelta soundnessBits scalePow10 with
       | .error e => return .error e
       | .ok certs =>
-          let ok := certs.foldl (fun acc c => acc && c.check eps) true
+          let ok :=
+            certs.foldl (fun acc c =>
+              acc && c.soundnessBits = soundnessBits && c.check eps) true
           if ok then
             return .ok certs
           return .error "local head contribution certificate failed internal checks"
@@ -129,6 +152,7 @@ def certifyHeadPatternLocal
     (layerIdx headIdx : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
@@ -141,7 +165,7 @@ def certifyHeadPatternLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternLocal
-            path layerIdx headIdx eps inputPath? inputDelta targetOffset maxSeqLen
+            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
@@ -156,6 +180,7 @@ def certifyHeadPatternBestMatchLocal
     (queryPos? : Option Nat := none)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
@@ -168,7 +193,8 @@ def certifyHeadPatternBestMatchLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocal
-            path layerIdx headIdx queryPos? eps inputPath? inputDelta targetOffset maxSeqLen
+            path layerIdx headIdx queryPos? eps soundnessBits inputPath? inputDelta targetOffset
+              maxSeqLen
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
@@ -182,6 +208,7 @@ def certifyHeadPatternBestMatchLocalSweep
     (layerIdx headIdx : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
@@ -194,7 +221,7 @@ def certifyHeadPatternBestMatchLocalSweep
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocalSweep
-            path layerIdx headIdx eps inputPath? inputDelta targetOffset maxSeqLen
+            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok certs =>
@@ -210,6 +237,7 @@ def certifyHeadValueLowerBoundLocal
     (coord : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
@@ -222,8 +250,8 @@ def certifyHeadValueLowerBoundLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadValueLowerBoundLocal
-            path layerIdx headIdx coord eps inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
+            path layerIdx headIdx coord eps soundnessBits inputPath? inputDelta targetOffset
+            maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -237,6 +265,7 @@ def certifyHeadLogitDiffLowerBoundLocal
     (targetToken negativeToken : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (targetOffset : Int := -1)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
@@ -249,9 +278,9 @@ def certifyHeadLogitDiffLowerBoundLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadLogitDiffLowerBoundLocal
-            path layerIdx headIdx targetToken negativeToken eps inputPath? inputDelta
-            targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers
-            scalePow10 with
+            path layerIdx headIdx targetToken negativeToken eps soundnessBits inputPath? inputDelta
+            targetOffset maxSeqLen tightPattern tightPatternLayers
+            perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -265,6 +294,7 @@ def certifyInductionSound
     (coord : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (offset1 : Int := -1)
     (offset2 : Int := -1)
     (maxSeqLen : Nat := 256)
@@ -280,9 +310,9 @@ def certifyInductionSound
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyInductionSound
-            path layer1 head1 layer2 head2 coord eps inputPath? inputDelta offset1 offset2
-            maxSeqLen scalePow10 tightPattern tightPatternLayers perRowPatternLayers
-            targetToken? negativeToken? with
+            path layer1 head1 layer2 head2 coord eps soundnessBits inputPath? inputDelta
+            offset1 offset2 maxSeqLen scalePow10 tightPattern tightPatternLayers
+            perRowPatternLayers targetToken? negativeToken? with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -297,6 +327,7 @@ def certifyInductionSoundBestMatch
     (queryPos? : Option Nat := none)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (offset1 : Int := -1)
     (offset2 : Int := -1)
     (maxSeqLen : Nat := 256)
@@ -312,9 +343,9 @@ def certifyInductionSoundBestMatch
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyInductionSoundBestMatch
-            path layer1 head1 layer2 head2 coord queryPos? eps inputPath? inputDelta
-            offset1 offset2 maxSeqLen scalePow10 tightPattern tightPatternLayers
-            perRowPatternLayers targetToken? negativeToken? with
+            path layer1 head1 layer2 head2 coord queryPos? eps soundnessBits inputPath? inputDelta
+            offset1 offset2 maxSeqLen scalePow10 tightPattern
+            tightPatternLayers perRowPatternLayers targetToken? negativeToken? with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then

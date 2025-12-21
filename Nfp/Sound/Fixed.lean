@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Std
+import Nfp.Sound.Activation
 
 namespace Nfp.Sound
 
@@ -63,8 +64,27 @@ def geluOverapprox (a : Fixed10Interval) : Fixed10Interval :=
 
 private def absInt (x : Int) : Int := if x < 0 then -x else x
 
+/-- Maximum absolute endpoint (in scaled integer units). -/
 def absUpper (a : Fixed10Interval) : Int :=
   max (absInt a.lo) (absInt a.hi)
+
+/-- Upper bound on `max |gelu'(x)|` over a fixed-point interval. -/
+def geluDerivBound (cfg : Fixed10Cfg) (target : GeluDerivTarget) (a : Fixed10Interval) : Rat :=
+  let maxAbsInt := absUpper a
+  let maxAbsRat : Rat :=
+    Rat.normalize maxAbsInt cfg.scaleNat (den_nz := by
+      have h10pos : (0 : Nat) < 10 := by decide
+      exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+  let maxAbsSq := maxAbsRat * maxAbsRat
+  let half : Rat := (1 : Rat) / 2
+  match target with
+  | .exact =>
+      min (1 + half * maxAbsRat) 2
+  | .tanh =>
+      let c : Rat := (44715 : Rat) / 1000000
+      let slope := 1 + (3 : Rat) * c * maxAbsSq
+      let localBound := 1 + half * maxAbsRat * slope
+      min localBound 2
 
 /-- Floor division by a positive `Nat` divisor. -/
 private def floorDivNat (a : Int) (d : Nat) : Int :=
@@ -143,6 +163,24 @@ theorem absInt_spec (x : Int) : absInt x = absInt x := rfl
 
 theorem absUpper_def (a : Fixed10Interval) :
     Fixed10Interval.absUpper a = max (absInt a.lo) (absInt a.hi) := rfl
+
+theorem geluDerivBound_def (cfg : Fixed10Cfg) (target : GeluDerivTarget) (a : Fixed10Interval) :
+    Fixed10Interval.geluDerivBound cfg target a =
+      let maxAbsInt := absUpper a
+      let maxAbsRat : Rat :=
+        Rat.normalize maxAbsInt cfg.scaleNat (den_nz := by
+          have h10pos : (0 : Nat) < 10 := by decide
+          exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+      let maxAbsSq := maxAbsRat * maxAbsRat
+      let half : Rat := (1 : Rat) / 2
+      match target with
+      | .exact =>
+          min (1 + half * maxAbsRat) 2
+      | .tanh =>
+          let c : Rat := (44715 : Rat) / 1000000
+          let slope := 1 + (3 : Rat) * c * maxAbsSq
+          let localBound := 1 + half * maxAbsRat * slope
+          min localBound 2 := rfl
 
 theorem floorDivNat_spec (a : Int) (d : Nat) : floorDivNat a d = floorDivNat a d := rfl
 

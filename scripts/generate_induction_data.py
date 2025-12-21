@@ -66,6 +66,7 @@ def export_induction_weights(output_path: str = "models/gpt2_induction.nfpt"):
             vocab_size=config.vocab_size,
             seq_len=seq_len,
             layer_norm_eps=layer_norm_eps,
+            gelu_kind="tanh",
         )
 
         write_i32(f, sample_tokens)

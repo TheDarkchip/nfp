@@ -212,6 +212,26 @@ Therefore `GeLU([lo,hi]) ⊆ [min(lo,0), max(hi,0)]`.
 def geluOverapprox (a : RatInterval) : RatInterval :=
   { lo := min a.lo 0, hi := max a.hi 0 }
 
+/-- Upper bound on `max |gelu'(x)|` over a rational interval. -/
+def geluDerivBound (target : GeluDerivTarget) (a : RatInterval) : Rat :=
+  let maxAbs := max (ratAbs a.lo) (ratAbs a.hi)
+  let maxAbsSq := maxAbs * maxAbs
+  let half : Rat := (1 : Rat) / 2
+  match target with
+  | .exact =>
+      -- Conservative: Φ(x) ≤ 1 and φ(x) ≤ 1/2, so gelu'(x) ≤ 1 + |x|/2.
+      min (1 + half * maxAbs) (geluDerivBoundGlobal target)
+  | .tanh =>
+      -- Conservative: |tanh| ≤ 1, sech^2 ≤ 1, and sqrt(2/pi) ≤ 1.
+      let c : Rat := (44715 : Rat) / 1000000
+      let slope := 1 + (3 : Rat) * c * maxAbsSq
+      let localBound := 1 + half * maxAbs * slope
+      min localBound (geluDerivBoundGlobal target)
+
+/-- Upper bound on the row-sum softmax Jacobian norm for a probability interval. -/
+def softmaxJacobianNormInfBound (a : RatInterval) : Rat :=
+  Nfp.Sound.softmaxJacobianNormInfBound a.lo a.hi
+
 /-! ### Specs -/
 
 theorem const_def (r : Rat) : RatInterval.const r = { lo := r, hi := r } := rfl
@@ -234,6 +254,24 @@ theorem relu_def (a : RatInterval) :
 
 theorem union_def (a b : RatInterval) :
     RatInterval.union a b = { lo := min a.lo b.lo, hi := max a.hi b.hi } := rfl
+
+theorem softmaxJacobianNormInfBound_def (a : RatInterval) :
+    RatInterval.softmaxJacobianNormInfBound a =
+      Nfp.Sound.softmaxJacobianNormInfBound a.lo a.hi := rfl
+
+theorem geluDerivBound_def (target : GeluDerivTarget) (a : RatInterval) :
+    RatInterval.geluDerivBound target a =
+      let maxAbs := max (ratAbs a.lo) (ratAbs a.hi)
+      let maxAbsSq := maxAbs * maxAbs
+      let half : Rat := (1 : Rat) / 2
+      match target with
+      | .exact =>
+          min (1 + half * maxAbs) (geluDerivBoundGlobal target)
+      | .tanh =>
+          let c : Rat := (44715 : Rat) / 1000000
+          let slope := 1 + (3 : Rat) * c * maxAbsSq
+          let localBound := 1 + half * maxAbs * slope
+          min localBound (geluDerivBoundGlobal target) := rfl
 
 theorem containsZero_iff (a : RatInterval) :
     RatInterval.containsZero a = true ↔ a.lo ≤ 0 ∧ 0 ≤ a.hi := by

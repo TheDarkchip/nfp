@@ -211,20 +211,20 @@ supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --actDeriv 2 --output cert.txt
+  --output cert.txt
 ```
 
 - For local (input-dependent) LayerNorm certification, pass an ℓ∞ radius `δ`:
 
 ```bash
 lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --delta 0.01 --actDeriv 2
+  --delta 0.01
 ```
 
 If you want to override the embedded input, pass a separate input `.nfpt`:
 
 - LayerNorm ε is read from the model header (`layer_norm_eps`).
-- `--actDeriv` bounds the activation derivative (default: `2`).
+- `gelu_kind` in the model header selects the GeLU derivative target (`tanh` or `exact`).
 - `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
 - `--input` optionally provides an input `.nfpt` file used for local certification.
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).

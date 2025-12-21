@@ -209,10 +209,16 @@ def main() -> None:
         raise ValueError("input/model seq_len mismatch")
     input_eps = input_header.get("layer_norm_eps") or input_header.get("eps")
     model_eps = model_header.get("layer_norm_eps") or model_header.get("eps")
+    model_gelu = model_header.get("gelu_kind") or model_header.get("gelu_deriv")
+    input_gelu = input_header.get("gelu_kind") or input_header.get("gelu_deriv")
     if model_eps is None:
         raise ValueError("model header missing layer_norm_eps")
     if input_eps is not None and input_eps != model_eps:
         raise ValueError("input/model layer_norm_eps mismatch")
+    if model_gelu is None:
+        raise ValueError("model header missing gelu_kind")
+    if input_gelu is not None and input_gelu != model_gelu:
+        raise ValueError("input/model gelu_kind mismatch")
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("wb") as f:
@@ -228,6 +234,7 @@ def main() -> None:
         ]:
             f.write(f"{key}={model_header[key]}\n".encode("ascii"))
         f.write(f"layer_norm_eps={model_eps}\n".encode("ascii"))
+        f.write(f"gelu_kind={model_gelu}\n".encode("ascii"))
         f.write(b"BINARY_START\n")
 
         write_i32(f, tokens)

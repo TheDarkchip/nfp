@@ -2,6 +2,10 @@
 
 import Std
 import Mathlib.Algebra.Order.Ring.Unbundled.Rat
+import Mathlib.Algebra.Order.Floor.Semiring
+import Mathlib.Data.Nat.Sqrt
+import Mathlib.Data.Rat.Floor
+import Nfp.Sound.Activation
 import Mathlib.Data.Finset.Lattice.Fold
 import Mathlib.Data.Fintype.Basic
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
@@ -150,6 +154,54 @@ def softmaxJacobianNormInfWorst : Rat := (1 : Rat) / 2
 
 theorem softmaxJacobianNormInfWorst_def : softmaxJacobianNormInfWorst = (1 : Rat) / 2 := rfl
 
+/-! ### GeLU derivative bounds -/
+
+/-- Global conservative GeLU derivative bound (independent of interval). -/
+def geluDerivBoundGlobal : GeluDerivTarget → Rat
+  | .tanh => 2
+  | .exact => 2
+
+theorem geluDerivBoundGlobal_def (t : GeluDerivTarget) :
+    geluDerivBoundGlobal t = match t with | .tanh => 2 | .exact => 2 := rfl
+
+/-- Clamp a rational to the unit interval `[0,1]`. -/
+private def clamp01 (x : Rat) : Rat :=
+  max 0 (min x 1)
+
+theorem clamp01_def (x : Rat) : clamp01 x = max 0 (min x 1) := rfl
+
+/-- Local upper bound on the row-sum softmax Jacobian norm given `p ∈ [pLo, pHi]`. -/
+def softmaxJacobianNormInfBound (pLo pHi : Rat) : Rat :=
+  let lo0 := min pLo pHi
+  let hi0 := max pLo pHi
+  let lo := clamp01 lo0
+  let hi := clamp01 hi0
+  if hi < lo then
+    0
+  else
+    let half : Rat := (1 : Rat) / 2
+    let f : Rat → Rat := fun p => (2 : Rat) * p * (1 - p)
+    if lo ≤ half ∧ half ≤ hi then
+      half
+    else
+      max (f lo) (f hi)
+
+theorem softmaxJacobianNormInfBound_def (pLo pHi : Rat) :
+    softmaxJacobianNormInfBound pLo pHi =
+      let lo0 := min pLo pHi
+      let hi0 := max pLo pHi
+      let lo := clamp01 lo0
+      let hi := clamp01 hi0
+      if hi < lo then
+        0
+      else
+        let half : Rat := (1 : Rat) / 2
+        let f : Rat → Rat := fun p => (2 : Rat) * p * (1 - p)
+        if lo ≤ half ∧ half ≤ hi then
+          half
+        else
+          max (f lo) (f hi) := rfl
+
 /-! ### Local (input-dependent) LayerNorm bounds
 
 We want a sound upper bound on `max |γ| / sqrt(var + eps)` using exact `Rat` arithmetic,
@@ -159,7 +211,7 @@ Given a proven lower bound `L ≤ var`, we have:
 `1/sqrt(var+eps) ≤ 1/sqrt(L+eps)`.
 
 To avoid `sqrt`, we compute a dyadic rational `s = k/2^p` such that
-`s^2 ≤ (L+eps)`. Then `1/s ≥ 1/sqrt(L+eps)` is a valid **upper** bound on `1/sqrt(L+eps)`.
+`s^2 ≤ max (L+eps) 0`. Then `1/s ≥ 1/sqrt(L+eps)` is a valid **upper** bound on `1/sqrt(L+eps)`.
 -/
 
 private def pow2 (p : Nat) : Nat :=
@@ -171,42 +223,51 @@ private def sqNat (n : Nat) : Nat := n * n
 
 theorem sqNat_def (n : Nat) : sqNat n = n * n := rfl
 
-private def leSqDyadic (k : Nat) (scaleSq : Nat) (x : Rat) : Bool :=
-  -- (k/scale)^2 ≤ x  ↔  k^2 ≤ x * scale^2
-  ((sqNat k : Nat) : Rat) ≤ x * (scaleSq : Nat)
+/-- Certificate that `k` is the dyadic floor of `sqrt (max x 0)` at precision `precBits`. -/
+private structure SqrtLowerDyadicCert (x : Rat) (precBits : Nat) where
+  k : Nat
+  lower :
+    ((sqNat k : Nat) : Rat) ≤ max x 0 * (sqNat (pow2 precBits) : Nat)
+  upper :
+    max x 0 * (sqNat (pow2 precBits) : Nat) < ((sqNat (k + 1) : Nat) : Rat)
 
-theorem leSqDyadic_iff (k : Nat) (scaleSq : Nat) (x : Rat) :
-    leSqDyadic k scaleSq x = true ↔ ((sqNat k : Nat) : Rat) ≤ x * (scaleSq : Nat) := by
-  simp [leSqDyadic]
+/-- The dyadic value `k/2^precBits` encoded by a `SqrtLowerDyadicCert`. -/
+private def SqrtLowerDyadicCert.rat {x : Rat} {precBits : Nat}
+    (c : SqrtLowerDyadicCert x precBits) : Rat :=
+  Rat.normalize (Int.ofNat c.k) (pow2 precBits) (den_nz := by simp [pow2])
 
-private def sqrtLowerDyadic (x : Rat) (precBits : Nat := 20) : Rat :=
-  if x ≤ 0 then
-    0
-  else
-    Id.run do
-      let scale : Nat := pow2 precBits
-      let scaleSq : Nat := sqNat scale
-      -- Find an upper bracket by doubling.
-      let mut hi : Nat := scale
-      while leSqDyadic hi scaleSq x do
-        hi := hi * 2
-      -- Binary search for max k with k^2 ≤ x*scale^2.
-      let mut lo : Nat := 0
-      while lo + 1 < hi do
-        let mid := (lo + hi) / 2
-        if leSqDyadic mid scaleSq x then
-          lo := mid
-        else
-          hi := mid
-      return Rat.normalize (Int.ofNat lo) (pow2 precBits) (den_nz := by simp [pow2])
+/-- Compute a dyadic floor certificate for `sqrt (max x 0)` using `Nat.sqrt` on the floor. -/
+private def sqrtLowerDyadic (x : Rat) (precBits : Nat) : SqrtLowerDyadicCert x precBits := by
+  let scale : Nat := pow2 precBits
+  let scaleSq : Nat := sqNat scale
+  let y : Rat := max x 0 * (scaleSq : Rat)
+  let m : Nat := ⌊y⌋₊
+  let k : Nat := Nat.sqrt m
+  refine ⟨k, ?lower, ?upper⟩
+  · have hy_nonneg : 0 ≤ y := by
+      have hmax : 0 ≤ max x 0 := le_max_right _ _
+      have hscale : 0 ≤ (scaleSq : Rat) := by
+        exact_mod_cast (Nat.zero_le scaleSq)
+      exact mul_nonneg hmax hscale
+    have hm_le : ((m : Nat) : Rat) ≤ y := by
+      simpa [m] using (Nat.floor_le (a := y) hy_nonneg)
+    have hk_le_m : sqNat k ≤ m := by
+      simpa [sqNat, k] using (Nat.sqrt_le m)
+    have hk_le_m_rat : ((sqNat k : Nat) : Rat) ≤ (m : Rat) := by
+      exact_mod_cast hk_le_m
+    exact le_trans hk_le_m_rat hm_le
+  · have hy_lt : y < (m : Rat) + 1 := by
+      simpa [m] using (Nat.lt_floor_add_one (a := y))
+    have hm_lt_nat : m < sqNat (k + 1) := by
+      simpa [sqNat, k, Nat.succ_eq_add_one] using (Nat.lt_succ_sqrt m)
+    have hm_succ_le_nat : m + 1 ≤ sqNat (k + 1) := Nat.succ_le_of_lt hm_lt_nat
+    have hm_succ_le_rat : (m + 1 : Rat) ≤ ((sqNat (k + 1) : Nat) : Rat) := by
+      exact_mod_cast hm_succ_le_nat
+    exact lt_of_lt_of_le hy_lt hm_succ_le_rat
 
-theorem leSqDyadic_spec : leSqDyadic = leSqDyadic := rfl
-
-theorem sqrtLowerDyadic_spec : sqrtLowerDyadic = sqrtLowerDyadic := rfl
-
-theorem sqrtLowerDyadic_eq_zero_of_nonpos {x : Rat} (h : x ≤ 0) :
-    sqrtLowerDyadic x = 0 := by
-  simp [sqrtLowerDyadic, h]
+/-- Dyadic lower bound on `sqrt (max x 0)` as a `Rat`. -/
+private def sqrtLowerDyadicRat (x : Rat) (precBits : Nat) : Rat :=
+  (sqrtLowerDyadic x precBits).rat
 
 /-- Conservative bound for the operator norm of a row-wise LayerNorm Jacobian.
 
@@ -221,25 +282,25 @@ so we only use the dyadic bound.
 For tighter **local** certification (weights + a bounded input region), use
 `layerNormOpBoundLocal`, which replaces `eps` with a proven variance lower bound.
 -/
-def layerNormOpBoundConservative (maxAbsGamma eps : Rat) : Rat :=
+def layerNormOpBoundConservative (maxAbsGamma eps : Rat) (sqrtPrecBits : Nat) : Rat :=
   if eps ≤ 0 then
     0
   else
     let raw := maxAbsGamma / eps
-    let s := sqrtLowerDyadic eps 20
+    let s := sqrtLowerDyadicRat eps sqrtPrecBits
     if s ≤ 0 then
       if eps ≤ 1 then raw else maxAbsGamma
     else
       let sBound := maxAbsGamma / s
       if eps ≤ 1 then min raw sBound else sBound
 
-theorem layerNormOpBoundConservative_def (maxAbsGamma eps : Rat) :
-    layerNormOpBoundConservative maxAbsGamma eps =
+theorem layerNormOpBoundConservative_def (maxAbsGamma eps : Rat) (sqrtPrecBits : Nat) :
+    layerNormOpBoundConservative maxAbsGamma eps sqrtPrecBits =
       if eps ≤ 0 then
         0
       else
         let raw := maxAbsGamma / eps
-        let s := sqrtLowerDyadic eps 20
+        let s := sqrtLowerDyadicRat eps sqrtPrecBits
         if s ≤ 0 then
           if eps ≤ 1 then raw else maxAbsGamma
         else
@@ -256,27 +317,27 @@ If the dyadic lower bound is zero (too small / insufficient precision), we fall 
 conservative bound `maxAbsGamma / eps`.
 -/
 def layerNormOpBoundLocal (maxAbsGamma varianceLowerBound eps : Rat)
-    (sqrtPrecBits : Nat := 20) : Rat :=
+    (sqrtPrecBits : Nat) : Rat :=
   let denom := varianceLowerBound + eps
   if denom ≤ 0 then
-    layerNormOpBoundConservative maxAbsGamma eps
+    layerNormOpBoundConservative maxAbsGamma eps sqrtPrecBits
   else
-    let s := sqrtLowerDyadic denom sqrtPrecBits
+    let s := sqrtLowerDyadicRat denom sqrtPrecBits
     if s ≤ 0 then
-      layerNormOpBoundConservative maxAbsGamma eps
+      layerNormOpBoundConservative maxAbsGamma eps sqrtPrecBits
     else
       maxAbsGamma / s
 
 theorem layerNormOpBoundLocal_def (maxAbsGamma varianceLowerBound eps : Rat)
-    (sqrtPrecBits : Nat := 20) :
+    (sqrtPrecBits : Nat) :
     layerNormOpBoundLocal maxAbsGamma varianceLowerBound eps sqrtPrecBits =
       let denom := varianceLowerBound + eps
       if denom ≤ 0 then
-        layerNormOpBoundConservative maxAbsGamma eps
+        layerNormOpBoundConservative maxAbsGamma eps sqrtPrecBits
       else
-        let s := sqrtLowerDyadic denom sqrtPrecBits
+        let s := sqrtLowerDyadicRat denom sqrtPrecBits
         if s ≤ 0 then
-          layerNormOpBoundConservative maxAbsGamma eps
+          layerNormOpBoundConservative maxAbsGamma eps sqrtPrecBits
         else
           maxAbsGamma / s := rfl
 

@@ -14,13 +14,6 @@ much looser than the Float-based heuristic analysis.
 -/
 
 
-/-- Conservative upper bound on GeLU derivative for certification.
-
-For the exact GeLU `x ↦ x·Φ(x)` the derivative is bounded well below 2.
-We use `2` as a simple, obviously-safe constant to avoid importing heavy analysis.
--/
-def defaultActDerivBound : Rat := 2
-
 /-- Per-layer conservative residual amplification constant `Cᵢ`
 (bounds ‖layerJacobian - I‖) and its components. -/
 structure LayerAmplificationCert where
@@ -33,6 +26,10 @@ structure LayerAmplificationCert where
   ln2VarianceLowerBound? : Option Rat
   ln1Bound : Rat
   ln2Bound : Rat
+  attnCoeff : Rat
+  mlpCoeff : Rat
+  /-- Upper bound on the max GeLU derivative over this layer's preactivations. -/
+  mlpActDerivBound : Rat
   attnWeightContribution : Rat
   mlpWeightContribution : Rat
   C : Rat
@@ -49,33 +46,41 @@ instance : Inhabited LayerAmplificationCert :=
     ln2VarianceLowerBound? := none
     ln1Bound := 0
     ln2Bound := 0
+    attnCoeff := 0
+    mlpCoeff := 0
+    mlpActDerivBound := 0
     attnWeightContribution := 0
     mlpWeightContribution := 0
     C := 0
   }⟩
 
 /-- Internal consistency checks for per-layer bounds. -/
-def Valid (eps : Rat) (l : LayerAmplificationCert) : Prop :=
+def Valid (eps : Rat) (sqrtPrecBits : Nat) (l : LayerAmplificationCert) : Prop :=
   l.ln1Bound =
       (match l.ln1VarianceLowerBound? with
-       | some v => layerNormOpBoundLocal l.ln1MaxAbsGamma v eps
-       | none => layerNormOpBoundConservative l.ln1MaxAbsGamma eps) ∧
+       | some v => layerNormOpBoundLocal l.ln1MaxAbsGamma v eps sqrtPrecBits
+       | none => layerNormOpBoundConservative l.ln1MaxAbsGamma eps sqrtPrecBits) ∧
     l.ln2Bound =
       (match l.ln2VarianceLowerBound? with
-       | some v => layerNormOpBoundLocal l.ln2MaxAbsGamma v eps
-       | none => layerNormOpBoundConservative l.ln2MaxAbsGamma eps) ∧
+       | some v => layerNormOpBoundLocal l.ln2MaxAbsGamma v eps sqrtPrecBits
+       | none => layerNormOpBoundConservative l.ln2MaxAbsGamma eps sqrtPrecBits) ∧
+    l.attnWeightContribution =
+      l.ln1Bound * softmaxJacobianNormInfWorst * l.attnCoeff ∧
+    l.mlpWeightContribution =
+      l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) ∧
     l.C = l.attnWeightContribution + l.mlpWeightContribution
 
-instance (eps : Rat) (l : LayerAmplificationCert) : Decidable (Valid eps l) := by
+instance (eps : Rat) (sqrtPrecBits : Nat) (l : LayerAmplificationCert) :
+    Decidable (Valid eps sqrtPrecBits l) := by
   unfold Valid
   infer_instance
 
 /-- Boolean checker for `Valid`. -/
-def check (eps : Rat) (l : LayerAmplificationCert) : Bool :=
-  decide (Valid eps l)
+def check (eps : Rat) (sqrtPrecBits : Nat) (l : LayerAmplificationCert) : Bool :=
+  decide (Valid eps sqrtPrecBits l)
 
-theorem check_iff (eps : Rat) (l : LayerAmplificationCert) :
-    l.check eps = true ↔ l.Valid eps := by
+theorem check_iff (eps : Rat) (sqrtPrecBits : Nat) (l : LayerAmplificationCert) :
+    l.check eps sqrtPrecBits = true ↔ l.Valid eps sqrtPrecBits := by
   simp [check]
 
 theorem Valid_spec : Valid = Valid := rfl
@@ -89,6 +94,10 @@ structure ModelCert where
   inputPath? : Option String
   inputDelta : Rat
   eps : Rat
+  /-- Precision in dyadic bits for local LayerNorm bounds. -/
+  soundnessBits : Nat
+  /-- Which GeLU derivative target the model uses. -/
+  geluDerivTarget : GeluDerivTarget
   actDerivBound : Rat
   softmaxJacobianNormInfWorst : Rat
   layers : Array LayerAmplificationCert
@@ -101,8 +110,9 @@ namespace ModelCert
 def Valid (c : ModelCert) : Prop :=
   0 < c.eps ∧
     c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
+    c.actDerivBound = c.layers.foldl (fun acc l => max acc l.mlpActDerivBound) 0 ∧
     List.Forall₂
-      (fun i l => l.layerIdx = i ∧ LayerAmplificationCert.Valid c.eps l)
+      (fun i l => l.layerIdx = i ∧ LayerAmplificationCert.Valid c.eps c.soundnessBits l)
       (List.range c.layers.size) c.layers.toList ∧
     c.totalAmplificationFactor =
       c.layers.foldl (fun acc l => acc * (1 + l.C)) 1
@@ -125,14 +135,17 @@ def toString (c : ModelCert) : String :=
     (match c.inputPath? with
      | some p => s!"input={p}, delta={c.inputDelta}\n"
      | none => "") ++
-    s!"eps={c.eps}, actDerivBound={c.actDerivBound}, \
-softmaxJacobianNormInfWorst={c.softmaxJacobianNormInfWorst}\n" ++
+    s!"eps={c.eps}, soundnessBits={c.soundnessBits}, " ++
+    s!"geluDerivTarget={geluDerivTargetToString c.geluDerivTarget}, " ++
+    s!"actDerivBound={c.actDerivBound}, " ++
+    s!"softmaxJacobianNormInfWorst={c.softmaxJacobianNormInfWorst}\n" ++
     s!"totalAmplificationFactor={c.totalAmplificationFactor}\n"
   let body :=
     c.layers.foldl (fun acc l =>
       acc ++
       s!"Layer {l.layerIdx}: C={l.C} (attn={l.attnWeightContribution}, \
-mlp={l.mlpWeightContribution}, ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound}" ++
+mlp={l.mlpWeightContribution}, mlpActDerivBound={l.mlpActDerivBound}, \
+ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound}" ++
         (match l.ln1VarianceLowerBound? with
          | some v => s!", ln1Var≥{v}"
          | none => "") ++
@@ -151,7 +164,5 @@ theorem toString_spec : toString = toString := rfl
 end ModelCert
 
 /-! ### Specs -/
-
-theorem defaultActDerivBound_spec : defaultActDerivBound = defaultActDerivBound := rfl
 
 end Nfp.Sound

@@ -92,6 +92,7 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
             vocab_size=config.vocab_size,
             seq_len=seq_len,
             layer_norm_eps=layer_norm_eps,
+            gelu_kind="tanh",
         )
 
         write_i32(f, full_sequence)

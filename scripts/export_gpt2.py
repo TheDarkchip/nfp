@@ -81,6 +81,7 @@ def export_gpt2_weights(output_path: str = "models/gpt2.nfpt", seq_len: int = 25
             vocab_size=vocab_size,
             seq_len=seq_len,
             layer_norm_eps=layer_norm_eps,
+            gelu_kind="tanh",
         )
 
         # Sample input embeddings for analysis

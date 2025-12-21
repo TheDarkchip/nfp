@@ -231,12 +231,14 @@ def certifyHeadBoundsBinary
 private def certifyModelFileGlobalBinary
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat := defaultActDerivBound) : IO (Except String ModelCert) := do
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat) : IO (Except String ModelCert) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   match ← readBinaryHeader h with
   | .error e => return .error e
   | .ok hdr =>
       let scalePow10 := defaultBinaryScalePow10
+      let actDerivBound := geluDerivBoundGlobal geluDerivTarget
       match ← skipI32Array h hdr.seqLen with
       | .error e => return .error e
       | .ok _ => pure ()
@@ -317,10 +319,13 @@ private def certifyModelFileGlobalBinary
         let ln2Max := ratOfScaledInt scalePow10 ln2GammaScaled
         let nWin := ratOfScaledInt scalePow10 nWinScaled
         let nWout := ratOfScaledInt scalePow10 nWoutScaled
-        let ln1Bound := layerNormOpBoundConservative ln1Max eps
-        let ln2Bound := layerNormOpBoundConservative ln2Max eps
-        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnSum
-        let mlpW := ln2Bound * (nWin * actDerivBound * nWout)
+        let ln1Bound := layerNormOpBoundConservative ln1Max eps soundnessBits
+        let ln2Bound := layerNormOpBoundConservative ln2Max eps soundnessBits
+        let attnCoeff := attnSum
+        let mlpCoeff := nWin * nWout
+        let mlpActDerivBound := actDerivBound
+        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+        let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
         let C := attnW + mlpW
         layers := layers.push {
           layerIdx := l
@@ -330,6 +335,9 @@ private def certifyModelFileGlobalBinary
           ln2VarianceLowerBound? := none
           ln1Bound := ln1Bound
           ln2Bound := ln2Bound
+          attnCoeff := attnCoeff
+          mlpCoeff := mlpCoeff
+          mlpActDerivBound := mlpActDerivBound
           attnWeightContribution := attnW
           mlpWeightContribution := mlpW
           C := C
@@ -349,6 +357,8 @@ private def certifyModelFileGlobalBinary
         inputPath? := none
         inputDelta := 0
         eps := eps
+        soundnessBits := soundnessBits
+        geluDerivTarget := geluDerivTarget
         actDerivBound := actDerivBound
         softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
         layers := layers
@@ -388,6 +398,15 @@ private def unionVecIntervals (a b : Array RatInterval) : Array RatInterval :=
 private def zeroIntervals (n : Nat) : Array RatInterval :=
   Array.replicate n (RatInterval.const 0)
 
+/-- Max GeLU derivative bound across a vector of rational intervals. -/
+private def maxGeluDerivBound (target : GeluDerivTarget) (xs : Array RatInterval) : Rat :=
+  xs.foldl (fun acc x => max acc (RatInterval.geluDerivBound target x)) 0
+
+/-- Max GeLU derivative bound across fixed-point intervals (converted to `Rat`). -/
+private def maxGeluDerivBoundFixed (cfg : Fixed10Cfg) (target : GeluDerivTarget)
+    (xs : Array Fixed10Interval) : Rat :=
+  xs.foldl (fun acc x => max acc (Fixed10Interval.geluDerivBound cfg target x)) 0
+
 private def unionRows (rows : Array (Array RatInterval)) (dim : Nat) : Array RatInterval :=
   Id.run do
     if rows.isEmpty then
@@ -401,8 +420,8 @@ private def unionRows (rows : Array (Array RatInterval)) (dim : Nat) : Array Rat
         out := unionVecIntervals out r
     return out
 
-private def layerNormRowApprox (row : Array RatInterval) (gamma beta : Array Rat) (eps : Rat) :
-    (Array RatInterval × Rat) :=
+private def layerNormRowApprox (row : Array RatInterval) (gamma beta : Array Rat) (eps : Rat)
+    (soundnessBits : Nat) : (Array RatInterval × Rat) :=
   if row.size = 0 || gamma.size ≠ row.size || beta.size ≠ row.size then
     (row, 0)
   else
@@ -412,9 +431,9 @@ private def layerNormRowApprox (row : Array RatInterval) (gamma beta : Array Rat
       let invσUpper : Rat :=
         if varLB ≤ 0 then
           -- Sound fallback for IBP propagation: `1/σ ≤ 1/eps` (conservative, but rigorous).
-          layerNormOpBoundConservative 1 eps
+          layerNormOpBoundConservative 1 eps soundnessBits
         else
-          layerNormOpBoundLocal 1 varLB eps
+          layerNormOpBoundLocal 1 varLB eps soundnessBits
       let mut out : Array RatInterval := Array.mkEmpty row.size
       for i in [:row.size] do
         let centered := RatInterval.sub row[i]! μ
@@ -577,9 +596,11 @@ private def consumeMatrixMulAndNormInf
 def certifyModelFileGlobal
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat := defaultActDerivBound)
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
+  let actDerivBound := geluDerivBoundGlobal geluDerivTarget
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
   -- Header
@@ -689,6 +710,7 @@ def certifyModelFileGlobal
   -- Build layer reports
   let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
   let mut totalAmp : Rat := 1
+  let mut actDerivBoundMax : Rat := 0
   for l in [:L] do
     let ln1Max := ln1GammaMax[l]!
     let ln2Max := ln2GammaMax[l]!
@@ -696,14 +718,17 @@ def certifyModelFileGlobal
     let ln2Var? : Option Rat := none
     let ln1Bound :=
       match ln1Var? with
-      | some v => layerNormOpBoundLocal ln1Max v eps
-      | none => layerNormOpBoundConservative ln1Max eps
+      | some v => layerNormOpBoundLocal ln1Max v eps soundnessBits
+      | none => layerNormOpBoundConservative ln1Max eps soundnessBits
     let ln2Bound :=
       match ln2Var? with
-      | some v => layerNormOpBoundLocal ln2Max v eps
-      | none => layerNormOpBoundConservative ln2Max eps
-    let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnSum[l]!
-    let mlpW := ln2Bound * (mlpWin[l]! * actDerivBound * mlpWout[l]!)
+      | some v => layerNormOpBoundLocal ln2Max v eps soundnessBits
+      | none => layerNormOpBoundConservative ln2Max eps soundnessBits
+    let attnCoeff := attnSum[l]!
+    let mlpCoeff := mlpWin[l]! * mlpWout[l]!
+    let mlpActDerivBound := actDerivBound
+    let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+    let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
     let C := attnW + mlpW
     layers := layers.push {
       layerIdx := l
@@ -713,17 +738,23 @@ def certifyModelFileGlobal
       ln2VarianceLowerBound? := ln2Var?
       ln1Bound := ln1Bound
       ln2Bound := ln2Bound
+      attnCoeff := attnCoeff
+      mlpCoeff := mlpCoeff
+      mlpActDerivBound := mlpActDerivBound
       attnWeightContribution := attnW
       mlpWeightContribution := mlpW
       C := C
     }
     totalAmp := totalAmp * (1 + C)
+    actDerivBoundMax := max actDerivBoundMax mlpActDerivBound
   let cert : ModelCert := {
     modelPath := path.toString
     inputPath? := inputPath?.map (·.toString)
     inputDelta := inputDelta
     eps := eps
-    actDerivBound := actDerivBound
+    soundnessBits := soundnessBits
+    geluDerivTarget := geluDerivTarget
+    actDerivBound := actDerivBoundMax
     softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
     layers := layers
     totalAmplificationFactor := totalAmp
@@ -990,7 +1021,8 @@ private def fixedLayerNormRowApprox
     (cfg : Fixed10Cfg)
     (row : Array Fixed10Interval)
     (gamma beta : Array Fixed10Interval)
-    (eps : Rat) :
+    (eps : Rat)
+    (soundnessBits : Nat) :
     (Array Fixed10Interval × Rat) :=
   if row.size = 0 || gamma.size ≠ row.size || beta.size ≠ row.size then
     (row, 0)
@@ -1000,9 +1032,9 @@ private def fixedLayerNormRowApprox
       let varLB := fixedVarianceLowerBoundRange cfg row
       let invσUpper : Rat :=
         if varLB ≤ 0 then
-          layerNormOpBoundConservative 1 eps
+          layerNormOpBoundConservative 1 eps soundnessBits
         else
-          layerNormOpBoundLocal 1 varLB eps
+          layerNormOpBoundLocal 1 varLB eps soundnessBits
       let invσUpperInt : Int := ratCeilMulNat invσUpper cfg.scaleNat
       let invσFix : Fixed10Interval := { lo := invσUpperInt, hi := invσUpperInt }
       let mut out : Array Fixed10Interval := Array.mkEmpty row.size
@@ -1415,6 +1447,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
     (path : System.FilePath)
     (layerIdx headIdx queryPos coord : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (targetOffset : Int)
@@ -1457,7 +1490,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
         let mut wv? : Option (Array Int) := none
@@ -1576,7 +1609,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let ln2Union := unionRowsFixed ln2Rows
         let (hidden0, _nWin) ←
@@ -1657,6 +1690,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
     (layerIdx headIdx queryPos : Nat)
     (targetToken negativeToken : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (targetOffset : Int)
@@ -1703,7 +1737,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
         let mut wv? : Option (Array Int) := none
@@ -1825,7 +1859,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let ln2Union := unionRowsFixed ln2Rows
         let (hidden0, _nWin) ←
@@ -1878,7 +1912,8 @@ This is conservative in two key ways to remain streaming/memory-safe:
 private def certifyModelFileLocalText
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat)
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
   let contents ← IO.FS.readFile path
@@ -1940,6 +1975,7 @@ private def certifyModelFileLocalText
       let mut pos : Nat := skipUntil lines 0 (fun s => s.startsWith "LAYER")
       let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
       let mut totalAmp : Rat := 1
+      let mut actDerivBoundMax : Rat := 0
       for l in [:L] do
         -- Ensure we're at the next layer.
         pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
@@ -1948,13 +1984,14 @@ private def certifyModelFileLocalText
         pos := pos + 1
         -- LN1: compute per-row outputs (for union) and min variance LB (for Jacobian bound).
         let p1 := ln1Params.getD l defLn
-        let (ln1Out, ln1VarLB) := layerNormRowApprox residualUnion p1.gamma p1.beta eps
+        let (ln1Out, ln1VarLB) :=
+          layerNormRowApprox residualUnion p1.gamma p1.beta eps soundnessBits
         let ln1MaxAbsGamma := maxAbsOfVector p1.gamma
         let ln1Bound :=
           if ln1VarLB > 0 then
-            layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+            layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
           else
-            layerNormOpBoundConservative ln1MaxAbsGamma eps
+            layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
         let ln1Union := ln1Out
         -- Attention (streaming): use union input box.
         let mut attnUnion : Array RatInterval := zeroIntervals d
@@ -2030,13 +2067,14 @@ private def certifyModelFileLocalText
         residualUnion := addVecIntervals residualUnion attnUnion
         -- LN2: compute per-row outputs and min variance LB.
         let p2 := ln2Params.getD l defLn
-        let (ln2Out, ln2VarLB) := layerNormRowApprox residualUnion p2.gamma p2.beta eps
+        let (ln2Out, ln2VarLB) :=
+          layerNormRowApprox residualUnion p2.gamma p2.beta eps soundnessBits
         let ln2MaxAbsGamma := maxAbsOfVector p2.gamma
         let ln2Bound :=
           if ln2VarLB > 0 then
-            layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
+            layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps soundnessBits
           else
-            layerNormOpBoundConservative ln2MaxAbsGamma eps
+            layerNormOpBoundConservative ln2MaxAbsGamma eps soundnessBits
         let ln2Union := ln2Out
         -- MLP (streaming): W_in, b_in, W_out, b_out.
         pos := skipBlankLines lines pos
@@ -2058,6 +2096,7 @@ private def certifyModelFileLocalText
             | .ok (bin, nextBin) =>
                 pos := nextBin
                 let hiddenB := addConstVec hidden bin
+                let mlpActDerivBound := maxGeluDerivBound geluDerivTarget hiddenB
                 let actHidden := hiddenB.map RatInterval.geluOverapprox
                 pos := skipBlankLines lines pos
                 if !(pos < lines.size && lines[pos]!.trim = "W_out") then
@@ -2076,8 +2115,8 @@ private def certifyModelFileLocalText
                         let mlpOut := addConstVec mlpOut0 bout
                         residualUnion := addVecIntervals residualUnion mlpOut
                         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
-                        let mlpCoeff := nWin * actDerivBound * nWout
-                        let mlpW := ln2Bound * mlpCoeff
+                        let mlpCoeff := nWin * nWout
+                        let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
                         let C := attnW + mlpW
                         layers := layers.push {
                           layerIdx := l
@@ -2087,18 +2126,24 @@ private def certifyModelFileLocalText
                           ln2VarianceLowerBound? := some ln2VarLB
                           ln1Bound := ln1Bound
                           ln2Bound := ln2Bound
+                          attnCoeff := attnCoeff
+                          mlpCoeff := mlpCoeff
+                          mlpActDerivBound := mlpActDerivBound
                           attnWeightContribution := attnW
                           mlpWeightContribution := mlpW
                           C := C
                         }
                         totalAmp := totalAmp * (1 + C)
+                        actDerivBoundMax := max actDerivBoundMax mlpActDerivBound
                         pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
       let cert : ModelCert := {
         modelPath := path.toString
         inputPath? := some inputPath.toString
         inputDelta := inputDelta
         eps := eps
-        actDerivBound := actDerivBound
+        soundnessBits := soundnessBits
+        geluDerivTarget := geluDerivTarget
+        actDerivBound := actDerivBoundMax
         softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
         layers := layers
         totalAmplificationFactor := totalAmp
@@ -2110,13 +2155,14 @@ private def certifyModelFileLocalText
 private def certifyModelFileLocal
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat)
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
   -- Prefer cached fixed-point path; fall back to the (slow) Rat-based path on any cache error.
   match (← ensureSoundCache path) with
   | .error _ =>
-      certifyModelFileLocalText path eps actDerivBound inputPath inputDelta
+      certifyModelFileLocalText path eps geluDerivTarget soundnessBits inputPath inputDelta
   | .ok (cpath, hdr) =>
       let cfg : Fixed10Cfg := scaleCfgOfPow10 hdr.scalePow10.toNat
       let slack : Int := fixedUlpSlack
@@ -2137,6 +2183,7 @@ private def certifyModelFileLocal
           let mut rr ← Nfp.Untrusted.SoundCacheIO.I32Reader.init ch
           let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
           let mut totalAmp : Rat := 1
+          let mut actDerivBoundMax : Rat := 0
           for l in [:L] do
             -- LN params from cache
             let (ln1Gamma, rr1) ← readVecIntervals rr modelDim slack
@@ -2145,16 +2192,17 @@ private def certifyModelFileLocal
             let (ln2Beta, rr4) ← readVecIntervals rr3 modelDim slack
             rr := rr4
             -- LN1
-            let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion ln1Gamma ln1Beta eps
+            let (ln1Out, ln1VarLB) :=
+              fixedLayerNormRowApprox cfg residualUnion ln1Gamma ln1Beta eps soundnessBits
             let ln1MaxAbsGamma : Rat :=
               Rat.normalize (maxAbsVecFixed ln1Gamma) cfg.scaleNat (den_nz := by
                 have h10pos : (0 : Nat) < 10 := by decide
                 exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
             let ln1Bound :=
               if ln1VarLB > 0 then
-                layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+                layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
               else
-                layerNormOpBoundConservative ln1MaxAbsGamma eps
+                layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
             -- Attention (streaming from cache)
             let mut attnUnion : Array Fixed10Interval :=
               Array.replicate modelDim { lo := 0, hi := 0 }
@@ -2176,16 +2224,17 @@ private def certifyModelFileLocal
             attnUnion := addVecFixed attnUnion attnBias
             residualUnion := addVecFixed residualUnion attnUnion
             -- LN2
-            let (ln2Out, ln2VarLB) := fixedLayerNormRowApprox cfg residualUnion ln2Gamma ln2Beta eps
+            let (ln2Out, ln2VarLB) :=
+              fixedLayerNormRowApprox cfg residualUnion ln2Gamma ln2Beta eps soundnessBits
             let ln2MaxAbsGamma : Rat :=
               Rat.normalize (maxAbsVecFixed ln2Gamma) cfg.scaleNat (den_nz := by
                 have h10pos : (0 : Nat) < 10 := by decide
                 exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
             let ln2Bound :=
               if ln2VarLB > 0 then
-                layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
+                layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps soundnessBits
               else
-                layerNormOpBoundConservative ln2MaxAbsGamma eps
+                layerNormOpBoundConservative ln2MaxAbsGamma eps soundnessBits
             -- MLP
             let (hidden0, nWin, rrWin) ←
               consumeMatrixMulAndNormInfFixed cfg slack rr modelDim hiddenDim ln2Out
@@ -2193,6 +2242,7 @@ private def certifyModelFileLocal
             let (bIn, rrBin) ← readVecIntervals rr hiddenDim slack
             rr := rrBin
             let hiddenB := addVecFixed hidden0 bIn
+            let mlpActDerivBound := maxGeluDerivBoundFixed cfg geluDerivTarget hiddenB
             let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
             let (mlpOut0, nWout, rrWout) ←
               consumeMatrixMulAndNormInfFixed cfg slack rr hiddenDim modelDim actHidden
@@ -2202,8 +2252,8 @@ private def certifyModelFileLocal
             let mlpOut := addVecFixed mlpOut0 bOut
             residualUnion := addVecFixed residualUnion mlpOut
             let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
-            let mlpCoeff := nWin * actDerivBound * nWout
-            let mlpW := ln2Bound * mlpCoeff
+            let mlpCoeff := nWin * nWout
+            let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
             let C := attnW + mlpW
             layers := layers.push {
               layerIdx := l
@@ -2213,17 +2263,23 @@ private def certifyModelFileLocal
               ln2VarianceLowerBound? := some ln2VarLB
               ln1Bound := ln1Bound
               ln2Bound := ln2Bound
+              attnCoeff := attnCoeff
+              mlpCoeff := mlpCoeff
+              mlpActDerivBound := mlpActDerivBound
               attnWeightContribution := attnW
               mlpWeightContribution := mlpW
               C := C
             }
             totalAmp := totalAmp * (1 + C)
+            actDerivBoundMax := max actDerivBoundMax mlpActDerivBound
           let cert : ModelCert := {
             modelPath := path.toString
             inputPath? := some inputPath.toString
             inputDelta := inputDelta
             eps := eps
-            actDerivBound := actDerivBound
+            soundnessBits := soundnessBits
+            geluDerivTarget := geluDerivTarget
+            actDerivBound := actDerivBoundMax
             softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
             layers := layers
             totalAmplificationFactor := totalAmp
@@ -2235,7 +2291,8 @@ private def certifyModelFileLocal
 private def certifyModelFileLocalBinary
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat)
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat) : IO (Except String ModelCert) := do
   let scalePow10 := defaultBinaryScalePow10
@@ -2257,18 +2314,20 @@ private def certifyModelFileLocalBinary
     let mut residualUnion := residualUnion0
     let mut layers : Array LayerAmplificationCert := Array.mkEmpty hdr.numLayers
     let mut totalAmp : Rat := 1
+    let mut actDerivBoundMax : Rat := 0
     for l in [:hdr.numLayers] do
       let p1 := ln1Params.getD l defP
-      let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps
+      let (ln1Out, ln1VarLB) :=
+        fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps soundnessBits
       let ln1MaxAbsGamma : Rat :=
         Rat.normalize (maxAbsVecFixed p1.gamma) cfg.scaleNat (den_nz := by
           have h10pos : (0 : Nat) < 10 := by decide
           exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
       let ln1Bound :=
         if ln1VarLB > 0 then
-          layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+          layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
         else
-          layerNormOpBoundConservative ln1MaxAbsGamma eps
+          layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
       let mut attnUnion : Array Fixed10Interval :=
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       let mut attnCoeff : Rat := 0
@@ -2291,21 +2350,23 @@ private def certifyModelFileLocalBinary
       attnUnion := addVecFixed attnUnion attnBias
       residualUnion := addVecFixed residualUnion attnUnion
       let p2 := ln2Params.getD l defP
-      let (ln2Out, ln2VarLB) := fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps
+      let (ln2Out, ln2VarLB) :=
+        fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps soundnessBits
       let ln2MaxAbsGamma : Rat :=
         Rat.normalize (maxAbsVecFixed p2.gamma) cfg.scaleNat (den_nz := by
           have h10pos : (0 : Nat) < 10 := by decide
           exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
       let ln2Bound :=
         if ln2VarLB > 0 then
-          layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
+          layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps soundnessBits
         else
-          layerNormOpBoundConservative ln2MaxAbsGamma eps
+          layerNormOpBoundConservative ln2MaxAbsGamma eps soundnessBits
       let (hidden0, nWin) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
       let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
       let hiddenB := addVecFixed hidden0 bIn
+      let mlpActDerivBound := maxGeluDerivBoundFixed cfg geluDerivTarget hiddenB
       let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
       let (mlpOut0, nWout) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
@@ -2314,8 +2375,8 @@ private def certifyModelFileLocalBinary
       let mlpOut := addVecFixed mlpOut0 bOut
       residualUnion := addVecFixed residualUnion mlpOut
       let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
-      let mlpCoeff := nWin * actDerivBound * nWout
-      let mlpW := ln2Bound * mlpCoeff
+      let mlpCoeff := nWin * nWout
+      let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
       let C := attnW + mlpW
       layers := layers.push {
         layerIdx := l
@@ -2325,11 +2386,15 @@ private def certifyModelFileLocalBinary
         ln2VarianceLowerBound? := some ln2VarLB
         ln1Bound := ln1Bound
         ln2Bound := ln2Bound
+        attnCoeff := attnCoeff
+        mlpCoeff := mlpCoeff
+        mlpActDerivBound := mlpActDerivBound
         attnWeightContribution := attnW
         mlpWeightContribution := mlpW
         C := C
       }
       totalAmp := totalAmp * (1 + C)
+      actDerivBoundMax := max actDerivBoundMax mlpActDerivBound
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
@@ -2339,7 +2404,9 @@ private def certifyModelFileLocalBinary
       inputPath? := some inputPath.toString
       inputDelta := inputDelta
       eps := eps
-      actDerivBound := actDerivBound
+      soundnessBits := soundnessBits
+      geluDerivTarget := geluDerivTarget
+      actDerivBound := actDerivBoundMax
       softmaxJacobianNormInfWorst := softmaxJacobianNormInfWorst
       layers := layers
       totalAmplificationFactor := totalAmp
@@ -2355,6 +2422,7 @@ private def certifyHeadBoundsLocalBinary
     (eps : Rat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
+    (soundnessBits : Nat)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String (Array HeadLocalContributionCert)) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
@@ -2377,16 +2445,17 @@ private def certifyHeadBoundsLocalBinary
       Array.mkEmpty (hdr.numLayers * hdr.numHeads)
     for l in [:hdr.numLayers] do
       let p1 := ln1Params.getD l defP
-      let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps
+      let (ln1Out, ln1VarLB) :=
+        fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps soundnessBits
       let ln1MaxAbsGamma : Rat :=
         Rat.normalize (maxAbsVecFixed p1.gamma) cfg.scaleNat (den_nz := by
           have h10pos : (0 : Nat) < 10 := by decide
           exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
       let ln1Bound :=
         if ln1VarLB > 0 then
-          layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
+          layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
         else
-          layerNormOpBoundConservative ln1MaxAbsGamma eps
+          layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
       let mut attnUnion : Array Fixed10Interval :=
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       for hIdx in [:hdr.numHeads] do
@@ -2411,6 +2480,7 @@ private def certifyHeadBoundsLocalBinary
         let cert : HeadLocalContributionCert := {
           layerIdx := l
           headIdx := hIdx
+          soundnessBits := soundnessBits
           ln1MaxAbsGamma := ln1MaxAbsGamma
           ln1VarianceLowerBound := ln1VarLB
           ln1Bound := ln1Bound
@@ -2430,7 +2500,7 @@ private def certifyHeadBoundsLocalBinary
       residualUnion := addVecFixed residualUnion attnUnion
       let p2 := ln2Params.getD l defP
       let (ln2Out, _ln2VarLB) :=
-        fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps
+        fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps soundnessBits
       let (hidden0, _nWin) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
@@ -2455,6 +2525,7 @@ private def certifyHeadPatternLocalBinary
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (targetOffset : Int)
@@ -2495,7 +2566,7 @@ private def certifyHeadPatternLocalBinary
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
         let mut wq? : Option (Array Int) := none
@@ -2662,7 +2733,7 @@ private def certifyHeadPatternLocalBinary
           let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
           for row in residuals do
             let (ln2Out, _ln2VarLB) :=
-              fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+              fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
             ln2Rows := ln2Rows.push ln2Out
           let perRowLayers : Nat := perRowPatternLayers
           if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
@@ -2718,7 +2789,7 @@ private def certifyHeadPatternLocalBinary
           let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
           for row in residuals do
             let (ln2Out, _ln2VarLB) :=
-              fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+              fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
             ln2Rows := ln2Rows.push ln2Out
           let ln2Union := unionRowsFixed ln2Rows
           let (hidden0, _nWin) ←
@@ -2746,6 +2817,7 @@ private def certifyHeadPatternBestMatchLocalBinary
     (layerIdx headIdx : Nat)
     (queryPos? : Option Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (targetOffset : Int)
@@ -2793,7 +2865,7 @@ private def certifyHeadPatternBestMatchLocalBinary
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
         let mut wq? : Option (Array Int) := none
@@ -2938,7 +3010,7 @@ private def certifyHeadPatternBestMatchLocalBinary
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let perRowLayers : Nat := perRowPatternLayers
         if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
@@ -2977,6 +3049,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (targetOffset : Int)
@@ -3017,7 +3090,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
         let mut wq? : Option (Array Int) := none
@@ -3191,7 +3264,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let perRowLayers : Nat := perRowPatternLayers
         if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
@@ -3231,6 +3304,7 @@ private def certifyHeadValueLowerBoundLocalBinary
     (pattern : HeadPatternCert)
     (coord : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (maxSeqLen : Nat)
@@ -3271,7 +3345,7 @@ private def certifyHeadValueLowerBoundLocalBinary
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = pattern.layerIdx then
         let mut wv? : Option (Array Int) := none
@@ -3409,7 +3483,7 @@ private def certifyHeadValueLowerBoundLocalBinary
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let ln2Union := unionRowsFixed ln2Rows
         let (hidden0, _nWin) ←
@@ -3437,6 +3511,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
     (pattern : HeadPatternCert)
     (targetToken negativeToken : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath : System.FilePath)
     (inputDelta : Rat)
     (maxSeqLen : Nat)
@@ -3481,7 +3556,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
       let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
       for row in residuals do
         let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps
+          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = pattern.layerIdx then
         let mut wv? : Option (Array Int) := none
@@ -3622,7 +3697,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
           let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps
+            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
           ln2Rows := ln2Rows.push ln2Out
         let ln2Union := unionRowsFixed ln2Rows
         let (hidden0, _nWin) ←
@@ -3653,7 +3728,8 @@ Otherwise it falls back to the weight-only global certificate.
 def certifyModelFile
     (path : System.FilePath)
     (eps : Rat)
-    (actDerivBound : Rat := defaultActDerivBound)
+    (geluDerivTarget : GeluDerivTarget)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -3664,20 +3740,20 @@ def certifyModelFile
     match inputPath? with
     | none =>
         if inputDelta = 0 then
-          certifyModelFileGlobalBinary path eps actDerivBound
+          certifyModelFileGlobalBinary path eps geluDerivTarget soundnessBits
         else
-          certifyModelFileLocalBinary path eps actDerivBound path inputDelta
+          certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits path inputDelta
     | some ip =>
-        certifyModelFileLocalBinary path eps actDerivBound ip inputDelta
+        certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits ip inputDelta
   else
     match inputPath? with
     | none =>
-        certifyModelFileGlobal path eps actDerivBound
+        certifyModelFileGlobal path eps geluDerivTarget soundnessBits
           (inputPath? := none) (inputDelta := inputDelta)
     | some ip =>
         if inputDelta < 0 then
           return .error "delta must be nonnegative"
-        certifyModelFileLocal path eps actDerivBound ip inputDelta
+        certifyModelFileLocal path eps geluDerivTarget soundnessBits ip inputDelta
 
 /-- Compute weight-only per-head contribution bounds for a `.nfpt` model file. -/
 def certifyHeadBounds
@@ -3697,6 +3773,7 @@ def certifyHeadBoundsLocal
     (eps : Rat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
     (scalePow10 : Nat := defaultBinaryScalePow10) :
     IO (Except String (Array HeadLocalContributionCert)) := do
   if inputDelta < 0 then
@@ -3705,7 +3782,7 @@ def certifyHeadBoundsLocal
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
-    certifyHeadBoundsLocalBinary path eps inputPath inputDelta scalePow10
+    certifyHeadBoundsLocalBinary path eps inputPath inputDelta soundnessBits scalePow10
   else
     return .error "local head contribution bounds require NFP_BINARY_V1"
 
@@ -3714,6 +3791,7 @@ def certifyHeadPatternLocal
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3729,7 +3807,7 @@ def certifyHeadPatternLocal
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
-    certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
+    certifyHeadPatternLocalBinary path layerIdx headIdx eps soundnessBits inputPath inputDelta
       targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
@@ -3740,6 +3818,7 @@ def certifyHeadPatternBestMatchLocal
     (layerIdx headIdx : Nat)
     (queryPos? : Option Nat := none)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3755,7 +3834,8 @@ def certifyHeadPatternBestMatchLocal
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
-    certifyHeadPatternBestMatchLocalBinary path layerIdx headIdx queryPos? eps inputPath
+    certifyHeadPatternBestMatchLocalBinary path layerIdx headIdx queryPos? eps soundnessBits
+      inputPath
       inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers
       perRowPatternLayers scalePow10
   else
@@ -3766,6 +3846,7 @@ def certifyHeadPatternBestMatchLocalSweep
     (path : System.FilePath)
     (layerIdx headIdx : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3781,7 +3862,7 @@ def certifyHeadPatternBestMatchLocalSweep
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
-    certifyHeadPatternBestMatchLocalBinarySweep path layerIdx headIdx eps inputPath
+    certifyHeadPatternBestMatchLocalBinarySweep path layerIdx headIdx eps soundnessBits inputPath
       inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers
       scalePow10
   else
@@ -3792,6 +3873,7 @@ def certifyHeadValueLowerBoundLocal
     (path : System.FilePath)
     (layerIdx headIdx coord : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3808,13 +3890,13 @@ def certifyHeadValueLowerBoundLocal
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     let patternE ←
-      certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
+      certifyHeadPatternLocalBinary path layerIdx headIdx eps soundnessBits inputPath inputDelta
         targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match patternE with
     | .error e => return .error e
     | .ok pattern =>
-        certifyHeadValueLowerBoundLocalBinary path pattern coord eps inputPath inputDelta
-          maxSeqLen scalePow10
+        certifyHeadValueLowerBoundLocalBinary path pattern coord eps soundnessBits inputPath
+          inputDelta maxSeqLen scalePow10
   else
     return .error "head value bounds require NFP_BINARY_V1"
 
@@ -3823,6 +3905,7 @@ def certifyHeadLogitDiffLowerBoundLocal
     (path : System.FilePath)
     (layerIdx headIdx targetToken negativeToken : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (targetOffset : Int := -1)
@@ -3839,13 +3922,13 @@ def certifyHeadLogitDiffLowerBoundLocal
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     let patternE ←
-      certifyHeadPatternLocalBinary path layerIdx headIdx eps inputPath inputDelta
+      certifyHeadPatternLocalBinary path layerIdx headIdx eps soundnessBits inputPath inputDelta
         targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match patternE with
     | .error e => return .error e
     | .ok pattern =>
         certifyHeadLogitDiffLowerBoundLocalBinary path pattern targetToken negativeToken
-          eps inputPath inputDelta maxSeqLen scalePow10
+          eps soundnessBits inputPath inputDelta maxSeqLen scalePow10
   else
     return .error "head logit bounds require NFP_BINARY_V1"
 
@@ -3854,6 +3937,7 @@ def certifyInductionSound
     (path : System.FilePath)
     (layer1 head1 layer2 head2 coord : Nat)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (offset1 : Int := -1)
@@ -3873,20 +3957,20 @@ def certifyInductionSound
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     let p1E ←
-      certifyHeadPatternLocalBinary path layer1 head1 eps inputPath inputDelta
+      certifyHeadPatternLocalBinary path layer1 head1 eps soundnessBits inputPath inputDelta
         offset1 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
-          certifyHeadPatternLocalBinary path layer2 head2 eps inputPath inputDelta
+          certifyHeadPatternLocalBinary path layer2 head2 eps soundnessBits inputPath inputDelta
             offset2 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
         match p2E with
         | .error e => return .error e
         | .ok p2 =>
             let vE ←
-              certifyHeadValueLowerBoundLocalBinary path p2 coord eps inputPath inputDelta
-                maxSeqLen scalePow10
+              certifyHeadValueLowerBoundLocalBinary path p2 coord eps soundnessBits inputPath
+                inputDelta maxSeqLen scalePow10
             match vE with
             | .error e => return .error e
             | .ok v =>
@@ -3895,7 +3979,7 @@ def certifyInductionSound
                   | none, none => pure (.ok none)
                   | some targetToken, some negativeToken => do
                       let logitE ← certifyHeadLogitDiffLowerBoundLocalBinary path p2
-                        targetToken negativeToken eps inputPath inputDelta
+                        targetToken negativeToken eps soundnessBits inputPath inputDelta
                         maxSeqLen scalePow10
                       pure (logitE.map some)
                   | _, _ =>
@@ -3923,6 +4007,7 @@ def certifyInductionSoundBestMatch
     (layer1 head1 layer2 head2 coord : Nat)
     (queryPos? : Option Nat := none)
     (eps : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
     (offset1 : Int := -1)
@@ -3942,21 +4027,22 @@ def certifyInductionSoundBestMatch
   if firstLine = "NFP_BINARY_V1" then
     let inputPath := inputPath?.getD path
     let p1E ←
-      certifyHeadPatternBestMatchLocalBinary path layer1 head1 queryPos? eps inputPath
-        inputDelta offset1 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+      certifyHeadPatternBestMatchLocalBinary path layer1 head1 queryPos? eps soundnessBits
+        inputPath inputDelta offset1 maxSeqLen tightPattern tightPatternLayers
+        perRowPatternLayers scalePow10
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
-          certifyHeadPatternBestMatchLocalBinary path layer2 head2 queryPos? eps inputPath
-            inputDelta offset2 maxSeqLen tightPattern tightPatternLayers
+          certifyHeadPatternBestMatchLocalBinary path layer2 head2 queryPos? eps soundnessBits
+            inputPath inputDelta offset2 maxSeqLen tightPattern tightPatternLayers
             perRowPatternLayers scalePow10
         match p2E with
         | .error e => return .error e
         | .ok p2 =>
             let vE ←
               certifyHeadValueLowerBoundLocalBinaryAt path layer2 head2 p2.queryPos coord
-                eps inputPath inputDelta offset2 p2.bestMatchWeightLowerBound
+                eps soundnessBits inputPath inputDelta offset2 p2.bestMatchWeightLowerBound
                 maxSeqLen scalePow10
             match vE with
             | .error e => return .error e
@@ -3967,7 +4053,7 @@ def certifyInductionSoundBestMatch
                   | some targetToken, some negativeToken => do
                       let logitE ←
                         certifyHeadLogitDiffLowerBoundLocalBinaryAt path layer2 head2 p2.queryPos
-                          targetToken negativeToken eps inputPath inputDelta offset2
+                          targetToken negativeToken eps soundnessBits inputPath inputDelta offset2
                           p2.bestMatchWeightLowerBound maxSeqLen scalePow10
                       pure (logitE.map some)
                   | _, _ =>

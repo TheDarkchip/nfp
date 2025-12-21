@@ -278,6 +278,8 @@ but you **must** update this list in the same commit.
   - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
 - `Sound/Decimal.lean`
   - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
+- `Sound/Activation.lean`
+  - Activation-derivative metadata + header parsing helpers for SOUND mode.
 - `Sound/ModelHeader.lean`
   - Pure header parsing helpers for SOUND metadata (e.g., LayerNorm epsilon).
 - `Sound/BinaryPure.lean`

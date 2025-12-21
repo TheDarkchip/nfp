@@ -34,11 +34,11 @@ lake exe nfp analyze model.nfpt --threshold 0.1 --output report.txt
 lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 
 # Generate a sound-mode certificate report
-lake exe nfp certify model.nfpt --actDeriv 2
+lake exe nfp certify model.nfpt
 
 # Local (input-dependent) sound-mode certificate report
 # (NFP_BINARY_V1 always embeds inputs; legacy text requires an EMBEDDINGS section.)
-lake exe nfp certify model.nfpt --delta 1/100 --actDeriv 2
+lake exe nfp certify model.nfpt --delta 1/100
 
 # Sound per-head contribution bounds (global or local with --delta)
 lake exe nfp head_bounds model.nfpt --delta 1/100
@@ -811,7 +811,7 @@ private structure CertifyArgs where
   modelPath : System.FilePath
   modelPathStr : String
   inputPath? : Option System.FilePath
-  actDerivStr : String
+  soundnessBits : Nat
   deltaFlag? : Option String
   deltaStr : String
   outputPath? : Option System.FilePath
@@ -819,23 +819,19 @@ private structure CertifyArgs where
 private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
   let modelPathStr := p.positionalArg! "model" |>.as! String
   let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
-  let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
+  let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   { modelPath := ⟨modelPathStr⟩
     modelPathStr := modelPathStr
     inputPath? := inputPath?
-    actDerivStr := actDerivStr
+    soundnessBits := soundnessBits
     deltaFlag? := deltaFlag?
     deltaStr := deltaStr
     outputPath? := outputPath? }
 
 private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.ModelCert := do
-  let actDeriv ←
-    match Nfp.Sound.parseRat args.actDerivStr with
-    | .ok r => pure r
-    | .error e => throw s!"invalid --actDeriv '{args.actDerivStr}': {e}"
   let delta ←
     match Nfp.Sound.parseRat args.deltaStr with
     | .ok r => pure r
@@ -860,7 +856,7 @@ private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.
 EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
 containing EMBEDDINGS or omit --delta for global certification."
   let cert ← ExceptT.mk <|
-    Nfp.Sound.certifyModelFile args.modelPath actDeriv
+    Nfp.Sound.certifyModelFile args.modelPath args.soundnessBits
       (inputPath? := inputPath?) (inputDelta := delta)
   return cert
 
@@ -869,6 +865,7 @@ private structure HeadBoundsArgs where
   inputPath? : Option System.FilePath
   deltaFlag? : Option String
   deltaStr : String
+  soundnessBits : Nat
   scalePow10 : Nat
   outputPath? : Option System.FilePath
 
@@ -877,23 +874,26 @@ private def parseHeadBoundsArgs (p : Parsed) : HeadBoundsArgs :=
   let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
+  let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   { modelPath := ⟨modelPathStr⟩
     inputPath? := inputPath?
     deltaFlag? := deltaFlag?
     deltaStr := deltaStr
+    soundnessBits := soundnessBits
     scalePow10 := scalePow10
     outputPath? := outputPath? }
 
 private def formatHeadBoundsLocal
     (heads : Array Nfp.Sound.HeadLocalContributionCert)
     (delta : Rat)
+    (soundnessBits : Nat)
     (inputPath? : Option System.FilePath)
     (modelPath : System.FilePath) : String :=
   let header :=
     "SOUND per-head bounds (local): " ++
-      s!"delta={delta}, input={inputPath?.getD modelPath}\n"
+      s!"delta={delta}, soundnessBits={soundnessBits}, input={inputPath?.getD modelPath}\n"
   let body :=
     heads.foldl (fun acc h =>
       acc ++
@@ -943,8 +943,8 @@ EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <in
 containing EMBEDDINGS or omit --delta for global head bounds."
     let heads ← ExceptT.mk <|
       Nfp.Sound.certifyHeadBoundsLocal args.modelPath
-        (inputPath? := inputPath?) (inputDelta := delta)
-    return formatHeadBoundsLocal heads delta inputPath? args.modelPath
+        (inputPath? := inputPath?) (inputDelta := delta) (soundnessBits := args.soundnessBits)
+    return formatHeadBoundsLocal heads delta args.soundnessBits inputPath? args.modelPath
   else
     let heads ← ExceptT.mk <|
       Nfp.Sound.certifyHeadBounds args.modelPath (scalePow10 := args.scalePow10)
@@ -955,6 +955,7 @@ private structure HeadPatternArgs where
   layerIdx : Nat
   headIdx : Nat
   offset : Int
+  soundnessBits : Nat
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
@@ -971,6 +972,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
   let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
+  let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
   let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
@@ -986,6 +988,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
     layerIdx := layerIdx
     headIdx := headIdx
     offset := offset
+    soundnessBits := soundnessBits
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
@@ -1055,7 +1058,8 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
       let certs ← ExceptT.mk <|
         Nfp.Sound.certifyHeadPatternBestMatchLocalSweep args.modelPath args.layerIdx args.headIdx
           (inputPath? := inputPath?) (inputDelta := delta)
-          (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+          (soundnessBits := args.soundnessBits) (targetOffset := args.offset)
+          (maxSeqLen := args.maxSeqLen)
           (tightPattern := args.tightPattern)
           (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
@@ -1064,7 +1068,8 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
       let cert ← ExceptT.mk <|
         Nfp.Sound.certifyHeadPatternBestMatchLocal args.modelPath args.layerIdx args.headIdx
           (queryPos? := args.queryPos?) (inputPath? := inputPath?)
-          (inputDelta := delta) (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+          (inputDelta := delta) (soundnessBits := args.soundnessBits)
+          (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
           (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
       return formatHeadPatternBestMatch cert
@@ -1074,7 +1079,8 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
     let cert ← ExceptT.mk <|
       Nfp.Sound.certifyHeadPatternLocal args.modelPath args.layerIdx args.headIdx
         (inputPath? := inputPath?) (inputDelta := delta)
-        (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+        (soundnessBits := args.soundnessBits) (targetOffset := args.offset)
+        (maxSeqLen := args.maxSeqLen)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
     return formatHeadPatternLocal cert
@@ -1125,6 +1131,7 @@ private structure InductionCertArgs where
   offset2 : Int
   targetToken? : Option Nat
   negativeToken? : Option Nat
+  soundnessBits : Nat
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
@@ -1148,6 +1155,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let offset2 := p.flag? "offset2" |>.map (·.as! Int) |>.getD (-1)
   let targetToken := p.flag? "target" |>.map (·.as! Nat)
   let negativeToken := p.flag? "negative" |>.map (·.as! Nat)
+  let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
   let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
@@ -1186,6 +1194,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     offset2 := offset2
     targetToken? := targetToken
     negativeToken? := negativeToken
+    soundnessBits := soundnessBits
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
@@ -1266,8 +1275,9 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
       Nfp.Sound.certifyInductionSoundBestMatch args.modelPath
         args.layer1 args.head1 args.layer2 args.head2 args.coord
         (queryPos? := args.queryPos?) (inputPath? := args.inputPath?)
-        (inputDelta := args.delta) (offset1 := args.offset1) (offset2 := args.offset2)
-        (maxSeqLen := args.maxSeqLen) (tightPattern := args.tightPattern)
+        (inputDelta := args.delta) (soundnessBits := args.soundnessBits)
+        (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (tightPattern := args.tightPattern)
         (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
@@ -1277,6 +1287,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
       Nfp.Sound.certifyInductionSound args.modelPath
         args.layer1 args.head1 args.layer2 args.head2 args.coord
         (inputPath? := args.inputPath?) (inputDelta := args.delta)
+        (soundnessBits := args.soundnessBits)
         (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
@@ -1497,13 +1508,13 @@ def inductionCmd : Cmd := `[Cli|
 def certifyCmd : Cmd := `[Cli|
   certify VIA runCertify;
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust). \
-LayerNorm epsilon is read from the model header."
+LayerNorm epsilon and GeLU kind are read from the model header."
   FLAGS:
     input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local certification (default: 0; \
 if --input is omitted, uses EMBEDDINGS in the model file when present)"
-    actDeriv : String; "Activation derivative bound (default: 2)"
+    soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
@@ -1519,6 +1530,7 @@ LayerNorm epsilon is read from the model header."
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0; if --input is omitted, \
 uses EMBEDDINGS in the model file when present)"
+    soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p for global bounds (default: 9)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
@@ -1543,6 +1555,7 @@ LayerNorm epsilon is read from the model header."
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
+    soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
@@ -1572,6 +1585,7 @@ LayerNorm epsilon is read from the model header."
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
+    soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
