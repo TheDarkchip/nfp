@@ -50,6 +50,8 @@ end HeadContributionCert
 structure HeadLocalContributionCert where
   layerIdx : Nat
   headIdx : Nat
+  /-- Precision in dyadic bits for local LayerNorm bounds. -/
+  soundnessBits : Nat
   ln1MaxAbsGamma : Rat
   ln1VarianceLowerBound : Rat
   ln1Bound : Rat
@@ -68,9 +70,9 @@ def Valid (eps : Rat) (c : HeadLocalContributionCert) : Prop :=
   0 < eps ∧
     c.ln1Bound =
       (if c.ln1VarianceLowerBound > 0 then
-        layerNormOpBoundLocal c.ln1MaxAbsGamma c.ln1VarianceLowerBound eps
+        layerNormOpBoundLocal c.ln1MaxAbsGamma c.ln1VarianceLowerBound eps c.soundnessBits
       else
-        layerNormOpBoundConservative c.ln1MaxAbsGamma eps) ∧
+        layerNormOpBoundConservative c.ln1MaxAbsGamma eps c.soundnessBits) ∧
     c.qkFactorBound = c.wqOpBound * c.wkOpBound ∧
     c.attnWeightContribution =
       c.ln1Bound * softmaxJacobianNormInfWorst * c.wvOpBound * c.woOpBound

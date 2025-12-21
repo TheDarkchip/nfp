@@ -73,6 +73,8 @@ structure VerificationConfig where
   energyRelTol : Float := 0.05
   /-- Absolute fallback tolerance for tiny-norm heads. -/
   energyAbsTol : Float := 1e-6
+  /-- Precision (bits) for dyadic sqrt bounds in SOUND-mode checks. -/
+  soundnessBits : Nat := 20
   /-- Whether to run attention causally (autoregressive). -/
   causal : Bool := true
 
