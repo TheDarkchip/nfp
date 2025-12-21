@@ -259,7 +259,7 @@ noncomputable def layerNormJacobian (x : n → ℝ) : SignedMixer n n where
     let diagonal := if i = j then 1 else 0
     (1 / σ) * (diagonal - n_inv - centered_j * centered_i / (Fintype.card n * σ^2))
 
-/-- Diagonal linear map as a `SignedMixer`: (diag d) · x. -/
+/-- Diagonal linear map as a `SignedMixer`: x · diag d (row-vector convention). -/
 noncomputable def diagMixer (d : n → ℝ) : SignedMixer n n where
   w := fun i j => if i = j then d j else 0
 
