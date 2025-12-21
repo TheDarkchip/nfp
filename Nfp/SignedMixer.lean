@@ -293,7 +293,7 @@ end SignedMixer
 /-! ## Affine Mixer -/
 
 /-- An affine mixer: a signed linear map plus a bias term.
-This captures the full `y = Wx + b` form of neural network layers. -/
+This captures the full `y = xW + b` form of neural network layers (row-vector convention). -/
 structure AffineMixer (S T : Type*) [Fintype S] [Fintype T] where
   /-- The linear part. -/
   linear : SignedMixer S T
@@ -304,7 +304,7 @@ namespace AffineMixer
 
 variable {S T U : Type*} [Fintype S] [Fintype T] [Fintype U]
 
-/-- Apply an affine mixer to a vector: Wx + b. -/
+/-- Apply an affine mixer to a vector: xW + b. -/
 noncomputable def apply (M : AffineMixer S T) (v : S → ℝ) : T → ℝ :=
   fun j => M.linear.apply v j + M.bias j
 

@@ -89,17 +89,7 @@ def mean (xs : Array RatInterval) : RatInterval :=
 
 We return a conservative lower bound on `var(x)` for all `x` in the box.
 
-We use two ingredients:
-
-1. **Range lower bound (fast, O(n))**.
-   If the intersection `⋂ᵢ [lᵢ,uᵢ]` is empty, then the box cannot contain a constant vector.
-   Let `δ := max(0, maxᵢ lᵢ - minᵢ uᵢ)`. Then every realization `x` has `max(x)-min(x) ≥ δ`.
-   The minimum variance among vectors of length `n` with range at least `δ` is
-   `δ^2 / (2n)`, attained (for exact range `δ`) by one entry at each extreme and all remaining
-   entries at the midpoint. Hence `var(x) ≥ δ^2 / (2n)` for all `x` in the box.
-
-2. **Exact convex minimization (optional, tighter for small `n`)**.
-   For small dimension we can compute the exact minimum via a 1D convex minimization:
+We compute the exact minimum via a 1D convex minimization:
 
 `var(x) = (1/n) ∑ (xᵢ - mean(x))^2 = min_c (1/n) ∑ (xᵢ - c)^2`.
 
