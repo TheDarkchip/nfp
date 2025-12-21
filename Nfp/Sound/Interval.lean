@@ -111,14 +111,11 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
     Id.run do
       let n : Nat := xs.size
       let nRat : Rat := (n : Nat)
-
       -- Normalize endpoints defensively.
       let normed : Array RatInterval :=
         xs.map (fun x => { lo := min x.lo x.hi, hi := max x.lo x.hi })
-
       if n < 2 then
         return 0
-
       -- Build sorted breakpoint lists for `lo` and `hi` with squared endpoints for O(1) evaluation.
       let mut enters : Array (Rat × Rat) := Array.mkEmpty n
       let mut leaves : Array (Rat × Rat) := Array.mkEmpty n
@@ -131,14 +128,11 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
         leaves := leaves.push (hi, ratSq hi)
         sumLeft := sumLeft + lo
         sumLeftSq := sumLeftSq + ratSq lo
-
       -- Exact minimization over the breakpoints (O(n log n)).
-
       let entersSorted := enters.qsort (fun a b => a.1 ≤ b.1)
       let leavesSorted := leaves.qsort (fun a b => a.1 ≤ b.1)
       let breaksAll :=
         (entersSorted.map (fun p => p.1) ++ leavesSorted.map (fun p => p.1)).qsort (· ≤ ·)
-
       -- Unique-ify breakpoints.
       let mut breaks : Array Rat := Array.mkEmpty breaksAll.size
       for b in breaksAll do
@@ -148,7 +142,6 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
           pure ()
         else
           breaks := breaks.push b
-
       let evalG (c : Rat) (leftCount rightCount : Nat)
           (sumLeft sumLeftSq sumRight sumRightSq : Rat) : Rat :=
         let cSq := ratSq c
@@ -157,7 +150,6 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
         let rightTerm :=
           ((rightCount : Nat) : Rat) * cSq - (2 : Rat) * c * sumRight + sumRightSq
         leftTerm + rightTerm
-
       -- State for scanning regions:
       -- left set: intervals with `c < lo`
       -- right set: intervals with `c > hi`
@@ -167,13 +159,11 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
       let mut sumRightSq : Rat := 0
       let mut iEnter : Nat := 0
       let mut iLeave : Nat := 0
-
       let mut bestG : Rat :=
         evalG (sumLeft / nRat) leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq
       if !breaks.isEmpty then
         bestG := min bestG
           (evalG breaks[0]! leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
-
       for bi in [:breaks.size] do
         let b := breaks[bi]!
         -- Process enters at `b` (at `c=b` these are already inside, so not in left).
@@ -184,10 +174,8 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
           sumLeft := sumLeft - lo
           sumLeftSq := sumLeftSq - loSq
           iEnter := iEnter + 1
-
         -- Evaluate at the breakpoint `c=b` (intervals with `hi=b` are still inside at `c=b`).
         bestG := min bestG (evalG b leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
-
         -- After `b`, process leaves at `b` (those intervals become right for `c>b`).
         while iLeave < leavesSorted.size && leavesSorted[iLeave]!.1 = b do
           let (_, hiSq) := leavesSorted[iLeave]!
@@ -196,7 +184,6 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
           sumRight := sumRight + hi
           sumRightSq := sumRightSq + hiSq
           iLeave := iLeave + 1
-
         -- Check stationary point in the region `(b, nextB)` if there is a next breakpoint.
         let outsideCount : Nat := leftCount + rightCount
         if outsideCount = 0 then
@@ -214,7 +201,6 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
           if b ≤ cStar then
             bestG := min bestG
               (evalG cStar leftCount rightCount sumLeft sumLeftSq sumRight sumRightSq)
-
       let exactLB := bestG / nRat
       return exactLB
 

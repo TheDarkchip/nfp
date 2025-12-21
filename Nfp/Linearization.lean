@@ -1238,9 +1238,15 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
           (ropeJacobian (pos := pos) (pair := pair) θ) ≤ (2 : ℝ) := by
     classical
     -- Reduce `sup' ≤ 2` to a per-row absolute row-sum bound.
-    simp [operatorNormBound, SignedMixer.operatorNormBound]
-    intro p k
-    have hrow (b : Bool) :
+    dsimp [operatorNormBound, SignedMixer.operatorNormBound]
+    refine (Finset.sup'_le_iff (s := (Finset.univ : Finset (pos × RoPEDim pair)))
+      (f := fun i : pos × RoPEDim pair =>
+        ∑ j : pos × RoPEDim pair,
+          |(ropeJacobian (pos := pos) (pair := pair) θ).w i j|)
+      (H := Finset.univ_nonempty)).2 ?_
+    intro i _hi
+    rcases i with ⟨p, ⟨k, b⟩⟩
+    have hrow :
         (∑ j : pos × RoPEDim pair,
             |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|) ≤ (2 : ℝ) := by
       -- Expand the row-sum over `pos × pair × Bool` and collapse the `pos`/`pair` sums using
@@ -1273,7 +1279,7 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
               =
             ∑ bb : Bool,
               |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := by
-        simp [RoPEDim, Fintype.sum_prod_type]
+        simp only [RoPEDim, Fintype.sum_prod_type]
         have hzero :
             ∀ x : pair,
               x ≠ k →
@@ -1314,7 +1320,7 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
         _ ≤ 1 + 1 := by
               exact add_le_add (Real.abs_cos_le_one _) (Real.abs_sin_le_one _)
         _ = (2 : ℝ) := by norm_num
-    exact ⟨hrow false, hrow true⟩
+    exact hrow
 
 end RoPEBounds
 

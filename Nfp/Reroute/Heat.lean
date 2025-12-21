@@ -22,8 +22,9 @@ lemma mem_left_of_zip {α β : Type*} :
   | [], _, _, _, h => by cases h
   | _ :: _, [], _, _, h => by cases h
   | x :: xs, y :: ys, a, b, h => by
-      simp [List.zip_cons_cons] at h
-      rcases h with h | h
+      have h' : (a, b) = (x, y) ∨ (a, b) ∈ xs.zip ys := by
+        simpa [List.zip_cons_cons] using h
+      rcases h' with h | h
       · rcases h with ⟨rfl, _⟩
         simp
       · exact List.mem_cons.mpr (Or.inr (mem_left_of_zip h))

@@ -202,13 +202,13 @@ def parseFloat (s : String) : Option Float := Id.run do
   if s.isEmpty then
     none
   else
-    parseFloatRange s 0 s.endPos
+    parseFloatRange s 0 s.rawEndPos
 
 private def appendFloatsFromLine (line : String) (acc : Array Float) : Array Float := Id.run do
   let mut out := acc
   let s := line
   let mut p : String.Pos.Raw := 0
-  let endPos := s.endPos
+  let endPos := s.rawEndPos
   let isWs (c : Char) : Bool :=
     c = ' ' || c = '\t' || c = '\n' || c = '\r'
   while p < endPos do
@@ -260,7 +260,7 @@ private def appendNatsFromLine (line : String) (acc : Array Nat) : Array Nat := 
   let mut out := acc
   let s := line
   let mut p : String.Pos.Raw := 0
-  let endPos := s.endPos
+  let endPos := s.rawEndPos
   let isWs (c : Char) : Bool :=
     c = ' ' || c = '\t' || c = '\n' || c = '\r'
   while p < endPos do

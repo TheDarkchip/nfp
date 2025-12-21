@@ -65,7 +65,8 @@ namespace HeadLocalContributionCert
 
 /-- Internal consistency checks for local per-head bounds. -/
 def Valid (eps : Rat) (c : HeadLocalContributionCert) : Prop :=
-  c.ln1Bound =
+  0 < eps ∧
+    c.ln1Bound =
       (if c.ln1VarianceLowerBound > 0 then
         layerNormOpBoundLocal c.ln1MaxAbsGamma c.ln1VarianceLowerBound eps
       else

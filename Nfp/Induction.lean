@@ -68,32 +68,23 @@ An induction head is "true" if it simultaneously satisfies three conditions:
 structure TrueInductionHead where
   /-- The model input (residual stream at sequence positions) -/
   input : (n × d) → ℝ
-
   /-- Certified induction head pattern (has layer1 and layer2 with attention properties) -/
   pattern : InductionHeadPattern (n := n) (d := d)
-
   /-- The composed true Jacobian from input to output -/
   composed_jacobian : SignedMixer (n × d) (n × d)
-
   /-- Target direction in residual stream space (how positions/dimensions contribute to target) -/
   target_logit_diff : (n × d) → ℝ
-
   /-- Faithfulness bound: how close virtual head is to composed Jacobian -/
   epsilon : ℝ
-
   /-- Functional effectiveness bound: minimum logit increase from this mechanism -/
   delta : ℝ
-
   /-- Faithfulness: Virtual head approximates composed Jacobian within ε -/
   faithful : isCertifiedVirtualHead pattern.layer2 pattern.layer1 composed_jacobian epsilon
-
   /-- Effectiveness: Virtual head applied to this input produces ≥ delta on target direction -/
   effective : inner_product (VirtualHead pattern.layer2 pattern.layer1 |>.apply input)
       target_logit_diff ≥ delta
-
   /-- Bounds are valid -/
   epsilon_nonneg : 0 ≤ epsilon
-
   /-- Delta is nonnegative (can't guarantee negative output) -/
   delta_nonneg : 0 ≤ delta
 
@@ -379,7 +370,6 @@ theorem true_induction_head_predicts_logits
     simpa [E, V, isCertifiedVirtualHead] using h.faithful
   have hV : h.delta ≤ inner_product (V.apply h.input) h.target_logit_diff := by
     simpa [V] using h.effective
-
   have happly_add : (V + E).apply h.input = V.apply h.input + E.apply h.input := by
     ext j
     simp [SignedMixer.apply_def, Finset.sum_add_distrib, mul_add]
@@ -404,14 +394,12 @@ theorem true_induction_head_predicts_logits
             inner_product (E.apply h.input) h.target_logit_diff := by
               simpa using hinner_add (a := V.apply h.input) (b := E.apply h.input)
                 (u := h.target_logit_diff)
-
   set bound : ℝ := h.epsilon * l2_norm h.input * l2_norm h.target_logit_diff
   have hbound_nonneg : 0 ≤ bound := by
     have hx : 0 ≤ l2_norm h.input := by simp [l2_norm]
     have hu : 0 ≤ l2_norm h.target_logit_diff := by simp [l2_norm]
     have : 0 ≤ h.epsilon * l2_norm h.input := mul_nonneg h.epsilon_nonneg hx
     simpa [bound, mul_assoc] using mul_nonneg this hu
-
   have herr_abs :
       |inner_product (E.apply h.input) h.target_logit_diff| ≤ bound := by
     have habs :
@@ -439,10 +427,8 @@ theorem true_induction_head_predicts_logits
         l2_norm (E.apply h.input) * l2_norm h.target_logit_diff ≤ bound := by
       simpa [bound, mul_assoc, mul_left_comm, mul_comm] using hchain
     exact le_trans habs hchain'
-
   have herr_lower : -bound ≤ inner_product (E.apply h.input) h.target_logit_diff := by
     exact (abs_le.mp herr_abs).1
-
   -- Combine: <Jx,u> = <Vx,u> + <Ex,u> ≥ δ + (-bound) = δ - bound
   have hsum_le :
       h.delta + (-bound) ≤

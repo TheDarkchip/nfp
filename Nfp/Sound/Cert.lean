@@ -99,7 +99,8 @@ namespace ModelCert
 
 /-- Internal consistency checks for a reported sound certificate. -/
 def Valid (c : ModelCert) : Prop :=
-  c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
+  0 < c.eps ∧
+    c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
     List.Forall₂
       (fun i l => l.layerIdx = i ∧ LayerAmplificationCert.Valid c.eps l)
       (List.range c.layers.size) c.layers.toList ∧

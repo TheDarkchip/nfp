@@ -785,8 +785,7 @@ theorem causal_first_token_self (M : Mixer (Fin (n + 1)) (Fin (n + 1)))
     · intro hx
       simp [hx]
   rw [hfilt] at h
-  simp at h
-  exact h
+  simpa using h
 
 end CausalMask
 
@@ -833,10 +832,11 @@ def Mixer.isDiffuseAt (M : Mixer Pos Pos) (i : Pos) (threshold : NNReal) : Prop 
   M.attentionConcentration i ≤ threshold
 
 /-- If all attention is on one position, concentration is 1. -/
-theorem Mixer.attentionConcentration_one_hot [DecidableEq Pos]
+theorem Mixer.attentionConcentration_one_hot
     (M : Mixer Pos Pos) (i j₀ : Pos)
     (h : M.w i j₀ = 1) (hz : ∀ j, j ≠ j₀ → M.w i j = 0) :
     M.attentionConcentration i = 1 := by
+  classical
   simp only [Mixer.attentionConcentration]
   have hsplit : ∑ j, (M.w i j) ^ 2 =
       (M.w i j₀) ^ 2 + ∑ j ∈ Finset.univ.erase j₀, (M.w i j) ^ 2 := by
@@ -866,9 +866,13 @@ theorem residual_diagonal_lower [DecidableEq S]
     (M : Mixer S S) (c : NNReal) (hc : c ≤ 1) (i : S) :
     (Mixer.residual M c hc).w i i ≥ c := by
   simp only [Mixer.residual]
-  calc c * 1 + (1 - c) * M.w i i ≥ c * 1 + 0 := by
-         apply add_le_add_left
-         exact mul_nonneg (by simp) (by simp)
+  have hnonneg : 0 ≤ (1 - c) * M.w i i := by
+    have h1 : 0 ≤ (1 - c) := by
+      exact zero_le _
+    exact mul_nonneg h1 (by simp)
+  calc c * 1 + (1 - c) * M.w i i ≥ c * 1 := by
+         exact le_add_of_nonneg_right hnonneg
+       _ = c * 1 + 0 := by simp
        _ = c := by ring
 
 /-- Off-diagonal elements of a residual are scaled down by (1-c).
