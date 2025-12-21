@@ -127,6 +127,15 @@ private def setStdoutLogNameFromModelPath (modelPath : String) : IO Unit := do
   let stem := p.fileStem.getD (p.fileName.getD "model")
   setStdoutLogName stem
 
+/-- Write a report to stdout or to a file if an output path is provided. -/
+private def writeReport (outputPath? : Option System.FilePath) (report : String) : IO Unit := do
+  match outputPath? with
+  | some path =>
+      IO.FS.writeFile path report
+      IO.println s!"Report written to {path}"
+  | none =>
+      IO.println report
+
 /-- Check whether a `.nfpt` file contains an `EMBEDDINGS` section before the first `LAYER`.
 
 For `NFP_BINARY_V1`, embeddings are always present, so this returns true. This is used to decide
@@ -242,35 +251,54 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   IO.println s!"                    Δvalue={fmtFloat (valueRecon - valueCached)}"
   IO.println s!"                    Δε={fmtFloat (epsRecon - epsCached)}"
 
-/-- Run the analyze command - perform circuit analysis. -/
-def runAnalyze (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
-  setStdoutLogNameFromModelPath modelPath
+/-! ## Analyze command helpers -/
+
+private structure AnalyzeArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  threshold : Float
+  outputPath? : Option System.FilePath
+  verify : Bool
+  verbose : Bool
+
+private def parseAnalyzeArgs (p : Parsed) : IO (Option AnalyzeArgs) := do
+  let modelPathStr := p.positionalArg! "model" |>.as! String
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.1"
   let some threshold := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
-      return 1
-  let outputPath := p.flag? "output" |>.map (·.as! String)
+      return none
+  let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let verify := p.hasFlag "verify"
   let verbose := p.hasFlag "verbose"
-  if verbose then
-    IO.println s!"Loading model from {modelPath}..."
-    IO.println s!"Threshold: {threshold}"
-    if verify then
+  return some {
+    modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    threshold := threshold
+    outputPath? := outputPath?
+    verify := verify
+    verbose := verbose
+  }
+
+private def runAnalyzeWithArgs (args : AnalyzeArgs) : IO UInt32 := do
+  setStdoutLogNameFromModelPath args.modelPathStr
+  if args.verbose then
+    IO.println s!"Loading model from {args.modelPathStr}..."
+    IO.println s!"Threshold: {args.threshold}"
+    if args.verify then
       IO.println "Mode: Verification (with empirical validation)"
     else
       IO.println "Mode: Analysis (static bounds only)"
-  let loadResult ← loadModel ⟨modelPath⟩
+  let loadResult ← loadModel args.modelPath
   match loadResult with
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
   | .ok model0 =>
     let model := model0.trimTrailingZeroEmbeddings
-    if verbose && model.seqLen ≠ model0.seqLen then
+    if args.verbose && model.seqLen ≠ model0.seqLen then
       IO.println s!"  Trimmed trailing zero embeddings: seqLen {model0.seqLen} -> {model.seqLen}"
-    if verbose then
+    if args.verbose then
       IO.println s!"✓ Model loaded successfully"
       IO.println s!"  Layers: {model.numLayers}"
       IO.println s!"  Sequence Length: {model.seqLen}"
@@ -282,23 +310,41 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
       IO.println s!"  Model Dimension: {model.modelDim}"
       IO.println ""
       IO.println "Running analysis..."
-    let report ← if verify then
-      analyzeAndVerify model modelPath threshold none
+    let report ← if args.verify then
+      analyzeAndVerify model args.modelPathStr args.threshold none
     else
-      analyzeModel model modelPath threshold
-    let reportStr := toString report
-    match outputPath with
-    | some path =>
-      IO.FS.writeFile ⟨path⟩ reportStr
-      IO.println s!"Report written to {path}"
-    | none =>
-      IO.println reportStr
+      analyzeModel model args.modelPathStr args.threshold
+    writeReport args.outputPath? (toString report)
     return 0
 
-/-- Run the induction command - discover induction heads ranked by effectiveness. -/
-def runInduction (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
-  setStdoutLogNameFromModelPath modelPath
+/-- Run the analyze command - perform circuit analysis. -/
+def runAnalyze (p : Parsed) : IO UInt32 := do
+  let some args ← parseAnalyzeArgs p
+    | return 1
+  runAnalyzeWithArgs args
+
+/-! ## Induction command helpers -/
+
+private structure InductionArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  correctOpt : Option Nat
+  incorrectOpt : Option Nat
+  minEffect : Float
+  verify : Bool
+  verbose : Bool
+  diagnostics : Bool
+  adaptive : Bool
+  targetSlack : Float
+  maxUpgrades : Nat
+  minRelImprove : Float
+  krylovSteps : Nat
+  adaptiveScope : Nfp.AdaptiveScope
+  adaptiveScopeStr : String
+  diagTop : Nat
+
+private def parseInductionArgs (p : Parsed) : IO (Option InductionArgs) := do
+  let modelPathStr := p.positionalArg! "model" |>.as! String
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.0"
@@ -315,17 +361,17 @@ def runInduction (p : Parsed) : IO UInt32 := do
   let some minEffect := Nfp.parseFloat thresholdStr
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
-      return 1
+      return none
   let (targetSlack, minRelImprove, adaptiveScope) ←
     if adaptive then
       let some targetSlack := Nfp.parseFloat targetSlackStr
         | do
           IO.eprintln s!"Error: Invalid --targetSlack '{targetSlackStr}'"
-          return 1
+          return none
       let some minRelImprove := Nfp.parseFloat minRelImproveStr
         | do
           IO.eprintln s!"Error: Invalid --minRelImprove '{minRelImproveStr}'"
-          return 1
+          return none
       let adaptiveScope? : Option Nfp.AdaptiveScope :=
         match adaptiveScopeStr.trim.toLower with
         | "layernorm" => some .layernorm
@@ -336,38 +382,394 @@ def runInduction (p : Parsed) : IO UInt32 := do
           IO.eprintln <|
             s!"Error: Invalid --adaptiveScope '{adaptiveScopeStr}' " ++
               "(expected layernorm|all)"
-          return 1
+          return none
       pure (targetSlack, minRelImprove, adaptiveScope)
     else
       pure (8.0, 0.01, Nfp.AdaptiveScope.layernorm)
+  return some {
+    modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    correctOpt := correctOpt
+    incorrectOpt := incorrectOpt
+    minEffect := minEffect
+    verify := verify
+    verbose := verbose
+    diagnostics := diagnostics
+    adaptive := adaptive
+    targetSlack := targetSlack
+    maxUpgrades := maxUpgrades
+    minRelImprove := minRelImprove
+    krylovSteps := krylovSteps
+    adaptiveScope := adaptiveScope
+    adaptiveScopeStr := adaptiveScopeStr
+    diagTop := diagTop
+  }
+
+private def deriveInductionTarget
+    (model : ConcreteModel)
+    (W_U : ConcreteMatrix)
+    (correctOpt incorrectOpt : Option Nat) : Option TargetDirection :=
+  match correctOpt, incorrectOpt with
+  | some correct, some incorrect =>
+      some (TargetDirection.fromLogitDiff W_U correct incorrect)
+  | some _, none | none, some _ =>
+      none
+  | none, none =>
+      match model.inputTokens with
+      | some _ => TargetDirection.fromInductionHistory model
+      | none => some (TargetDirection.fromLogitDiff W_U 0 1)
+
+private def printInductionSearchIntro (minEffect : Float) : IO Unit := do
+  IO.println s!"Searching for heads with Effect > {minEffect}... (heuristic)"
+  IO.println "Ranking: highest mechScore (= kComp·indScore·prevTok) first"
+  IO.println "  Tie-break: Effect, kComp, δ, then lowest Error"
+  IO.println "  circuitScore = Effect · mechScore"
+  IO.println "  Effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)"
+  IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
+  IO.println "  kComp = kComp_raw - 1/√modelDim"
+
+private def printInductionCandidate (verbose : Bool) (h : HeuristicInductionHead) : IO Unit := do
+  let c := h.candidate
+  let mechScore := c.kComp * c.inductionScore * c.prevTokenStrength
+  let circuitScore := h.effect * mechScore
+  if verbose then
+    IO.println <|
+      s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
+        s!"Mech: {mechScore} | Circuit: {circuitScore} | " ++
+        s!"Effect: {h.effect} | kComp: {c.kComp} | " ++
+        s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
+        s!"δ: {h.delta} | " ++
+        s!"Error: {c.combinedError} | " ++
+        s!"‖X₂‖_F: {h.layer2InputNorm} | " ++
+        s!"‖ln₁(X₂)‖_F: {h.layer2Ln1InputNorm} " ++
+        s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
+  else
+    IO.println <|
+      s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
+        s!"Mech: {mechScore} | Effect: {h.effect} | " ++
+        s!"kComp: {c.kComp} | " ++
+        s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
+        s!"Error: {c.combinedError} | " ++
+        s!"‖X₂‖_F: {h.layer2InputNorm}"
+
+private def printInductionCandidates (heads : Array HeuristicInductionHead) (verbose : Bool) :
+    IO (Array HeuristicInductionHead) := do
+  let top := heads.take 50
+  IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
+  for h in top do
+    printInductionCandidate verbose h
+  return top
+
+private def buildAdaptiveScheduler
+    (cache : PrecomputedCache)
+    (args : InductionArgs) : Option AdaptiveSchedulerResult :=
+  if args.adaptive && (args.verbose || args.diagnostics) then
+    let cfg : Nfp.AdaptiveSchedulerConfig :=
+      { targetSlack := args.targetSlack
+        maxUpgrades := args.maxUpgrades
+        minRelImprove := args.minRelImprove
+        krylovSteps := args.krylovSteps
+        scope := args.adaptiveScope
+        debugMonotone := args.diagnostics }
+    some (Nfp.runAdaptiveScheduler cache cfg none)
+  else
+    none
+
+private def printAdaptiveSchedulerSteps
+    (sched : AdaptiveSchedulerResult)
+    (args : InductionArgs) : IO Unit := do
+  IO.println ""
+  IO.println "ADAPTIVE SCHEDULER"
+  IO.println <|
+    s!"  targetSlack={fmtFloat args.targetSlack}  maxUpgrades={args.maxUpgrades} " ++
+      s!"minRelImprove={fmtFloat args.minRelImprove}  krylovSteps={args.krylovSteps} " ++
+      s!"scope={args.adaptiveScopeStr}"
+  for s in sched.steps do
+    IO.println <|
+      match s.kind with
+      | .ubTier =>
+          s!"  it={s.iter}  L{s.layerIdx}: tier {s.tierFrom}->{s.tierTo}  " ++
+            s!"ub {fmtFloat s.ubBefore}->{fmtFloat s.ubAfter}  " ++
+            s!"lb≈{fmtFloat s.lb} (k={s.kTo})  " ++
+            s!"slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
+      | .lbSteps =>
+          s!"  it={s.iter}  L{s.layerIdx}: lb-steps {s.kFrom}->{s.kTo}  " ++
+            s!"ub {fmtFloat s.ubBefore}  " ++
+            s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
+
+private def printInductionDiagnostics
+    (cache : PrecomputedCache)
+    (top : Array HeuristicInductionHead)
+    (args : InductionArgs)
+    (sched? : Option AdaptiveSchedulerResult) : IO (Option UInt32) := do
+  IO.println ""
+  let diagN := min args.diagTop top.size
+  if args.adaptive then
+    let some sched := sched?
+      | do
+        IO.eprintln "Error: internal scheduler state missing."
+        return some 1
+    IO.println ""
+    IO.println "LAYER NORM DIAGNOSTICS (LOWER vs UPPER)"
+    IO.println "  (lb is rigorous lower bound via Krylov steps; ub is rigorous upper bound)"
+    for l in [:sched.ub.size] do
+      let ub := sched.ub[l]!
+      let lb := sched.lb[l]!
+      let ratio : Float := if lb > 1e-12 then ub / lb else Float.inf
+      let tier := sched.tier[l]!
+      let k := sched.lbK.getD l 0
+      IO.println <|
+        s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
+          s!"ub/lb={fmtFloat ratio}  tier={tier}  k={k}"
+      let x := cache.forwardResult.getLayerInput l
+      let y := cache.forwardResult.getPostAttnResidual l
+      let ln1p := cache.model.ln1Params l
+      let ln2p := cache.model.ln2Params l
+      let ln1 := ConcreteMatrix.layerNormRowwiseOpDiag x ln1p.gamma
+      let ln2 := ConcreteMatrix.layerNormRowwiseOpDiag y ln2p.gamma
+      IO.println <|
+        s!"      ln1: op≈{fmtFloat (ln1.gammaMaxAbs * ln1.maxInvStd)} " ++
+          s!"(γmax≈{fmtFloat ln1.gammaMaxAbs}, invStdMax≈{fmtFloat ln1.maxInvStd} " ++
+          s!"@r={ln1.maxInvStdRow}, varMin≈{fmtFloat ln1.minVar} @r={ln1.minVarRow})"
+      IO.println <|
+        s!"      ln2: op≈{fmtFloat (ln2.gammaMaxAbs * ln2.maxInvStd)} " ++
+          s!"(γmax≈{fmtFloat ln2.gammaMaxAbs}, invStdMax≈{fmtFloat ln2.maxInvStd} " ++
+          s!"@r={ln2.maxInvStdRow}, varMin≈{fmtFloat ln2.minVar} @r={ln2.minVarRow})"
+      if hm : l < cache.model.mlps.size then
+        let mlp := cache.model.mlps[l]'hm
+        let y := cache.forwardResult.getPostAttnResidual l
+        let ln2Bound := cache.model.ln2OpBound l y
+        let (attnPart, maxHeadIdx, maxHeadContrib, maxHeadValue, maxHeadPattern) :
+            (Float × Nat × Float × Float × Float) := Id.run do
+          let layerData := cache.headData.getD l #[]
+          let mut a : Float := 0.0
+          let mut bestIdx : Nat := 0
+          let mut best : Float := 0.0
+          let mut bestValue : Float := 0.0
+          let mut bestPattern : Float := 0.0
+          let mut idx : Nat := 0
+          for d in layerData do
+            let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
+            let attnOpUb : Float := min attnFrob d.attentionOneInfBound
+            let valueTermUb : Float := d.ln1OpBound * (attnOpUb * d.valueOutputProjSchurNorm)
+            let inputs : Nfp.PatternTermBoundInputs := {
+              attention := d.attention
+              inputNorm := d.inputNorm
+              inputOpBound := d.inputOpBound
+              scaleFactor := d.scaleFactor
+              wqOpBound := d.wqOpGram
+              wkOpBound := d.wkOpGram
+              wvOpBound := d.wvOpGram
+              woOpBound := d.woOpGram
+              bqFrob := d.bqFrob
+              bkFrob := d.bkFrob
+              bvFrob := d.bvFrob
+            }
+            let patternTermUb : Float := d.ln1OpBound * (Nfp.computePatternTermBound inputs)
+            let contrib := valueTermUb + patternTermUb
+            a := a + contrib
+            if contrib > best then
+              bestIdx := idx
+              best := contrib
+              bestValue := valueTermUb
+              bestPattern := patternTermUb
+            idx := idx + 1
+          (a, bestIdx, best, bestValue, bestPattern)
+        let mlpTotal : Float := max 0.0 (ub - attnPart)
+        let mlpOnly : Float :=
+          if 1.0 + attnPart > 1e-12 then
+            mlpTotal / (1.0 + attnPart)
+          else
+            mlpTotal
+        let cross : Float := max 0.0 (mlpTotal - mlpOnly)
+        IO.println <|
+          s!"      contrib: attn≈{fmtFloat attnPart}  mlpOnly≈{fmtFloat mlpOnly}  " ++
+            s!"cross≈{fmtFloat cross}  mlpTotal≈{fmtFloat mlpTotal}  " ++
+            s!"(maxHead=H{maxHeadIdx}≈{fmtFloat maxHeadContrib}, " ++
+            s!"value≈{fmtFloat maxHeadValue}, pattern≈{fmtFloat maxHeadPattern})"
+        let mlpJacLegacy : Float :=
+          let denom := ln2Bound * (1.0 + attnPart)
+          if denom > 1e-12 then
+            mlpTotal / denom
+          else
+            Float.nan
+        let geluDeriv := cache.forwardResult.getMlpGeluDeriv l
+        let diag := computeMLPOpAbsSchurDiag mlp geluDeriv
+        let chosen : Float := min diag.absSchur mlpJacLegacy
+        IO.println <|
+          s!"      mlpDiag(L{l}): absSchur={fmtFloat diag.absSchur}  " ++
+            s!"legacy≈{fmtFloat mlpJacLegacy}  chosen≈{fmtFloat chosen}  " ++
+            s!"dMax≈{fmtFloat diag.dMax}"
+  else
+    IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
+    IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
+    for l in [:cache.layerNormBounds.size] do
+      let ub := cache.layerNormBounds[l]!
+      let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
+      let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
+      IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
+  -- Rectangular Gram diagnostics for MLP weights (layer 0 only).
+  if h0 : 0 < cache.model.mlps.size then
+    let mlp0 : ConcreteMLPLayer := cache.model.mlps[0]'h0
+    let dIn := mlp0.W_in.opNormUpperBoundRectGramDiag
+    let dOut := mlp0.W_out.opNormUpperBoundRectGramDiag
+    let chosenMsg (d : _) : String :=
+      if d.usedGram then "chosen=signedGram"
+      else if d.usedAbsGram then "chosen=absGram"
+      else "chosen=cheap"
+    let signedGramMsg (d : _) : String :=
+      if !d.signedGramEnabled then "signedGram=disabled"
+      else if d.gramDim > d.maxGramDimCap then "signedGram=skipped(maxGramDim cap)"
+      else if d.skippedGram then "signedGram=skipped(cost guard)"
+      else if d.computedGram then "signedGram=computed"
+      else "signedGram=not-attempted"
+    let absGramMsg (d : _) : String :=
+      if !d.computedAbsGram then "absGram=disabled"
+      else if d.usedAbsGram then "absGram=chosen"
+      else "absGram=computed"
+    IO.println ""
+    IO.println "RECT-GRAM DIAGNOSTICS (MLP layer 0 weights)"
+    IO.println <|
+      s!"  W_in:  usedGram={dIn.usedGram}  usedAbsGram={dIn.usedAbsGram}  " ++
+        s!"computedGram={dIn.computedGram}  computedAbsGram={dIn.computedAbsGram}  " ++
+        s!"skippedGram={dIn.skippedGram}"
+    IO.println <|
+      s!"        gramDim={dIn.gramDim}  maxGramDimCap={dIn.maxGramDimCap}  " ++
+        s!"signedGramEnabled={dIn.signedGramEnabled}"
+    IO.println <|
+      s!"        gramCost={dIn.gramCost}  gramCostLimit={dIn.gramCostLimit}  " ++
+        s!"{chosenMsg dIn}  {signedGramMsg dIn}  {absGramMsg dIn}"
+    IO.println <|
+      s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound} " ++
+        s!"opBound={fmtFloat dIn.opBound}"
+    IO.println <|
+      s!"        λ_abs_gersh={fmtFloat dIn.lambdaAbsGersh} " ++
+        s!"λ_abs_brauer={fmtFloat dIn.lambdaAbsBrauer}"
+    IO.println s!"        λ_gersh={fmtFloat dIn.lambdaGersh}"
+    IO.println s!"        λ_brauer={fmtFloat dIn.lambdaBrauer}"
+    IO.println s!"        λ_moment={fmtFloat dIn.lambdaMoment}"
+    IO.println s!"        λ_used={fmtFloat dIn.lambdaUsed}"
+    IO.println <|
+      s!"  W_out: usedGram={dOut.usedGram}  usedAbsGram={dOut.usedAbsGram}  " ++
+        s!"computedGram={dOut.computedGram}  computedAbsGram={dOut.computedAbsGram}  " ++
+        s!"skippedGram={dOut.skippedGram}"
+    IO.println <|
+      s!"        gramDim={dOut.gramDim}  maxGramDimCap={dOut.maxGramDimCap}  " ++
+        s!"signedGramEnabled={dOut.signedGramEnabled}"
+    IO.println <|
+      s!"        gramCost={dOut.gramCost}  gramCostLimit={dOut.gramCostLimit}  " ++
+        s!"{chosenMsg dOut}  {signedGramMsg dOut}  {absGramMsg dOut}"
+    IO.println <|
+      s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound} " ++
+        s!"opBound={fmtFloat dOut.opBound}"
+    IO.println <|
+      s!"        λ_abs_gersh={fmtFloat dOut.lambdaAbsGersh} " ++
+        s!"λ_abs_brauer={fmtFloat dOut.lambdaAbsBrauer}"
+    IO.println s!"        λ_gersh={fmtFloat dOut.lambdaGersh}"
+    IO.println s!"        λ_brauer={fmtFloat dOut.lambdaBrauer}"
+    IO.println s!"        λ_moment={fmtFloat dOut.lambdaMoment}"
+    IO.println s!"        λ_used={fmtFloat dOut.lambdaUsed}"
+  IO.println ""
+  IO.println s!"DIAGNOSTICS (ε decomposition) for top-{diagN} candidates"
+  for h in (top.take diagN) do
+    let c := h.candidate
+    IO.println s!"Candidate L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx}"
+    match cache.getHeadData c.layer1Idx c.head1Idx,
+          cache.getHeadData c.layer2Idx c.head2Idx with
+    | some d1, some d2 =>
+        printHeadDiagnostics "Head1" d1
+        printHeadDiagnostics "Head2" d2
+        let ε1 := d1.faithfulnessRatioCached
+        let ε2 := d2.faithfulnessRatioCached
+        let combinedRecon := ε1 + ε2 + ε1 * ε2
+        IO.println "  Combined:"
+        IO.println s!"    ε1 = {fmtFloat ε1}  ε2 = {fmtFloat ε2}"
+        IO.println s!"    combinedError = (1+ε1)(1+ε2)-1 = {fmtFloat combinedRecon}"
+        IO.println s!"    combinedErrorCached = {fmtFloat c.combinedError}"
+        IO.println s!"    reconDiff = {fmtFloat (combinedRecon - c.combinedError)}"
+    | _, _ =>
+        IO.println "  (diagnostics unavailable: missing cached head data)"
+  return none
+
+private def runInductionVerification
+    (model : ConcreteModel)
+    (heads : Array HeuristicInductionHead)
+    (correctOpt : Option Nat) : IO (Option UInt32) := do
+  IO.println ""
+  IO.println "Causal Verification (Head Ablation)"
+  IO.println "Metric: Δ = logit(target) - logit(top non-target) at last position"
+  IO.println "Impact = Δ_base - Δ_ablated"
+  IO.println ""
+  let targetToken? : Option Nat :=
+    match correctOpt with
+    | some t => some t
+    | none => inductionTargetTokenFromHistory model
+  let some targetToken := targetToken?
+    | do
+      IO.eprintln "Error: Cannot infer induction target token (need TOKENS or --correct)."
+      return some 2
+  match VerificationContext.build model targetToken {} with
+  | .error msg =>
+      IO.eprintln s!"Error: {msg}"
+      return some 2
+  | .ok ctx =>
+      let verifyTop := heads.take 10
+      IO.println s!"Top-{verifyTop.size} ablation checks (ranked by mechScore):"
+      IO.println s!"  target={ctx.targetToken} | neg={ctx.negativeToken}"
+      IO.println s!"  Δ_base={ctx.baseDelta}"
+      IO.println ""
+      IO.println "Rank | Candidate | Base Δ | Ablated Δ | Impact (Logits) | RelScore | \
+        Control Impact | Axioms Verified?"
+      IO.println "-----|-----------|--------|----------|----------------|----------|\
+        --------------|----------------"
+      let fmtOpt (x : Option Float) : String :=
+        match x with
+        | some v => toString v
+        | none => "undef"
+      let mut rank : Nat := 1
+      for h in verifyTop do
+        let c := h.candidate
+        let candHeads : Array HeadRef := #[
+          { layerIdx := c.layer1Idx, headIdx := c.head1Idx },
+          { layerIdx := c.layer2Idx, headIdx := c.head2Idx }
+        ]
+        let row := verifyCircuit ctx candHeads
+        let axiomsStr :=
+          if row.axioms.verified then
+            "yes"
+          else
+            let reasons := String.intercalate "; " row.axioms.failures.toList
+            if reasons.isEmpty then "no" else s!"no ({reasons})"
+        IO.println s!"{rank} | {row.candidateLabel} | {row.baseDelta} | \
+          {fmtOpt row.ablatedDelta} | {fmtOpt row.impact} | {fmtOpt row.relScore} | \
+          {fmtOpt row.controlImpact} | {axiomsStr}"
+        rank := rank + 1
+      return none
+
+/-- Run the induction command - discover induction heads ranked by effectiveness. -/
+def runInduction (p : Parsed) : IO UInt32 := do
+  let some args ← parseInductionArgs p
+    | return 1
+  setStdoutLogNameFromModelPath args.modelPathStr
   IO.println "Loading model..."
-  let loadResult ← loadModel ⟨modelPath⟩
+  let loadResult ← loadModel args.modelPath
   match loadResult with
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
     return 1
   | .ok model0 =>
     let model := model0.trimTrailingZeroEmbeddings
-    if verbose && model.seqLen ≠ model0.seqLen then
+    if args.verbose && model.seqLen ≠ model0.seqLen then
       IO.println s!"  Trimmed trailing zero embeddings: seqLen {model0.seqLen} -> {model.seqLen}"
     match model.unembedding with
     | none =>
       IO.eprintln "Error: Model is missing unembedding matrix (needed for logit directions)."
       return 1
     | some W_U =>
-      let target? : Option TargetDirection :=
-        match correctOpt, incorrectOpt with
-        | some correct, some incorrect =>
-            some (TargetDirection.fromLogitDiff W_U correct incorrect)
-        | some _, none | none, some _ =>
-            none
-        | none, none =>
-            match model.inputTokens with
-            | some _ => TargetDirection.fromInductionHistory model
-            | none => some (TargetDirection.fromLogitDiff W_U 0 1)
+      let target? := deriveInductionTarget model W_U args.correctOpt args.incorrectOpt
       let some target := target?
         | do
-          if correctOpt.isSome ∨ incorrectOpt.isSome then
+          if args.correctOpt.isSome ∨ args.incorrectOpt.isSome then
             IO.eprintln "Error: Use both --correct and --incorrect (or neither to auto-detect)."
             return 1
           else
@@ -376,452 +778,196 @@ def runInduction (p : Parsed) : IO UInt32 := do
             IO.eprintln "Hint: pass --correct/--incorrect to override, or export a prompt \
               where the last token repeats."
             return 2
-      if correctOpt.isNone ∧ incorrectOpt.isNone ∧ model.inputTokens.isNone then
+      if args.correctOpt.isNone ∧ args.incorrectOpt.isNone ∧ model.inputTokens.isNone then
         IO.println "Warning: No TOKENS section found; using default target logit_diff(0-1)."
         IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
       IO.println s!"Target: {target.description}"
-      IO.println s!"Searching for heads with Effect > {minEffect}... (heuristic)"
-      IO.println "Ranking: highest mechScore (= kComp·indScore·prevTok) first"
-      IO.println "  Tie-break: Effect, kComp, δ, then lowest Error"
-      IO.println "  circuitScore = Effect · mechScore"
-      IO.println "  Effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)"
-      IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
-      IO.println "  kComp = kComp_raw - 1/√modelDim"
-      let buildLayerNormBounds := diagnostics && (!adaptive)
+      printInductionSearchIntro args.minEffect
+      let buildLayerNormBounds := args.diagnostics && (!args.adaptive)
       let (heads, cache) :=
-        findHeuristicInductionHeadsWithCache model target minEffect (minInductionScore := 0.01)
+        findHeuristicInductionHeadsWithCache model target args.minEffect
+          (minInductionScore := 0.01)
           (buildLayerNormBounds := buildLayerNormBounds)
-          (storeDiagnostics := diagnostics)
-      let top := heads.take 50
-      IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
-      let needSched := adaptive && (verbose || diagnostics)
-      let schedActive? : Option (Array Bool) := none
-      let sched? : Option Nfp.AdaptiveSchedulerResult :=
-        if needSched then
-          let cfg : Nfp.AdaptiveSchedulerConfig :=
-            { targetSlack := targetSlack
-              maxUpgrades := maxUpgrades
-              minRelImprove := minRelImprove
-              krylovSteps := krylovSteps
-              scope := adaptiveScope
-              debugMonotone := diagnostics }
-          some (Nfp.runAdaptiveScheduler cache cfg schedActive?)
-        else
-          none
-      if adaptive && verbose then
-        let some sched := sched?
-          | pure ()
-        IO.println ""
-        IO.println "ADAPTIVE SCHEDULER"
-        IO.println <|
-          s!"  targetSlack={fmtFloat targetSlack}  maxUpgrades={maxUpgrades} " ++
-            s!"minRelImprove={fmtFloat minRelImprove}  krylovSteps={krylovSteps} " ++
-            s!"scope={adaptiveScopeStr}"
-        for s in sched.steps do
-          IO.println <|
-            match s.kind with
-            | .ubTier =>
-                s!"  it={s.iter}  L{s.layerIdx}: tier {s.tierFrom}->{s.tierTo}  " ++
-                  s!"ub {fmtFloat s.ubBefore}->{fmtFloat s.ubAfter}  " ++
-                  s!"lb≈{fmtFloat s.lb} (k={s.kTo})  " ++
-                  s!"slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
-            | .lbSteps =>
-                s!"  it={s.iter}  L{s.layerIdx}: lb-steps {s.kFrom}->{s.kTo}  " ++
-                  s!"ub {fmtFloat s.ubBefore}  " ++
-                  s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
-      for h in top do
-        let c := h.candidate
-        let mechScore := c.kComp * c.inductionScore * c.prevTokenStrength
-        let circuitScore := h.effect * mechScore
-        if verbose then
-          IO.println <|
-            s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Mech: {mechScore} | Circuit: {circuitScore} | " ++
-              s!"Effect: {h.effect} | kComp: {c.kComp} | " ++
-              s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
-              s!"δ: {h.delta} | " ++
-              s!"Error: {c.combinedError} | " ++
-              s!"‖X₂‖_F: {h.layer2InputNorm} | " ++
-              s!"‖ln₁(X₂)‖_F: {h.layer2Ln1InputNorm} " ++
-              s!"(ε₁={c.patternBound1}, ε₂={c.patternBound2})"
-        else
-          IO.println <|
-            s!"L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx} | " ++
-              s!"Mech: {mechScore} | Effect: {h.effect} | " ++
-              s!"kComp: {c.kComp} | " ++
-              s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
-              s!"Error: {c.combinedError} | " ++
-              s!"‖X₂‖_F: {h.layer2InputNorm}"
-      if diagnostics then
-        IO.println ""
-        let diagN := min diagTop top.size
-        if adaptive then
-          let some sched := sched?
-            | do
-              IO.eprintln "Error: internal scheduler state missing."
-              return 1
-          IO.println ""
-          IO.println "LAYER NORM DIAGNOSTICS (LOWER vs UPPER)"
-          IO.println "  (lb is rigorous lower bound via Krylov steps; ub is rigorous upper bound)"
-          for l in [:sched.ub.size] do
-            let ub := sched.ub[l]!
-            let lb := sched.lb[l]!
-            let ratio : Float := if lb > 1e-12 then ub / lb else Float.inf
-            let tier := sched.tier[l]!
-            let k := sched.lbK.getD l 0
-            IO.println <|
-              s!"  L{l}: lb≈{fmtFloat lb}  ub={fmtFloat ub}  " ++
-                s!"ub/lb={fmtFloat ratio}  tier={tier}  k={k}"
-            let x := cache.forwardResult.getLayerInput l
-            let y := cache.forwardResult.getPostAttnResidual l
-            let ln1p := cache.model.ln1Params l
-            let ln2p := cache.model.ln2Params l
-            let ln1 := ConcreteMatrix.layerNormRowwiseOpDiag x ln1p.gamma
-            let ln2 := ConcreteMatrix.layerNormRowwiseOpDiag y ln2p.gamma
-            IO.println <|
-              s!"      ln1: op≈{fmtFloat (ln1.gammaMaxAbs * ln1.maxInvStd)} " ++
-                s!"(γmax≈{fmtFloat ln1.gammaMaxAbs}, invStdMax≈{fmtFloat ln1.maxInvStd} " ++
-                s!"@r={ln1.maxInvStdRow}, varMin≈{fmtFloat ln1.minVar} @r={ln1.minVarRow})"
-            IO.println <|
-              s!"      ln2: op≈{fmtFloat (ln2.gammaMaxAbs * ln2.maxInvStd)} " ++
-                s!"(γmax≈{fmtFloat ln2.gammaMaxAbs}, invStdMax≈{fmtFloat ln2.maxInvStd} " ++
-                s!"@r={ln2.maxInvStdRow}, varMin≈{fmtFloat ln2.minVar} @r={ln2.minVarRow})"
-            if hm : l < cache.model.mlps.size then
-              let mlp := cache.model.mlps[l]'hm
-              let y := cache.forwardResult.getPostAttnResidual l
-              let ln2Bound := cache.model.ln2OpBound l y
-              let (attnPart, maxHeadIdx, maxHeadContrib, maxHeadValue, maxHeadPattern) :
-                  (Float × Nat × Float × Float × Float) := Id.run do
-                let layerData := cache.headData.getD l #[]
-                let mut a : Float := 0.0
-                let mut bestIdx : Nat := 0
-                let mut best : Float := 0.0
-                let mut bestValue : Float := 0.0
-                let mut bestPattern : Float := 0.0
-                let mut idx : Nat := 0
-                for d in layerData do
-                  let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
-                  let attnOpUb : Float := min attnFrob d.attentionOneInfBound
-                  let valueTermUb : Float := d.ln1OpBound * (attnOpUb * d.valueOutputProjSchurNorm)
-                  let inputs : Nfp.PatternTermBoundInputs := {
-                    attention := d.attention
-                    inputNorm := d.inputNorm
-                    inputOpBound := d.inputOpBound
-                    scaleFactor := d.scaleFactor
-                    wqOpBound := d.wqOpGram
-                    wkOpBound := d.wkOpGram
-                    wvOpBound := d.wvOpGram
-                    woOpBound := d.woOpGram
-                    bqFrob := d.bqFrob
-                    bkFrob := d.bkFrob
-                    bvFrob := d.bvFrob
-                  }
-                  let patternTermUb : Float := d.ln1OpBound * (Nfp.computePatternTermBound inputs)
-                  let contrib := valueTermUb + patternTermUb
-                  a := a + contrib
-                  if contrib > best then
-                    bestIdx := idx
-                    best := contrib
-                    bestValue := valueTermUb
-                    bestPattern := patternTermUb
-                  idx := idx + 1
-                (a, bestIdx, best, bestValue, bestPattern)
-              let mlpTotal : Float := max 0.0 (ub - attnPart)
-              let mlpOnly : Float :=
-                if 1.0 + attnPart > 1e-12 then
-                  mlpTotal / (1.0 + attnPart)
-                else
-                  mlpTotal
-              let cross : Float := max 0.0 (mlpTotal - mlpOnly)
-              IO.println <|
-                s!"      contrib: attn≈{fmtFloat attnPart}  mlpOnly≈{fmtFloat mlpOnly}  " ++
-                  s!"cross≈{fmtFloat cross}  mlpTotal≈{fmtFloat mlpTotal}  " ++
-                  s!"(maxHead=H{maxHeadIdx}≈{fmtFloat maxHeadContrib}, " ++
-                  s!"value≈{fmtFloat maxHeadValue}, pattern≈{fmtFloat maxHeadPattern})"
-              let mlpJacLegacy : Float :=
-                let denom := ln2Bound * (1.0 + attnPart)
-                if denom > 1e-12 then
-                  mlpTotal / denom
-                else
-                  Float.nan
-              let geluDeriv := cache.forwardResult.getMlpGeluDeriv l
-              let diag := computeMLPOpAbsSchurDiag mlp geluDeriv
-              let chosen : Float := min diag.absSchur mlpJacLegacy
-              IO.println <|
-                s!"      mlpDiag(L{l}): absSchur={fmtFloat diag.absSchur}  " ++
-                  s!"legacy≈{fmtFloat mlpJacLegacy}  chosen≈{fmtFloat chosen}  " ++
-                  s!"dMax≈{fmtFloat diag.dMax}"
-        else
-          IO.println "LAYER NORM DIAGNOSTICS (PI vs rigorous)"
-          IO.println "  (PI is diagnostics-only; rigorous is used for bounds)"
-          for l in [:cache.layerNormBounds.size] do
-            let ub := cache.layerNormBounds[l]!
-            let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
-            let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
-            IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
-        -- Rectangular Gram diagnostics for MLP weights (layer 0 only).
-        if h0 : 0 < cache.model.mlps.size then
-          let mlp0 : ConcreteMLPLayer := cache.model.mlps[0]'h0
-          let dIn := mlp0.W_in.opNormUpperBoundRectGramDiag
-          let dOut := mlp0.W_out.opNormUpperBoundRectGramDiag
-          let chosenMsg (d : _) : String :=
-            if d.usedGram then "chosen=signedGram"
-            else if d.usedAbsGram then "chosen=absGram"
-            else "chosen=cheap"
-          let signedGramMsg (d : _) : String :=
-            if !d.signedGramEnabled then "signedGram=disabled"
-            else if d.gramDim > d.maxGramDimCap then "signedGram=skipped(maxGramDim cap)"
-            else if d.skippedGram then "signedGram=skipped(cost guard)"
-            else if d.computedGram then "signedGram=computed"
-            else "signedGram=not-attempted"
-          let absGramMsg (d : _) : String :=
-            if !d.computedAbsGram then "absGram=disabled"
-            else if d.usedAbsGram then "absGram=chosen"
-            else "absGram=computed"
-          IO.println ""
-          IO.println "RECT-GRAM DIAGNOSTICS (MLP layer 0 weights)"
-          IO.println <|
-            s!"  W_in:  usedGram={dIn.usedGram}  usedAbsGram={dIn.usedAbsGram}  " ++
-              s!"computedGram={dIn.computedGram}  computedAbsGram={dIn.computedAbsGram}  " ++
-              s!"skippedGram={dIn.skippedGram}"
-          IO.println <|
-            s!"        gramDim={dIn.gramDim}  maxGramDimCap={dIn.maxGramDimCap}  " ++
-              s!"signedGramEnabled={dIn.signedGramEnabled}"
-          IO.println <|
-            s!"        gramCost={dIn.gramCost}  gramCostLimit={dIn.gramCostLimit}  " ++
-              s!"{chosenMsg dIn}  {signedGramMsg dIn}  {absGramMsg dIn}"
-          IO.println <|
-            s!"        frob={fmtFloat dIn.frobBound}  oneInf={fmtFloat dIn.oneInfBound} " ++
-              s!"opBound={fmtFloat dIn.opBound}"
-          IO.println <|
-            s!"        λ_abs_gersh={fmtFloat dIn.lambdaAbsGersh} " ++
-              s!"λ_abs_brauer={fmtFloat dIn.lambdaAbsBrauer}"
-          IO.println s!"        λ_gersh={fmtFloat dIn.lambdaGersh}"
-          IO.println s!"        λ_brauer={fmtFloat dIn.lambdaBrauer}"
-          IO.println s!"        λ_moment={fmtFloat dIn.lambdaMoment}"
-          IO.println s!"        λ_used={fmtFloat dIn.lambdaUsed}"
-          IO.println <|
-            s!"  W_out: usedGram={dOut.usedGram}  usedAbsGram={dOut.usedAbsGram}  " ++
-              s!"computedGram={dOut.computedGram}  computedAbsGram={dOut.computedAbsGram}  " ++
-              s!"skippedGram={dOut.skippedGram}"
-          IO.println <|
-            s!"        gramDim={dOut.gramDim}  maxGramDimCap={dOut.maxGramDimCap}  " ++
-              s!"signedGramEnabled={dOut.signedGramEnabled}"
-          IO.println <|
-            s!"        gramCost={dOut.gramCost}  gramCostLimit={dOut.gramCostLimit}  " ++
-              s!"{chosenMsg dOut}  {signedGramMsg dOut}  {absGramMsg dOut}"
-          IO.println <|
-            s!"        frob={fmtFloat dOut.frobBound}  oneInf={fmtFloat dOut.oneInfBound} " ++
-              s!"opBound={fmtFloat dOut.opBound}"
-          IO.println <|
-            s!"        λ_abs_gersh={fmtFloat dOut.lambdaAbsGersh} " ++
-              s!"λ_abs_brauer={fmtFloat dOut.lambdaAbsBrauer}"
-          IO.println s!"        λ_gersh={fmtFloat dOut.lambdaGersh}"
-          IO.println s!"        λ_brauer={fmtFloat dOut.lambdaBrauer}"
-          IO.println s!"        λ_moment={fmtFloat dOut.lambdaMoment}"
-          IO.println s!"        λ_used={fmtFloat dOut.lambdaUsed}"
-        IO.println ""
-        IO.println s!"DIAGNOSTICS (ε decomposition) for top-{diagN} candidates"
-        for h in (top.take diagN) do
-          let c := h.candidate
-          IO.println s!"Candidate L{c.layer1Idx}H{c.head1Idx} -> L{c.layer2Idx}H{c.head2Idx}"
-          match cache.getHeadData c.layer1Idx c.head1Idx,
-                cache.getHeadData c.layer2Idx c.head2Idx with
-          | some d1, some d2 =>
-              printHeadDiagnostics "Head1" d1
-              printHeadDiagnostics "Head2" d2
-              let ε1 := d1.faithfulnessRatioCached
-              let ε2 := d2.faithfulnessRatioCached
-              let combinedRecon := ε1 + ε2 + ε1 * ε2
-              IO.println "  Combined:"
-              IO.println s!"    ε1 = {fmtFloat ε1}  ε2 = {fmtFloat ε2}"
-              IO.println s!"    combinedError = (1+ε1)(1+ε2)-1 = {fmtFloat combinedRecon}"
-              IO.println s!"    combinedErrorCached = {fmtFloat c.combinedError}"
-              IO.println s!"    reconDiff = {fmtFloat (combinedRecon - c.combinedError)}"
-          | _, _ =>
-              IO.println "  (diagnostics unavailable: missing cached head data)"
-      if verify then
-        IO.println ""
-        IO.println "Causal Verification (Head Ablation)"
-        IO.println "Metric: Δ = logit(target) - logit(top non-target) at last position"
-        IO.println "Impact = Δ_base - Δ_ablated"
-        IO.println ""
-        let targetToken? : Option Nat :=
-          match correctOpt with
-          | some t => some t
-          | none => inductionTargetTokenFromHistory model
-        let some targetToken := targetToken?
-          | do
-            IO.eprintln "Error: Cannot infer induction target token (need TOKENS or --correct)."
-            return 2
-        match VerificationContext.build model targetToken {} with
-        | .error msg =>
-            IO.eprintln s!"Error: {msg}"
-            return 2
-        | .ok ctx =>
-            let verifyTop := heads.take 10
-            IO.println s!"Top-{verifyTop.size} ablation checks (ranked by mechScore):"
-            IO.println s!"  target={ctx.targetToken} | neg={ctx.negativeToken}"
-            IO.println s!"  Δ_base={ctx.baseDelta}"
-            IO.println ""
-            IO.println "Rank | Candidate | Base Δ | Ablated Δ | Impact (Logits) | RelScore | \
-              Control Impact | Axioms Verified?"
-            IO.println "-----|-----------|--------|----------|----------------|----------|\
-              --------------|----------------"
-            let fmtOpt (x : Option Float) : String :=
-              match x with
-              | some v => toString v
-              | none => "undef"
-            let mut rank : Nat := 1
-            for h in verifyTop do
-              let c := h.candidate
-              let candHeads : Array HeadRef := #[
-                { layerIdx := c.layer1Idx, headIdx := c.head1Idx },
-                { layerIdx := c.layer2Idx, headIdx := c.head2Idx }
-              ]
-              let row := verifyCircuit ctx candHeads
-              let axiomsStr :=
-                if row.axioms.verified then
-                  "yes"
-                else
-                  let reasons := String.intercalate "; " row.axioms.failures.toList
-                  if reasons.isEmpty then "no" else s!"no ({reasons})"
-              IO.println s!"{rank} | {row.candidateLabel} | {row.baseDelta} | \
-                {fmtOpt row.ablatedDelta} | {fmtOpt row.impact} | {fmtOpt row.relScore} | \
-                {fmtOpt row.controlImpact} | {axiomsStr}"
-              rank := rank + 1
+          (storeDiagnostics := args.diagnostics)
+      let top ← printInductionCandidates heads args.verbose
+      let sched? := buildAdaptiveScheduler cache args
+      if args.adaptive && args.verbose then
+        match sched? with
+        | some sched => printAdaptiveSchedulerSteps sched args
+        | none => pure ()
+      if args.diagnostics then
+        let err? ← printInductionDiagnostics cache top args sched?
+        if let some code := err? then
+          return code
+      if args.verify then
+        let err? ← runInductionVerification model heads args.correctOpt
+        if let some code := err? then
+          return code
       return 0
 
-/-- Run the certify command - compute conservative, exact bounds in sound mode. -/
-def runCertify (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
-  setStdoutLogNameFromModelPath modelPath
-  let inputPath := p.flag? "input" |>.map (·.as! String)
+/-! ## SOUND command helpers -/
+
+private structure CertifyArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  inputPath? : Option System.FilePath
+  actDerivStr : String
+  deltaFlag? : Option String
+  deltaStr : String
+  outputPath? : Option System.FilePath
+
+private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
+  let modelPathStr := p.positionalArg! "model" |>.as! String
+  let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let actDerivStr := p.flag? "actDeriv" |>.map (·.as! String) |>.getD "2"
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
-  let outputPath := p.flag? "output" |>.map (·.as! String)
-  let action : ExceptT String IO Nfp.Sound.ModelCert := do
-    let actDeriv ←
-      match Nfp.Sound.parseRat actDerivStr with
-      | .ok r => pure r
-      | .error e => throw s!"invalid --actDeriv '{actDerivStr}': {e}"
-    let delta ←
-      match Nfp.Sound.parseRat deltaStr with
-      | .ok r => pure r
-      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-    /- If `--input` is omitted but `--delta` is provided, try to use `modelPath` as the input file
-       (for `.nfpt` exports that embed `EMBEDDINGS` in the same file). This keeps `nfp certify`
-       ergonomic without changing the default behavior when `--delta` is absent. -/
-    let inputPath? : Option System.FilePath ←
-      match inputPath with
-      | some s => pure (some ⟨s⟩)
-      | none =>
-          match deltaFlag? with
-          | none => pure none
-          | some _ =>
-              let hasEmbeddings ←
-                hasEmbeddingsBeforeLayers ⟨modelPath⟩
-              if hasEmbeddings then
-                pure (some ⟨modelPath⟩)
-              else
-                throw <|
-                  "local certification requested via --delta, but the model file has no \
+  let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
+  { modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    inputPath? := inputPath?
+    actDerivStr := actDerivStr
+    deltaFlag? := deltaFlag?
+    deltaStr := deltaStr
+    outputPath? := outputPath? }
+
+private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.ModelCert := do
+  let actDeriv ←
+    match Nfp.Sound.parseRat args.actDerivStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --actDeriv '{args.actDerivStr}': {e}"
+  let delta ←
+    match Nfp.Sound.parseRat args.deltaStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --delta '{args.deltaStr}': {e}"
+  /- If `--input` is omitted but `--delta` is provided, try to use `modelPath` as the input file
+     (for `.nfpt` exports that embed `EMBEDDINGS` in the same file). This keeps `nfp certify`
+     ergonomic without changing the default behavior when `--delta` is absent. -/
+  let inputPath? : Option System.FilePath ←
+    match args.inputPath? with
+    | some path => pure (some path)
+    | none =>
+        match args.deltaFlag? with
+        | none => pure none
+        | some _ =>
+            let hasEmbeddings ←
+              hasEmbeddingsBeforeLayers args.modelPath
+            if hasEmbeddings then
+              pure (some args.modelPath)
+            else
+              throw <|
+                "local certification requested via --delta, but the model file has no \
 EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
 containing EMBEDDINGS or omit --delta for global certification."
-    let cert ← ExceptT.mk <|
-      Nfp.Sound.certifyModelFile ⟨modelPath⟩ actDeriv
-        (inputPath? := inputPath?) (inputDelta := delta)
-    pure cert
-  match ← action.run with
-  | .error msg =>
-    IO.eprintln s!"Error: {msg}"
-    return 1
-  | .ok cert =>
-    let s := toString cert
-    match outputPath with
-    | some path =>
-      IO.FS.writeFile ⟨path⟩ s
-      IO.println s!"Report written to {path}"
-    | none =>
-      IO.println s
-    return 0
+  let cert ← ExceptT.mk <|
+    Nfp.Sound.certifyModelFile args.modelPath actDeriv
+      (inputPath? := inputPath?) (inputDelta := delta)
+  return cert
 
-/-- Run the head-bounds command - compute per-head contribution bounds in sound mode. -/
-def runHeadBounds (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
-  let inputPath := p.flag? "input" |>.map (·.as! String)
+private structure HeadBoundsArgs where
+  modelPath : System.FilePath
+  inputPath? : Option System.FilePath
+  deltaFlag? : Option String
+  deltaStr : String
+  scalePow10 : Nat
+  outputPath? : Option System.FilePath
+
+private def parseHeadBoundsArgs (p : Parsed) : HeadBoundsArgs :=
+  let modelPathStr := p.positionalArg! "model" |>.as! String
+  let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
-  let outputPath := p.flag? "output" |>.map (·.as! String)
-  let action : ExceptT String IO String := do
-    let delta ←
-      match Nfp.Sound.parseRat deltaStr with
-      | .ok r => pure r
-      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-    let useLocal := (inputPath.isSome || deltaFlag?.isSome)
-    if useLocal then
-      let inputPath? : Option System.FilePath ←
-        match inputPath with
-        | some s => pure (some ⟨s⟩)
-        | none =>
-            let hasEmbeddings ←
-              hasEmbeddingsBeforeLayers ⟨modelPath⟩
-            if hasEmbeddings then
-              pure (some ⟨modelPath⟩)
-            else
-              throw <|
-                "local head bounds requested via --delta, but the model file has no \
+  let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
+  { modelPath := ⟨modelPathStr⟩
+    inputPath? := inputPath?
+    deltaFlag? := deltaFlag?
+    deltaStr := deltaStr
+    scalePow10 := scalePow10
+    outputPath? := outputPath? }
+
+private def formatHeadBoundsLocal
+    (heads : Array Nfp.Sound.HeadLocalContributionCert)
+    (delta : Rat)
+    (inputPath? : Option System.FilePath)
+    (modelPath : System.FilePath) : String :=
+  let header :=
+    "SOUND per-head bounds (local): " ++
+      s!"delta={delta}, input={inputPath?.getD modelPath}\n"
+  let body :=
+    heads.foldl (fun acc h =>
+      acc ++
+        s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
+          s!"ln1MaxAbsGamma={h.ln1MaxAbsGamma}, " ++
+          s!"ln1VarLB={h.ln1VarianceLowerBound}, " ++
+          s!"ln1Bound={h.ln1Bound}, " ++
+          s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
+          s!"qk={h.qkFactorBound}, " ++
+          s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
+          s!"attn={h.attnWeightContribution}\n") ""
+  header ++ body
+
+private def formatHeadBoundsGlobal
+    (heads : Array Nfp.Sound.HeadContributionCert)
+    (scalePow10 : Nat) : String :=
+  let header :=
+    s!"SOUND per-head bounds (weight-only): scalePow10={scalePow10}\n"
+  let body :=
+    heads.foldl (fun acc h =>
+      acc ++
+        s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
+          s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
+          s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
+          s!"qk={h.qkFactorBound}, vo={h.voFactorBound}\n") ""
+  header ++ body
+
+private def runHeadBoundsAction (args : HeadBoundsArgs) : ExceptT String IO String := do
+  let delta ←
+    match Nfp.Sound.parseRat args.deltaStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --delta '{args.deltaStr}': {e}"
+  let useLocal := (args.inputPath?.isSome || args.deltaFlag?.isSome)
+  if useLocal then
+    let inputPath? : Option System.FilePath ←
+      match args.inputPath? with
+      | some path => pure (some path)
+      | none =>
+          let hasEmbeddings ←
+            hasEmbeddingsBeforeLayers args.modelPath
+          if hasEmbeddings then
+            pure (some args.modelPath)
+          else
+            throw <|
+              "local head bounds requested via --delta, but the model file has no \
 EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
 containing EMBEDDINGS or omit --delta for global head bounds."
-      let heads ← ExceptT.mk <|
-        Nfp.Sound.certifyHeadBoundsLocal ⟨modelPath⟩
-          (inputPath? := inputPath?) (inputDelta := delta)
-      let header :=
-        "SOUND per-head bounds (local): " ++
-          s!"delta={delta}, input={inputPath?.getD ⟨modelPath⟩}\n"
-      let body :=
-        heads.foldl (fun acc h =>
-          acc ++
-            s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
-              s!"ln1MaxAbsGamma={h.ln1MaxAbsGamma}, " ++
-              s!"ln1VarLB={h.ln1VarianceLowerBound}, " ++
-              s!"ln1Bound={h.ln1Bound}, " ++
-              s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
-              s!"qk={h.qkFactorBound}, " ++
-              s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
-              s!"attn={h.attnWeightContribution}\n") ""
-      return header ++ body
-    else
-      let heads ← ExceptT.mk <|
-        Nfp.Sound.certifyHeadBounds ⟨modelPath⟩ (scalePow10 := scalePow10)
-      let header :=
-        s!"SOUND per-head bounds (weight-only): scalePow10={scalePow10}\n"
-      let body :=
-        heads.foldl (fun acc h =>
-          acc ++
-            s!"Layer {h.layerIdx} Head {h.headIdx}: " ++
-              s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
-              s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
-              s!"qk={h.qkFactorBound}, vo={h.voFactorBound}\n") ""
-      return header ++ body
-  match ← action.run with
-  | .error msg =>
-    IO.eprintln s!"Error: {msg}"
-    return 1
-  | .ok s =>
-    match outputPath with
-    | some path =>
-      IO.FS.writeFile ⟨path⟩ s
-      IO.println s!"Report written to {path}"
-    | none =>
-      IO.println s
-    return 0
+    let heads ← ExceptT.mk <|
+      Nfp.Sound.certifyHeadBoundsLocal args.modelPath
+        (inputPath? := inputPath?) (inputDelta := delta)
+    return formatHeadBoundsLocal heads delta inputPath? args.modelPath
+  else
+    let heads ← ExceptT.mk <|
+      Nfp.Sound.certifyHeadBounds args.modelPath (scalePow10 := args.scalePow10)
+    return formatHeadBoundsGlobal heads args.scalePow10
 
-/-- Run the head-pattern command - compute per-head attention pattern bounds in sound mode. -/
-def runHeadPattern (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
+private structure HeadPatternArgs where
+  modelPath : System.FilePath
+  layerIdx : Nat
+  headIdx : Nat
+  offset : Int
+  tightPatternLayers : Nat
+  tightPattern : Bool
+  perRowPatternLayers : Nat
+  bestMatch : Bool
+  sweep : Bool
+  queryPos? : Option Nat
+  inputPath? : Option System.FilePath
+  deltaStr : String
+  maxSeqLen : Nat
+  outputPath? : Option System.FilePath
+
+private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
+  let modelPathStr := p.positionalArg! "model" |>.as! String
   let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
@@ -831,99 +977,168 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
   let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
   let bestMatch := p.hasFlag "bestMatch"
   let sweep := p.hasFlag "sweep"
-  let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
-  let inputPath := p.flag? "input" |>.map (·.as! String)
+  let queryPos? := p.flag? "queryPos" |>.map (·.as! Nat)
+  let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
-  let outputPath := p.flag? "output" |>.map (·.as! String)
-  let action : ExceptT String IO String := do
-    let delta ←
-      match Nfp.Sound.parseRat deltaStr with
-      | .ok r => pure r
-      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-    let inputPath? : Option System.FilePath ←
-      match inputPath with
-      | some s => pure (some ⟨s⟩)
-      | none =>
-          let hasEmbeddings ←
-            hasEmbeddingsBeforeLayers ⟨modelPath⟩
-          if hasEmbeddings then
-            pure (some ⟨modelPath⟩)
-          else
-            throw <|
-              "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
-    let s ←
-      if bestMatch then
-        if sweep then
-          let certs ← ExceptT.mk <|
-            Nfp.Sound.certifyHeadPatternBestMatchLocalSweep ⟨modelPath⟩ layerIdx headIdx
-              (inputPath? := inputPath?) (inputDelta := delta)
-              (targetOffset := offset) (maxSeqLen := maxSeqLen)
-              (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
-              (perRowPatternLayers := perRowPatternLayers)
-          let header :=
-            "SOUND head pattern sweep (best-match): " ++
-              s!"layer={layerIdx}, head={headIdx}, offset={offset}\n"
-          let body :=
-            certs.foldl (fun acc cert =>
-              acc ++
-                s!"queryPos={cert.queryPos} targetTok={cert.targetToken} " ++
-                  s!"marginLB={cert.marginLowerBound} " ++
-                  s!"weightLB={cert.bestMatchWeightLowerBound}\n") ""
-          pure (header ++ body)
+  let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
+  { modelPath := ⟨modelPathStr⟩
+    layerIdx := layerIdx
+    headIdx := headIdx
+    offset := offset
+    tightPatternLayers := tightPatternLayers
+    tightPattern := tightPattern
+    perRowPatternLayers := perRowPatternLayers
+    bestMatch := bestMatch
+    sweep := sweep
+    queryPos? := queryPos?
+    inputPath? := inputPath?
+    deltaStr := deltaStr
+    maxSeqLen := maxSeqLen
+    outputPath? := outputPath? }
+
+private def formatHeadPatternBestMatchSweep
+    (layerIdx headIdx : Nat)
+    (offset : Int)
+    (certs : Array Nfp.Sound.HeadBestMatchPatternCert) : String :=
+  let header :=
+    "SOUND head pattern sweep (best-match): " ++
+      s!"layer={layerIdx}, head={headIdx}, offset={offset}\n"
+  let body :=
+    certs.foldl (fun acc cert =>
+      acc ++
+        s!"queryPos={cert.queryPos} targetTok={cert.targetToken} " ++
+          s!"marginLB={cert.marginLowerBound} " ++
+          s!"weightLB={cert.bestMatchWeightLowerBound}\n") ""
+  header ++ body
+
+private def formatHeadPatternBestMatch
+    (cert : Nfp.Sound.HeadBestMatchPatternCert) : String :=
+  "SOUND head pattern (best-match): " ++
+    s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
+      s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
+    s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
+      s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
+      s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
+    s!"marginLB={cert.marginLowerBound}, " ++
+      s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
+
+private def formatHeadPatternLocal
+    (cert : Nfp.Sound.HeadPatternCert) : String :=
+  "SOUND head pattern (local): " ++
+    s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
+    s!"seqLen={cert.seqLen}, " ++
+    s!"targetCountLB={cert.targetCountLowerBound}, " ++
+    s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
+    s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
+    s!"marginLB={cert.marginLowerBound}, " ++
+    s!"targetWeightLB={cert.targetWeightLowerBound}\n"
+
+private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO String := do
+  let delta ←
+    match Nfp.Sound.parseRat args.deltaStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --delta '{args.deltaStr}': {e}"
+  let inputPath? : Option System.FilePath ←
+    match args.inputPath? with
+    | some path => pure (some path)
+    | none =>
+        let hasEmbeddings ←
+          hasEmbeddingsBeforeLayers args.modelPath
+        if hasEmbeddings then
+          pure (some args.modelPath)
         else
-          let cert ← ExceptT.mk <|
-            Nfp.Sound.certifyHeadPatternBestMatchLocal ⟨modelPath⟩ layerIdx headIdx
-              (queryPos? := queryPos) (inputPath? := inputPath?)
-              (inputDelta := delta) (targetOffset := offset) (maxSeqLen := maxSeqLen)
-              (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
-              (perRowPatternLayers := perRowPatternLayers)
-          pure <|
-            "SOUND head pattern (best-match): " ++
-              s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
-                s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
-              s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
-                s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
-                s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
-              s!"marginLB={cert.marginLowerBound}, " ++
-                s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
-      else
-        if sweep then
-          throw "use --sweep with --bestMatch"
-        let cert ← ExceptT.mk <|
-          Nfp.Sound.certifyHeadPatternLocal ⟨modelPath⟩ layerIdx headIdx
-            (inputPath? := inputPath?) (inputDelta := delta)
-            (targetOffset := offset) (maxSeqLen := maxSeqLen)
-            (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
-            (perRowPatternLayers := perRowPatternLayers)
-        pure <|
-          "SOUND head pattern (local): " ++
-            s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
-            s!"seqLen={cert.seqLen}, " ++
-            s!"targetCountLB={cert.targetCountLowerBound}, " ++
-            s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
-            s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
-            s!"marginLB={cert.marginLowerBound}, " ++
-            s!"targetWeightLB={cert.targetWeightLowerBound}\n"
-    return s
-  match ← action.run with
+          throw <|
+            "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
+  if args.bestMatch then
+    if args.sweep then
+      let certs ← ExceptT.mk <|
+        Nfp.Sound.certifyHeadPatternBestMatchLocalSweep args.modelPath args.layerIdx args.headIdx
+          (inputPath? := inputPath?) (inputDelta := delta)
+          (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+          (tightPattern := args.tightPattern)
+          (tightPatternLayers := args.tightPatternLayers)
+          (perRowPatternLayers := args.perRowPatternLayers)
+      return formatHeadPatternBestMatchSweep args.layerIdx args.headIdx args.offset certs
+    else
+      let cert ← ExceptT.mk <|
+        Nfp.Sound.certifyHeadPatternBestMatchLocal args.modelPath args.layerIdx args.headIdx
+          (queryPos? := args.queryPos?) (inputPath? := inputPath?)
+          (inputDelta := delta) (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+          (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
+          (perRowPatternLayers := args.perRowPatternLayers)
+      return formatHeadPatternBestMatch cert
+  else
+    if args.sweep then
+      throw "use --sweep with --bestMatch"
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyHeadPatternLocal args.modelPath args.layerIdx args.headIdx
+        (inputPath? := inputPath?) (inputDelta := delta)
+        (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+        (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
+        (perRowPatternLayers := args.perRowPatternLayers)
+    return formatHeadPatternLocal cert
+
+/-- Run the certify command - compute conservative, exact bounds in sound mode. -/
+def runCertify (p : Parsed) : IO UInt32 := do
+  let args := parseCertifyArgs p
+  setStdoutLogNameFromModelPath args.modelPathStr
+  match ← (runCertifyAction args).run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok cert =>
+    writeReport args.outputPath? (toString cert)
+    return 0
+
+/-- Run the head-bounds command - compute per-head contribution bounds in sound mode. -/
+def runHeadBounds (p : Parsed) : IO UInt32 := do
+  let args := parseHeadBoundsArgs p
+  match ← (runHeadBoundsAction args).run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
     return 1
   | .ok s =>
-    match outputPath with
-    | some path =>
-      IO.FS.writeFile ⟨path⟩ s
-      IO.println s!"Report written to {path}"
-    | none =>
-      IO.println s
+    writeReport args.outputPath? s
     return 0
 
-set_option maxHeartbeats 8000000 in
--- Heartbeats bumped to avoid elaboration timeout for this CLI entrypoint.
-/-- Run the induction-cert command - compute a sound induction head certificate. -/
-def runInductionCert (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
+/-- Run the head-pattern command - compute per-head attention pattern bounds in sound mode. -/
+def runHeadPattern (p : Parsed) : IO UInt32 := do
+  let args := parseHeadPatternArgs p
+  match ← (runHeadPatternAction args).run with
+  | .error msg =>
+    IO.eprintln s!"Error: {msg}"
+    return 1
+  | .ok s =>
+    writeReport args.outputPath? s
+    return 0
+
+/-- Parsed arguments for `induction-cert`, with resolved input path and delta. -/
+private structure InductionCertArgs where
+  modelPath : System.FilePath
+  layer1 : Nat
+  head1 : Nat
+  layer2 : Nat
+  head2 : Nat
+  coord : Nat
+  offset1 : Int
+  offset2 : Int
+  targetToken? : Option Nat
+  negativeToken? : Option Nat
+  tightPatternLayers : Nat
+  tightPattern : Bool
+  perRowPatternLayers : Nat
+  bestMatch : Bool
+  queryPos? : Option Nat
+  inputPath? : Option System.FilePath
+  delta : Rat
+  maxSeqLen : Nat
+  outputPath? : Option System.FilePath
+
+/-- Parse and validate `induction-cert` arguments. -/
+private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCertArgs := do
+  let modelPathStr := p.positionalArg! "model" |>.as! String
+  let modelPath : System.FilePath := ⟨modelPathStr⟩
   let layer1 := p.flag? "layer1" |>.map (·.as! Nat) |>.getD 0
   let head1 := p.flag? "head1" |>.map (·.as! Nat) |>.getD 0
   let layer2 := p.flag? "layer2" |>.map (·.as! Nat) |>.getD 1
@@ -943,119 +1158,167 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
   let outputPath := p.flag? "output" |>.map (·.as! String)
-  let action : ExceptT String IO String := do
-    let delta ←
-      match Nfp.Sound.parseRat deltaStr with
-      | .ok r => pure r
-      | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-    let inputPath? : Option System.FilePath ←
-      match inputPath with
-      | some s => pure (some ⟨s⟩)
-      | none =>
-          let hasEmbeddings ←
-            hasEmbeddingsBeforeLayers ⟨modelPath⟩
-          if hasEmbeddings then
-            pure (some ⟨modelPath⟩)
-          else
-            throw <|
-              "induction cert requires EMBEDDINGS; pass --input for legacy text models."
-    let s ←
-      if bestMatch then
-        let cert ← ExceptT.mk <|
-          Nfp.Sound.certifyInductionSoundBestMatch ⟨modelPath⟩
-            layer1 head1 layer2 head2 coord
-            (queryPos? := queryPos) (inputPath? := inputPath?)
-            (inputDelta := delta) (offset1 := offset1) (offset2 := offset2)
-            (maxSeqLen := maxSeqLen) (tightPattern := tightPattern)
-            (tightPatternLayers := tightPatternLayers)
-            (perRowPatternLayers := perRowPatternLayers)
-            (targetToken? := targetToken) (negativeToken? := negativeToken)
-        let p1 := cert.layer1Pattern
-        let p2 := cert.layer2Pattern
-        let v := cert.layer2Value
-        let logitLine : String :=
-          match cert.layer2Logit? with
-          | none => ""
-          | some logit =>
-              s!"logitDiffLB={logit.logitDiffLowerBound} " ++
-                s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
-                s!"logitMatchLB={logit.matchLogitLowerBound} " ++
-                s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
-        pure <|
-          "SOUND induction cert (best-match):\n" ++
-            s!"queryPos={p2.queryPos}\n" ++
-            s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
-              s!"targetTok={p1.targetToken} " ++
-              s!"marginLB={p1.marginLowerBound} " ++
-              s!"weightLB={p1.bestMatchWeightLowerBound}\n" ++
-            s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
-              s!"targetTok={p2.targetToken} " ++
-              s!"marginLB={p2.marginLowerBound} " ++
-              s!"weightLB={p2.bestMatchWeightLowerBound}\n" ++
-            s!"coord={v.coord} matchCoordLB={v.matchCoordLowerBound} " ++
-              s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
-            s!"deltaLB={cert.deltaLowerBound}\n" ++
-            logitLine
-      else
-        let cert ← ExceptT.mk <|
-          Nfp.Sound.certifyInductionSound ⟨modelPath⟩
-            layer1 head1 layer2 head2 coord
-            (inputPath? := inputPath?) (inputDelta := delta)
-            (offset1 := offset1) (offset2 := offset2) (maxSeqLen := maxSeqLen)
-            (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
-            (perRowPatternLayers := perRowPatternLayers)
-            (targetToken? := targetToken) (negativeToken? := negativeToken)
-        let p1 := cert.layer1Pattern
-        let p2 := cert.layer2Pattern
-        let v := cert.layer2Value
-        let logitLine : String :=
-          match cert.layer2Logit? with
-          | none => ""
-          | some logit =>
-              s!"logitDiffLB={logit.logitDiffLowerBound} " ++
-                s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
-                s!"logitMatchLB={logit.matchLogitLowerBound} " ++
-                s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
-        pure <|
-          "SOUND induction cert:\n" ++
-            s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
-              s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
-            s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
-              s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
-            s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
-              s!"matchCoordLB={v.matchCoordLowerBound} " ++
-              s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
-            s!"deltaLB={cert.deltaLowerBound}\n" ++
-            logitLine
-    return s
+  let delta ←
+    match Nfp.Sound.parseRat deltaStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
+  let inputPath? : Option System.FilePath ←
+    match inputPath with
+    | some s => pure (some ⟨s⟩)
+    | none =>
+        let hasEmbeddings ←
+          hasEmbeddingsBeforeLayers modelPath
+        if hasEmbeddings then
+          pure (some modelPath)
+        else
+          throw <|
+            "induction cert requires EMBEDDINGS; pass --input for legacy text models."
+  let outputPath? : Option System.FilePath :=
+    outputPath.map (fun s => ⟨s⟩)
+  return {
+    modelPath := modelPath
+    layer1 := layer1
+    head1 := head1
+    layer2 := layer2
+    head2 := head2
+    coord := coord
+    offset1 := offset1
+    offset2 := offset2
+    targetToken? := targetToken
+    negativeToken? := negativeToken
+    tightPatternLayers := tightPatternLayers
+    tightPattern := tightPattern
+    perRowPatternLayers := perRowPatternLayers
+    bestMatch := bestMatch
+    queryPos? := queryPos
+    inputPath? := inputPath?
+    delta := delta
+    maxSeqLen := maxSeqLen
+    outputPath? := outputPath?
+  }
+
+/-- Format the optional logit-diff line for local induction certs. -/
+private def formatInductionLogitLine
+    (logit? : Option Nfp.Sound.HeadLogitDiffLowerBoundCert) : String :=
+  match logit? with
+  | none => ""
+  | some logit =>
+      s!"logitDiffLB={logit.logitDiffLowerBound} " ++
+        s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
+        s!"logitMatchLB={logit.matchLogitLowerBound} " ++
+        s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
+
+/-- Format the optional logit-diff line for best-match induction certs. -/
+private def formatInductionLogitLinePos
+    (logit? : Option Nfp.Sound.HeadLogitDiffLowerBoundPosCert) : String :=
+  match logit? with
+  | none => ""
+  | some logit =>
+      s!"logitDiffLB={logit.logitDiffLowerBound} " ++
+        s!"targetTok={logit.targetToken} negTok={logit.negativeToken}\n" ++
+        s!"logitMatchLB={logit.matchLogitLowerBound} " ++
+        s!"logitNonmatchLB={logit.nonmatchLogitLowerBound}\n"
+
+/-- Render a best-match induction certificate report. -/
+private def formatInductionBestMatch
+    (cert : Nfp.Sound.InductionHeadBestMatchSoundCert) : String :=
+  let p1 := cert.layer1Pattern
+  let p2 := cert.layer2Pattern
+  let v := cert.layer2Value
+  let logitLine := formatInductionLogitLinePos cert.layer2Logit?
+  "SOUND induction cert (best-match):\n" ++
+    s!"queryPos={p2.queryPos}\n" ++
+    s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+      s!"targetTok={p1.targetToken} " ++
+      s!"marginLB={p1.marginLowerBound} " ++
+      s!"weightLB={p1.bestMatchWeightLowerBound}\n" ++
+    s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+      s!"targetTok={p2.targetToken} " ++
+      s!"marginLB={p2.marginLowerBound} " ++
+      s!"weightLB={p2.bestMatchWeightLowerBound}\n" ++
+    s!"coord={v.coord} matchCoordLB={v.matchCoordLowerBound} " ++
+      s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
+    s!"deltaLB={cert.deltaLowerBound}\n" ++
+    logitLine
+
+/-- Render a local induction certificate report. -/
+private def formatInductionLocal
+    (cert : Nfp.Sound.InductionHeadSoundCert) : String :=
+  let p1 := cert.layer1Pattern
+  let p2 := cert.layer2Pattern
+  let v := cert.layer2Value
+  let logitLine := formatInductionLogitLine cert.layer2Logit?
+  "SOUND induction cert:\n" ++
+    s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+      s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
+    s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+      s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
+    s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
+      s!"matchCoordLB={v.matchCoordLowerBound} " ++
+      s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
+    s!"deltaLB={cert.deltaLowerBound}\n" ++
+    logitLine
+
+/-- Run the induction-cert action and return the report string. -/
+private def runInductionCertAction (args : InductionCertArgs) : ExceptT String IO String := do
+  if args.bestMatch then
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyInductionSoundBestMatch args.modelPath
+        args.layer1 args.head1 args.layer2 args.head2 args.coord
+        (queryPos? := args.queryPos?) (inputPath? := args.inputPath?)
+        (inputDelta := args.delta) (offset1 := args.offset1) (offset2 := args.offset2)
+        (maxSeqLen := args.maxSeqLen) (tightPattern := args.tightPattern)
+        (tightPatternLayers := args.tightPatternLayers)
+        (perRowPatternLayers := args.perRowPatternLayers)
+        (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
+    return formatInductionBestMatch cert
+  else
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyInductionSound args.modelPath
+        args.layer1 args.head1 args.layer2 args.head2 args.coord
+        (inputPath? := args.inputPath?) (inputDelta := args.delta)
+        (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
+        (perRowPatternLayers := args.perRowPatternLayers)
+        (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
+    return formatInductionLocal cert
+
+/-- Run the induction-cert command - compute a sound induction head certificate. -/
+def runInductionCert (p : Parsed) : IO UInt32 := do
+  let action : ExceptT String IO (String × Option System.FilePath) := do
+    let args ← parseInductionCertArgs p
+    let report ← runInductionCertAction args
+    return (report, args.outputPath?)
   match ← action.run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
     return 1
-  | .ok s =>
-    match outputPath with
+  | .ok (s, outputPath?) =>
+    match outputPath? with
     | some path =>
-      IO.FS.writeFile ⟨path⟩ s
+      IO.FS.writeFile path s
       IO.println s!"Report written to {path}"
     | none =>
       IO.println s
     return 0
 
-/-- Regression test for SOUND fixed-point cache soundness and consistency.
+/-! ## Sound cache check helpers -/
 
-This is intended for CI and small fixtures. It:
-- builds a `.nfpc` cache (if needed),
-- checks cache size matches the expected tensor stream length,
-- checks the `±1`-ulp rounding envelope on up to `maxTokens` numeric tokens in the text file.
--/
-def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
+private structure SoundCacheCheckArgs where
+  modelPath : System.FilePath
+  scalePow10 : Nat
+  maxTokens : Nat
+
+private def parseSoundCacheCheckArgs (p : Parsed) : SoundCacheCheckArgs :=
   let modelPath := p.positionalArg! "model" |>.as! String
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let maxTokens := p.flag? "maxTokens" |>.map (·.as! Nat) |>.getD 0
-  let modelFp : System.FilePath := ⟨modelPath⟩
-  let modelHash ← Nfp.Untrusted.SoundCacheIO.fnv1a64File modelFp
-  let cacheFp := Nfp.Sound.SoundCache.cachePath modelFp modelHash scalePow10
-  match (← Nfp.Untrusted.SoundCacheIO.buildCacheFile modelFp cacheFp scalePow10) with
+  { modelPath := ⟨modelPath⟩, scalePow10 := scalePow10, maxTokens := maxTokens }
+
+private def runSoundCacheCheckWithArgs (args : SoundCacheCheckArgs) : IO UInt32 := do
+  let modelHash ← Nfp.Untrusted.SoundCacheIO.fnv1a64File args.modelPath
+  let cacheFp := Nfp.Sound.SoundCache.cachePath args.modelPath modelHash args.scalePow10
+  match (← Nfp.Untrusted.SoundCacheIO.buildCacheFile args.modelPath cacheFp args.scalePow10) with
   | .error e =>
       IO.eprintln s!"Error: cache build failed: {e}"
       return 1
@@ -1072,15 +1335,26 @@ def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
       | .ok _ =>
           match
             (← Nfp.Untrusted.SoundCacheIO.checkTextTokenEnvelope
-              modelFp scalePow10 maxTokens) with
+              args.modelPath args.scalePow10 args.maxTokens) with
           | .error e =>
               IO.eprintln s!"Error: {e}"
               return 1
           | .ok _ =>
               IO.println <|
                 "OK: sound cache validated " ++
-                  s!"(scalePow10={scalePow10}, maxTokens={maxTokens})"
+                  s!"(scalePow10={args.scalePow10}, maxTokens={args.maxTokens})"
               return 0
+
+/-- Regression test for SOUND fixed-point cache soundness and consistency.
+
+This is intended for CI and small fixtures. It:
+- builds a `.nfpc` cache (if needed),
+- checks cache size matches the expected tensor stream length,
+- checks the `±1`-ulp rounding envelope on up to `maxTokens` numeric tokens in the text file.
+-/
+def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
+  let args := parseSoundCacheCheckArgs p
+  runSoundCacheCheckWithArgs args
 
 /-- Run the rope command - print a proof-backed RoPE operator norm certificate. -/
 def runRoPE (p : Parsed) : IO UInt32 := do
@@ -1108,15 +1382,54 @@ def runRoPE (p : Parsed) : IO UInt32 := do
       IO.eprintln "Error: --seqLen and --pairs must be positive."
       return 1
 
-/-- Dump a small slice of a forward pass for cross-implementation sanity checks. -/
-def runDump (p : Parsed) : IO UInt32 := do
-  let modelPath := p.positionalArg! "model" |>.as! String
-  setStdoutLogNameFromModelPath modelPath
+/-! ## Dump command helpers -/
+
+private structure DumpArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  layer : Nat
+  pos : Nat
+  take : Nat
+  kind : String
+
+private def parseDumpArgs (p : Parsed) : DumpArgs :=
+  let modelPathStr := p.positionalArg! "model" |>.as! String
   let layer := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let pos := p.flag? "pos" |>.map (·.as! Nat) |>.getD 0
   let take := p.flag? "take" |>.map (·.as! Nat) |>.getD 16
   let kind := p.flag? "kind" |>.map (·.as! String) |>.getD "afterLayer"
-  let loadResult ← loadModel ⟨modelPath⟩
+  { modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    layer := layer
+    pos := pos
+    take := take
+    kind := kind }
+
+private def selectDumpMatrix
+    (kind : String) (layer : Nat) (model : ConcreteModel) (fwd : ForwardPassResult) :
+    ConcreteMatrix :=
+  match kind with
+  | "embeddings" => model.inputEmbeddings
+  | "layerInput" => fwd.getLayerInput layer
+  | "postAttn" => fwd.getPostAttnResidual layer
+  | "afterLayer" => fwd.getLayerInput (layer + 1)
+  | _ => fwd.getLayerInput (layer + 1)
+
+private def collectDumpRow (X : ConcreteMatrix) (pos n : Nat) :
+    (Array Float × Float × Float) := Id.run do
+  let mut xs : Array Float := Array.mkEmpty n
+  let mut sum : Float := 0.0
+  let mut sumSq : Float := 0.0
+  for j in [:n] do
+    let v := X.get pos j
+    xs := xs.push v
+    sum := sum + v
+    sumSq := sumSq + v * v
+  return (xs, sum, sumSq)
+
+private def runDumpWithArgs (args : DumpArgs) : IO UInt32 := do
+  setStdoutLogNameFromModelPath args.modelPathStr
+  let loadResult ← loadModel args.modelPath
   match loadResult with
   | .error msg =>
       IO.eprintln s!"Error loading model: {msg}"
@@ -1124,38 +1437,26 @@ def runDump (p : Parsed) : IO UInt32 := do
   | .ok model0 =>
       let model := model0.trimTrailingZeroEmbeddings
       let fwd := model.runForward true
-      let X : ConcreteMatrix :=
-        match kind with
-        | "embeddings" => model.inputEmbeddings
-        | "layerInput" =>
-            fwd.getLayerInput layer
-        | "postAttn" =>
-            fwd.getPostAttnResidual layer
-        | "afterLayer" =>
-            fwd.getLayerInput (layer + 1)
-        | _ =>
-            fwd.getLayerInput (layer + 1)
+      let X := selectDumpMatrix args.kind args.layer model fwd
       if X.numRows = 0 || X.numCols = 0 then
-        IO.eprintln s!"Error: empty matrix for kind={kind}"
+        IO.eprintln s!"Error: empty matrix for kind={args.kind}"
         return 1
-      if pos ≥ X.numRows then
-        IO.eprintln s!"Error: pos={pos} out of bounds (rows={X.numRows})"
+      if args.pos ≥ X.numRows then
+        IO.eprintln s!"Error: pos={args.pos} out of bounds (rows={X.numRows})"
         return 1
-      let n := min take X.numCols
-      let mut xs : Array Float := Array.mkEmpty n
-      let mut sum : Float := 0.0
-      let mut sumSq : Float := 0.0
-      for j in [:n] do
-        let v := X.get pos j
-        xs := xs.push v
-        sum := sum + v
-        sumSq := sumSq + v * v
+      let n := min args.take X.numCols
+      let (xs, sum, sumSq) := collectDumpRow X args.pos n
       IO.println <|
-        s!"DUMP kind={kind} layer={layer} pos={pos} take={n} " ++
+        s!"DUMP kind={args.kind} layer={args.layer} pos={args.pos} take={n} " ++
           s!"rows={X.numRows} cols={X.numCols}"
       IO.println s!"sum={sum} sumSq={sumSq}"
       IO.println (String.intercalate " " (xs.toList.map (fun x => s!"{x}")))
       return 0
+
+/-- Dump a small slice of a forward pass for cross-implementation sanity checks. -/
+def runDump (p : Parsed) : IO UInt32 := do
+  let args := parseDumpArgs p
+  runDumpWithArgs args
 
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|

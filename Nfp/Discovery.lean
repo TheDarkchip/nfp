@@ -78,15 +78,18 @@ namespace ConcreteMatrix
 
 /-- Access element (i, j) of the matrix. Returns 0 if out of bounds.
 
-PERFORMANCE: This uses `getD` (safe with default) rather than bounds-checked `[i]!`
-because it's called in tight loops where bounds are already verified at a higher level.
-The 0.0 default allows graceful handling of edge cases in algorithms.
+PERFORMANCE: This is the guarded accessor; hot loops should prefer `getUnsafe`
+once bounds are established to avoid the per-access branch.
 -/
 def get (M : ConcreteMatrix) (i j : Nat) : Float :=
   if i < M.numRows ∧ j < M.numCols then
     -- Index is in-bounds by `size_eq` and the guard above.
     M.data[i * M.numCols + j]!
   else 0.0
+
+/-- Fast access to element `(i, j)` assuming `i < numRows` and `j < numCols`. -/
+@[inline] def getUnsafe (M : ConcreteMatrix) (i j : Nat) : Float :=
+  M.data[i * M.numCols + j]!
 
 /-- Set element `(i,j)` of the matrix. If out of bounds, returns the original matrix.
 
@@ -316,10 +319,12 @@ PERFORMANCE: Power iteration is O(iterations × n²) but heavily optimized:
 - Bounds-checked access `v[j]!` and `Mv[i]!` (compiler optimizes in loops)
 -/
 def operatorNormHeuristicPI (M : ConcreteMatrix) (numIterations : Nat := 20) : Float := Id.run do
-  if M.numRows = 0 || M.numCols = 0 then return 0.0
+  let numRows := M.numRows
+  let numCols := M.numCols
+  if numRows = 0 || numCols = 0 then return 0.0
 
   -- Initialize with a vector of ones
-  let mut v : Array Float := .ofFn fun _ : Fin M.numCols => 1.0
+  let mut v : Array Float := .ofFn fun _ : Fin numCols => 1.0
 
   -- Normalize initial vector
   let initNorm := Float.sqrt (v.foldl (fun acc x => acc + x * x) 0.0)
@@ -330,19 +335,21 @@ def operatorNormHeuristicPI (M : ConcreteMatrix) (numIterations : Nat := 20) : F
   let mut sigma : Float := 0.0
   for _ in [:numIterations] do
     -- Compute M v
-    let mut Mv : Array Float := .ofFn fun i : Fin M.numRows => Id.run do
+    let mut Mv : Array Float := .ofFn fun i : Fin numRows => Id.run do
       let mut acc : Float := 0.0
-      for j in [:M.numCols] do
+      let rowBase := i.val * numCols
+      for j in [:numCols] do
         -- SAFETY: v has size M.numCols, guaranteed by Array.ofFn
-        acc := acc + M.get i j * v[j]!
+        acc := acc + M.data[rowBase + j]! * v[j]!
       return acc
 
     -- Compute M^T (M v) = (M^T M) v
-    let mut MTMv : Array Float := .ofFn fun j : Fin M.numCols => Id.run do
+    let mut MTMv : Array Float := .ofFn fun j : Fin numCols => Id.run do
       let mut acc : Float := 0.0
-      for i in [:M.numRows] do
+      let col := j.val
+      for i in [:numRows] do
         -- SAFETY: Mv has size M.numRows, guaranteed by Array.ofFn above
-        acc := acc + M.get i j * Mv[i]!
+        acc := acc + M.data[i * numCols + col]! * Mv[i]!
       return acc
 
     -- Compute norm of MTMv (this is σ² times ‖v‖, and ‖v‖ ≈ 1)
@@ -416,8 +423,9 @@ def maxAbsRowSumEst (M : ConcreteMatrix) : Float := Id.run do
   let mut maxSum : Float := 0.0
   for i in [:M.numRows] do
     let mut rowSum : Float := 0.0
+    let rowBase := i * M.numCols
     for j in [:M.numCols] do
-      rowSum := rowSum + Float.abs (M.get i j)
+      rowSum := rowSum + Float.abs (M.data[rowBase + j]!)
     maxSum := max maxSum rowSum
   maxSum
 
@@ -433,7 +441,8 @@ def maxAbsColSumEst (M : ConcreteMatrix) : Float := Id.run do
   for j in [:M.numCols] do
     let mut colSum : Float := 0.0
     for i in [:M.numRows] do
-      colSum := colSum + Float.abs (M.get i j)
+      let rowBase := i * M.numCols
+      colSum := colSum + Float.abs (M.data[rowBase + j]!)
     maxSum := max maxSum colSum
   maxSum
 
@@ -545,7 +554,7 @@ def transpose (M : ConcreteMatrix) : ConcreteMatrix where
   data := .ofFn fun idx : Fin (M.numCols * M.numRows) =>
     let i := idx.val / M.numRows
     let j := idx.val % M.numRows
-    M.get j i
+    M.data[j * M.numCols + i]!
   size_eq := Array.size_ofFn
 
 
@@ -662,7 +671,7 @@ def symmLambdaMaxUpperBrauer (G : ConcreteMatrix) : Float := Id.run do
   let mut rs : Array Float := Array.mkEmpty n
 
   for i in [:n] do
-    let di := G.get i i
+    let di := G.data[i * n + i]!
     ds := ds.push di
     maxDiag := max maxDiag di
 
@@ -1234,7 +1243,7 @@ def getRow (M : ConcreteMatrix) (i : Nat) : ConcreteMatrix :=
     {
       numRows := 1
       numCols := M.numCols
-      data := .ofFn fun j : Fin M.numCols => M.get i j.val
+      data := .ofFn fun j : Fin M.numCols => M.getUnsafe i j.val
       size_eq := by simp
     }
   else zeros 1 M.numCols
@@ -1248,7 +1257,7 @@ def setRow (M : ConcreteMatrix) (i : Nat) (row : ConcreteMatrix) : ConcreteMatri
       data := .ofFn fun idx : Fin (M.numRows * M.numCols) =>
         let r := idx.val / M.numCols
         let c := idx.val % M.numCols
-        if r = i then row.get 0 c else M.get r c
+        if r = i then row.getUnsafe 0 c else M.getUnsafe r c
       size_eq := Array.size_ofFn
     }
   else M
@@ -1268,7 +1277,7 @@ def addBias (M : ConcreteMatrix) (bias : ConcreteMatrix) : ConcreteMatrix :=
       numCols := M.numCols
       data := .ofFn fun idx : Fin (M.numRows * M.numCols) =>
         let c := idx.val % M.numCols
-        M.data.getD idx.val 0.0 + bias.get 0 c
+        M.data[idx.val]! + bias.data[c]!
       size_eq := Array.size_ofFn
     }
   else M
@@ -1279,39 +1288,45 @@ This implements the Pre-LN transformer normalization convention: each token (row
 is normalized across model dimension (columns), then scaled and shifted.
 -/
 def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : ConcreteMatrix := Id.run do
-  if X.numRows = 0 || X.numCols = 0 then
-    return ConcreteMatrix.zeros X.numRows X.numCols
-  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols ∧ β.numRows = 1 ∧ β.numCols = X.numCols) then
+  let rows := X.numRows
+  let cols := X.numCols
+  if rows = 0 || cols = 0 then
+    return ConcreteMatrix.zeros rows cols
+  if !(γ.numRows = 1 ∧ γ.numCols = cols ∧ β.numRows = 1 ∧ β.numCols = cols) then
     return X
+  let colsF := cols.toFloat
+  let gammaData := γ.data
+  let betaData := β.data
 
   -- Per-row mean and inverse stddev (compute once for speed).
-  let mut means : Array Float := Array.mkEmpty X.numRows
-  let mut invStds : Array Float := Array.mkEmpty X.numRows
-  for r in [:X.numRows] do
+  let mut means : Array Float := Array.mkEmpty rows
+  let mut invStds : Array Float := Array.mkEmpty rows
+  for r in [:rows] do
     let mut sum : Float := 0.0
-    for c in [:X.numCols] do
-      sum := sum + X.get r c
-    let μ := sum / X.numCols.toFloat
+    let rowBase := r * cols
+    for c in [:cols] do
+      sum := sum + X.data[rowBase + c]!
+    let μ := sum / colsF
     let mut varSum : Float := 0.0
-    for c in [:X.numCols] do
-      let d := X.get r c - μ
+    for c in [:cols] do
+      let d := X.data[rowBase + c]! - μ
       varSum := varSum + d * d
     -- In exact arithmetic, `var ≥ 0`. Clamp to avoid NaN from tiny negative float noise.
-    let var := max 0.0 (varSum / X.numCols.toFloat)
+    let var := max 0.0 (varSum / colsF)
     let invσ := 1.0 / Float.sqrt (var + eps)
     means := means.push μ
     invStds := invStds.push invσ
 
   return {
-    numRows := X.numRows
-    numCols := X.numCols
-    data := .ofFn fun idx : Fin (X.numRows * X.numCols) =>
-      let r := idx.val / X.numCols
-      let c := idx.val % X.numCols
+    numRows := rows
+    numCols := cols
+    data := .ofFn fun idx : Fin (rows * cols) =>
+      let r := idx.val / cols
+      let c := idx.val % cols
       let μ := means.getD r 0.0
       let invσ := invStds.getD r 0.0
-      let normalized := (X.get r c - μ) * invσ
-      (γ.get 0 c) * normalized + (β.get 0 c)
+      let normalized := (X.data[r * cols + c]! - μ) * invσ
+      (gammaData[c]!) * normalized + (betaData[c]!)
     size_eq := Array.size_ofFn
   }
 
@@ -1334,13 +1349,17 @@ This avoids the previous row-sum bound which could overestimate by orders of mag
 and made downstream certification thresholds unusable.
 -/
 def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float := Id.run do
-  if X.numRows = 0 || X.numCols = 0 then return 0.0
-  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols) then return 0.0
+  let rows := X.numRows
+  let cols := X.numCols
+  if rows = 0 || cols = 0 then return 0.0
+  if !(γ.numRows = 1 ∧ γ.numCols = cols) then return 0.0
+  let colsF := cols.toFloat
+  let gammaData := γ.data
 
   -- max |γ|
   let mut gammaMaxAbs : Float := 0.0
-  for c in [:X.numCols] do
-    let g := Float.abs (γ.get 0 c)
+  for c in [:cols] do
+    let g := Float.abs (gammaData[c]!)
     if Float.isNaN g || Float.isInf g then
       gammaMaxAbs := Float.inf
     else if g > gammaMaxAbs then
@@ -1348,19 +1367,20 @@ def layerNormRowwiseOpEst (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Float 
 
   -- max_r (1/σ_r)
   let mut maxInvStd : Float := 0.0
-  for r in [:X.numRows] do
+  for r in [:rows] do
     -- Mean
     let mut sum : Float := 0.0
-    for c in [:X.numCols] do
-      sum := sum + X.get r c
-    let μ := sum / X.numCols.toFloat
+    let rowBase := r * cols
+    for c in [:cols] do
+      sum := sum + X.data[rowBase + c]!
+    let μ := sum / colsF
 
     -- Variance
     let mut varSum : Float := 0.0
-    for c in [:X.numCols] do
-      let centered := X.get r c - μ
+    for c in [:cols] do
+      let centered := X.data[rowBase + c]! - μ
       varSum := varSum + centered * centered
-    let varRaw := varSum / X.numCols.toFloat
+    let varRaw := varSum / colsF
     -- In exact arithmetic, `var ≥ 0`. If we see NaN/Inf, conservatively treat as 0
     -- so that `1/σ ≤ 1/sqrt(eps)`.
     let var :=
@@ -1391,14 +1411,18 @@ structure LayerNormOpDiag where
 /-- Diagnostics for `layerNormRowwiseOpEst`: reports `max |γ|`, the worst-case row inverse-std,
 and the minimum variance row (useful for spotting padding/degenerate rows). -/
 def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : LayerNormOpDiag := Id.run do
-  if X.numRows = 0 || X.numCols = 0 then
+  let rows := X.numRows
+  let cols := X.numCols
+  if rows = 0 || cols = 0 then
     return { gammaMaxAbs := 0.0, maxInvStd := 0.0, maxInvStdRow := 0, minVar := 0.0, minVarRow := 0 }
-  if !(γ.numRows = 1 ∧ γ.numCols = X.numCols) then
+  if !(γ.numRows = 1 ∧ γ.numCols = cols) then
     return { gammaMaxAbs := 0.0, maxInvStd := 0.0, maxInvStdRow := 0, minVar := 0.0, minVarRow := 0 }
+  let colsF := cols.toFloat
+  let gammaData := γ.data
 
   let mut gammaMaxAbs : Float := 0.0
-  for c in [:X.numCols] do
-    let g := Float.abs (γ.get 0 c)
+  for c in [:cols] do
+    let g := Float.abs (gammaData[c]!)
     if Float.isNaN g || Float.isInf g then
       gammaMaxAbs := Float.inf
     else if g > gammaMaxAbs then
@@ -1409,16 +1433,17 @@ def layerNormRowwiseOpDiag (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
   let mut minVar : Float := Float.inf
   let mut minVarRow : Nat := 0
 
-  for r in [:X.numRows] do
+  for r in [:rows] do
     let mut sum : Float := 0.0
-    for c in [:X.numCols] do
-      sum := sum + X.get r c
-    let μ := sum / X.numCols.toFloat
+    let rowBase := r * cols
+    for c in [:cols] do
+      sum := sum + X.data[rowBase + c]!
+    let μ := sum / colsF
     let mut varSum : Float := 0.0
-    for c in [:X.numCols] do
-      let centered := X.get r c - μ
+    for c in [:cols] do
+      let centered := X.data[rowBase + c]! - μ
       varSum := varSum + centered * centered
-    let varRaw := varSum / X.numCols.toFloat
+    let varRaw := varSum / colsF
     let var :=
       if Float.isNaN varRaw || Float.isInf varRaw then 0.0
       else max 0.0 varRaw
@@ -1451,7 +1476,7 @@ def getCol (M : ConcreteMatrix) (j : Nat) : ConcreteMatrix :=
     {
       numRows := M.numRows
       numCols := 1
-      data := .ofFn fun i : Fin M.numRows => M.get i.val j
+      data := .ofFn fun i : Fin M.numRows => M.getUnsafe i.val j
       size_eq := by simp
     }
   else zeros M.numRows 1
@@ -1465,8 +1490,9 @@ def matVecMul (M : ConcreteMatrix) (v : ConcreteMatrix) : ConcreteMatrix :=
       numCols := 1
       data := .ofFn fun i : Fin M.numRows => Id.run do
         let mut acc : Float := 0.0
+        let rowBase := i.val * M.numCols
         for k in [:M.numCols] do
-          acc := acc + M.get i.val k * v.get k 0
+          acc := acc + M.data[rowBase + k]! * v.data[k]!
         return acc
       size_eq := by simp
     }
@@ -1477,7 +1503,7 @@ def dot (v1 v2 : ConcreteMatrix) : Float :=
   if v1.numRows = v2.numRows ∧ v1.numCols = 1 ∧ v2.numCols = 1 then Id.run do
     let mut acc : Float := 0.0
     for i in [:v1.numRows] do
-      acc := acc + v1.get i 0 * v2.get i 0
+      acc := acc + v1.data[i]! * v2.data[i]!
     return acc
   else 0.0
 
@@ -1493,7 +1519,7 @@ def vecSub (v1 v2 : ConcreteMatrix) : ConcreteMatrix :=
     {
       numRows := v1.numRows
       numCols := 1
-      data := .ofFn fun i : Fin v1.numRows => v1.get i.val 0 - v2.get i.val 0
+      data := .ofFn fun i : Fin v1.numRows => v1.data[i.val]! - v2.data[i.val]!
       size_eq := by simp
     }
   else zeros v1.numRows 1
@@ -1613,7 +1639,7 @@ def centeredQKOpBound (layer : ConcreteAttentionLayer) : Float := Id.run do
         let j := idx.val % kCols
         let ui := colSums.getD i 0.0
         let uj := colSums.getD j 0.0
-        wkGram.get i j - (invDim * ui * uj)
+        wkGram.getUnsafe i j - (invDim * ui * uj)
       size_eq := Array.size_ofFn }
 
   let wqGram := layer.W_Q.transpose.matmul layer.W_Q
@@ -1888,13 +1914,14 @@ namespace ConcreteMLPLayer
 /-- Get the input weight vector for neuron i (column i of W_in). -/
 def neuronInputWeights (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Array Float :=
   if neuronIdx < layer.hiddenDim then
-    .ofFn fun row : Fin layer.modelDim => layer.W_in.get row.val neuronIdx
+    .ofFn fun row : Fin layer.modelDim => layer.W_in.getUnsafe row.val neuronIdx
   else #[]
 
 /-- Get the output weight vector for neuron i (row i of W_out). -/
 def neuronOutputWeights (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Array Float :=
   if neuronIdx < layer.hiddenDim then
-    .ofFn fun col : Fin layer.modelDim => layer.W_out.get neuronIdx col.val
+    .ofFn fun col : Fin layer.modelDim =>
+      layer.W_out.data[neuronIdx * layer.modelDim + col.val]!
   else #[]
 
 /-- Compute the L2 norm of input weights for a neuron. -/
@@ -1918,7 +1945,7 @@ def neuronInfluence (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Float :=
 /-- Get the bias for neuron i. -/
 def getBias (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Float :=
   if neuronIdx < layer.hiddenDim then
-    layer.b_in.get 0 neuronIdx
+    layer.b_in.data[neuronIdx]!
   else 0.0
 
 end ConcreteMLPLayer
@@ -2055,11 +2082,11 @@ Returns array of pre-activations: z[i] = W_in[:,i]^T · x + b[i]
 def computePreActivations (layer : ConcreteMLPLayer) (input : Array Float) :
     Array Float :=
   .ofFn fun i : Fin layer.hiddenDim => Id.run do
-    let mut z : Float := layer.getBias i.val
+    let mut z : Float := layer.b_in.data[i.val]!
     for j in [:layer.modelDim] do
       -- SAFETY: input should have size modelDim, but getD provides safe fallback
       let x_j := input.getD j 0.0
-      let w_ji := layer.W_in.get j i.val
+      let w_ji := layer.W_in.data[j * layer.hiddenDim + i.val]!
       z := z + w_ji * x_j
     return z
 
@@ -2138,10 +2165,10 @@ def neuronPatternTermBoundIBP (layer : ConcreteMLPLayer) (neuronIdx : Nat)
   if neuronIdx ≥ layer.hiddenDim then 0.0
   else
     let z := Id.run do
-      let mut acc : Float := layer.getBias neuronIdx
+      let mut acc : Float := layer.b_in.data[neuronIdx]!
       for j in [:layer.modelDim] do
         let x_j := input.getD j 0.0
-        let w_ji := layer.W_in.get j neuronIdx
+        let w_ji := layer.W_in.data[j * layer.hiddenDim + neuronIdx]!
         acc := acc + w_ji * x_j
       acc
     let inputNorm := layer.neuronInputNorm neuronIdx
@@ -2243,10 +2270,10 @@ PERFORMANCE: Pre-allocates output array (critical for SAE-based circuit discover
 -/
 def encode (sae : ConcreteSAE) (input : Array Float) : Array Float :=
   .ofFn fun k : Fin sae.numFeatures => Id.run do
-    let mut z : Float := sae.b_enc.get 0 k.val
+    let mut z : Float := sae.b_enc.data[k.val]!
     for i in [:sae.inputDim] do
       let x_i := input.getD i 0.0
-      let w_ik := sae.W_enc.get i k.val
+      let w_ik := sae.W_enc.data[i * sae.numFeatures + k.val]!
       z := z + x_i * w_ik
     return relu z
 
@@ -2258,10 +2285,10 @@ PERFORMANCE: Pre-allocates output array (critical for SAE-based circuit discover
 -/
 def decode (sae : ConcreteSAE) (features : Array Float) : Array Float :=
   .ofFn fun j : Fin sae.inputDim => Id.run do
-    let mut y : Float := sae.b_dec.get 0 j.val
+    let mut y : Float := sae.b_dec.data[j.val]!
     for k in [:sae.numFeatures] do
       let f_k := features.getD k 0.0
-      let w_kj := sae.W_dec.get k j.val
+      let w_kj := sae.W_dec.data[k * sae.inputDim + j.val]!
       y := y + f_k * w_kj
     return y
 
@@ -2282,7 +2309,7 @@ def reconstructionError (sae : ConcreteSAE) (input : Array Float) : Float := Id.
 def reconstructionErrorMatrix (sae : ConcreteSAE) (input : ConcreteMatrix) : Float := Id.run do
   let mut totalErrSq : Float := 0.0
   for pos in [:input.numRows] do
-    let inputVec : Array Float := .ofFn fun d : Fin input.numCols => input.get pos d.val
+    let inputVec : Array Float := .ofFn fun d : Fin input.numCols => input.getUnsafe pos d.val
     let err := sae.reconstructionError inputVec
     totalErrSq := totalErrSq + err * err
   Float.sqrt totalErrSq
@@ -2305,13 +2332,14 @@ def numActiveFeatures (sae : ConcreteSAE) (input : Array Float)
 /-- Get the encoder weight vector for feature k (column k of W_enc). -/
 def encoderWeights (sae : ConcreteSAE) (featureIdx : Nat) : Array Float :=
   if featureIdx < sae.numFeatures then
-    .ofFn fun i : Fin sae.inputDim => sae.W_enc.get i.val featureIdx
+    .ofFn fun i : Fin sae.inputDim => sae.W_enc.getUnsafe i.val featureIdx
   else #[]
 
 /-- Get the decoder weight vector for feature k (row k of W_dec). -/
 def decoderWeights (sae : ConcreteSAE) (featureIdx : Nat) : Array Float :=
   if featureIdx < sae.numFeatures then
-    .ofFn fun j : Fin sae.inputDim => sae.W_dec.get featureIdx j.val
+    .ofFn fun j : Fin sae.inputDim =>
+      sae.W_dec.data[featureIdx * sae.inputDim + j.val]!
   else #[]
 
 /-- Compute the L2 norm of encoder weights for feature k. -/
@@ -2334,16 +2362,16 @@ def featureInfluence (sae : ConcreteSAE) (featureIdx : Nat) : Float :=
 
 /-- Get encoder bias for feature k. -/
 def encoderBias (sae : ConcreteSAE) (featureIdx : Nat) : Float :=
-  if featureIdx < sae.numFeatures then sae.b_enc.get 0 featureIdx else 0.0
+  if featureIdx < sae.numFeatures then sae.b_enc.data[featureIdx]! else 0.0
 
 /-- Compute the pre-activation for feature k given input. -/
 def featurePreActivation (sae : ConcreteSAE) (featureIdx : Nat)
     (input : Array Float) : Float := Id.run do
   if featureIdx ≥ sae.numFeatures then return 0.0
-  let mut z : Float := sae.encoderBias featureIdx
+  let mut z : Float := sae.b_enc.data[featureIdx]!
   for i in [:sae.inputDim] do
     let x_i := input.getD i 0.0
-    let w_ik := sae.W_enc.get i featureIdx
+    let w_ik := sae.W_enc.data[i * sae.numFeatures + featureIdx]!
     z := z + x_i * w_ik
   z
 
@@ -4941,7 +4969,7 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
           let c := idx.val % cols
           let μ := means.getD r 0.0
           let invσ := invStds.getD r 0.0
-          (X.get r c - μ) * invσ
+          (X.data[r * cols + c]! - μ) * invσ
         size_eq := Array.size_ofFn }
 
     return { numRows := rows, numCols := cols, gamma := γ, invStds := invStds, v := v }
@@ -4953,6 +4981,8 @@ def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix
       return ConcreteMatrix.zeros ctx.numRows ctx.numCols
     let rows := ctx.numRows
     let cols := ctx.numCols
+    let colsF := cols.toFloat
+    let gammaData := ctx.gamma.data
     if rows = 0 || cols = 0 then
       return ConcreteMatrix.zeros rows cols
     if ctx.invStds.size ≠ rows then
@@ -4977,13 +5007,14 @@ def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix
       data := .ofFn fun idx : Fin (rows * cols) =>
         let r := idx.val / cols
         let c := idx.val % cols
+        let rowBase := r * cols
         let invσ := ctx.invStds[r]!
-        let g := ctx.gamma.get 0 c
-        let dx := dX.get r c
+        let g := gammaData[c]!
+        let dx := dX.data[rowBase + c]!
         let mdx := meanDx[r]!
         let vdx := vDotDx[r]!
-        let vrc := ctx.v.get r c
-        g * invσ * (dx - mdx - (vrc * (vdx / cols.toFloat)))
+        let vrc := ctx.v.data[rowBase + c]!
+        g * invσ * (dx - mdx - (vrc * (vdx / colsF)))
       size_eq := Array.size_ofFn }
 
 /-- Elementwise (Hadamard) product of two matrices with the same shape. -/
@@ -6766,7 +6797,7 @@ def computeSAEFeatureImportance (sae : ConcreteSAE) (layerIdx featureIdx : Nat)
       let mut totalPatternSq : Float := 0.0
       for pos in [:layerInput.numRows] do
         let inputVec : Array Float := .ofFn fun d : Fin layerInput.numCols =>
-          layerInput.get pos d.val
+          layerInput.getUnsafe pos d.val
         let posBound := sae.featurePatternTermBoundIBP featureIdx inputVec perturbationNorm
         totalPatternSq := totalPatternSq + posBound * posBound
       Float.sqrt (totalPatternSq / (max 1 layerInput.numRows).toFloat)
@@ -6777,7 +6808,7 @@ def computeSAEFeatureImportance (sae : ConcreteSAE) (layerIdx featureIdx : Nat)
       let mut totalRecon : Float := 0.0
       for pos in [:layerInput.numRows] do
         let inputVec : Array Float := .ofFn fun d : Fin layerInput.numCols =>
-          layerInput.get pos d.val
+          layerInput.getUnsafe pos d.val
         totalRecon := totalRecon + sae.reconstructionError inputVec
       totalRecon / (max 1 layerInput.numRows).toFloat / sae.numFeatures.toFloat
 
@@ -7132,9 +7163,8 @@ def ConcreteMLPLayer.forwardAblated (layer : ConcreteMLPLayer) (input : Concrete
     numRows := hidden.numRows
     numCols := hidden.numCols
     data := .ofFn fun idx : Fin (hidden.numRows * hidden.numCols) =>
-      let i := idx.val / hidden.numCols
       let j := idx.val % hidden.numCols
-      let val := hidden.get i j
+      let val := hidden.data[idx.val]!
       let act := geluFloat val
       -- Zero out if neuron j is not included
       if neuronMask.getD j true then act else 0.0
@@ -7548,7 +7578,7 @@ def computeNeuronImportanceIBP (model : ConcreteModel) (layerIdx neuronIdx : Nat
         for pos in [:numPositions] do
           -- Extract input vector at this position
           let inputVec : Array Float := .ofFn fun d : Fin layerInput.numCols =>
-            layerInput.get pos d.val
+            layerInput.getUnsafe pos d.val
           -- Compute IBP-based pattern term bound
           let posBound := mlp.neuronPatternTermBoundIBP neuronIdx inputVec perturbationNorm
           totalPatternBound := totalPatternBound + posBound * posBound
@@ -8108,7 +8138,8 @@ def computeNeuronTargetImportance (model : ConcreteModel) (layerIdx neuronIdx : 
       let outputWeights : ConcreteMatrix := {
         numRows := mlp.modelDim
         numCols := 1
-        data := .ofFn fun j : Fin mlp.modelDim => mlp.W_out.get neuronIdx j.val
+        data := .ofFn fun j : Fin mlp.modelDim =>
+          mlp.W_out.data[neuronIdx * mlp.modelDim + j.val]!
         size_eq := by simp
       }
       let dotProd := outputWeights.dot target.direction
@@ -8706,7 +8737,7 @@ def analyzeModelMLPStability (model : ConcreteModel)
       -- Use position 0 as representative (could average over positions)
       if layerInput.numRows > 0 then
         let inputVec : Array Float := .ofFn fun d : Fin layerInput.numCols =>
-          layerInput.get 0 d.val
+          layerInput.getUnsafe 0 d.val
         layerAnalysis := mlp.analyzeIntervalBounds l inputVec perturbationNorm
 
       analyses := analyses.push layerAnalysis
