@@ -874,21 +874,22 @@ noncomputable def positionValueTerm (L : AttentionLinearization n d) : SignedMix
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
 /-- **Key insight**: The position-collapsed Value Term is proportional to attention weights!
 
-positionValueTerm(k→q) = A_{qk} · Tr(W_V · W_O)
+positionValueTerm(k→q) = A_{qk} · Σ_{d_in,d_out} (W_V · W_O)_{d_in,d_out}
 
-So if Tr(W_V · W_O) is a constant, attention weights directly give the position flow.
-This is the mathematical justification for "attention rollout". -/
+So if the total sum of entries of W_V · W_O is treated as a constant, attention weights
+directly give the position flow. This is the mathematical justification for
+"attention rollout". -/
 theorem positionValueTerm_proportional_to_attention (L : AttentionLinearization n d) (k q : n) :
     (positionValueTerm L).w k q =
     L.state.attentionWeights q k *
     ∑ d_in : d, ∑ d_out : d, (L.layer.W_V.comp L.layer.W_O).w d_in d_out := rfl
 
-/-- The trace of W_V · W_O (the proportionality constant). -/
+/-- The total sum of entries of W_V · W_O (the proportionality constant). -/
 noncomputable def valueOutputTrace (L : AttentionLinearization n d) : ℝ :=
   ∑ d_in : d, ∑ d_out : d, (L.layer.W_V.comp L.layer.W_O).w d_in d_out
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- Position Value Term is attention weights scaled by the trace. -/
+/-- Position Value Term is attention weights scaled by the total sum of entries. -/
 theorem positionValueTerm_eq_scaled_attention (L : AttentionLinearization n d) (k q : n) :
     (positionValueTerm L).w k q = L.state.attentionWeights q k * valueOutputTrace L := rfl
 
@@ -1146,7 +1147,7 @@ noncomputable def PositionVirtualHead
       (valueOutputTrace L₁) * (valueOutputTrace L₂)
 
 omit [DecidableEq n] [DecidableEq d] in
-/-- Position virtual head is attention composition scaled by value traces. -/
+/-- Position virtual head is attention composition scaled by value-entry sums. -/
 theorem PositionVirtualHead_eq_attention_comp
     (L₂ L₁ : AttentionLinearization n d) (i q : n) :
     (PositionVirtualHead L₂ L₁).w i q =
