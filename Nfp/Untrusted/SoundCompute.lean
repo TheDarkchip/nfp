@@ -1537,8 +1537,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := matchWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadValueLowerBoundPosCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -1786,8 +1785,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := matchWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadLogitDiffLowerBoundPosCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -3373,8 +3371,7 @@ private def certifyHeadValueLowerBoundLocalBinary
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := pattern.targetWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadValueLowerBoundCert := {
           layerIdx := pattern.layerIdx
           headIdx := pattern.headIdx
@@ -3586,8 +3583,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := pattern.targetWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadLogitDiffLowerBoundCert := {
           layerIdx := pattern.layerIdx
           headIdx := pattern.headIdx

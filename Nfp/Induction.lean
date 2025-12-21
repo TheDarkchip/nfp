@@ -109,6 +109,7 @@ namespace TokenMatchPattern
 /-- Soundness invariant for token-match pattern witnesses. -/
 def Valid (p : TokenMatchPattern) : Prop :=
   p.seqLen > 0 ∧
+    p.targetCountLowerBound ≤ p.seqLen ∧
     p.targetWeightLowerBound =
       (if p.marginLowerBound > 0 then
         (p.targetCountLowerBound : Rat) / (p.seqLen : Rat)
@@ -132,14 +133,14 @@ theorem weight_lower_bound_of_margin_pos
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0) :
     p.targetWeightLowerBound =
       (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
-  rcases h with ⟨_hseq, hweight⟩
+  rcases h with ⟨_hseq, _hcount, hweight⟩
   simpa [hm] using hweight
 
 /-- If the margin is nonpositive, the weight lower bound is zero. -/
 theorem weight_lower_bound_of_margin_nonpos
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound ≤ 0) :
     p.targetWeightLowerBound = 0 := by
-  rcases h with ⟨_hseq, hweight⟩
+  rcases h with ⟨_hseq, _hcount, hweight⟩
   have hm' : ¬ p.marginLowerBound > 0 := by
     exact not_lt.mpr hm
   simpa [hm'] using hweight
@@ -150,7 +151,7 @@ theorem weight_lower_bound_pos_of_margin_pos
     (hcount : 0 < p.targetCountLowerBound) :
     0 < p.targetWeightLowerBound := by
   have hweight := weight_lower_bound_of_margin_pos p h hm
-  rcases h with ⟨hseq, _hweight⟩
+  rcases h with ⟨hseq, _hcount, _hweight⟩
   have hseq' : (0 : Rat) < (p.seqLen : Rat) := by
     exact_mod_cast hseq
   have hcount' : (0 : Rat) < (p.targetCountLowerBound : Rat) := by
