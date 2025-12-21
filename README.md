@@ -47,7 +47,7 @@ The goal is to gradually cover more modern decoder blocks (e.g. RoPE-style posit
 - A standard build toolchain for Lean (C/C++ compiler, `make`, etc.).
 - (Optional) **Python** for the export scripts in `scripts/`.
 
-Lean version is pinned in `lean-toolchain` (currently `leanprover/lean4:v4.25.2`).
+Lean version is pinned in `lean-toolchain` (currently `leanprover/lean4:v4.26`).
 
 ## Getting started
 
