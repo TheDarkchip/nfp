@@ -20,8 +20,9 @@ these operations at a specific input.
 
 ## Key Insight
 
-For any differentiable function f : ℝⁿ → ℝᵐ, at a specific input x₀, we have:
-  f(x) ≈ f(x₀) + J_f(x₀) · (x - x₀)
+For any differentiable function f : ℝⁿ → ℝᵐ, at a specific input x₀, we use a
+row-vector convention:
+  f(x) ≈ f(x₀) + (x - x₀) · J_f(x₀)
 
 where J_f(x₀) is the Jacobian matrix. This Jacobian is exactly a `SignedMixer`!
 
@@ -85,13 +86,21 @@ variable {n m p : Type*} [Fintype n] [Fintype m] [Fintype p]
 /-- Compose two linearizations (chain rule).
 If f : ℝⁿ → ℝᵐ is linearized at x with Jacobian J_f, and
    g : ℝᵐ → ℝᵖ is linearized at f(x) with Jacobian J_g, then
-   g ∘ f has Jacobian J_g · J_f at x. -/
+   g ∘ f has Jacobian J_f · J_g at x (row-vector convention). -/
 noncomputable def comp
     (L₁ : Linearization n m) (L₂ : Linearization m p)
     (_h : L₂.input = L₁.output) : Linearization n p where
   input := L₁.input
   output := L₂.output
   jacobian := L₁.jacobian.comp L₂.jacobian
+
+/-- Chain rule for composed linearizations (row-vector convention). -/
+theorem comp_apply
+    (L₁ : Linearization n m) (L₂ : Linearization m p) (h : L₂.input = L₁.output)
+    (v : n → ℝ) :
+    (L₁.comp L₂ h).jacobian.apply v = L₂.jacobian.apply (L₁.jacobian.apply v) := by
+  simpa using
+    (SignedMixer.apply_comp (M := L₁.jacobian) (N := L₂.jacobian) (v := v))
 
 /-- The identity linearization (identity function). -/
 noncomputable def id [DecidableEq n] : Linearization n n where
@@ -477,9 +486,9 @@ theorem gradientTimesInput_complete (L : Linearization n n)
   simp only [gradientTimesInput, hLinear, SignedMixer.apply_def]
 
 /-- For composed linearizations, the chain rule gives:
-  ∂output/∂input = J_last · J_{last-1} · ... · J_first
+  ∂output/∂input = J_first · J_{next} · ... · J_last
 
-This is exactly `SignedMixer.comp`! -/
+This is exactly `SignedMixer.comp` under the row-vector convention. -/
 theorem composed_attribution {p : Type*} [Fintype p]
     (L₁ : Linearization n m) (L₂ : Linearization m p)
     (h : L₂.input = L₁.output) :
