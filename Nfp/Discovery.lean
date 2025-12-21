@@ -2613,8 +2613,8 @@ The Frobenius norm squared of J for a single row is:
 
 A simpler upper bound is `Σᵢ p_i(1-p_i) = 1 - Σᵢ p_i²` (the Gini impurity).
 
-For sparse (one-hot) distributions: Σ p_i² ≈ 1, so ‖J‖_F ≈ 0
-For uniform distributions: Σ p_i² = 1/n, so ‖J‖_F ≈ √((n-1)/n)
+For sparse (one-hot) distributions: Σ p_i² ≈ 1, so the bound is ≈ 0
+For uniform distributions: Σ p_i² = 1/n, so the bound is √((n-1)/n)
 
 This allows us to compute much tighter pattern term bounds for sharp attention heads.
 -/
