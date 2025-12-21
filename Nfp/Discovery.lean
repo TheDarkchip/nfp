@@ -2813,22 +2813,27 @@ def ConcreteAttentionWeights.softmaxJacobianOpEst (A : ConcreteAttentionWeights)
 
 /-- Compute the overall Frobenius norm of the softmax Jacobian across all rows.
 
-This is `sqrt(Σ_q (1 - Σ_k A[q,k]²))`, which gives the total "softness" of attention.
+For a probability row `p`, the Jacobian is `J = diag(p) - p pᵀ` and
+`‖J‖_F² = (Σ pᵢ²) - 2(Σ pᵢ³) + (Σ pᵢ²)²`.
+We sum this per-row Frobenius norm squared and take a final square root.
 -/
 def ConcreteAttentionWeights.softmaxJacobianFrobeniusNorm
     (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
   else Id.run do
-    let mut totalNormSq : Float := 0.0
+    let mut totalFrobSq : Float := 0.0
     for q in [:A.seqLen] do
       let mut sumSq : Float := 0.0
+      let mut sumCube : Float := 0.0
       let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
         -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
         let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
-      totalNormSq := totalNormSq + max 0.0 (1.0 - sumSq)
-    Float.sqrt totalNormSq
+        sumCube := sumCube + p * p * p
+      let rowFrobSq := max 0.0 (sumSq - 2.0 * sumCube + sumSq * sumSq)
+      totalFrobSq := totalFrobSq + rowFrobSq
+    Float.sqrt totalFrobSq
 
 /-! ## Forward Pass Implementations
 
@@ -3616,7 +3621,8 @@ structure DeepCircuitCandidate where
   simpleErrorSum : Float
   /-- N-layer amplified error: Σᵢ εᵢ · ∏_{j>i}(1+Cⱼ) -/
   amplifiedError : Float
-  /-- Total amplification factor: ∏ᵢ(1+Cᵢ) -/
+  /-- Suffix amplification factor from the earliest layer in the circuit:
+      `∏_{j ≥ min layer}(1 + Cⱼ)`. -/
   amplificationFactor : Float
   /-- Pattern type description (e.g., "induction", "composition") -/
   patternType : String
