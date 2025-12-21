@@ -1145,7 +1145,7 @@ def runRoPE (p : Parsed) : IO UInt32 := do
       IO.println "RoPE certificate (static):"
       IO.println s!"  seqLen={seqLen}, pairs={pairs}, dim={2 * pairs}"
       IO.println "  Bound: operatorNormBound(ropeJacobian θ) ≤ 2"
-      IO.println "  Meaning: max row-sum of absolute weights (ℓ∞ induced upper bound)."
+      IO.println "  Meaning: max row-sum of absolute weights (ℓ1 induced for row-vectors)."
       IO.println "  Proof: Nfp.rope_operatorNormBound_le_two (uses |sin|,|cos| ≤ 1 from mathlib)."
       return 0
   | _, _ =>

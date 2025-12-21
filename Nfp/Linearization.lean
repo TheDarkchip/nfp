@@ -503,13 +503,14 @@ section AttentionJacobian
 /-!
 ### The Key Insight
 
-In a self-attention layer, the output for query position q is:
-  output_q = Σ_k A_{qk} · V_k = Σ_k A_{qk} · (x_k · W_V)
+In a self-attention layer, the output for query position q is (before W_O):
+  attnOut_q = Σ_k A_{qk} · V_k = Σ_k A_{qk} · (x_k · W_V)
 
 where A_{qk} = softmax(Q_q · K_k^T / √d)_k
 
 The Jacobian ∂output/∂input has two fundamentally different contributions:
-1. **Value term**: ∂output/∂V · ∂V/∂x = A · W_V (attention weights × value projection)
+1. **Value term**: ∂output/∂V · ∂V/∂x = A · (W_V · W_O)
+   (attention weights × value/output projections)
 2. **Pattern term**: ∂output/∂A · ∂A/∂x (how changing x shifts the attention pattern)
 
 The **Value term** is what "Attention Rollout" uses—it treats attention weights A as fixed.
@@ -1019,8 +1020,8 @@ variable {n m : Type*} [Fintype n] [Fintype m]
 
 IG_i(x, x₀) = (x_i - x₀_i) · ∫₀¹ ∂f/∂x_i(x₀ + t(x - x₀)) dt
 
-For a linear function f(x) = Mx, this simplifies to:
-  IG_i = (x_i - x₀_i) · M_i  (just gradient × input difference)
+For a linear function f(x) = x · M (row-vector convention), this simplifies to:
+  IG_i = (x_i - x₀_i) · M_{i,j}  (gradient × input difference for output j)
 
 The key insight: IG is a path integral of linearizations along
 the straight line from baseline to input. -/
@@ -1234,7 +1235,7 @@ variable {pos pair : Type*}
   [Fintype pos] [DecidableEq pos] [Nonempty pos]
   [Fintype pair] [DecidableEq pair] [Nonempty pair]
 
-/-- **Certification lemma (ℓ∞ bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
+/-- **Certification lemma (row-sum bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
 
 Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute values are ≤ 1. -/
   theorem rope_operatorNormBound_le_two (θ : pos → pair → ℝ) :

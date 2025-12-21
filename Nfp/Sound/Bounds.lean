@@ -17,7 +17,7 @@ open scoped BigOperators
 This module implements conservative bounds using exact `Rat` arithmetic.
 
 Numeric strategy (Option A): avoid `sqrt` and any `Float`-trusted computation by using
-row-sum induced norms (ℓ∞) and submultiplicativity.
+row-sum induced norms (ℓ1 for row-vector convention) and submultiplicativity.
 -/
 
 /-- Exact absolute value on `Rat`. -/
@@ -84,7 +84,7 @@ def rowAbsSum (M : RatMatrix S T) [DecidableEq T] (i : S) : Rat :=
 theorem rowAbsSum_def (M : RatMatrix S T) [DecidableEq T] (i : S) :
     RatMatrix.rowAbsSum M i = ∑ j, ratAbs (M.w i j) := rfl
 
-/-- ℓ∞ operator norm bound in `Rat` (max row sum). -/
+/-- Row-sum operator norm bound in `Rat` (induced ℓ1 for row-vectors). -/
 def operatorNormBound (M : RatMatrix S T) [DecidableEq S] [DecidableEq T] [Nonempty S] : Rat :=
   Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
     rowAbsSum M i
@@ -109,7 +109,7 @@ theorem ofRowMajor_def (rows cols : Nat) (data : Array Rat) :
 
 end RatMatrix
 
-/-- Compute `‖M‖∞ = maxᵢ ∑ⱼ |M[i,j]|` from a row-major array.
+/-- Compute the row-sum norm `maxᵢ ∑ⱼ |M[i,j]|` from a row-major array.
 
 If the provided data has fewer than `rows*cols` entries, missing entries are treated as 0.
 Extra entries are ignored.
@@ -129,7 +129,7 @@ theorem matrixNormInfOfRowMajor_def (rows cols : Nat) (data : Array Rat) :
         let _ : Nonempty (Fin rows) := ⟨⟨0, Nat.pos_of_ne_zero h⟩⟩
         RatMatrix.operatorNormBound (RatMatrix.ofRowMajor rows cols data) := rfl
 
-/-- ℓ∞ induced operator norm bound for a product.
+/-- Row-sum operator norm bound for a product.
 
 `‖A·B‖∞ ≤ ‖A‖∞ · ‖B‖∞`.
 -/
@@ -137,7 +137,7 @@ def normInfMulBound (a b : Rat) : Rat := a * b
 
 theorem normInfMulBound_def (a b : Rat) : normInfMulBound a b = a * b := rfl
 
-/-- Worst-case bound on the induced ℓ∞ operator norm of a softmax Jacobian row.
+/-- Worst-case bound on the row-sum operator norm of a softmax Jacobian row.
 
 For a probability row `p`, the softmax Jacobian is `J = diag(p) - p pᵀ`.
 For row `i`, the absolute row-sum is:

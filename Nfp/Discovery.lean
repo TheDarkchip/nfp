@@ -305,7 +305,7 @@ error / ε pipelines.
 
 /-- Heuristic operator-norm estimate via power iteration.
 
-The operator norm ‖M‖₂ = max‖x‖=1 ‖Mx‖ is the largest singular value.
+The operator norm ‖M‖₂ = max‖x‖=1 ‖x·M‖ (row-vector convention) is the largest singular value.
 We approximate it using power iteration on M^T M.
 
 This is a fast **heuristic estimate** of how much `M` can stretch a vector.
@@ -2631,7 +2631,7 @@ def softmaxRowJacobianNorm (row : Array Float) : Float :=
 /-- Compute the average softmax Jacobian norm across all rows of attention weights.
 
 This provides a data-dependent bound on the softmax Jacobian that is much tighter
-than the worst-case constant 2.0 for sharp attention patterns.
+than a coarse constant bound (e.g. 1.0), especially for sharp attention patterns.
 -/
 def ConcreteAttentionWeights.avgSoftmaxJacobianNorm (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
@@ -2652,7 +2652,7 @@ def ConcreteAttentionWeights.avgSoftmaxJacobianNorm (A : ConcreteAttentionWeight
 
 /-- Compute the maximum softmax Jacobian norm across all rows.
 
-More conservative than avg, but still much tighter than 2.0 for sparse attention.
+More conservative than avg, but still much tighter than a coarse constant bound for sparse attention.
 -/
 def ConcreteAttentionWeights.maxSoftmaxJacobianNorm (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
