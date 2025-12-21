@@ -184,7 +184,7 @@ section AttentionFlow
 variable {Pos : Type*} [Fintype Pos] [DecidableEq Pos]
 
 /-- Attention flow: composition of attention matrices across layers.
-This captures how attention "flows" from later layers to earlier ones.
+This captures how attention "flows" across layers in list order (row-vector convention).
 
 This is the formal version of "attention rollout" from Abnar & Zuidema (2020). -/
 noncomputable def attentionFlow (layers : List (Mixer Pos Pos)) : Mixer Pos Pos :=
@@ -282,8 +282,8 @@ noncomputable def effectiveAttention
     (blocks : List (Mixer Pos Pos)) (i j : Pos) : NNReal :=
   (transformerStack blocks).w i j
 
-/-- Effective attention forms a probability distribution over source positions
-for each target position. This is a key property for interpretation:
+/-- Effective attention forms a probability distribution over target positions
+for each source position. This is a key property for interpretation:
 it tells us "how much" each source position contributes to each target. -/
 theorem effectiveAttention_normalized (blocks : List (Mixer Pos Pos)) (i : Pos) :
     (∑ j, effectiveAttention blocks i j) = 1 := by
@@ -713,7 +713,7 @@ def isCausal (M : Mixer (Fin n) (Fin n)) : Prop :=
   ∀ i j : Fin n, j.val > i.val → M.w i j = 0
 
 /-- **Causal reachability**: In a causal mixer, information can only flow
-from earlier to later positions (or stay in place). -/
+from later to earlier positions (or stay in place). -/
 theorem causal_reachable_dir (M : Mixer (Fin n) (Fin n)) (hcaus : isCausal M)
     {i j : Fin n} (hreach : M.reachable i j) : j.val ≤ i.val := by
   by_contra h
