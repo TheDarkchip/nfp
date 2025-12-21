@@ -65,7 +65,8 @@ namespace HeadLocalContributionCert
 
 /-- Internal consistency checks for local per-head bounds. -/
 def Valid (eps : Rat) (c : HeadLocalContributionCert) : Prop :=
-  c.ln1Bound =
+  0 < eps ∧
+    c.ln1Bound =
       (if c.ln1VarianceLowerBound > 0 then
         layerNormOpBoundLocal c.ln1MaxAbsGamma c.ln1VarianceLowerBound eps
       else
@@ -106,6 +107,7 @@ namespace HeadPatternCert
 /-- Internal consistency checks for pattern bounds. -/
 def Valid (c : HeadPatternCert) : Prop :=
   c.seqLen > 0 ∧
+    c.targetCountLowerBound ≤ c.seqLen ∧
     c.marginLowerBound = c.targetLogitLowerBound - c.otherLogitUpperBound ∧
     c.targetWeightLowerBound =
       (if c.marginLowerBound > 0 then
@@ -128,6 +130,10 @@ end HeadPatternCert
 
 /-! ## Local value-direction bounds -/
 
+/-- Safe lower bound for a convex mixture when only a lower bound on the match weight is known. -/
+def mixLowerBound (w m n : Rat) : Rat :=
+  min m (w * m + (1 - w) * n)
+
 /-- Local per-head output lower bound for a single coordinate. -/
 structure HeadValueLowerBoundCert where
   layerIdx : Nat
@@ -143,9 +149,10 @@ namespace HeadValueLowerBoundCert
 
 /-- Internal consistency checks for the coordinate lower bound. -/
 def Valid (c : HeadValueLowerBoundCert) : Prop :=
-  c.outputCoordLowerBound =
-    c.matchWeightLowerBound * c.matchCoordLowerBound +
-      (1 - c.matchWeightLowerBound) * c.nonmatchCoordLowerBound
+  0 ≤ c.matchWeightLowerBound ∧
+    c.matchWeightLowerBound ≤ 1 ∧
+    c.outputCoordLowerBound =
+      mixLowerBound c.matchWeightLowerBound c.matchCoordLowerBound c.nonmatchCoordLowerBound
 
 instance (c : HeadValueLowerBoundCert) : Decidable (Valid c) := by
   unfold Valid
@@ -178,9 +185,10 @@ namespace HeadLogitDiffLowerBoundCert
 
 /-- Internal consistency checks for the logit-difference lower bound. -/
 def Valid (c : HeadLogitDiffLowerBoundCert) : Prop :=
-  c.logitDiffLowerBound =
-    c.matchWeightLowerBound * c.matchLogitLowerBound +
-      (1 - c.matchWeightLowerBound) * c.nonmatchLogitLowerBound
+  0 ≤ c.matchWeightLowerBound ∧
+    c.matchWeightLowerBound ≤ 1 ∧
+    c.logitDiffLowerBound =
+      mixLowerBound c.matchWeightLowerBound c.matchLogitLowerBound c.nonmatchLogitLowerBound
 
 instance (c : HeadLogitDiffLowerBoundCert) : Decidable (Valid c) := by
   unfold Valid
@@ -255,9 +263,10 @@ namespace HeadValueLowerBoundPosCert
 
 /-- Internal consistency checks for the coordinate lower bound. -/
 def Valid (c : HeadValueLowerBoundPosCert) : Prop :=
-  c.outputCoordLowerBound =
-    c.matchWeightLowerBound * c.matchCoordLowerBound +
-      (1 - c.matchWeightLowerBound) * c.nonmatchCoordLowerBound
+  0 ≤ c.matchWeightLowerBound ∧
+    c.matchWeightLowerBound ≤ 1 ∧
+    c.outputCoordLowerBound =
+      mixLowerBound c.matchWeightLowerBound c.matchCoordLowerBound c.nonmatchCoordLowerBound
 
 instance (c : HeadValueLowerBoundPosCert) : Decidable (Valid c) := by
   unfold Valid
@@ -289,9 +298,10 @@ namespace HeadLogitDiffLowerBoundPosCert
 
 /-- Internal consistency checks for the logit-difference lower bound. -/
 def Valid (c : HeadLogitDiffLowerBoundPosCert) : Prop :=
-  c.logitDiffLowerBound =
-    c.matchWeightLowerBound * c.matchLogitLowerBound +
-      (1 - c.matchWeightLowerBound) * c.nonmatchLogitLowerBound
+  0 ≤ c.matchWeightLowerBound ∧
+    c.matchWeightLowerBound ≤ 1 ∧
+    c.logitDiffLowerBound =
+      mixLowerBound c.matchWeightLowerBound c.matchLogitLowerBound c.nonmatchLogitLowerBound
 
 instance (c : HeadLogitDiffLowerBoundPosCert) : Decidable (Valid c) := by
   unfold Valid
@@ -319,8 +329,8 @@ def toTokenMatchPattern (c : HeadPatternCert) : Nfp.TokenMatchPattern := {
 
 theorem toTokenMatchPattern_valid (c : HeadPatternCert) (h : c.Valid) :
     (toTokenMatchPattern c).Valid := by
-  rcases h with ⟨hseq, _hmargin, hweight⟩
-  exact ⟨hseq, by simpa [toTokenMatchPattern] using hweight⟩
+  rcases h with ⟨hseq, hcount, _hmargin, hweight⟩
+  exact ⟨hseq, hcount, by simpa [toTokenMatchPattern] using hweight⟩
 
 def toInductionPatternWitness
     (c : HeadPatternCert) (h : c.Valid) (hm : c.marginLowerBound > 0)
@@ -431,6 +441,8 @@ theorem HeadLocalContributionCert.Valid_spec :
     HeadLocalContributionCert.Valid = HeadLocalContributionCert.Valid := rfl
 theorem HeadLocalContributionCert.check_spec :
     HeadLocalContributionCert.check = HeadLocalContributionCert.check := rfl
+theorem mixLowerBound_spec :
+    mixLowerBound = mixLowerBound := rfl
 theorem HeadPatternCert.Valid_spec :
     HeadPatternCert.Valid = HeadPatternCert.Valid := rfl
 theorem HeadPatternCert.check_spec :

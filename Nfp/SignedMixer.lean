@@ -207,7 +207,7 @@ noncomputable def rowAbsSum (M : SignedMixer S T) (i : S) : ℝ := ∑ j, |M.w i
 /-- Total influence magnitude: sum of all absolute weights. -/
 noncomputable def totalInfluence (M : SignedMixer S T) : ℝ := ∑ i, M.rowAbsSum i
 
-/-- ℓ∞ operator norm bound: max row sum of absolute weights. -/
+/-- Row-sum operator norm bound (induced ℓ1 for row-vector convention). -/
 noncomputable def operatorNormBound (M : SignedMixer S T) [Nonempty S] : ℝ :=
   Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
     ∑ j, |M.w i j|
@@ -293,7 +293,7 @@ end SignedMixer
 /-! ## Affine Mixer -/
 
 /-- An affine mixer: a signed linear map plus a bias term.
-This captures the full `y = Wx + b` form of neural network layers. -/
+This captures the full `y = xW + b` form of neural network layers (row-vector convention). -/
 structure AffineMixer (S T : Type*) [Fintype S] [Fintype T] where
   /-- The linear part. -/
   linear : SignedMixer S T
@@ -304,7 +304,7 @@ namespace AffineMixer
 
 variable {S T U : Type*} [Fintype S] [Fintype T] [Fintype U]
 
-/-- Apply an affine mixer to a vector: Wx + b. -/
+/-- Apply an affine mixer to a vector: xW + b. -/
 noncomputable def apply (M : AffineMixer S T) (v : S → ℝ) : T → ℝ :=
   fun j => M.linear.apply v j + M.bias j
 
@@ -316,11 +316,53 @@ def ofLinear (M : SignedMixer S T) : AffineMixer S T where
   linear := M
   bias := fun _ => 0
 
-/-- Composition of affine mixers.
-(W₂, b₂) ∘ (W₁, b₁) = (W₂W₁, W₂b₁ + b₂) -/
+/-- Composition of affine mixers (row-vector convention).
+(W₂, b₂) ∘ (W₁, b₁) = (W₁W₂, b₁W₂ + b₂). -/
 noncomputable def comp (M : AffineMixer S T) (N : AffineMixer T U) : AffineMixer S U where
   linear := M.linear.comp N.linear
   bias := fun k => N.linear.apply M.bias k + N.bias k
+
+/-- Composition corresponds to sequential application. -/
+theorem comp_apply (M : AffineMixer S T) (N : AffineMixer T U) (v : S → ℝ) :
+    (M.comp N).apply v = N.apply (M.apply v) := by
+  classical
+  ext k
+  have hlin :
+      ∑ i, v i * (∑ x, M.linear.w i x * N.linear.w x k) =
+        ∑ x, (∑ i, v i * M.linear.w i x) * N.linear.w x k := by
+    have h :=
+      congrArg (fun f => f k)
+        (SignedMixer.apply_comp (M := M.linear) (N := N.linear) (v := v))
+    simpa [SignedMixer.apply_def] using h
+  have hsum :
+      (∑ x, M.bias x * N.linear.w x k) +
+          ∑ x, (∑ i, v i * M.linear.w i x) * N.linear.w x k =
+        ∑ x, (M.bias x + ∑ i, v i * M.linear.w i x) * N.linear.w x k := by
+    symm
+    simp [Finset.sum_add_distrib, add_mul]
+  calc
+    (M.comp N).apply v k =
+        (M.comp N).bias k + ∑ i, v i * (M.comp N).linear.w i k := by
+      simp [AffineMixer.apply_def, add_comm]
+    _ =
+        N.bias k + (∑ x, M.bias x * N.linear.w x k) +
+          ∑ i, v i * (∑ x, M.linear.w i x * N.linear.w x k) := by
+      simp [AffineMixer.comp, SignedMixer.comp_w, SignedMixer.apply_def, add_assoc, add_comm]
+    _ = N.bias k + (∑ x, M.bias x * N.linear.w x k) +
+          ∑ x, (∑ i, v i * M.linear.w i x) * N.linear.w x k := by
+      simp [hlin]
+    _ = N.bias k + ∑ x, (M.bias x + ∑ i, v i * M.linear.w i x) * N.linear.w x k := by
+      calc
+        N.bias k + (∑ x, M.bias x * N.linear.w x k) +
+              ∑ x, (∑ i, v i * M.linear.w i x) * N.linear.w x k =
+            N.bias k +
+              ((∑ x, M.bias x * N.linear.w x k) +
+                ∑ x, (∑ i, v i * M.linear.w i x) * N.linear.w x k) := by
+              simp [add_assoc]
+        _ = N.bias k + ∑ x, (M.bias x + ∑ i, v i * M.linear.w i x) * N.linear.w x k := by
+              simp [hsum]
+    _ = N.apply (M.apply v) k := by
+      simp [AffineMixer.apply_def, add_comm]
 
 /-- The bias can be seen as the output when input is zero. -/
 theorem apply_zero (M : AffineMixer S T) : M.apply (fun _ => 0) = M.bias := by
@@ -347,15 +389,12 @@ the convention used by downstream (external) gradient-based interpretations. -/
 theorem SignedMixer.jacobianEntry_eq_weight (M : SignedMixer S T) (i : S) (j : T) :
     M.w i j = M.w i j := rfl
 
-/-- **Integrated Gradients correspondence**: For a linear map M,
-the integrated gradient from baseline 0 to input x is:
-  IG_i(x, 0) = x_i * (∑_j M.w i j * (x_j / x_j))  [simplified for linear case]
-            = x_i * M.rowSum i
-
-For linear maps, IG simplifies significantly. -/
+/-- **Integrated Gradients (aggregated output)**: for a linear map M,
+if we aggregate outputs by summing over j, then the IG attribution for input i
+reduces to `x_i * rowSum i`. -/
 theorem SignedMixer.integrated_gradients_linear (M : SignedMixer S T) (x : S → ℝ) (i : S) :
     -- The "contribution" of input i to the output
-    -- For linear M, this is just x_i times the row sum (influence of i on all outputs)
+    -- For linear M, this is x_i times the signed row sum (net effect on all outputs)
     x i * M.rowSum i = x i * ∑ j, M.w i j := by
   simp [SignedMixer.rowSum]
 

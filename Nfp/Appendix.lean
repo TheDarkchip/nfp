@@ -513,7 +513,7 @@ there exists
 an optimal set A maximizing `A.sum m` such that no outside element has larger weight
 than an inside element (swap-optimality). This captures the compact majorization-style
 “top-k is optimal” property without constructing an explicit sort. -/
-lemma greedy_topk_optimal (m : S → NNReal) [DecidableEq S] (k : ℕ) :
+lemma greedy_topk_optimal (m : S → NNReal) (k : ℕ) :
   ∃ A : Finset S,
     A.card ≤ k ∧
     (∀ B : Finset S, B.card ≤ k → B.sum m ≤ A.sum m) ∧

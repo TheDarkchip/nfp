@@ -194,7 +194,7 @@ lake exe nfp induction models/gpt2_rigorous.nfpt \
 - `--verify` runs causal verification via head ablation on the top-10 candidates.
 - `--diagnostics` enables bound breakdowns; `--diagTop` controls how many candidates receive diagnostics (default: `5`).
 - `--adaptive` turns on the adaptive bound scheduler. Tuning flags include `--targetSlack` (default: `8.0`),
-  `--maxUpgrades` (default: `200`), `--minRelImprove` (default: `0.01`), `--krylovSteps` (default: `4`),
+  `--maxUpgrades` (default: `120`), `--minRelImprove` (default: `0.01`), `--krylovSteps` (default: `2`),
   and `--adaptiveScope` (`layernorm | all`, default: `layernorm`).
 - `--verbose` prints detailed scoring metrics for each candidate.
 

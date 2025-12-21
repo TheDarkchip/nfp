@@ -21,7 +21,8 @@ We use `2` as a simple, obviously-safe constant to avoid importing heavy analysi
 -/
 def defaultActDerivBound : Rat := 2
 
-/-- Per-layer conservative amplification constant `Cᵢ` and its components. -/
+/-- Per-layer conservative residual amplification constant `Cᵢ`
+(bounds ‖layerJacobian - I‖) and its components. -/
 structure LayerAmplificationCert where
   layerIdx : Nat
   ln1MaxAbsGamma : Rat
@@ -98,7 +99,8 @@ namespace ModelCert
 
 /-- Internal consistency checks for a reported sound certificate. -/
 def Valid (c : ModelCert) : Prop :=
-  c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
+  0 < c.eps ∧
+    c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
     List.Forall₂
       (fun i l => l.layerIdx = i ∧ LayerAmplificationCert.Valid c.eps l)
       (List.range c.layers.size) c.layers.toList ∧

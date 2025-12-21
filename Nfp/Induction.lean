@@ -13,7 +13,8 @@ import Nfp.SignedMixer
 
 A **True Induction Head** is a rigorously certified mechanism that combines three components:
 
-1. **Structure**: The attention patterns match an induction head (previous-token + induction)
+1. **Structure**: The attention patterns match an induction head (previous-token + induction),
+   with the previous-token leg modeled by a self-attention placeholder due to abstract indexing.
 2. **Faithfulness**: The virtual head approximation (attention rollout) is ε-certified
 3. **Function**: The mechanism effectively increases logit scores for the correct token by ≥ δ
 
@@ -52,7 +53,8 @@ noncomputable def inner_product (u v : (n × d) → ℝ) : ℝ :=
 An induction head is "true" if it simultaneously satisfies three conditions:
 
 1. **Structural Pattern**: The attention weights exhibit the induction head
-   structure (Layer 1 attends to previous tokens, Layer 2 attends to matching tokens).
+   structure (Layer 1 uses a previous-token pattern, modeled as self-attention; Layer 2
+   uses a nonnegativity placeholder for token-matching).
    This is captured by an `InductionHeadPattern`.
 
 2. **Faithful Approximation**: The virtual head (composition of value terms,
@@ -66,32 +68,23 @@ An induction head is "true" if it simultaneously satisfies three conditions:
 structure TrueInductionHead where
   /-- The model input (residual stream at sequence positions) -/
   input : (n × d) → ℝ
-
   /-- Certified induction head pattern (has layer1 and layer2 with attention properties) -/
   pattern : InductionHeadPattern (n := n) (d := d)
-
   /-- The composed true Jacobian from input to output -/
   composed_jacobian : SignedMixer (n × d) (n × d)
-
   /-- Target direction in residual stream space (how positions/dimensions contribute to target) -/
   target_logit_diff : (n × d) → ℝ
-
   /-- Faithfulness bound: how close virtual head is to composed Jacobian -/
   epsilon : ℝ
-
   /-- Functional effectiveness bound: minimum logit increase from this mechanism -/
   delta : ℝ
-
   /-- Faithfulness: Virtual head approximates composed Jacobian within ε -/
   faithful : isCertifiedVirtualHead pattern.layer2 pattern.layer1 composed_jacobian epsilon
-
   /-- Effectiveness: Virtual head applied to this input produces ≥ delta on target direction -/
   effective : inner_product (VirtualHead pattern.layer2 pattern.layer1 |>.apply input)
       target_logit_diff ≥ delta
-
   /-- Bounds are valid -/
   epsilon_nonneg : 0 ≤ epsilon
-
   /-- Delta is nonnegative (can't guarantee negative output) -/
   delta_nonneg : 0 ≤ delta
 
@@ -116,6 +109,7 @@ namespace TokenMatchPattern
 /-- Soundness invariant for token-match pattern witnesses. -/
 def Valid (p : TokenMatchPattern) : Prop :=
   p.seqLen > 0 ∧
+    p.targetCountLowerBound ≤ p.seqLen ∧
     p.targetWeightLowerBound =
       (if p.marginLowerBound > 0 then
         (p.targetCountLowerBound : Rat) / (p.seqLen : Rat)
@@ -139,14 +133,14 @@ theorem weight_lower_bound_of_margin_pos
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0) :
     p.targetWeightLowerBound =
       (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
-  rcases h with ⟨_hseq, hweight⟩
+  rcases h with ⟨_hseq, _hcount, hweight⟩
   simpa [hm] using hweight
 
 /-- If the margin is nonpositive, the weight lower bound is zero. -/
 theorem weight_lower_bound_of_margin_nonpos
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound ≤ 0) :
     p.targetWeightLowerBound = 0 := by
-  rcases h with ⟨_hseq, hweight⟩
+  rcases h with ⟨_hseq, _hcount, hweight⟩
   have hm' : ¬ p.marginLowerBound > 0 := by
     exact not_lt.mpr hm
   simpa [hm'] using hweight
@@ -157,7 +151,7 @@ theorem weight_lower_bound_pos_of_margin_pos
     (hcount : 0 < p.targetCountLowerBound) :
     0 < p.targetWeightLowerBound := by
   have hweight := weight_lower_bound_of_margin_pos p h hm
-  rcases h with ⟨hseq, _hweight⟩
+  rcases h with ⟨hseq, _hcount, _hweight⟩
   have hseq' : (0 : Rat) < (p.seqLen : Rat) := by
     exact_mod_cast hseq
   have hcount' : (0 : Rat) < (p.targetCountLowerBound : Rat) := by
@@ -257,9 +251,8 @@ composition has bounded error from the rule: ε_total ≤ ε₁ + ε₂ + ε₁�
 theorem true_induction_head_composition
     (h₁ h₂ : TrueInductionHead (n := n) (d := d))
     (ε : ℝ)
-    (_hε_bound : ε ≥ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon)
-    (hε_nonneg : 0 ≤ ε) :
-    0 ≤ ε := hε_nonneg
+    (hε_bound : ε ≤ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon) :
+    ε ≤ h₁.epsilon + h₂.epsilon + h₁.epsilon * h₂.epsilon := hε_bound
 
 omit [DecidableEq n] [DecidableEq d] in
 /-- **Interpretability Guarantee**: True induction heads are real mechanisms. -/
@@ -378,7 +371,6 @@ theorem true_induction_head_predicts_logits
     simpa [E, V, isCertifiedVirtualHead] using h.faithful
   have hV : h.delta ≤ inner_product (V.apply h.input) h.target_logit_diff := by
     simpa [V] using h.effective
-
   have happly_add : (V + E).apply h.input = V.apply h.input + E.apply h.input := by
     ext j
     simp [SignedMixer.apply_def, Finset.sum_add_distrib, mul_add]
@@ -403,14 +395,12 @@ theorem true_induction_head_predicts_logits
             inner_product (E.apply h.input) h.target_logit_diff := by
               simpa using hinner_add (a := V.apply h.input) (b := E.apply h.input)
                 (u := h.target_logit_diff)
-
   set bound : ℝ := h.epsilon * l2_norm h.input * l2_norm h.target_logit_diff
   have hbound_nonneg : 0 ≤ bound := by
     have hx : 0 ≤ l2_norm h.input := by simp [l2_norm]
     have hu : 0 ≤ l2_norm h.target_logit_diff := by simp [l2_norm]
     have : 0 ≤ h.epsilon * l2_norm h.input := mul_nonneg h.epsilon_nonneg hx
     simpa [bound, mul_assoc] using mul_nonneg this hu
-
   have herr_abs :
       |inner_product (E.apply h.input) h.target_logit_diff| ≤ bound := by
     have habs :
@@ -438,10 +428,8 @@ theorem true_induction_head_predicts_logits
         l2_norm (E.apply h.input) * l2_norm h.target_logit_diff ≤ bound := by
       simpa [bound, mul_assoc, mul_left_comm, mul_comm] using hchain
     exact le_trans habs hchain'
-
   have herr_lower : -bound ≤ inner_product (E.apply h.input) h.target_logit_diff := by
     exact (abs_le.mp herr_abs).1
-
   -- Combine: <Jx,u> = <Vx,u> + <Ex,u> ≥ δ + (-bound) = δ - bound
   have hsum_le :
       h.delta + (-bound) ≤

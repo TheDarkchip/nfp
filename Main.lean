@@ -74,7 +74,7 @@ private structure StdoutLogCtx where
 initialize stdoutLogCtxRef : IO.Ref (Option StdoutLogCtx) ← IO.mkRef none
 
 private def sanitizeFileComponent (s : String) : String :=
-  String.mk <|
+  String.ofList <|
     s.toList.map fun c =>
       if c.isAlphanum || c = '_' || c = '-' || c = '.' then c else '_'
 
@@ -140,7 +140,6 @@ private def hasEmbeddingsBeforeLayers (path : System.FilePath) : IO Bool := do
   let s := line.trim
   if s = "NFP_BINARY_V1" then
     return true
-
   -- Header: read until blank line (text format only).
   let mut seenHeader : Bool := false
   if s.startsWith "NFP_TEXT" then
@@ -156,7 +155,6 @@ private def hasEmbeddingsBeforeLayers (path : System.FilePath) : IO Bool := do
       continue
     if s.isEmpty then
       break
-
   -- After the header, `EMBEDDINGS` (if present) must appear before any layer payload.
   while true do
     let line ← h.getLine
@@ -177,11 +175,9 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   let valueRecon : Float := attnFrob * data.valueOutputProjNorm
   let epsRecon : Float :=
     if valueRecon < 1e-10 then Float.inf else patternRecon / valueRecon
-
   let patternCached := data.patternTermBoundCached
   let valueCached := data.valueTermNormCached
   let epsCached := data.faithfulnessRatioCached
-
   IO.println s!"  {label} L{data.layerIdx}H{data.headIdx}:"
   IO.println s!"    softmaxOpBound = {fmtFloat data.softmaxJacobianOpEst}"
   IO.println s!"    softmaxParts  = rowMaxP={fmtFloat data.softmaxRowMaxP}"
@@ -258,7 +254,6 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
   let outputPath := p.flag? "output" |>.map (·.as! String)
   let verify := p.hasFlag "verify"
   let verbose := p.hasFlag "verbose"
-
   if verbose then
     IO.println s!"Loading model from {modelPath}..."
     IO.println s!"Threshold: {threshold}"
@@ -266,9 +261,7 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
       IO.println "Mode: Verification (with empirical validation)"
     else
       IO.println "Mode: Analysis (static bounds only)"
-
   let loadResult ← loadModel ⟨modelPath⟩
-
   match loadResult with
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
@@ -289,21 +282,17 @@ def runAnalyze (p : Parsed) : IO UInt32 := do
       IO.println s!"  Model Dimension: {model.modelDim}"
       IO.println ""
       IO.println "Running analysis..."
-
     let report ← if verify then
       analyzeAndVerify model modelPath threshold none
     else
       analyzeModel model modelPath threshold
-
     let reportStr := toString report
-
     match outputPath with
     | some path =>
       IO.FS.writeFile ⟨path⟩ reportStr
       IO.println s!"Report written to {path}"
     | none =>
       IO.println reportStr
-
     return 0
 
 /-- Run the induction command - discover induction heads ranked by effectiveness. -/
@@ -327,7 +316,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
     | do
       IO.eprintln s!"Error: Invalid threshold value '{thresholdStr}'"
       return 1
-
   let (targetSlack, minRelImprove, adaptiveScope) ←
     if adaptive then
       let some targetSlack := Nfp.parseFloat targetSlackStr
@@ -352,10 +340,8 @@ def runInduction (p : Parsed) : IO UInt32 := do
       pure (targetSlack, minRelImprove, adaptiveScope)
     else
       pure (8.0, 0.01, Nfp.AdaptiveScope.layernorm)
-
   IO.println "Loading model..."
   let loadResult ← loadModel ⟨modelPath⟩
-
   match loadResult with
   | .error msg =>
     IO.eprintln s!"Error loading model: {msg}"
@@ -379,7 +365,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
             match model.inputTokens with
             | some _ => TargetDirection.fromInductionHistory model
             | none => some (TargetDirection.fromLogitDiff W_U 0 1)
-
       let some target := target?
         | do
           if correctOpt.isSome ∨ incorrectOpt.isSome then
@@ -391,11 +376,9 @@ def runInduction (p : Parsed) : IO UInt32 := do
             IO.eprintln "Hint: pass --correct/--incorrect to override, or export a prompt \
               where the last token repeats."
             return 2
-
       if correctOpt.isNone ∧ incorrectOpt.isNone ∧ model.inputTokens.isNone then
         IO.println "Warning: No TOKENS section found; using default target logit_diff(0-1)."
         IO.println "Hint: export with TOKENS or pass --correct/--incorrect."
-
       IO.println s!"Target: {target.description}"
       IO.println s!"Searching for heads with Effect > {minEffect}... (heuristic)"
       IO.println "Ranking: highest mechScore (= kComp·indScore·prevTok) first"
@@ -404,7 +387,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println "  Effect = δ / (‖ln₁(X₂)‖_F · ‖u‖₂)"
       IO.println "  kComp_raw = ‖W_QK² · W_OV¹‖_F / (‖W_QK²‖_F · ‖W_OV¹‖_F)"
       IO.println "  kComp = kComp_raw - 1/√modelDim"
-
       let buildLayerNormBounds := diagnostics && (!adaptive)
       let (heads, cache) :=
         findHeuristicInductionHeadsWithCache model target minEffect (minInductionScore := 0.01)
@@ -412,7 +394,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
           (storeDiagnostics := diagnostics)
       let top := heads.take 50
       IO.println s!"Top Induction Head Pairs by mechScore (top {top.size} of {heads.size})"
-
       let needSched := adaptive && (verbose || diagnostics)
       let schedActive? : Option (Array Bool) := none
       let sched? : Option Nfp.AdaptiveSchedulerResult :=
@@ -427,7 +408,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
           some (Nfp.runAdaptiveScheduler cache cfg schedActive?)
         else
           none
-
       if adaptive && verbose then
         let some sched := sched?
           | pure ()
@@ -449,7 +429,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
                 s!"  it={s.iter}  L{s.layerIdx}: lb-steps {s.kFrom}->{s.kTo}  " ++
                   s!"ub {fmtFloat s.ubBefore}  " ++
                   s!"lb≈{fmtFloat s.lb}  slack {fmtFloat s.slackBefore}->{fmtFloat s.slackAfter}"
-
       for h in top do
         let c := h.candidate
         let mechScore := c.kComp * c.inductionScore * c.prevTokenStrength
@@ -473,7 +452,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
               s!"indScore: {c.inductionScore} | prevTok: {c.prevTokenStrength} | " ++
               s!"Error: {c.combinedError} | " ++
               s!"‖X₂‖_F: {h.layer2InputNorm}"
-
       if diagnostics then
         IO.println ""
         let diagN := min diagTop top.size
@@ -581,7 +559,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
             let pi := estimateAttentionLayerNormHeuristicPI cache.model cache.forwardResult l true
             let ratio : Float := if pi > 1e-12 then ub / pi else Float.inf
             IO.println s!"  L{l}: PI≈{fmtFloat pi}  ub={fmtFloat ub}  ub/PI={fmtFloat ratio}"
-
         -- Rectangular Gram diagnostics for MLP weights (layer 0 only).
         if h0 : 0 < cache.model.mlps.size then
           let mlp0 : ConcreteMLPLayer := cache.model.mlps[0]'h0
@@ -663,24 +640,20 @@ def runInduction (p : Parsed) : IO UInt32 := do
               IO.println s!"    reconDiff = {fmtFloat (combinedRecon - c.combinedError)}"
           | _, _ =>
               IO.println "  (diagnostics unavailable: missing cached head data)"
-
       if verify then
         IO.println ""
         IO.println "Causal Verification (Head Ablation)"
         IO.println "Metric: Δ = logit(target) - logit(top non-target) at last position"
         IO.println "Impact = Δ_base - Δ_ablated"
         IO.println ""
-
         let targetToken? : Option Nat :=
           match correctOpt with
           | some t => some t
           | none => inductionTargetTokenFromHistory model
-
         let some targetToken := targetToken?
           | do
             IO.eprintln "Error: Cannot infer induction target token (need TOKENS or --correct)."
             return 2
-
         match VerificationContext.build model targetToken {} with
         | .error msg =>
             IO.eprintln s!"Error: {msg}"
@@ -717,7 +690,6 @@ def runInduction (p : Parsed) : IO UInt32 := do
                 {fmtOpt row.ablatedDelta} | {fmtOpt row.impact} | {fmtOpt row.relScore} | \
                 {fmtOpt row.controlImpact} | {axiomsStr}"
               rank := rank + 1
-
       return 0
 
 /-- Run the certify command - compute conservative, exact bounds in sound mode. -/
@@ -729,7 +701,6 @@ def runCertify (p : Parsed) : IO UInt32 := do
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
   let outputPath := p.flag? "output" |>.map (·.as! String)
-
   let action : ExceptT String IO Nfp.Sound.ModelCert := do
     let actDeriv ←
       match Nfp.Sound.parseRat actDerivStr with
@@ -739,7 +710,6 @@ def runCertify (p : Parsed) : IO UInt32 := do
       match Nfp.Sound.parseRat deltaStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-
     /- If `--input` is omitted but `--delta` is provided, try to use `modelPath` as the input file
        (for `.nfpt` exports that embed `EMBEDDINGS` in the same file). This keeps `nfp certify`
        ergonomic without changing the default behavior when `--delta` is absent. -/
@@ -763,7 +733,6 @@ containing EMBEDDINGS or omit --delta for global certification."
       Nfp.Sound.certifyModelFile ⟨modelPath⟩ actDeriv
         (inputPath? := inputPath?) (inputDelta := delta)
     pure cert
-
   match ← action.run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
@@ -786,13 +755,11 @@ def runHeadBounds (p : Parsed) : IO UInt32 := do
   let deltaStr := deltaFlag?.getD "0"
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let outputPath := p.flag? "output" |>.map (·.as! String)
-
   let action : ExceptT String IO String := do
     let delta ←
       match Nfp.Sound.parseRat deltaStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-
     let useLocal := (inputPath.isSome || deltaFlag?.isSome)
     if useLocal then
       let inputPath? : Option System.FilePath ←
@@ -839,7 +806,6 @@ containing EMBEDDINGS or omit --delta for global head bounds."
               s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
               s!"qk={h.qkFactorBound}, vo={h.voFactorBound}\n") ""
       return header ++ body
-
   match ← action.run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
@@ -870,13 +836,11 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
   let outputPath := p.flag? "output" |>.map (·.as! String)
-
   let action : ExceptT String IO String := do
     let delta ←
       match Nfp.Sound.parseRat deltaStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-
     let inputPath? : Option System.FilePath ←
       match inputPath with
       | some s => pure (some ⟨s⟩)
@@ -942,7 +906,6 @@ def runHeadPattern (p : Parsed) : IO UInt32 := do
             s!"marginLB={cert.marginLowerBound}, " ++
             s!"targetWeightLB={cert.targetWeightLowerBound}\n"
     return s
-
   match ← action.run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
@@ -980,13 +943,11 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
   let outputPath := p.flag? "output" |>.map (·.as! String)
-
   let action : ExceptT String IO String := do
     let delta ←
       match Nfp.Sound.parseRat deltaStr with
       | .ok r => pure r
       | .error e => throw s!"invalid --delta '{deltaStr}': {e}"
-
     let inputPath? : Option System.FilePath ←
       match inputPath with
       | some s => pure (some ⟨s⟩)
@@ -1067,7 +1028,6 @@ def runInductionCert (p : Parsed) : IO UInt32 := do
             s!"deltaLB={cert.deltaLowerBound}\n" ++
             logitLine
     return s
-
   match ← action.run with
   | .error msg =>
     IO.eprintln s!"Error: {msg}"
@@ -1093,10 +1053,8 @@ def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let maxTokens := p.flag? "maxTokens" |>.map (·.as! Nat) |>.getD 0
   let modelFp : System.FilePath := ⟨modelPath⟩
-
   let modelHash ← Nfp.Untrusted.SoundCacheIO.fnv1a64File modelFp
   let cacheFp := Nfp.Sound.SoundCache.cachePath modelFp modelHash scalePow10
-
   match (← Nfp.Untrusted.SoundCacheIO.buildCacheFile modelFp cacheFp scalePow10) with
   | .error e =>
       IO.eprintln s!"Error: cache build failed: {e}"
@@ -1128,7 +1086,6 @@ def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
 def runRoPE (p : Parsed) : IO UInt32 := do
   let seqLen := p.flag? "seqLen" |>.map (·.as! Nat) |>.getD 4
   let pairs := p.flag? "pairs" |>.map (·.as! Nat) |>.getD 8
-
   match seqLen, pairs with
   | Nat.succ n, Nat.succ m =>
       -- Instantiate the theorem at concrete sizes to ensure the report is proof-backed.
@@ -1141,11 +1098,10 @@ def runRoPE (p : Parsed) : IO UInt32 := do
         simpa using
           (Nfp.rope_operatorNormBound_le_two
             (pos := Fin (Nat.succ n)) (pair := Fin (Nat.succ m)) θ)
-
       IO.println "RoPE certificate (static):"
       IO.println s!"  seqLen={seqLen}, pairs={pairs}, dim={2 * pairs}"
       IO.println "  Bound: operatorNormBound(ropeJacobian θ) ≤ 2"
-      IO.println "  Meaning: max row-sum of absolute weights (ℓ∞ induced upper bound)."
+      IO.println "  Meaning: max row-sum of absolute weights (ℓ1 induced for row-vectors)."
       IO.println "  Proof: Nfp.rope_operatorNormBound_le_two (uses |sin|,|cos| ≤ 1 from mathlib)."
       return 0
   | _, _ =>
@@ -1160,7 +1116,6 @@ def runDump (p : Parsed) : IO UInt32 := do
   let pos := p.flag? "pos" |>.map (·.as! Nat) |>.getD 0
   let take := p.flag? "take" |>.map (·.as! Nat) |>.getD 16
   let kind := p.flag? "kind" |>.map (·.as! String) |>.getD "afterLayer"
-
   let loadResult ← loadModel ⟨modelPath⟩
   match loadResult with
   | .error msg =>
@@ -1169,7 +1124,6 @@ def runDump (p : Parsed) : IO UInt32 := do
   | .ok model0 =>
       let model := model0.trimTrailingZeroEmbeddings
       let fwd := model.runForward true
-
       let X : ConcreteMatrix :=
         match kind with
         | "embeddings" => model.inputEmbeddings
@@ -1181,14 +1135,12 @@ def runDump (p : Parsed) : IO UInt32 := do
             fwd.getLayerInput (layer + 1)
         | _ =>
             fwd.getLayerInput (layer + 1)
-
       if X.numRows = 0 || X.numCols = 0 then
         IO.eprintln s!"Error: empty matrix for kind={kind}"
         return 1
       if pos ≥ X.numRows then
         IO.eprintln s!"Error: pos={pos} out of bounds (rows={X.numRows})"
         return 1
-
       let n := min take X.numCols
       let mut xs : Array Float := Array.mkEmpty n
       let mut sum : Float := 0.0
@@ -1198,7 +1150,6 @@ def runDump (p : Parsed) : IO UInt32 := do
         xs := xs.push v
         sum := sum + v
         sumSq := sumSq + v * v
-
       IO.println <|
         s!"DUMP kind={kind} layer={layer} pos={pos} take={n} " ++
           s!"rows={X.numRows} cols={X.numCols}"
@@ -1210,13 +1161,11 @@ def runDump (p : Parsed) : IO UInt32 := do
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
   "Analyze a neural network model for circuit discovery and verification."
-
   FLAGS:
     t, threshold : String; "Error threshold for verification (default: 0.1)"
     o, output : String; "Write report to file instead of stdout"
     verify; "Run empirical verification (requires input in model)"
     v, verbose; "Enable verbose output"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1225,7 +1174,6 @@ def analyzeCmd : Cmd := `[Cli|
 def inductionCmd : Cmd := `[Cli|
   induction VIA runInduction;
   "Discover induction head pairs ranked by mechScore (kComp·indScore·prevTok)."
-
   FLAGS:
     c, correct : Nat; "Correct token ID (manual override; requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (manual override; requires --correct)"
@@ -1240,7 +1188,6 @@ def inductionCmd : Cmd := `[Cli|
     minRelImprove : String; "Stop upgrading a layer if improvement < this fraction (default: 0.01)"
     krylovSteps : Nat; "Krylov steps for LOWER bounds only (default: 2)"
     adaptiveScope : String; "Adaptive scope: layernorm | all (default: layernorm)"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1250,7 +1197,6 @@ def certifyCmd : Cmd := `[Cli|
   certify VIA runCertify;
   "SOUND mode: compute conservative bounds using exact Rat arithmetic (no Float trust). \
 LayerNorm epsilon is read from the model header."
-
   FLAGS:
     input : String; "Optional input .nfpt file for local certification (must contain EMBEDDINGS \
 for legacy text)"
@@ -1258,7 +1204,6 @@ for legacy text)"
 if --input is omitted, uses EMBEDDINGS in the model file when present)"
     actDeriv : String; "Activation derivative bound (default: 2)"
     o, output : String; "Write report to file instead of stdout"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1268,7 +1213,6 @@ def headBoundsCmd : Cmd := `[Cli|
   head_bounds VIA runHeadBounds;
   "SOUND mode: compute per-head contribution bounds. \
 LayerNorm epsilon is read from the model header."
-
   FLAGS:
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"
@@ -1276,7 +1220,6 @@ for legacy text)"
 uses EMBEDDINGS in the model file when present)"
     scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p for global bounds (default: 9)"
     o, output : String; "Write report to file instead of stdout"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1286,7 +1229,6 @@ def headPatternCmd : Cmd := `[Cli|
   head_pattern VIA runHeadPattern;
   "SOUND mode: compute per-head attention pattern bounds (binary only). \
 LayerNorm epsilon is read from the model header."
-
   FLAGS:
     layer : Nat; "Layer index (default: 0)"
     head : Nat; "Head index (default: 0)"
@@ -1302,7 +1244,6 @@ for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1312,7 +1253,6 @@ def inductionCertCmd : Cmd := `[Cli|
   induction_cert VIA runInductionCert;
   "SOUND mode: compute a minimal induction head certificate (binary only). \
 LayerNorm epsilon is read from the model header."
-
   FLAGS:
     layer1 : Nat; "Layer index for the previous-token head (default: 0)"
     head1 : Nat; "Head index for the previous-token head (default: 0)"
@@ -1333,7 +1273,6 @@ for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1342,11 +1281,9 @@ for legacy text)"
 def soundCacheCheckCmd : Cmd := `[Cli|
   sound_cache_check VIA runSoundCacheCheck;
   "Check SOUND fixed-point cache soundness (CI / small fixtures)."
-
   FLAGS:
     scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p (default: 9)"
     maxTokens : Nat; "Check at most this many numeric tokens (0=all; default: 0)"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1355,7 +1292,6 @@ def soundCacheCheckCmd : Cmd := `[Cli|
 def ropeCmd : Cmd := `[Cli|
   rope VIA runRoPE;
   "Static certificate for RoPE (rotary position embedding) linearization bounds."
-
   FLAGS:
     seqLen : Nat; "Sequence length (>0) used for instantiation (default: 4)"
     pairs : Nat; "Number of RoPE pairs (>0); dimension is 2*pairs (default: 8)"
@@ -1365,13 +1301,11 @@ def ropeCmd : Cmd := `[Cli|
 def dumpCmd : Cmd := `[Cli|
   dump VIA runDump;
   "Dump a small forward-pass slice (for PyTorch sanity checking)."
-
   FLAGS:
     layer : Nat; "Layer index (default: 0)"
     pos : Nat; "Token position / row index (default: 0)"
     take : Nat; "How many columns to dump from the start (default: 16)"
     kind : String; "embeddings | layerInput | postAttn | afterLayer (default: afterLayer)"
-
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
@@ -1380,7 +1314,6 @@ def dumpCmd : Cmd := `[Cli|
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
   "NFP: Neural Formal Pathways verification toolkit"
-
   SUBCOMMANDS:
     analyzeCmd;
     inductionCmd;

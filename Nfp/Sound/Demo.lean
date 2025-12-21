@@ -2,6 +2,7 @@
 
 import Mathlib.Tactic.Linarith
 import Mathlib.Tactic.NormNum
+import Mathlib.Tactic.FinCases
 import Nfp.Linearization
 import Nfp.Sound.Cert
 
@@ -29,10 +30,23 @@ This is intentionally tiny (2×2) but exercises the same definition (`max row su
 theorem demo_operatorNormBound_le :
     Nfp.operatorNormBound demoMixer ≤ (7 : ℝ) := by
   classical
-  -- Unfold to a `Finset.sup'` of row sums.
-  -- `simp` reduces the `sup' ≤ 7` goal to a per-row bound.
-  simp [Nfp.operatorNormBound, SignedMixer.operatorNormBound, demoMixer]
-  constructor
+  -- Unfold to a `Finset.sup'` of row sums and check each row explicitly.
+  dsimp [Nfp.operatorNormBound, SignedMixer.operatorNormBound, demoMixer]
+  refine (Finset.sup'_le_iff (s := (Finset.univ : Finset (Fin 1 × Fin 2)))
+    (f := fun i : Fin 1 × Fin 2 =>
+      ∑ x : Fin 1 × Fin 2,
+        abs
+          (match (i.2 : Nat), (x.2 : Nat) with
+            | 0, 0 => (1 : ℝ)
+            | 0, 1 => (2 : ℝ)
+            | 1, 0 => (-3 : ℝ)
+            | 1, 1 => (4 : ℝ)
+            | _, _ => 0))
+    (H := Finset.univ_nonempty)).2 ?_
+  intro i _hi
+  rcases i with ⟨i1, i2⟩
+  fin_cases i1
+  fin_cases i2
   · -- Row 0: |1| + |2| = 3 ≤ 7.
     have hsum :
         (∑ x : Fin 1 × Fin 2,

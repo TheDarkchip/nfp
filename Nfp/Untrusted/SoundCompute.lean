@@ -20,7 +20,8 @@ open Nfp.Untrusted.SoundBinary
 This is a minimal, *sound* loader intended for certification on the legacy text format.
 
 It does **not** construct the full `ConcreteModel` (Float-based). Instead it parses only the
-weights needed for conservative amplification constants `Cᵢ`, using exact `Rat` arithmetic.
+weights needed for conservative residual amplification constants `Cᵢ` (bounds ‖layerJacobian - I‖),
+using exact `Rat` arithmetic.
 
 It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
 LayerNorm certification on a bounded region around that input.
@@ -88,7 +89,8 @@ def consumeVector
   let step := fun (acc : Array Rat) (x : Rat) => acc.push x
   foldRatTokens lines start n (Array.mkEmpty n) step
 
-/-- Consume a matrix in row-major order and return its exact `‖·‖∞` row-sum norm.
+/-- Consume a matrix in row-major order and return its exact row-sum norm
+(`‖·‖∞` in column-vector convention, `‖·‖₁` in row-vector convention).
 
 Returns `(normInf, nextLineIndex)`.
 -/
@@ -138,9 +140,7 @@ def certifyHeadBoundsBinary
       match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
       | .error e => return .error e
       | .ok _ => pure ()
-
       let mut heads : Array HeadContributionCert := Array.mkEmpty (hdr.numLayers * hdr.numHeads)
-
       for l in [:hdr.numLayers] do
         for hIdx in [:hdr.numHeads] do
           let wqScaledE ← readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10
@@ -151,7 +151,6 @@ def certifyHeadBoundsBinary
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
-
           let wkScaledE ← readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10
           let wkScaled ←
             match wkScaledE with
@@ -160,7 +159,6 @@ def certifyHeadBoundsBinary
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
-
           let wvScaledE ← readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10
           let wvScaled ←
             match wvScaledE with
@@ -169,13 +167,11 @@ def certifyHeadBoundsBinary
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
-
           let woScaledE ← readMatrixOpBoundScaled h hdr.headDim hdr.modelDim scalePow10
           let woScaled ←
             match woScaledE with
             | .error e => return .error e
             | .ok v => pure v
-
           let wqOp := ratOfScaledNat scalePow10 wqScaled
           let wkOp := ratOfScaledNat scalePow10 wkScaled
           let wvOp := ratOfScaledNat scalePow10 wvScaled
@@ -194,11 +190,9 @@ def certifyHeadBoundsBinary
             heads := heads.push cert
           else
             return .error "head contribution certificate failed internal checks"
-
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         match ← skipF64Array h (hdr.modelDim * hdr.hiddenDim) with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -211,7 +205,6 @@ def certifyHeadBoundsBinary
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -224,7 +217,6 @@ def certifyHeadBoundsBinary
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
       match ← skipF64Array h hdr.modelDim with
       | .error e => return .error e
       | .ok _ => pure ()
@@ -234,7 +226,6 @@ def certifyHeadBoundsBinary
       match ← skipF64Array h (hdr.modelDim * hdr.vocabSize) with
       | .error e => return .error e
       | .ok _ => pure ()
-
       return .ok heads
 
 private def certifyModelFileGlobalBinary
@@ -246,17 +237,14 @@ private def certifyModelFileGlobalBinary
   | .error e => return .error e
   | .ok hdr =>
       let scalePow10 := defaultBinaryScalePow10
-
       match ← skipI32Array h hdr.seqLen with
       | .error e => return .error e
       | .ok _ => pure ()
       match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
       | .error e => return .error e
       | .ok _ => pure ()
-
       let mut layers : Array LayerAmplificationCert := Array.mkEmpty hdr.numLayers
       let mut totalAmp : Rat := 1
-
       for l in [:hdr.numLayers] do
         let mut attnSum : Rat := 0
         for _h in [:hdr.numHeads] do
@@ -272,7 +260,6 @@ private def certifyModelFileGlobalBinary
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
-
           let nvScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
           let nvScaled ←
             match nvScaledE with
@@ -286,15 +273,12 @@ private def certifyModelFileGlobalBinary
             match noScaledE with
             | .error e => return .error e
             | .ok v => pure v
-
           let nv := ratOfScaledInt scalePow10 nvScaled
           let no := ratOfScaledInt scalePow10 noScaled
           attnSum := attnSum + nv * no
-
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         let nWinScaledE ←
           readMatrixNormInfScaled h hdr.modelDim hdr.hiddenDim scalePow10
         let nWinScaled ←
@@ -313,7 +297,6 @@ private def certifyModelFileGlobalBinary
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         let ln1GammaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
         let ln1GammaScaled ←
           match ln1GammaScaledE with
@@ -330,18 +313,15 @@ private def certifyModelFileGlobalBinary
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         let ln1Max := ratOfScaledInt scalePow10 ln1GammaScaled
         let ln2Max := ratOfScaledInt scalePow10 ln2GammaScaled
         let nWin := ratOfScaledInt scalePow10 nWinScaled
         let nWout := ratOfScaledInt scalePow10 nWoutScaled
-
         let ln1Bound := layerNormOpBoundConservative ln1Max eps
         let ln2Bound := layerNormOpBoundConservative ln2Max eps
         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnSum
         let mlpW := ln2Bound * (nWin * actDerivBound * nWout)
         let C := attnW + mlpW
-
         layers := layers.push {
           layerIdx := l
           ln1MaxAbsGamma := ln1Max
@@ -355,7 +335,6 @@ private def certifyModelFileGlobalBinary
           C := C
         }
         totalAmp := totalAmp * (1 + C)
-
       match ← skipF64Array h hdr.modelDim with
       | .error e => return .error e
       | .ok _ => pure ()
@@ -365,7 +344,6 @@ private def certifyModelFileGlobalBinary
       match ← skipF64Array h (hdr.modelDim * hdr.vocabSize) with
       | .error e => return .error e
       | .ok _ => pure ()
-
       let cert : ModelCert := {
         modelPath := path.toString
         inputPath? := none
@@ -565,7 +543,6 @@ private def consumeMatrixMulAndNormInf
     let mut idx : Nat := 0
     let mut curRowAbs : Rat := 0
     let mut maxRowAbs : Rat := 0
-
     while remaining > 0 do
       if iLine ≥ lines.size then
         return .error "unexpected end of file while reading matrix"
@@ -596,7 +573,7 @@ private def consumeMatrixMulAndNormInf
     maxRowAbs := max maxRowAbs curRowAbs
     return .ok (out, maxRowAbs, iLine)
 
-/-- Soundly compute conservative per-layer amplification constants from a `.nfpt` file. -/
+/-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
     (path : System.FilePath)
     (eps : Rat)
@@ -605,27 +582,22 @@ def certifyModelFileGlobal
     (inputDelta : Rat := 0) : IO (Except String ModelCert) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
-
   -- Header
   let mut i : Nat := 0
   while i < lines.size && lines[i]!.trim.isEmpty do
     i := i + 1
-
   if !(i < lines.size) then
     return .error "empty file"
-
   let headerTag := lines[i]!.trim
   if !headerTag.startsWith "NFP_TEXT" then
     return .error s!"unexpected header '{headerTag}'"
   i := i + 1
-
   let mut numLayers : Option Nat := none
   let mut numHeads : Option Nat := none
   let mut modelDim : Option Nat := none
   let mut headDim : Option Nat := none
   let mut hiddenDim : Option Nat := none
   let mut seqLen : Option Nat := none
-
   while i < lines.size do
     let line := lines[i]!.trim
     if line.isEmpty then
@@ -644,28 +616,22 @@ def certifyModelFileGlobal
       | "seq_len" => seqLen := v.toNat?
       | _ => pure ()
       i := i + 1
-
   let some L := numLayers | return .error "missing num_layers"
   let some _ := numHeads | return .error "missing num_heads"
   let some d := modelDim | return .error "missing model_dim"
   let some dh := headDim | return .error "missing head_dim"
   let some dhid := hiddenDim | return .error "missing hidden_dim"
-
   let inputVarLowerMin? : Option Rat := none
-
   -- Accumulators
   let mut ln1GammaMax : Array Rat := Array.replicate L 1
   let mut ln2GammaMax : Array Rat := Array.replicate L 1
   let mut attnSum : Array Rat := Array.replicate L 0
   let mut mlpWin : Array Rat := Array.replicate L 0
   let mut mlpWout : Array Rat := Array.replicate L 0
-
   let mut curLayer : Nat := 0
-
   -- Scan remaining sections
   while i < lines.size do
     let line := lines[i]!.trim
-
     if line.startsWith "LAYER" then
       let parts := line.splitOn " " |>.filter (· ≠ "")
       if parts.length >= 2 then
@@ -720,7 +686,6 @@ def certifyModelFileGlobal
     else
       -- default: advance
       i := i + 1
-
   -- Build layer reports
   let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
   let mut totalAmp : Rat := 1
@@ -753,7 +718,6 @@ def certifyModelFileGlobal
       C := C
     }
     totalAmp := totalAmp * (1 + C)
-
   let cert : ModelCert := {
     modelPath := path.toString
     inputPath? := inputPath?.map (·.toString)
@@ -789,7 +753,6 @@ private def loadEmbeddingsIntervals
   if !(i < lines.size) then
     return .error "Missing EMBEDDINGS section in input file"
   i := i + 1
-
   let step :=
     fun (st : (Array (Array RatInterval) × Array RatInterval)) (x : Rat) =>
       let (rows, cur) := st
@@ -889,14 +852,12 @@ private def collectLayerNormParamsBinary
       match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
       | .error e => return .error e
       | .ok _ => pure ()
-
       let defP : LayerNormParamsFixed := {
         gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
         beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       }
       let mut ln1 : Array LayerNormParamsFixed := Array.replicate hdr.numLayers defP
       let mut ln2 : Array LayerNormParamsFixed := Array.replicate hdr.numLayers defP
-
       for l in [:hdr.numLayers] do
         for _h in [:hdr.numHeads] do
           match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
@@ -920,11 +881,9 @@ private def collectLayerNormParamsBinary
           match ← skipF64Array h (hdr.headDim * hdr.modelDim) with
           | .error e => return .error e
           | .ok _ => pure ()
-
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         match ← skipF64Array h (hdr.modelDim * hdr.hiddenDim) with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -937,7 +896,6 @@ private def collectLayerNormParamsBinary
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
-
         let ln1GammaE ← readScaledFloatArray h hdr.modelDim scalePow10
         let ln1Gamma ←
           match ln1GammaE with
@@ -958,10 +916,8 @@ private def collectLayerNormParamsBinary
           match ln2BetaE with
           | .error e => return .error e
           | .ok xs => pure (intervalsFromScaled xs slack)
-
         ln1 := ln1.set! l { gamma := ln1Gamma, beta := ln1Beta }
         ln2 := ln2.set! l { gamma := ln2Gamma, beta := ln2Beta }
-
       return .ok (hdr, ln1, ln2)
 
 /-!
@@ -1275,7 +1231,6 @@ private def loadEmbeddingsUnionFixed
   let mut out : Array Fixed10Interval := Array.replicate expectedModelDim { lo := 0, hi := 0 }
   let mut iCol : Nat := 0
   let mut remaining : Nat := 0
-
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   -- Header: read until blank line.
   let mut seqLen : Option Nat := none
@@ -1301,13 +1256,11 @@ private def loadEmbeddingsUnionFixed
           modelDim := v.toNat?
         else
           pure ()
-
   let some n := seqLen | return .error "missing seq_len in input file"
   let some d := modelDim | return .error "missing model_dim in input file"
   if d ≠ expectedModelDim then
     return .error s!"input model_dim mismatch (expected {expectedModelDim}, got {d})"
   remaining := n * d
-
   -- Scan to EMBEDDINGS marker.
   let mut found : Bool := false
   while !found do
@@ -1316,7 +1269,6 @@ private def loadEmbeddingsUnionFixed
       return .error "unexpected EOF while scanning for EMBEDDINGS"
     if line.trim = "EMBEDDINGS" then
       found := true
-
   while remaining > 0 do
     let line ← h.getLine
     if line.isEmpty then
@@ -1495,7 +1447,6 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -1534,7 +1485,6 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
             let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
             let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
             let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
-
         let wv ←
           match wv? with
           | none => throw "missing W_V for requested head"
@@ -1547,7 +1497,6 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
           match wo? with
           | none => throw "missing W_O for requested head"
           | some xs => pure xs
-
         let bVIntervals := intervalsFromScaled bV slack
         let mut vOutRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -1557,7 +1506,6 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
           let vOut := matMulIntervalsFromScaled cfg slack
             hdr.headDim hdr.modelDim wo vHidden
           vOutRows := vOutRows.push vOut
-
         let ti : Int := (Int.ofNat queryPos) + targetOffset
         if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
           throw "query position has no valid target offset"
@@ -1586,12 +1534,10 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
           match nonmatchLo? with
           | none => matchLo
           | some v => v
-
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := matchWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadValueLowerBoundPosCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -1626,7 +1572,6 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         attnUnion := addVecFixed attnUnion attnBias
         residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -1646,12 +1591,10 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
         let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         let mlpOut := addVecFixed mlpOut0 bOut
         residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -1750,7 +1693,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -1789,7 +1731,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
             let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
             let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
             let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
-
         let wv ←
           match wv? with
           | none => throw "missing W_V for requested head"
@@ -1802,7 +1743,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
           match wo? with
           | none => throw "missing W_O for requested head"
           | some xs => pure xs
-
         let bVIntervals := intervalsFromScaled bV slack
         let mut vOutRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -1812,11 +1752,9 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
           let vOut := matMulIntervalsFromScaled cfg slack
             hdr.headDim hdr.modelDim wo vHidden
           vOutRows := vOutRows.push vOut
-
         let mut vDotRows : Array Fixed10Interval := Array.mkEmpty hdr.seqLen
         for row in vOutRows do
           vDotRows := vDotRows.push (fixedDotInterval cfg row direction)
-
         let ti : Int := (Int.ofNat queryPos) + targetOffset
         if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
           throw "query position has no valid target offset"
@@ -1844,12 +1782,10 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
           match nonmatchLo? with
           | none => matchLo
           | some v => v
-
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := matchWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadLogitDiffLowerBoundPosCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -1885,7 +1821,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         attnUnion := addVecFixed attnUnion attnBias
         residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -1905,12 +1840,10 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
         let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         let mlpOut := addVecFixed mlpOut0 bOut
         residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -1950,7 +1883,6 @@ private def certifyModelFileLocalText
     (inputDelta : Rat) : IO (Except String ModelCert) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
-
   -- Header
   let mut i : Nat := 0
   while i < lines.size && lines[i]!.trim.isEmpty do
@@ -1961,7 +1893,6 @@ private def certifyModelFileLocalText
   if !headerTag.startsWith "NFP_TEXT" then
     return .error s!"unexpected header '{headerTag}'"
   i := i + 1
-
   let mut numLayers : Option Nat := none
   let mut numHeads : Option Nat := none
   let mut modelDim : Option Nat := none
@@ -1985,22 +1916,18 @@ private def certifyModelFileLocalText
         | "seq_len" => seqLen := v.toNat?
         | _ => pure ()
         i := i + 1
-
   let some L := numLayers | return .error "missing num_layers"
   let some H := numHeads | return .error "missing num_heads"
   let some d := modelDim | return .error "missing model_dim"
   let some dh := headDim | return .error "missing head_dim"
   let some dhid := hiddenDim | return .error "missing hidden_dim"
   let some n := seqLen | return .error "missing seq_len"
-
   -- Prepass: collect LN parameters.
   let (ln1Params, ln2Params) ←
     match collectLayerNormParams lines L d with
     | .error e => return .error e
     | .ok x => pure x
-
   let defLn : LayerNormParams := { gamma := Array.replicate d 1, beta := Array.replicate d 0 }
-
   -- Input: per-token residual intervals.
   let residual0 ← loadEmbeddingsIntervals inputPath n d inputDelta
   match residual0 with
@@ -2009,20 +1936,16 @@ private def certifyModelFileLocalText
       -- Use a single union box for all tokens (sound superset, much faster than
       -- `seqLen×modelDim`).
       let mut residualUnion := unionRows residualRows0 d
-
       -- Start scanning at first layer marker.
       let mut pos : Nat := skipUntil lines 0 (fun s => s.startsWith "LAYER")
-
       let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
       let mut totalAmp : Rat := 1
-
       for l in [:L] do
         -- Ensure we're at the next layer.
         pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
         if pos ≥ lines.size then
           return .error s!"unexpected end of file while scanning layer {l}"
         pos := pos + 1
-
         -- LN1: compute per-row outputs (for union) and min variance LB (for Jacobian bound).
         let p1 := ln1Params.getD l defLn
         let (ln1Out, ln1VarLB) := layerNormRowApprox residualUnion p1.gamma p1.beta eps
@@ -2033,7 +1956,6 @@ private def certifyModelFileLocalText
           else
             layerNormOpBoundConservative ln1MaxAbsGamma eps
         let ln1Union := ln1Out
-
         -- Attention (streaming): use union input box.
         let mut attnUnion : Array RatInterval := zeroIntervals d
         let mut attnCoeff : Rat := 0
@@ -2044,7 +1966,6 @@ private def certifyModelFileLocalText
           if !(lines[pos]!.trim.startsWith "HEAD") then
             return .error "expected HEAD marker before per-head matrices"
           pos := pos + 1
-
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_Q") then
             return .error "missing W_Q"
@@ -2058,7 +1979,6 @@ private def certifyModelFileLocalText
             match consumeVectorSkipFast lines (pos + 1) dh with
             | .error e => return .error e
             | .ok next => pos := next
-
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_K") then
             return .error "missing W_K"
@@ -2072,7 +1992,6 @@ private def certifyModelFileLocalText
             match consumeVectorSkipFast lines (pos + 1) dh with
             | .error e => return .error e
             | .ok next => pos := next
-
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_V") then
             return .error "missing W_V"
@@ -2090,7 +2009,6 @@ private def certifyModelFileLocalText
                 | .ok (bv, nextBv) =>
                     pos := nextBv
                     vHidden := addConstVec vHidden bv
-
               pos := skipBlankLines lines pos
               if !(pos < lines.size && lines[pos]!.trim = "W_O") then
                 return .error "missing W_O"
@@ -2100,7 +2018,6 @@ private def certifyModelFileLocalText
                       pos := nextO
                       attnUnion := addVecIntervals attnUnion vOut
                       attnCoeff := attnCoeff + nv * no
-
         -- Shared attention projection bias (affects forward activations / variance,
         -- so we include it).
         pos := skipBlankLines lines pos
@@ -2110,9 +2027,7 @@ private def certifyModelFileLocalText
           | .ok (bAttn, nextB) =>
               pos := nextB
               attnUnion := addConstVec attnUnion bAttn
-
         residualUnion := addVecIntervals residualUnion attnUnion
-
         -- LN2: compute per-row outputs and min variance LB.
         let p2 := ln2Params.getD l defLn
         let (ln2Out, ln2VarLB) := layerNormRowApprox residualUnion p2.gamma p2.beta eps
@@ -2123,13 +2038,11 @@ private def certifyModelFileLocalText
           else
             layerNormOpBoundConservative ln2MaxAbsGamma eps
         let ln2Union := ln2Out
-
         -- MLP (streaming): W_in, b_in, W_out, b_out.
         pos := skipBlankLines lines pos
         if !(pos < lines.size && lines[pos]!.trim = "MLP") then
           return .error "missing MLP section"
         pos := pos + 1
-
         pos := skipBlankLines lines pos
         if !(pos < lines.size && lines[pos]!.trim = "W_in") then
           return .error "missing W_in"
@@ -2137,7 +2050,6 @@ private def certifyModelFileLocalText
         | .error e => return .error e
         | .ok (hidden, nWin, nextWin) =>
             pos := nextWin
-
             pos := skipBlankLines lines pos
             if !(pos < lines.size && lines[pos]!.trim = "b_in") then
               return .error "missing b_in"
@@ -2145,10 +2057,8 @@ private def certifyModelFileLocalText
             | .error e => return .error e
             | .ok (bin, nextBin) =>
                 pos := nextBin
-
                 let hiddenB := addConstVec hidden bin
                 let actHidden := hiddenB.map RatInterval.geluOverapprox
-
                 pos := skipBlankLines lines pos
                 if !(pos < lines.size && lines[pos]!.trim = "W_out") then
                   return .error "missing W_out"
@@ -2165,12 +2075,10 @@ private def certifyModelFileLocalText
                         pos := nextBout
                         let mlpOut := addConstVec mlpOut0 bout
                         residualUnion := addVecIntervals residualUnion mlpOut
-
                         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
                         let mlpCoeff := nWin * actDerivBound * nWout
                         let mlpW := ln2Bound * mlpCoeff
                         let C := attnW + mlpW
-
                         layers := layers.push {
                           layerIdx := l
                           ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2185,7 +2093,6 @@ private def certifyModelFileLocalText
                         }
                         totalAmp := totalAmp * (1 + C)
                         pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
-
       let cert : ModelCert := {
         modelPath := path.toString
         inputPath? := some inputPath.toString
@@ -2228,10 +2135,8 @@ private def certifyModelFileLocal
           let ch ← IO.FS.Handle.mk cpath IO.FS.Mode.read
           let _ ← Nfp.Untrusted.SoundCacheIO.readHeader ch
           let mut rr ← Nfp.Untrusted.SoundCacheIO.I32Reader.init ch
-
           let mut layers : Array LayerAmplificationCert := Array.mkEmpty L
           let mut totalAmp : Rat := 1
-
           for l in [:L] do
             -- LN params from cache
             let (ln1Gamma, rr1) ← readVecIntervals rr modelDim slack
@@ -2239,7 +2144,6 @@ private def certifyModelFileLocal
             let (ln2Gamma, rr3) ← readVecIntervals rr2 modelDim slack
             let (ln2Beta, rr4) ← readVecIntervals rr3 modelDim slack
             rr := rr4
-
             -- LN1
             let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion ln1Gamma ln1Beta eps
             let ln1MaxAbsGamma : Rat :=
@@ -2251,7 +2155,6 @@ private def certifyModelFileLocal
                 layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
               else
                 layerNormOpBoundConservative ln1MaxAbsGamma eps
-
             -- Attention (streaming from cache)
             let mut attnUnion : Array Fixed10Interval :=
               Array.replicate modelDim { lo := 0, hi := 0 }
@@ -2268,12 +2171,10 @@ private def certifyModelFileLocal
               rr := rrO
               attnUnion := addVecFixed attnUnion vOut
               attnCoeff := attnCoeff + nWv * nWo
-
             let (attnBias, rrB) ← readVecIntervals rr modelDim slack
             rr := rrB
             attnUnion := addVecFixed attnUnion attnBias
             residualUnion := addVecFixed residualUnion attnUnion
-
             -- LN2
             let (ln2Out, ln2VarLB) := fixedLayerNormRowApprox cfg residualUnion ln2Gamma ln2Beta eps
             let ln2MaxAbsGamma : Rat :=
@@ -2285,7 +2186,6 @@ private def certifyModelFileLocal
                 layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
               else
                 layerNormOpBoundConservative ln2MaxAbsGamma eps
-
             -- MLP
             let (hidden0, nWin, rrWin) ←
               consumeMatrixMulAndNormInfFixed cfg slack rr modelDim hiddenDim ln2Out
@@ -2301,12 +2201,10 @@ private def certifyModelFileLocal
             rr := rrBout
             let mlpOut := addVecFixed mlpOut0 bOut
             residualUnion := addVecFixed residualUnion mlpOut
-
             let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
             let mlpCoeff := nWin * actDerivBound * nWout
             let mlpW := ln2Bound * mlpCoeff
             let C := attnW + mlpW
-
             layers := layers.push {
               layerIdx := l
               ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2320,7 +2218,6 @@ private def certifyModelFileLocal
               C := C
             }
             totalAmp := totalAmp * (1 + C)
-
           let cert : ModelCert := {
             modelPath := path.toString
             inputPath? := some inputPath.toString
@@ -2353,16 +2250,13 @@ private def certifyModelFileLocalBinary
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
     }
-
     let mut residualUnion := residualUnion0
     let mut layers : Array LayerAmplificationCert := Array.mkEmpty hdr.numLayers
     let mut totalAmp : Rat := 1
-
     for l in [:hdr.numLayers] do
       let p1 := ln1Params.getD l defP
       let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps
@@ -2375,7 +2269,6 @@ private def certifyModelFileLocalBinary
           layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
         else
           layerNormOpBoundConservative ln1MaxAbsGamma eps
-
       let mut attnUnion : Array Fixed10Interval :=
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       let mut attnCoeff : Rat := 0
@@ -2394,11 +2287,9 @@ private def certifyModelFileLocalBinary
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
         attnCoeff := attnCoeff + nWv * nWo
-
       let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       attnUnion := addVecFixed attnUnion attnBias
       residualUnion := addVecFixed residualUnion attnUnion
-
       let p2 := ln2Params.getD l defP
       let (ln2Out, ln2VarLB) := fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps
       let ln2MaxAbsGamma : Rat :=
@@ -2410,7 +2301,6 @@ private def certifyModelFileLocalBinary
           layerNormOpBoundLocal ln2MaxAbsGamma ln2VarLB eps
         else
           layerNormOpBoundConservative ln2MaxAbsGamma eps
-
       let (hidden0, nWin) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
@@ -2423,12 +2313,10 @@ private def certifyModelFileLocalBinary
       let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       let mlpOut := addVecFixed mlpOut0 bOut
       residualUnion := addVecFixed residualUnion mlpOut
-
       let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
       let mlpCoeff := nWin * actDerivBound * nWout
       let mlpW := ln2Bound * mlpCoeff
       let C := attnW + mlpW
-
       layers := layers.push {
         layerIdx := l
         ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2442,12 +2330,10 @@ private def certifyModelFileLocalBinary
         C := C
       }
       totalAmp := totalAmp * (1 + C)
-
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     let cert : ModelCert := {
       modelPath := path.toString
       inputPath? := some inputPath.toString
@@ -2482,16 +2368,13 @@ private def certifyHeadBoundsLocalBinary
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
     }
-
     let mut residualUnion := residualUnion0
     let mut heads : Array HeadLocalContributionCert :=
       Array.mkEmpty (hdr.numLayers * hdr.numHeads)
-
     for l in [:hdr.numLayers] do
       let p1 := ln1Params.getD l defP
       let (ln1Out, ln1VarLB) := fixedLayerNormRowApprox cfg residualUnion p1.gamma p1.beta eps
@@ -2504,10 +2387,8 @@ private def certifyHeadBoundsLocalBinary
           layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps
         else
           layerNormOpBoundConservative ln1MaxAbsGamma eps
-
       let mut attnUnion : Array Fixed10Interval :=
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
-
       for hIdx in [:hdr.numHeads] do
         let wqScaledE ←
           ExceptT.mk (readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10)
@@ -2526,7 +2407,6 @@ private def certifyHeadBoundsLocalBinary
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
-
         let attnW := ln1Bound * softmaxJacobianNormInfWorst * nWv * nWo
         let cert : HeadLocalContributionCert := {
           layerIdx := l
@@ -2545,15 +2425,12 @@ private def certifyHeadBoundsLocalBinary
           heads := heads.push cert
         else
           throw "local head contribution certificate failed internal checks"
-
       let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       attnUnion := addVecFixed attnUnion attnBias
       residualUnion := addVecFixed residualUnion attnUnion
-
       let p2 := ln2Params.getD l defP
       let (ln2Out, _ln2VarLB) :=
         fixedLayerNormRowApprox cfg residualUnion p2.gamma p2.beta eps
-
       let (hidden0, _nWin) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
@@ -2566,12 +2443,10 @@ private def certifyHeadBoundsLocalBinary
       let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       let mlpOut := addVecFixed mlpOut0 bOut
       residualUnion := addVecFixed residualUnion mlpOut
-
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
       let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     return heads
   action.run
 
@@ -2655,7 +2530,6 @@ private def certifyHeadPatternLocalBinary
           match wk? with
           | none => throw "missing W_K for requested head"
           | some xs => pure xs
-
         let mut qRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -2663,7 +2537,6 @@ private def certifyHeadPatternLocalBinary
             hdr.modelDim hdr.headDim wq row)
           kRows := kRows.push (matMulIntervalsFromScaled cfg slack
             hdr.modelDim hdr.headDim wk row)
-
         let mut minTargetLower? : Option Int := none
         let mut maxOtherUpper? : Option Int := none
         let mut minTargetCount? : Option Nat := none
@@ -2718,7 +2591,6 @@ private def certifyHeadPatternLocalBinary
                 match minTargetCount? with
                 | none => some targetCount
                 | some m => some (min m targetCount)
-
         let minTargetLower ←
           match minTargetLower? with
           | none => throw "no valid target positions for the requested offset"
@@ -2733,7 +2605,6 @@ private def certifyHeadPatternLocalBinary
           match maxOtherUpper? with
           | none => minTargetLower
           | some v => v
-
         let marginInt : Int := minTargetLower - maxOtherUpper
         let targetLower := ratOfScaledInt scalePow10 minTargetLower
         let otherUpper := ratOfScaledInt scalePow10 maxOtherUpper
@@ -2787,7 +2658,6 @@ private def certifyHeadPatternLocalBinary
           let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           attnUnion := addVecFixed attnUnion attnBias
           residuals := addVecFixedRows residuals attnUnion
-
           let p2 := ln2Params.getD l defP
           let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
           for row in residuals do
@@ -2819,7 +2689,6 @@ private def certifyHeadPatternLocalBinary
             let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
             let mlpOut := addVecFixed mlpOut0 bOut
             residuals := addVecFixedRows residuals mlpOut
-
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
@@ -2845,7 +2714,6 @@ private def certifyHeadPatternLocalBinary
           let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           attnUnion := addVecFixed attnUnion attnBias
           residuals := addVecFixedRows residuals attnUnion
-
           let p2 := ln2Params.getD l defP
           let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
           for row in residuals do
@@ -2865,12 +2733,10 @@ private def certifyHeadPatternLocalBinary
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpOut := addVecFixed mlpOut0 bOut
           residuals := addVecFixedRows residuals mlpOut
-
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
           let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -2917,7 +2783,6 @@ private def certifyHeadPatternBestMatchLocalBinary
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -2961,14 +2826,12 @@ private def certifyHeadPatternBestMatchLocalBinary
           match wk? with
           | none => throw "missing W_K for requested head"
           | some xs => pure xs
-
         let qRow := matMulIntervalsFromScaled cfg slack
           hdr.modelDim hdr.headDim wq (ln1Rows[queryPos]!)
         let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
           kRows := kRows.push (matMulIntervalsFromScaled cfg slack
             hdr.modelDim hdr.headDim wk row)
-
         let ti : Int := (Int.ofNat queryPos) + targetOffset
         if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
           throw "query position has no valid target offset"
@@ -2996,7 +2859,6 @@ private def certifyHeadPatternBestMatchLocalBinary
           match bestNonmatchUpper? with
           | none => bestMatchLower
           | some v => v
-
         let marginInt : Int := bestMatchLower - bestNonmatchUpper
         let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
         let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
@@ -3072,7 +2934,6 @@ private def certifyHeadPatternBestMatchLocalBinary
           let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           attnUnion := addVecFixed attnUnion attnBias
           residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -3104,12 +2965,10 @@ private def certifyHeadPatternBestMatchLocalBinary
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpOut := addVecFixed mlpOut0 bOut
           residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -3148,7 +3007,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -3192,7 +3050,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           match wk? with
           | none => throw "missing W_K for requested head"
           | some xs => pure xs
-
         let mut qRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         let mut kRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -3200,7 +3057,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             hdr.modelDim hdr.headDim wq row)
           kRows := kRows.push (matMulIntervalsFromScaled cfg slack
             hdr.modelDim hdr.headDim wk row)
-
         let validPositions : Array Nat := Id.run do
           let mut out : Array Nat := Array.mkEmpty hdr.seqLen
           for i in [:hdr.seqLen] do
@@ -3212,7 +3068,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           out
         if validPositions.isEmpty then
           throw "no valid query positions for the requested offset"
-
         let computeCert : Nat → Except String HeadBestMatchPatternCert := fun queryPos => do
           let ti : Int := (Int.ofNat queryPos) + targetOffset
           if ti < 0 || ti ≥ (Int.ofNat hdr.seqLen) then
@@ -3242,7 +3097,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             match bestNonmatchUpper? with
             | none => bestMatchLower
             | some v => v
-
           let marginInt : Int := bestMatchLower - bestNonmatchUpper
           let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
           let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
@@ -3267,7 +3121,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           if cert.check then
             return cert
           throw "best-match head pattern certificate failed internal consistency checks"
-
         let useTasks := validPositions.size > 32
         let mut certs : Array HeadBestMatchPatternCert := Array.mkEmpty validPositions.size
         if useTasks then
@@ -3334,7 +3187,6 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           attnUnion := addVecFixed attnUnion attnBias
           residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -3366,12 +3218,10 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpOut := addVecFixed mlpOut0 bOut
           residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -3411,7 +3261,6 @@ private def certifyHeadValueLowerBoundLocalBinary
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -3450,7 +3299,6 @@ private def certifyHeadValueLowerBoundLocalBinary
             let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
             let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
             let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
-
         let wv ←
           match wv? with
           | none => throw "missing W_V for requested head"
@@ -3463,7 +3311,6 @@ private def certifyHeadValueLowerBoundLocalBinary
           match wo? with
           | none => throw "missing W_O for requested head"
           | some xs => pure xs
-
         let bVIntervals := intervalsFromScaled bV slack
         let mut vOutRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -3473,7 +3320,6 @@ private def certifyHeadValueLowerBoundLocalBinary
           let vOut := matMulIntervalsFromScaled cfg slack
             hdr.headDim hdr.modelDim wo vHidden
           vOutRows := vOutRows.push vOut
-
         let mut minMatchLo? : Option Int := none
         let mut minNonmatchLo? : Option Int := none
         for i in [:hdr.seqLen] do
@@ -3514,7 +3360,6 @@ private def certifyHeadValueLowerBoundLocalBinary
               match minNonmatchLo? with
               | none => some nonmatchLo
               | some m => some (min m nonmatchLo)
-
         let matchLo :=
           match minMatchLo? with
           | none => 0
@@ -3523,12 +3368,10 @@ private def certifyHeadValueLowerBoundLocalBinary
           match minNonmatchLo? with
           | none => matchLo
           | some v => v
-
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := pattern.targetWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadValueLowerBoundCert := {
           layerIdx := pattern.layerIdx
           headIdx := pattern.headIdx
@@ -3562,7 +3405,6 @@ private def certifyHeadValueLowerBoundLocalBinary
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         attnUnion := addVecFixed attnUnion attnBias
         residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -3582,12 +3424,10 @@ private def certifyHeadValueLowerBoundLocalBinary
         let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         let mlpOut := addVecFixed mlpOut0 bOut
         residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 
@@ -3631,7 +3471,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
-
     let defP : LayerNormParamsFixed := {
       gamma := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
       beta := Array.replicate hdr.modelDim { lo := 0, hi := 0 }
@@ -3670,7 +3509,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
             let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
             let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
             let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
-
         let wv ←
           match wv? with
           | none => throw "missing W_V for requested head"
@@ -3683,7 +3521,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
           match wo? with
           | none => throw "missing W_O for requested head"
           | some xs => pure xs
-
         let bVIntervals := intervalsFromScaled bV slack
         let mut vOutRows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in ln1Rows do
@@ -3693,11 +3530,9 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
           let vOut := matMulIntervalsFromScaled cfg slack
             hdr.headDim hdr.modelDim wo vHidden
           vOutRows := vOutRows.push vOut
-
         let mut vDotRows : Array Fixed10Interval := Array.mkEmpty hdr.seqLen
         for row in vOutRows do
           vDotRows := vDotRows.push (fixedDotInterval cfg row direction)
-
         let mut minMatchLo? : Option Int := none
         let mut minNonmatchLo? : Option Int := none
         for i in [:hdr.seqLen] do
@@ -3737,7 +3572,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
               match minNonmatchLo? with
               | none => some nonmatchLo
               | some m => some (min m nonmatchLo)
-
         let matchLo :=
           match minMatchLo? with
           | none => 0
@@ -3746,12 +3580,10 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
           match minNonmatchLo? with
           | none => matchLo
           | some v => v
-
         let matchLoRat := ratOfScaledInt scalePow10 matchLo
         let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo
         let weightLB := pattern.targetWeightLowerBound
-        let outputLB :=
-          weightLB * matchLoRat + (1 - weightLB) * nonmatchLoRat
+        let outputLB := mixLowerBound weightLB matchLoRat nonmatchLoRat
         let cert : HeadLogitDiffLowerBoundCert := {
           layerIdx := pattern.layerIdx
           headIdx := pattern.headIdx
@@ -3786,7 +3618,6 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         attnUnion := addVecFixed attnUnion attnBias
         residuals := addVecFixedRows residuals attnUnion
-
         let p2 := ln2Params.getD l defP
         let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
         for row in residuals do
@@ -3806,12 +3637,10 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
         let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         let mlpOut := addVecFixed mlpOut0 bOut
         residuals := addVecFixedRows residuals mlpOut
-
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
-
     throw "target layer not reached"
   action.run
 

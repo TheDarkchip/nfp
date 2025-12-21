@@ -50,7 +50,7 @@ def certifyHeadBoundsBinary
         return .ok certs
       return .error "head contribution certificate failed internal checks"
 
-/-- Soundly compute conservative per-layer amplification constants from a `.nfpt` file. -/
+/-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
     (path : System.FilePath)
     (actDerivBound : Rat := defaultActDerivBound)

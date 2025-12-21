@@ -305,7 +305,7 @@ error / ε pipelines.
 
 /-- Heuristic operator-norm estimate via power iteration.
 
-The operator norm ‖M‖₂ = max‖x‖=1 ‖Mx‖ is the largest singular value.
+The operator norm ‖M‖₂ = max‖x‖=1 ‖x·M‖ (row-vector convention) is the largest singular value.
 We approximate it using power iteration on M^T M.
 
 This is a fast **heuristic estimate** of how much `M` can stretch a vector.
@@ -406,7 +406,8 @@ def psdLambdaMaxUpperMoment (n : Nat) (tr f2 : Float) : Float :=
     max 0.0 ((tr + root) / nF)
 
 
-/-- Estimate maximum absolute row sum (L∞ induced norm).
+/-- Estimate maximum absolute row sum (induced ℓ1 for row-vector convention,
+induced ℓ∞ for column-vector convention).
 
 Mathematically, the real-valued quantity `maxᵢ Σⱼ |M[i,j]|` is an induced matrix norm.
 This function computes a `Float` approximation and is therefore a heuristic estimate.
@@ -421,7 +422,8 @@ def maxAbsRowSumEst (M : ConcreteMatrix) : Float := Id.run do
   maxSum
 
 
-/-- Estimate maximum absolute column sum (L1 induced norm).
+/-- Estimate maximum absolute column sum (induced ℓ∞ for row-vector convention,
+induced ℓ1 for column-vector convention).
 
 Mathematically, the real-valued quantity `maxⱼ Σᵢ |M[i,j]|` is an induced matrix norm.
 This function computes a `Float` approximation and is therefore a heuristic estimate.
@@ -441,7 +443,8 @@ def maxAbsColSumEst (M : ConcreteMatrix) : Float := Id.run do
 In exact real arithmetic:
 `‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)`.
 
-We compute the induced 1/∞ norms from the stored Float entries.
+We compute max row/column sums from the stored Float entries; `‖·‖₁`/`‖·‖∞`
+swap under transpose, so the bound is convention-agnostic.
 -/
 def opNormUpperBoundOneInf (M : ConcreteMatrix) : Float :=
   Float.sqrt (M.maxAbsRowSumEst * M.maxAbsColSumEst)
@@ -454,15 +457,14 @@ This implementation uses `Float`, so it should be treated as an estimate.
 def schurNormEst (M : ConcreteMatrix) : Float :=
   M.opNormUpperBoundOneInf
 
-/-- Cheap, provably-valid operator-norm upper bound for a concrete real matrix.
+/-- Cheap operator-norm upper bound formula for a concrete real matrix.
 
 In exact real arithmetic, we have the standard inequalities:
 - `‖M‖₂ ≤ ‖M‖_F`
 - `‖M‖₂ ≤ sqrt(‖M‖₁ · ‖M‖∞)`
 
-We compute both in `Float` and interpret the resulting expression as a real-number
-quantity over the stored Float entries (the same convention used throughout this file).
-Taking `min` can only tighten a valid upper bound.
+In exact real arithmetic, taking `min` can only tighten a valid upper bound.
+Here we compute both in `Float`, so treat the result as an estimate.
 -/
 def opNormUpperBoundCheap (M : ConcreteMatrix) : Float :=
   let frob := M.frobeniusNorm
@@ -2610,8 +2612,8 @@ The Frobenius norm squared of J for a single row is:
 
 A simpler upper bound is `Σᵢ p_i(1-p_i) = 1 - Σᵢ p_i²` (the Gini impurity).
 
-For sparse (one-hot) distributions: Σ p_i² ≈ 1, so ‖J‖_F ≈ 0
-For uniform distributions: Σ p_i² = 1/n, so ‖J‖_F ≈ √((n-1)/n)
+For sparse (one-hot) distributions: Σ p_i² ≈ 1, so the bound is ≈ 0
+For uniform distributions: Σ p_i² = 1/n, so the bound is √((n-1)/n)
 
 This allows us to compute much tighter pattern term bounds for sharp attention heads.
 -/
@@ -2631,7 +2633,7 @@ def softmaxRowJacobianNorm (row : Array Float) : Float :=
 /-- Compute the average softmax Jacobian norm across all rows of attention weights.
 
 This provides a data-dependent bound on the softmax Jacobian that is much tighter
-than the worst-case constant 2.0 for sharp attention patterns.
+than a coarse constant bound (e.g. 1.0), especially for sharp attention patterns.
 -/
 def ConcreteAttentionWeights.avgSoftmaxJacobianNorm (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
@@ -2652,7 +2654,7 @@ def ConcreteAttentionWeights.avgSoftmaxJacobianNorm (A : ConcreteAttentionWeight
 
 /-- Compute the maximum softmax Jacobian norm across all rows.
 
-More conservative than avg, but still much tighter than 2.0 for sparse attention.
+More conservative than avg, but still much tighter than a coarse constant bound for sparse attention.
 -/
 def ConcreteAttentionWeights.maxSoftmaxJacobianNorm (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
@@ -2811,22 +2813,27 @@ def ConcreteAttentionWeights.softmaxJacobianOpEst (A : ConcreteAttentionWeights)
 
 /-- Compute the overall Frobenius norm of the softmax Jacobian across all rows.
 
-This is `sqrt(Σ_q (1 - Σ_k A[q,k]²))`, which gives the total "softness" of attention.
+For a probability row `p`, the Jacobian is `J = diag(p) - p pᵀ` and
+`‖J‖_F² = (Σ pᵢ²) - 2(Σ pᵢ³) + (Σ pᵢ²)²`.
+We sum this per-row Frobenius norm squared and take a final square root.
 -/
 def ConcreteAttentionWeights.softmaxJacobianFrobeniusNorm
     (A : ConcreteAttentionWeights) : Float :=
   if A.seqLen = 0 then 0.0
   else Id.run do
-    let mut totalNormSq : Float := 0.0
+    let mut totalFrobSq : Float := 0.0
     for q in [:A.seqLen] do
       let mut sumSq : Float := 0.0
+      let mut sumCube : Float := 0.0
       let rowBase := q * A.seqLen
       for k in [:A.seqLen] do
         -- SAFETY: `q < seqLen` and `k < seqLen` by loop bounds.
         let p := A.weights[rowBase + k]!
         sumSq := sumSq + p * p
-      totalNormSq := totalNormSq + max 0.0 (1.0 - sumSq)
-    Float.sqrt totalNormSq
+        sumCube := sumCube + p * p * p
+      let rowFrobSq := max 0.0 (sumSq - 2.0 * sumCube + sumSq * sumSq)
+      totalFrobSq := totalFrobSq + rowFrobSq
+    Float.sqrt totalFrobSq
 
 /-! ## Forward Pass Implementations
 
@@ -2911,10 +2918,11 @@ the MLP Jacobian is `J = W_in · diag(d) · W_out`.
 Computing `J` explicitly is intractable (`modelDim×modelDim`). Instead we upper-bound `‖J‖₂`
 via the standard inequality `‖J‖₂ ≤ sqrt(‖J‖₁ · ‖J‖∞)`, where `‖·‖₁`/`‖·‖∞` are induced norms.
 
-For a fixed token, row/column absolute sums can be bounded without forming `J`:
+For a fixed token, row/column absolute sums can be bounded without forming `J`.
+In row-vector convention, `‖J‖₁` is the max row sum and `‖J‖∞` is the max column sum:
 
-* `‖J‖∞ ≤ max_r ∑_k |W_in[r,k]| · |d_k| · (∑_c |W_out[k,c]|)`
-* `‖J‖₁ ≤ max_c ∑_k |W_out[k,c]| · |d_k| · (∑_r |W_in[r,k]|)`
+* max row sum ≤ `max_r ∑_k |W_in[r,k]| · |d_k| · (∑_c |W_out[k,c]|)`
+* max column sum ≤ `max_c ∑_k |W_out[k,c]| · |d_k| · (∑_r |W_in[r,k]|)`
 
 To avoid a per-token `O(modelDim·hiddenDim)` loop, we take `dMax[k] = max_token |d_token[k]|` and
 use it in place of `|d_k|`, which is sound for both `‖·‖₁` and `‖·‖∞`.
@@ -3021,7 +3029,7 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
   let winScaledFrob : Float := winScaledFrobTokMax
   let woutScaledFrob : Float := woutScaledFrobTokMax
 
-  -- ‖J‖∞ upper bound via row sums.
+  -- Max row-sum bound (‖J‖₁ in row-vector convention).
   let (boundInf, maxWinRowScaled) : (Float × Float) := Id.run do
     let mut maxRow : Float := 0.0
     let mut maxScaled : Float := 0.0
@@ -3040,7 +3048,7 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
         maxScaled := sScaled
     (maxRow, maxScaled)
 
-  -- ‖J‖₁ upper bound via column sums.
+  -- Max column-sum bound (‖J‖∞ in row-vector convention).
   let (boundOne, maxWoutColScaled) : (Float × Float) := Id.run do
     let mut maxCol : Float := 0.0
     let mut maxScaled : Float := 0.0
@@ -3255,7 +3263,7 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
       woutMaxSq := max woutMaxSq woutSq
     (Float.sqrt (max 0.0 winMaxSq), Float.sqrt (max 0.0 woutMaxSq))
 
-  -- ‖J‖∞ upper bound via row sums.
+  -- Max row-sum bound (‖J‖₁ in row-vector convention).
   let boundInf : Float := Id.run do
     let mut maxRow : Float := 0.0
     for r in [:d] do
@@ -3269,7 +3277,7 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
         maxRow := s
     maxRow
 
-  -- ‖J‖₁ upper bound via column sums.
+  -- Max column-sum bound (‖J‖∞ in row-vector convention).
   let boundOne : Float := Id.run do
     let mut maxCol : Float := 0.0
     for c in [:d] do
@@ -3607,13 +3615,14 @@ structure DeepCircuitCandidate where
   headIndices : Array Nat
   /-- Per-layer pattern term bounds (εᵢ) -/
   patternBounds : Array Float
-  /-- Per-layer operator norm upper bounds (Cᵢ) -/
+  /-- Per-layer residual operator norm upper bounds (Cᵢ) -/
   operatorNormUbs : Array Float
   /-- Simple error sum: Σᵢ εᵢ (no amplification) -/
   simpleErrorSum : Float
   /-- N-layer amplified error: Σᵢ εᵢ · ∏_{j>i}(1+Cⱼ) -/
   amplifiedError : Float
-  /-- Total amplification factor: ∏ᵢ(1+Cᵢ) -/
+  /-- Suffix amplification factor from the earliest layer in the circuit:
+      `∏_{j ≥ min layer}(1 + Cⱼ)`. -/
   amplificationFactor : Float
   /-- Pattern type description (e.g., "induction", "composition") -/
   patternType : String
@@ -4108,7 +4117,8 @@ def computeTotalAmplifiedError (patternBounds normBounds : Array Float) : Float 
 
 For an attention layer, the Jacobian includes both the attention pattern term
 and the value projection. We estimate:
-  ‖I + J‖ ≤ 1 + ‖A‖_F · ‖W_V·W_O‖_op + ‖∂A/∂x‖ · ‖V·W_O‖
+  ‖J‖ ≤ ‖A‖_F · ‖W_V·W_O‖_op + ‖∂A/∂x‖ · ‖V·W_O‖,
+so ‖I + J‖ ≤ 1 + ‖J‖.
 
 For simplicity, we use Frobenius norms as upper bounds.
 -/
@@ -4157,7 +4167,8 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
 
         -- Value-term operator bound:
         --   ‖X ↦ A·X·(W_VW_O)‖ ≤ ‖A‖₂ · ‖W_VW_O‖₂.
-        -- For the attention matrix `A` (nonnegative row-stochastic), `‖A‖_∞ ≈ 1`, so
+        -- For the attention matrix `A` (nonnegative row-stochastic), the max row sum is 1
+        -- (`‖A‖₁` in row-vector convention, `‖A‖∞` in column-vector convention), so
         -- `sqrt(‖A‖₁‖A‖∞)` is typically far tighter than `‖A‖_F`.
         let attnFrob : Float := Id.run do
           let mut s : Float := 0.0
@@ -4780,7 +4791,7 @@ This precomputes all attention patterns, projections, and norms once.
 
     let norm : Float :=
       if computeLayerNormBounds then
-        -- OPTIMIZATION: compute per-layer Jacobian upper bounds from cached head data,
+        -- OPTIMIZATION: compute per-layer residual Jacobian upper bounds from cached head data,
         -- avoiding recomputation of attention weights / projections.
         Id.run do
           let y := fwdResult.getPostAttnResidual l
@@ -4935,7 +4946,7 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
 
     return { numRows := rows, numCols := cols, gamma := γ, invStds := invStds, v := v }
 
-/-- Apply the LayerNorm Jacobian `J` at the cached row statistics: `δy = J δx`. -/
+/-- Apply the LayerNorm Jacobian `J` at the cached row statistics: `δy = δx · J` (row-wise). -/
 def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix) : ConcreteMatrix :=
   Id.run do
     if dX.numRows ≠ ctx.numRows || dX.numCols ≠ ctx.numCols then
@@ -5199,7 +5210,7 @@ def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx
 
   return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
 
-  /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`.
+  /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = δx · J_resid`.
 
   If `parallelHeads=true`, per-head Jacobian-vector products are computed in parallel and then
   summed in **head-index order** to preserve deterministic Float semantics.
@@ -6093,7 +6104,8 @@ For a 2-layer induction head with layers l1 < l2:
 - Layer l1 contributes: ε₁ · (1 + C_l2) · (1 + C_{l2+1}) · ...
 - Layer l2 contributes: ε₂ · (1 + C_{l2+1}) · ...
 
-The amplification factors Cⱼ are estimated from the layer Jacobian norms.
+The amplification factors Cⱼ are estimated from residual Jacobian norms
+(`layerJacobian - I`).
 -/
 def findDeepCircuitCandidatesFromCache (cache : PrecomputedCache)
     (minPrevTokenStrength : Float := 0.1)
@@ -8221,7 +8233,7 @@ amplified as they propagate through subsequent layers:
 
 where:
 - εᵢ = pattern term bound for layer i (interpretation error)
-- Cⱼ = operator norm bound for layer j's Jacobian (amplification factor)
+- Cⱼ = operator norm bound for layer j's residual Jacobian (layerJacobian - I)
 -/
 
 /-- Per-layer error metrics for deep circuit analysis. -/
@@ -8230,7 +8242,7 @@ structure LayerErrorMetrics where
   layerIdx : Nat
   /-- Pattern term bound εᵢ (faithfulness error before amplification) -/
   patternTermBound : Float
-  /-- Operator norm upper bound Cᵢ for I + Jacobian (amplification factor) -/
+  /-- Operator norm upper bound Cᵢ for layerJacobian - I (residual part). -/
   operatorNormUb : Float
   /-- Suffix amplification: ∏_{j>i} (1 + Cⱼ) -/
   suffixAmplification : Float
@@ -8353,7 +8365,7 @@ def estimateLayerAblationError (model : ConcreteModel) (fwdResult : ForwardPassR
 This is the main function that bridges theoretical bounds to practical verification.
 It computes:
 1. Per-layer pattern term bounds (εᵢ)
-2. Per-layer operator norm bounds (Cᵢ)
+2. Per-layer residual operator norm bounds (Cᵢ)
 3. Suffix amplification factors
 4. Total amplified error using the N-layer composition formula
 
@@ -8368,7 +8380,7 @@ def verifyDeepCircuit (model : ConcreteModel)
   -- Run forward pass to get layer-wise inputs
   let fwdResult := model.runForward
 
-  -- Step 1: Compute per-layer operator norm bounds
+  -- Step 1: Compute per-layer residual operator norm bounds
   let mut normBounds : Array Float := #[]
   for l in [:model.numLayers] do
     let norm := estimateAttentionLayerNorm model fwdResult l true

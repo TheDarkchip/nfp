@@ -20,8 +20,9 @@ these operations at a specific input.
 
 ## Key Insight
 
-For any differentiable function f : ℝⁿ → ℝᵐ, at a specific input x₀, we have:
-  f(x) ≈ f(x₀) + J_f(x₀) · (x - x₀)
+For any differentiable function f : ℝⁿ → ℝᵐ, at a specific input x₀, we use a
+row-vector convention:
+  f(x) ≈ f(x₀) + (x - x₀) · J_f(x₀)
 
 where J_f(x₀) is the Jacobian matrix. This Jacobian is exactly a `SignedMixer`!
 
@@ -85,13 +86,21 @@ variable {n m p : Type*} [Fintype n] [Fintype m] [Fintype p]
 /-- Compose two linearizations (chain rule).
 If f : ℝⁿ → ℝᵐ is linearized at x with Jacobian J_f, and
    g : ℝᵐ → ℝᵖ is linearized at f(x) with Jacobian J_g, then
-   g ∘ f has Jacobian J_g · J_f at x. -/
+   g ∘ f has Jacobian J_f · J_g at x (row-vector convention). -/
 noncomputable def comp
     (L₁ : Linearization n m) (L₂ : Linearization m p)
     (_h : L₂.input = L₁.output) : Linearization n p where
   input := L₁.input
   output := L₂.output
   jacobian := L₁.jacobian.comp L₂.jacobian
+
+/-- Chain rule for composed linearizations (row-vector convention). -/
+theorem comp_apply
+    (L₁ : Linearization n m) (L₂ : Linearization m p) (h : L₂.input = L₁.output)
+    (v : n → ℝ) :
+    (L₁.comp L₂ h).jacobian.apply v = L₂.jacobian.apply (L₁.jacobian.apply v) := by
+  simpa using
+    (SignedMixer.apply_comp (M := L₁.jacobian) (N := L₂.jacobian) (v := v))
 
 /-- The identity linearization (identity function). -/
 noncomputable def id [DecidableEq n] : Linearization n n where
@@ -250,7 +259,7 @@ noncomputable def layerNormJacobian (x : n → ℝ) : SignedMixer n n where
     let diagonal := if i = j then 1 else 0
     (1 / σ) * (diagonal - n_inv - centered_j * centered_i / (Fintype.card n * σ^2))
 
-/-- Diagonal linear map as a `SignedMixer`: (diag d) · x. -/
+/-- Diagonal linear map as a `SignedMixer`: x · diag d (row-vector convention). -/
 noncomputable def diagMixer (d : n → ℝ) : SignedMixer n n where
   w := fun i j => if i = j then d j else 0
 
@@ -272,7 +281,7 @@ noncomputable def layerNormLinearization (x : n → ℝ) : Linearization n n whe
 
 omit [DecidableEq n] in
 /-- **Key insight**: LayerNorm is translation-invariant: LayerNorm(x + c·1) = LayerNorm(x).
-The Jacobian rows summing to 0 reflects this. -/
+In row-vector convention, this corresponds to the Jacobian columns summing to 0. -/
 theorem layerNorm_translation_invariant [Nonempty n] (x : n → ℝ) (c : ℝ) :
     layerNorm (fun i => x i + c) = layerNorm x := by
   ext i
@@ -477,9 +486,9 @@ theorem gradientTimesInput_complete (L : Linearization n n)
   simp only [gradientTimesInput, hLinear, SignedMixer.apply_def]
 
 /-- For composed linearizations, the chain rule gives:
-  ∂output/∂input = J_last · J_{last-1} · ... · J_first
+  ∂output/∂input = J_first · J_{next} · ... · J_last
 
-This is exactly `SignedMixer.comp`! -/
+This is exactly `SignedMixer.comp` under the row-vector convention. -/
 theorem composed_attribution {p : Type*} [Fintype p]
     (L₁ : Linearization n m) (L₂ : Linearization m p)
     (h : L₂.input = L₁.output) :
@@ -494,13 +503,14 @@ section AttentionJacobian
 /-!
 ### The Key Insight
 
-In a self-attention layer, the output for query position q is:
-  output_q = Σ_k A_{qk} · V_k = Σ_k A_{qk} · (x_k · W_V)
+In a self-attention layer, the output for query position q is (before W_O):
+  attnOut_q = Σ_k A_{qk} · V_k = Σ_k A_{qk} · (x_k · W_V)
 
 where A_{qk} = softmax(Q_q · K_k^T / √d)_k
 
 The Jacobian ∂output/∂input has two fundamentally different contributions:
-1. **Value term**: ∂output/∂V · ∂V/∂x = A · W_V (attention weights × value projection)
+1. **Value term**: ∂output/∂V · ∂V/∂x = A · (W_V · W_O)
+   (attention weights × value/output projections)
 2. **Pattern term**: ∂output/∂A · ∂A/∂x (how changing x shifts the attention pattern)
 
 The **Value term** is what "Attention Rollout" uses—it treats attention weights A as fixed.
@@ -864,21 +874,22 @@ noncomputable def positionValueTerm (L : AttentionLinearization n d) : SignedMix
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
 /-- **Key insight**: The position-collapsed Value Term is proportional to attention weights!
 
-positionValueTerm(k→q) = A_{qk} · Tr(W_V · W_O)
+positionValueTerm(k→q) = A_{qk} · Σ_{d_in,d_out} (W_V · W_O)_{d_in,d_out}
 
-So if Tr(W_V · W_O) is a constant, attention weights directly give the position flow.
-This is the mathematical justification for "attention rollout". -/
+So if the total sum of entries of W_V · W_O is treated as a constant, attention weights
+directly give the position flow. This is the mathematical justification for
+"attention rollout". -/
 theorem positionValueTerm_proportional_to_attention (L : AttentionLinearization n d) (k q : n) :
     (positionValueTerm L).w k q =
     L.state.attentionWeights q k *
     ∑ d_in : d, ∑ d_out : d, (L.layer.W_V.comp L.layer.W_O).w d_in d_out := rfl
 
-/-- The trace of W_V · W_O (the proportionality constant). -/
+/-- The total sum of entries of W_V · W_O (the proportionality constant). -/
 noncomputable def valueOutputTrace (L : AttentionLinearization n d) : ℝ :=
   ∑ d_in : d, ∑ d_out : d, (L.layer.W_V.comp L.layer.W_O).w d_in d_out
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- Position Value Term is attention weights scaled by the trace. -/
+/-- Position Value Term is attention weights scaled by the total sum of entries. -/
 theorem positionValueTerm_eq_scaled_attention (L : AttentionLinearization n d) (k q : n) :
     (positionValueTerm L).w k q = L.state.attentionWeights q k * valueOutputTrace L := rfl
 
@@ -1010,8 +1021,8 @@ variable {n m : Type*} [Fintype n] [Fintype m]
 
 IG_i(x, x₀) = (x_i - x₀_i) · ∫₀¹ ∂f/∂x_i(x₀ + t(x - x₀)) dt
 
-For a linear function f(x) = Mx, this simplifies to:
-  IG_i = (x_i - x₀_i) · M_i  (just gradient × input difference)
+For a linear function f(x) = x · M (row-vector convention), this simplifies to:
+  IG_i = (x_i - x₀_i) · M_{i,j}  (gradient × input difference for output j)
 
 The key insight: IG is a path integral of linearizations along
 the straight line from baseline to input. -/
@@ -1030,17 +1041,12 @@ theorem integratedGradients_linear_complete
   ext i
   ring
 
-/-- **Key theorem**: For piecewise-linear networks (like ReLU networks),
-Integrated Gradients is a weighted sum of linearizations at each piece.
-
-If the path from x₀ to x crosses k linear regions with fractions t₁,...,tₖ,
-then IG = Σⱼ tⱼ · (linearization at region j). -/
-theorem integratedGradients_piecewise_linear
+/-- Placeholder: the full piecewise-linear IG statement is not yet formalized. -/
+theorem integratedGradients_piecewise_linear_placeholder
     (_regions : List (Linearization n n))
     (_weights : List ℝ)
     (_hWeightSum : _weights.sum = 1) :
-    -- IG is a convex combination of per-region linearizations
-    True := trivial  -- This would require formalizing path integration
+    True := trivial
 
 end IntegratedGradients
 
@@ -1141,7 +1147,7 @@ noncomputable def PositionVirtualHead
       (valueOutputTrace L₁) * (valueOutputTrace L₂)
 
 omit [DecidableEq n] [DecidableEq d] in
-/-- Position virtual head is attention composition scaled by value traces. -/
+/-- Position virtual head is attention composition scaled by value-entry sums. -/
 theorem PositionVirtualHead_eq_attention_comp
     (L₂ L₁ : AttentionLinearization n d) (i q : n) :
     (PositionVirtualHead L₂ L₁).w i q =
@@ -1225,7 +1231,7 @@ variable {pos pair : Type*}
   [Fintype pos] [DecidableEq pos] [Nonempty pos]
   [Fintype pair] [DecidableEq pair] [Nonempty pair]
 
-/-- **Certification lemma (ℓ∞ bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
+/-- **Certification lemma (row-sum bound)**: RoPE has a universal `operatorNormBound` ≤ 2.
 
 Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute values are ≤ 1. -/
   theorem rope_operatorNormBound_le_two (θ : pos → pair → ℝ) :
@@ -1233,9 +1239,15 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
           (ropeJacobian (pos := pos) (pair := pair) θ) ≤ (2 : ℝ) := by
     classical
     -- Reduce `sup' ≤ 2` to a per-row absolute row-sum bound.
-    simp [operatorNormBound, SignedMixer.operatorNormBound]
-    intro p k
-    have hrow (b : Bool) :
+    dsimp [operatorNormBound, SignedMixer.operatorNormBound]
+    refine (Finset.sup'_le_iff (s := (Finset.univ : Finset (pos × RoPEDim pair)))
+      (f := fun i : pos × RoPEDim pair =>
+        ∑ j : pos × RoPEDim pair,
+          |(ropeJacobian (pos := pos) (pair := pair) θ).w i j|)
+      (H := Finset.univ_nonempty)).2 ?_
+    intro i _hi
+    rcases i with ⟨p, ⟨k, b⟩⟩
+    have hrow :
         (∑ j : pos × RoPEDim pair,
             |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) j|) ≤ (2 : ℝ) := by
       -- Expand the row-sum over `pos × pair × Bool` and collapse the `pos`/`pair` sums using
@@ -1268,7 +1280,7 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
               =
             ∑ bb : Bool,
               |(ropeJacobian (pos := pos) (pair := pair) θ).w (p, (k, b)) (p, (k, bb))| := by
-        simp [RoPEDim, Fintype.sum_prod_type]
+        simp only [RoPEDim, Fintype.sum_prod_type]
         have hzero :
             ∀ x : pair,
               x ≠ k →
@@ -1309,7 +1321,7 @@ Each RoPE row has at most two nonzero entries, `cos` and `±sin`, whose absolute
         _ ≤ 1 + 1 := by
               exact add_le_add (Real.abs_cos_le_one _) (Real.abs_sin_le_one _)
         _ = (2 : ℝ) := by norm_num
-    exact ⟨hrow false, hrow true⟩
+    exact hrow
 
 end RoPEBounds
 
@@ -1334,20 +1346,22 @@ def isLayerFaithful (L : AttentionLinearization n d) (ε : ℝ) : Prop :=
 def isDeepFaithful (D : DeepLinearization (n := n) (d := d)) (ε : ℝ) : Prop :=
   frobeniusNorm (DeepPatternTerm D) ≤ ε
 
-/-- The key bound constant: amplification from Jacobian norms. -/
+/-- The key bound constant: amplification from residual Jacobian norms.
+This product ignores `lnFJacobian`; if it is nontrivial, multiply by
+`operatorNormBound D.lnFJacobian` to bound end-to-end amplification. -/
 noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) : ℝ :=
-  -- Product of (1 + ‖layer Jacobian‖) for all layers
+  -- Product of (1 + ‖layerJacobian - I‖) for all layers
   (List.range D.numLayers).foldl
     (fun acc i =>
       if hi : i < D.numLayers then
-        acc * (1 + operatorNormBound (D.layerJacobian ⟨i, hi⟩))
+        acc * (1 + operatorNormBound (D.layerJacobian ⟨i, hi⟩ - SignedMixer.identity))
       else acc)
     1
 
 /-- **Two-layer composition theorem**: Explicit bound for 2-layer case.
 
-If Layer 1 is ε₁-faithful and Layer 2 is ε₂-faithful, and both layers have
-Jacobian operator norms bounded by C, then the composition is approximately
+If Layer 1 is ε₁-faithful and Layer 2 is ε₂-faithful, and both residual layer
+maps `(I + fullJacobian)` have operator norm bounded by C, then the composition is approximately
 (ε₁ · C + ε₂ · C + ε₁ · ε₂)-faithful.
 
 The ε₁ · ε₂ term is second-order and often negligible when ε₁, ε₂ are small. -/
@@ -1369,7 +1383,8 @@ theorem two_layer_faithfulness_composition
 The key insight for deep networks is that errors compound multiplicatively:
 - Each layer's pattern term contributes error εᵢ
 - But that error is amplified by all subsequent layers
-- The amplification factor for layer i is ∏_{j>i} (1 + Cⱼ) where Cⱼ bounds layer j's norm
+- The amplification factor for layer i is ∏_{j>i} (1 + Cⱼ) where
+  Cⱼ bounds ‖layerJacobianⱼ - I‖
 
 The total error bound is:
   ε_total = Σᵢ εᵢ · ∏_{j>i} (1 + Cⱼ)
@@ -1380,18 +1395,19 @@ This formula is crucial because it shows:
 3. The bound is tight: achieved when all errors compound constructively
 -/
 
-/-- Per-layer operator norm bounds: Cᵢ bounds ‖I + Jacobianᵢ‖. -/
+/-- Per-layer residual norm bounds: Cᵢ bounds ‖layerJacobianᵢ - I‖. -/
 noncomputable def layerNormBounds (D : DeepLinearization (n := n) (d := d)) :
     Fin D.numLayers → ℝ :=
-  fun i => operatorNormBound (D.layerJacobian i)
+  fun i => operatorNormBound (D.layerJacobian i - SignedMixer.identity)
 
 /-- Per-layer faithfulness: εᵢ bounds ‖patternTermᵢ‖. -/
 noncomputable def layerFaithfulness (D : DeepLinearization (n := n) (d := d)) :
     Fin D.numLayers → ℝ :=
   fun i => frobeniusNorm (patternTerm (D.layers i))
 
-/-- Suffix amplification factor: ∏_{j≥start} (1 + Cⱼ).
-This is how much error from layer `start` gets amplified by subsequent layers.
+/-- Suffix amplification factor: ∏_{j≥start} (1 + Cⱼ),
+where Cⱼ bounds ‖layerJacobianⱼ - I‖. This is how much error from layer `start`
+gets amplified by subsequent layers.
 
 When start = numLayers, this equals 1 (no amplification). -/
 noncomputable def suffixAmplification (D : DeepLinearization (n := n) (d := d))
@@ -1473,7 +1489,8 @@ theorem totalAmplifiedError_nonneg (D : DeepLinearization (n := n) (d := d))
 /-- **N-Layer Faithfulness Composition Theorem**.
 
 If each layer i is εᵢ-faithful (‖patternTermᵢ‖ ≤ εᵢ) and has operator norm
-bounded by Cᵢ (‖I + Jacobianᵢ‖ ≤ 1 + Cᵢ), then the deep network is
+bounded by Cᵢ (‖layerJacobianᵢ - I‖ ≤ Cᵢ, hence ‖layerJacobianᵢ‖ ≤ 1 + Cᵢ),
+then the deep network is
 ε_total-faithful where:
 
   ε_total = Σᵢ εᵢ · ∏_{j>i} (1 + Cⱼ)
@@ -1492,7 +1509,7 @@ theorem n_layer_faithfulness_composition
     (εs : Fin D.numLayers → ℝ)
     (Cs : Fin D.numLayers → ℝ)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) (εs i))
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ Cs i)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ Cs i)
     (hε_pos : ∀ i, 0 ≤ εs i)
     (hC_pos : ∀ i, 0 ≤ Cs i) :
     -- The deep network faithfulness is bounded by the amplified sum
@@ -1546,7 +1563,7 @@ theorem n_layer_faithfulness_composition
 
 /-- Simplified N-layer bound with uniform constants.
 
-If all layers have ‖patternTerm‖ ≤ ε and ‖I + Jacobian‖ ≤ 1 + C, then:
+If all layers have ‖patternTerm‖ ≤ ε and ‖layerJacobian - I‖ ≤ C, then:
   ε_total ≤ ε · L · (1 + C)^{L-1}
 
 where L is the number of layers. This shows exponential growth in depth
@@ -1556,7 +1573,7 @@ theorem n_layer_uniform_bound
     (ε C : ℝ)
     (_hL : 0 < D.numLayers)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ C)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ C)
     (hε_pos : 0 ≤ ε)
     (hC_pos : 0 ≤ C) :
     -- Simplified bound with uniform constants
@@ -1591,7 +1608,7 @@ theorem n_layer_geometric_bound
     (ε C : ℝ)
     (_hL : 0 < D.numLayers)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ C)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ C)
     (hε_pos : 0 ≤ ε)
     (hC_pos : 0 < C) :
     -- The geometric series bound
@@ -1608,7 +1625,7 @@ theorem n_layer_geometric_bound
     · linarith
   · exact le_refl _
 
-/-- Zero-norm case: when all Jacobians have zero operator norm, error adds linearly.
+/-- Zero-norm case: when all residual Jacobians have zero operator norm, error adds linearly.
 
 This is the best-case scenario for interpretability: each layer's error
 contributes independently without amplification. -/
@@ -1616,7 +1633,7 @@ theorem n_layer_zero_norm_bound
     (D : DeepLinearization (n := n) (d := d))
     (ε : ℝ)
     (_hLayerFaithful : ∀ i, isLayerFaithful (D.layers i) ε)
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ 0)
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ 0)
     (hε_pos : 0 ≤ ε) :
     -- Linear bound when amplification is 1
     ∃ (ε_total : ℝ),
@@ -1630,11 +1647,11 @@ theorem n_layer_zero_norm_bound
 
 /-- The connection to totalLayerError: when amplification is 1.
 
-Without amplification (all layer norms ≤ 0), the N-layer bound reduces to
+Without amplification (all residual layer norms ≤ 0), the N-layer bound reduces to
 the simple sum of layer errors, matching totalLayerError. -/
 theorem totalLayerError_eq_n_layer_no_amplification
     (D : DeepLinearization (n := n) (d := d))
-    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i) ≤ 0) :
+    (_hLayerNorm : ∀ i, operatorNormBound (D.layerJacobian i - SignedMixer.identity) ≤ 0) :
     totalLayerError D ≤ ∑ i : Fin D.numLayers, layerFaithfulness D i := by
   simp only [totalLayerError, layerError, layerFaithfulness]
   exact le_refl _
@@ -1654,9 +1671,10 @@ def isCertifiedVirtualHead
   frobeniusNorm (composedJacobian - VirtualHead L₂ L₁) ≤ ε
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- **Virtual head certification from layer faithfulness**.
+/-- **Virtual head error budget from layer faithfulness**.
 
-If both layers are faithful, their virtual head is certified. -/
+This packages a combined ε bound (ε ≤ ε₁ + ε₂ + ε₁·ε₂); it does not
+assert `isCertifiedVirtualHead` for a specific composed Jacobian. -/
 theorem virtual_head_certification
     (L₂ L₁ : AttentionLinearization n d)
     (ε₁ ε₂ : ℝ)
@@ -1668,11 +1686,12 @@ theorem virtual_head_certification
 
 /-! ### Induction Head Formalization -/
 
-/-- **Induction Head Pattern**: Layer 2 attends to tokens that Layer 1 attended to.
+/-- **Induction Head Pattern**: Layer 2 follows the attention structure created by Layer 1.
 
 An induction head occurs when:
-- Layer 1 (previous-token head): A₁[i, i-1] is high (attends to previous token)
-- Layer 2 (induction head): A₂[q, k] is high when token[k+1] = token[q]
+- Layer 1 (previous-token head, simplified): A₁[i, i] is high (self-attention stand-in for i-1)
+- Layer 2 (induction head, simplified): attention weights are nonnegative (softmax),
+  with token-matching handled by external witnesses.
 
 The composed pattern A₂ · A₁ creates "in-context learning" behavior. -/
 structure InductionHeadPattern where
@@ -1683,7 +1702,7 @@ structure InductionHeadPattern where
   /-- Layer 1 strongly attends to previous position -/
   prevTokenStrong : ∀ i : n, 0.5 ≤ layer1.state.attentionWeights i i
     -- In practice, this would be i attending to i-1, but we simplify
-  /-- Layer 2 pattern matches tokens -/
+  /-- Layer 2 has nonnegative attention weights (softmax); token matching is handled elsewhere. -/
   inductionStrong : ∀ q k : n, layer2.state.attentionWeights q k ≥ 0
 
 /-- The effective "induction pattern" created by composing the heads. -/
@@ -1692,11 +1711,10 @@ noncomputable def inductionPattern (H : InductionHeadPattern (n := n) (d := d)) 
   PositionVirtualHead H.layer2 H.layer1
 
 omit [DecidableEq n] [DecidableEq d] [Nonempty n] [Nonempty d] in
-/-- **Induction head certification**: The discovered induction pattern is valid
-within error bounds determined by the pattern terms.
+/-- **Induction head error budget**: combine per-layer bounds into ε.
 
-This turns the intuition "this looks like an induction head" into a
-certifiable statement: "this IS an induction head, up to error ε." -/
+This provides a concrete ε bound (ε ≤ ε₁ + ε₂ + ε₁·ε₂); it does not, by itself,
+certify a specific composed Jacobian. -/
 theorem induction_head_certified (H : InductionHeadPattern (n := n) (d := d))
     (ε₁ ε₂ : ℝ)
     (_hε₁ : isLayerFaithful H.layer1 ε₁)
