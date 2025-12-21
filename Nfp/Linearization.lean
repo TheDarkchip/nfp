@@ -281,7 +281,7 @@ noncomputable def layerNormLinearization (x : n → ℝ) : Linearization n n whe
 
 omit [DecidableEq n] in
 /-- **Key insight**: LayerNorm is translation-invariant: LayerNorm(x + c·1) = LayerNorm(x).
-The Jacobian rows summing to 0 reflects this. -/
+In row-vector convention, this corresponds to the Jacobian columns summing to 0. -/
 theorem layerNorm_translation_invariant [Nonempty n] (x : n → ℝ) (c : ℝ) :
     layerNorm (fun i => x i + c) = layerNorm x := by
   ext i
