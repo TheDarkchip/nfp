@@ -2914,10 +2914,11 @@ the MLP Jacobian is `J = W_in · diag(d) · W_out`.
 Computing `J` explicitly is intractable (`modelDim×modelDim`). Instead we upper-bound `‖J‖₂`
 via the standard inequality `‖J‖₂ ≤ sqrt(‖J‖₁ · ‖J‖∞)`, where `‖·‖₁`/`‖·‖∞` are induced norms.
 
-For a fixed token, row/column absolute sums can be bounded without forming `J`:
+For a fixed token, row/column absolute sums can be bounded without forming `J`.
+In row-vector convention, `‖J‖₁` is the max row sum and `‖J‖∞` is the max column sum:
 
-* `‖J‖∞ ≤ max_r ∑_k |W_in[r,k]| · |d_k| · (∑_c |W_out[k,c]|)`
-* `‖J‖₁ ≤ max_c ∑_k |W_out[k,c]| · |d_k| · (∑_r |W_in[r,k]|)`
+* max row sum ≤ `max_r ∑_k |W_in[r,k]| · |d_k| · (∑_c |W_out[k,c]|)`
+* max column sum ≤ `max_c ∑_k |W_out[k,c]| · |d_k| · (∑_r |W_in[r,k]|)`
 
 To avoid a per-token `O(modelDim·hiddenDim)` loop, we take `dMax[k] = max_token |d_token[k]|` and
 use it in place of `|d_k|`, which is sound for both `‖·‖₁` and `‖·‖∞`.
