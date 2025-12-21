@@ -1344,7 +1344,9 @@ def isLayerFaithful (L : AttentionLinearization n d) (ε : ℝ) : Prop :=
 def isDeepFaithful (D : DeepLinearization (n := n) (d := d)) (ε : ℝ) : Prop :=
   frobeniusNorm (DeepPatternTerm D) ≤ ε
 
-/-- The key bound constant: amplification from residual Jacobian norms. -/
+/-- The key bound constant: amplification from residual Jacobian norms.
+This product ignores `lnFJacobian`; if it is nontrivial, multiply by
+`operatorNormBound D.lnFJacobian` to bound end-to-end amplification. -/
 noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) : ℝ :=
   -- Product of (1 + ‖layerJacobian - I‖) for all layers
   (List.range D.numLayers).foldl
