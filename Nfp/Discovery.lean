@@ -4108,7 +4108,8 @@ def computeTotalAmplifiedError (patternBounds normBounds : Array Float) : Float 
 
 For an attention layer, the Jacobian includes both the attention pattern term
 and the value projection. We estimate:
-  ‖I + J‖ ≤ 1 + ‖A‖_F · ‖W_V·W_O‖_op + ‖∂A/∂x‖ · ‖V·W_O‖
+  ‖J‖ ≤ ‖A‖_F · ‖W_V·W_O‖_op + ‖∂A/∂x‖ · ‖V·W_O‖,
+so ‖I + J‖ ≤ 1 + ‖J‖.
 
 For simplicity, we use Frobenius norms as upper bounds.
 -/
@@ -8221,7 +8222,7 @@ amplified as they propagate through subsequent layers:
 
 where:
 - εᵢ = pattern term bound for layer i (interpretation error)
-- Cⱼ = operator norm bound for layer j's Jacobian (amplification factor)
+- Cⱼ = operator norm bound for layer j's residual Jacobian (layerJacobian - I)
 -/
 
 /-- Per-layer error metrics for deep circuit analysis. -/
@@ -8230,7 +8231,7 @@ structure LayerErrorMetrics where
   layerIdx : Nat
   /-- Pattern term bound εᵢ (faithfulness error before amplification) -/
   patternTermBound : Float
-  /-- Operator norm upper bound Cᵢ for I + Jacobian (amplification factor) -/
+  /-- Operator norm upper bound Cᵢ for layerJacobian - I (residual part). -/
   operatorNormUb : Float
   /-- Suffix amplification: ∏_{j>i} (1 + Cⱼ) -/
   suffixAmplification : Float
