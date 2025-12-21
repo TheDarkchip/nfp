@@ -4940,7 +4940,7 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
 
     return { numRows := rows, numCols := cols, gamma := γ, invStds := invStds, v := v }
 
-/-- Apply the LayerNorm Jacobian `J` at the cached row statistics: `δy = J δx`. -/
+/-- Apply the LayerNorm Jacobian `J` at the cached row statistics: `δy = δx · J` (row-wise). -/
 def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix) : ConcreteMatrix :=
   Id.run do
     if dX.numRows ≠ ctx.numRows || dX.numCols ≠ ctx.numCols then
