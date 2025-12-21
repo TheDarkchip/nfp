@@ -5204,7 +5204,7 @@ def build (cache : PrecomputedCache) (layerIdx : Nat) : LayerResidualJacobianCtx
 
   return { ln1 := ln1Ctx, ln2 := ln2Ctx, heads := headCtxs, mlp? := mlp? }
 
-  /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = J_resid δx`.
+  /-- Apply the residual Jacobian `J_resid` (excluding identity): `δres = δx · J_resid`.
 
   If `parallelHeads=true`, per-head Jacobian-vector products are computed in parallel and then
   summed in **head-index order** to preserve deterministic Float semantics.
