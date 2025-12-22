@@ -68,6 +68,10 @@ private def absInt (x : Int) : Int := if x < 0 then -x else x
 def absUpper (a : Fixed10Interval) : Int :=
   max (absInt a.lo) (absInt a.hi)
 
+/-- Upper bound on `|x - μ|` for any `x, μ ∈ [lo, hi]` (scaled units). -/
+def centeredAbsBound (a : Fixed10Interval) : Int :=
+  absInt (a.hi - a.lo)
+
 /-- Upper bound on `max |gelu'(x)|` over a fixed-point interval. -/
 def geluDerivBound (cfg : Fixed10Cfg) (target : GeluDerivTarget) (a : Fixed10Interval) : Rat :=
   let maxAbsInt := absUpper a
@@ -163,6 +167,9 @@ theorem absInt_spec (x : Int) : absInt x = absInt x := rfl
 
 theorem absUpper_def (a : Fixed10Interval) :
     Fixed10Interval.absUpper a = max (absInt a.lo) (absInt a.hi) := rfl
+
+theorem centeredAbsBound_def (a : Fixed10Interval) :
+    Fixed10Interval.centeredAbsBound a = absInt (a.hi - a.lo) := rfl
 
 theorem geluDerivBound_def (cfg : Fixed10Cfg) (target : GeluDerivTarget) (a : Fixed10Interval) :
     Fixed10Interval.geluDerivBound cfg target a =

@@ -55,6 +55,10 @@ def union (a b : RatInterval) : RatInterval :=
 def containsZero (a : RatInterval) : Bool :=
   decide (a.lo ≤ 0 ∧ 0 ≤ a.hi)
 
+/-- Upper bound on `|x - μ|` for any `x, μ ∈ [lo, hi]`. -/
+def centeredAbsBound (a : RatInterval) : Rat :=
+  ratAbs (a.hi - a.lo)
+
 private def ratSq (x : Rat) : Rat := x * x
 
 /-- Lower bound on `x^2` over an interval.
@@ -235,6 +239,9 @@ def softmaxJacobianNormInfBound (a : RatInterval) : Rat :=
 /-! ### Specs -/
 
 theorem const_def (r : Rat) : RatInterval.const r = { lo := r, hi := r } := rfl
+
+theorem centeredAbsBound_def (a : RatInterval) :
+    RatInterval.centeredAbsBound a = ratAbs (a.hi - a.lo) := rfl
 
 theorem add_def (a b : RatInterval) :
     RatInterval.add a b = { lo := a.lo + b.lo, hi := a.hi + b.hi } := rfl

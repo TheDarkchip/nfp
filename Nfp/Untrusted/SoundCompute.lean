@@ -409,6 +409,10 @@ private def zeroIntervals (n : Nat) : Array RatInterval :=
 private def maxGeluDerivBound (target : GeluDerivTarget) (xs : Array RatInterval) : Rat :=
   xs.foldl (fun acc x => max acc (RatInterval.geluDerivBound target x)) 0
 
+/-- Sum of per-coordinate centered absolute bounds (interval widths). -/
+private def centeredAbsSum (xs : Array RatInterval) : Rat :=
+  xs.foldl (fun acc x => acc + RatInterval.centeredAbsBound x) 0
+
 /-- Max GeLU derivative bound across fixed-point intervals (converted to `Rat`). -/
 private def maxGeluDerivBoundFixed (cfg : Fixed10Cfg) (target : GeluDerivTarget)
     (xs : Array Fixed10Interval) : Rat :=
@@ -1112,6 +1116,13 @@ private def fixedDotInterval
 
 private def maxAbsVecFixed (xs : Array Fixed10Interval) : Int :=
   xs.foldl (fun acc x => max acc (Fixed10Interval.absUpper x)) 0
+
+/-- Sum of per-coordinate centered absolute bounds (interval widths), as a `Rat`. -/
+private def centeredAbsSumFixed (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) : Rat :=
+  let sumWidth : Int := xs.foldl (fun acc x => acc + Fixed10Interval.centeredAbsBound x) 0
+  Rat.normalize sumWidth cfg.scaleNat (den_nz := by
+    have h10pos : (0 : Nat) < 10 := by decide
+    exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
 
 private def addVecFixed (a b : Array Fixed10Interval) : Array Fixed10Interval :=
   Id.run do
@@ -2051,7 +2062,7 @@ private def certifyModelFileLocalText
             return .error "missing W_V"
           match consumeMatrixMulAndNormInf lines (pos + 1) d dh ln1Union with
           | .error e => return .error e
-          | .ok (vHidden, nv, nextV) =>
+          | .ok (vHidden, _nWv, nextV) =>
               pos := nextV
               -- Optional per-head V bias (affects forward activations / variance,
               -- so we include it).
@@ -2066,12 +2077,13 @@ private def certifyModelFileLocalText
               pos := skipBlankLines lines pos
               if !(pos < lines.size && lines[pos]!.trim = "W_O") then
                 return .error "missing W_O"
+              let vCenteredOpBound := centeredAbsSum vHidden
               match consumeMatrixMulAndNormInf lines (pos + 1) dh d vHidden with
               | .error e => return .error e
-                  | .ok (vOut, no, nextO) =>
-                      pos := nextO
-                      attnUnion := addVecIntervals attnUnion vOut
-                      attnCoeff := attnCoeff + nv * no
+              | .ok (vOut, no, nextO) =>
+                  pos := nextO
+                  attnUnion := addVecIntervals attnUnion vOut
+                  attnCoeff := attnCoeff + vCenteredOpBound * no
         -- Shared attention projection bias (affects forward activations / variance,
         -- so we include it).
         pos := skipBlankLines lines pos
@@ -2233,17 +2245,18 @@ private def certifyModelFileLocal
               Array.replicate modelDim { lo := 0, hi := 0 }
             let mut attnCoeff : Rat := 0
             for _h in [:H] do
-              let (vHidden0, nWv, rrV) ←
+              let (vHidden0, _nWv, rrV) ←
                 consumeMatrixMulAndNormInfFixed cfg slack rr modelDim headDim ln1Out
               rr := rrV
               let (bV, rrBv) ← readVecIntervals rr headDim slack
               rr := rrBv
               let vHidden := addVecFixed vHidden0 bV
+              let vCenteredOpBound := centeredAbsSumFixed cfg vHidden
               let (vOut, nWo, rrO) ←
                 consumeMatrixMulAndNormInfFixed cfg slack rr headDim modelDim vHidden
               rr := rrO
               attnUnion := addVecFixed attnUnion vOut
-              attnCoeff := attnCoeff + nWv * nWo
+              attnCoeff := attnCoeff + vCenteredOpBound * nWo
             let (attnBias, rrB) ← readVecIntervals rr modelDim slack
             rr := rrB
             attnUnion := addVecFixed attnUnion attnBias
@@ -2368,16 +2381,17 @@ private def certifyModelFileLocalBinary
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
         let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
-        let (vHidden0, nWv) ←
+        let (vHidden0, _nWv) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.modelDim hdr.headDim ln1Out scalePow10)
         let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
         let vHidden := addVecFixed vHidden0 bV
+        let vCenteredOpBound := centeredAbsSumFixed cfg vHidden
         let (vOut, nWo) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
-        attnCoeff := attnCoeff + nWv * nWo
+        attnCoeff := attnCoeff + vCenteredOpBound * nWo
       let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       attnUnion := addVecFixed attnUnion attnBias
       residualUnion := addVecFixed residualUnion attnUnion
@@ -2503,16 +2517,17 @@ private def certifyHeadBoundsLocalBinary
           ExceptT.mk (readMatrixOpBoundScaled h hdr.modelDim hdr.headDim scalePow10)
         let wkOp := ratOfScaledNat scalePow10 wkScaledE
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
-        let (vHidden0, nWv) ←
+        let (vHidden0, _nWv) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.modelDim hdr.headDim ln1Out scalePow10)
         let bV ← ExceptT.mk (readVecIntervalsBinary h hdr.headDim slack scalePow10)
         let vHidden := addVecFixed vHidden0 bV
+        let vCenteredOpBound := centeredAbsSumFixed cfg vHidden
         let (vOut, nWo) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
-        let attnW := ln1Bound * softmaxJacobianNormInfWorst * nWv * nWo
+        let attnW := ln1Bound * softmaxJacobianNormInfWorst * vCenteredOpBound * nWo
         let cert : HeadLocalContributionCert := {
           layerIdx := l
           headIdx := hIdx
@@ -2522,7 +2537,7 @@ private def certifyHeadBoundsLocalBinary
           ln1Bound := ln1Bound
           wqOpBound := wqOp
           wkOpBound := wkOp
-          wvOpBound := nWv
+          wvOpBound := vCenteredOpBound
           woOpBound := nWo
           qkFactorBound := wqOp * wkOp
           attnWeightContribution := attnW
