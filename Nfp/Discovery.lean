@@ -6017,51 +6017,57 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
     (minInductionScore : Float := 0.05) : Array CandidateInductionHead := Id.run do
   let model := cache.model
   let tokens? := model.inputTokens
+  -- Precompute induction scores per head (layer2-only), since these are reused across head1 loops.
+  let headInductionScores : Array (Array (Option Float)) :=
+    match tokens? with
+    | some tokens =>
+        cache.headData.map (fun layer =>
+          layer.map (fun data2 =>
+            checkInductionCopyNextPattern tokens data2.attention minInductionScore))
+    | none =>
+        cache.headData.map (fun layer => layer.map (fun _ => some 1.0))
 
   let computeForLayer (l1 : Nat) : Array CandidateInductionHead := Id.run do
     let layer1Cache := cache.headData.getD l1 #[]
+    let layer1Candidates :=
+      if minPrevTokenStrength <= 0.0 then
+        layer1Cache
+      else
+        layer1Cache.filter (fun data1 => data1.prevTokenStrength ≥ minPrevTokenStrength)
     let mut layerCandidates : Array CandidateInductionHead := #[]
 
     -- Preserve the original traversal order: l1, l2, head1, head2.
     for l2 in [l1 + 1:model.numLayers] do
       let layer2Cache := cache.headData.getD l2 #[]
-      for data1 in layer1Cache do
-        if data1.prevTokenStrength ≥ minPrevTokenStrength then
-            for data2 in layer2Cache do
-              let inductionScore? : Option Float :=
-                match tokens? with
-                | some tokens =>
-                    -- Token-aware induction check: attend to the **successor** of a previous
-                    -- matching token (variable-lag, "copy-next"), not fixed-lag shift matching.
-                    checkInductionCopyNextPattern tokens data2.attention minInductionScore
-                | none =>
-                    -- If the prompt has no token IDs, we can't do token-aware filtering.
-                    -- Fall back to **no pattern filter** and rely on certification.
-                    some 1.0
-              match inductionScore? with
-              | some inductionScore =>
-                  -- Use dimensionless faithfulness ratios (relative approximation errors).
-                  let ε1 := data1.faithfulnessRatio
-                  let ε2 := data2.faithfulnessRatio
-                  let combinedError := ε1 + ε2 + ε1 * ε2
-                  let kComp := computeKCompositionScore model data1 data2
+      let layer2Scores := headInductionScores.getD l2 #[]
+      let layer2Candidates : Array (PrecomputedHeadData × Float) := Id.run do
+        let mut out : Array (PrecomputedHeadData × Float) := #[]
+        for (data2, score?) in layer2Cache.zip layer2Scores do
+          match score? with
+          | some inductionScore => out := out.push (data2, inductionScore)
+          | none => pure ()
+        return out
+      for data1 in layer1Candidates do
+        for (data2, inductionScore) in layer2Candidates do
+          -- Use dimensionless faithfulness ratios (relative approximation errors).
+          let ε1 := data1.faithfulnessRatio
+          let ε2 := data2.faithfulnessRatio
+          let combinedError := ε1 + ε2 + ε1 * ε2
+          let kComp := computeKCompositionScore model data1 data2
 
-                  layerCandidates := layerCandidates.push {
-                    layer1Idx := l1
-                    layer2Idx := l2
-                    head1Idx := data1.headIdx
-                    head2Idx := data2.headIdx
-                    patternBound1 := ε1
-                    patternBound2 := ε2
-                    combinedError := combinedError
-                    prevTokenStrength := data1.prevTokenStrength
-                    inductionScore := inductionScore
-                    kComp := kComp
-                    description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
-                  }
-              | none => pure ()
-          else
-            pure ()
+          layerCandidates := layerCandidates.push {
+            layer1Idx := l1
+            layer2Idx := l2
+            head1Idx := data1.headIdx
+            head2Idx := data2.headIdx
+            patternBound1 := ε1
+            patternBound2 := ε2
+            combinedError := combinedError
+            prevTokenStrength := data1.prevTokenStrength
+            inductionScore := inductionScore
+            kComp := kComp
+            description := s!"L{l1}H{data1.headIdx}->L{l2}H{data2.headIdx}"
+          }
 
     return layerCandidates
 
@@ -7925,43 +7931,35 @@ def findHeuristicInductionHeadsWithCache (model : ConcreteModel)
     let cache := PrecomputedCache.build model (computeLayerNormBounds := buildLayerNormBounds)
       (layerNormEffort := layerNormEffort)
       (storeDiagnostics := storeDiagnostics)
-    let tokens? := model.inputTokens
     let targetNorm := target.direction.vecNorm
+    -- Precompute layer input norms once (per-layer, not per-candidate).
+    let layerInputNorms : Array Float :=
+      .ofFn fun i : Fin model.numLayers =>
+        (cache.forwardResult.getLayerInput i.val).frobeniusNorm
+    let ln1InputNorms : Array Float :=
+      .ofFn fun i : Fin model.numLayers =>
+        (cache.getLn1Input i.val).frobeniusNorm
     let candidates :=
       findInductionHeadCandidatesFromCache cache minPrevTokenStrength minInductionScore
     let mut certified : Array HeuristicInductionHead := #[]
 
     for candidate in candidates do
       if passesEgregiousIllusionFilter candidate then
-        -- Explicit token-aware pattern verification:
-        -- If `tokens?` is present, certify candidates only when the **variable-lag**
-        -- induction "copy-next" pattern check passes. We intentionally do *not* use
-        -- `checkInductionPattern` (fixed-lag shift matching) here.
-        let passesPattern : Bool :=
-          match tokens? with
-          | some tokens =>
-              match cache.getHeadData candidate.layer2Idx candidate.head2Idx with
-              | some data2 =>
-                  (checkInductionCopyNextPattern tokens data2.attention minInductionScore).isSome
-              | none => false
-          | none => true
-        if passesPattern then
-          let layer2Input := cache.forwardResult.getLayerInput candidate.layer2Idx
-          let layer2InputNorm := layer2Input.frobeniusNorm
-          let layer2Ln1Input := cache.getLn1Input candidate.layer2Idx
-          let layer2Ln1InputNorm := layer2Ln1Input.frobeniusNorm
-          let delta := computeInductionEffectiveness candidate cache layer2Ln1Input target
-          let denom := layer2Ln1InputNorm * targetNorm
-          let effect :=
-            if denom > 1e-10 then delta / denom else 0.0
-          if effect > minEffect then
-            certified := certified.push {
-              candidate := candidate
-              delta := delta
-              effect := effect
-              layer2InputNorm := layer2InputNorm
-              layer2Ln1InputNorm := layer2Ln1InputNorm
-            }
+        let layer2InputNorm := layerInputNorms.getD candidate.layer2Idx 0.0
+        let layer2Ln1Input := cache.getLn1Input candidate.layer2Idx
+        let layer2Ln1InputNorm := ln1InputNorms.getD candidate.layer2Idx 0.0
+        let delta := computeInductionEffectiveness candidate cache layer2Ln1Input target
+        let denom := layer2Ln1InputNorm * targetNorm
+        let effect :=
+          if denom > 1e-10 then delta / denom else 0.0
+        if effect > minEffect then
+          certified := certified.push {
+            candidate := candidate
+            delta := delta
+            effect := effect
+            layer2InputNorm := layer2InputNorm
+            layer2Ln1InputNorm := layer2Ln1InputNorm
+          }
 
     let certifiedSorted :=
       certified.qsort (fun a b =>
