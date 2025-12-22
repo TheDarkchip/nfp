@@ -154,6 +154,18 @@ theorem comp_assoc {V : Type*} [Fintype V]
   ext k
   ring
 
+/-- Composition distributes over addition on the left. -/
+theorem comp_add_left (M₁ M₂ : SignedMixer S T) (N : SignedMixer T U) :
+    (M₁ + M₂).comp N = M₁.comp N + M₂.comp N := by
+  ext i k
+  simp [comp_w, add_w, add_mul, Finset.sum_add_distrib]
+
+/-- Composition distributes over addition on the right. -/
+theorem comp_add_right (M : SignedMixer S T) (N₁ N₂ : SignedMixer T U) :
+    M.comp (N₁ + N₂) = M.comp N₁ + M.comp N₂ := by
+  ext i k
+  simp [comp_w, add_w, mul_add, Finset.sum_add_distrib]
+
 /-! ## Decomposition into positive and negative parts -/
 
 /-- The positive part of a signed mixer: max(w, 0) for each weight. -/
@@ -211,6 +223,231 @@ noncomputable def totalInfluence (M : SignedMixer S T) : ℝ := ∑ i, M.rowAbsS
 noncomputable def operatorNormBound (M : SignedMixer S T) [Nonempty S] : ℝ :=
   Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
     ∑ j, |M.w i j|
+
+/-! ## Operator norm bound estimates -/
+
+/-- Row absolute sum is nonnegative. -/
+lemma rowAbsSum_nonneg (M : SignedMixer S T) (i : S) : 0 ≤ M.rowAbsSum i := by
+  classical
+  unfold rowAbsSum
+  refine Finset.sum_nonneg ?_
+  intro j _hj
+  exact abs_nonneg _
+
+/-- Operator norm bounds are nonnegative. -/
+theorem operatorNormBound_nonneg (M : SignedMixer S T) [Nonempty S] :
+    0 ≤ operatorNormBound M := by
+  classical
+  rcases (Finset.univ_nonempty (α := S)) with ⟨i, hi⟩
+  have hrow : 0 ≤ rowAbsSum M i := rowAbsSum_nonneg (M := M) i
+  have hle : rowAbsSum M i ≤ operatorNormBound M := by
+    exact Finset.le_sup' (s := Finset.univ) (f := fun i => rowAbsSum M i) hi
+  exact le_trans hrow hle
+
+/-- Row absolute sums are subadditive. -/
+lemma rowAbsSum_add_le (M N : SignedMixer S T) (i : S) :
+    rowAbsSum (M + N) i ≤ rowAbsSum M i + rowAbsSum N i := by
+  classical
+  have hterm : ∀ j : T, |M.w i j + N.w i j| ≤ |M.w i j| + |N.w i j| := by
+    intro j
+    exact abs_add_le _ _
+  have hsum :
+      ∑ j, |M.w i j + N.w i j| ≤ ∑ j, (|M.w i j| + |N.w i j|) := by
+    refine Finset.sum_le_sum ?_
+    intro j _hj
+    exact hterm j
+  calc
+    rowAbsSum (M + N) i = ∑ j, |M.w i j + N.w i j| := by
+      simp [rowAbsSum, add_w]
+    _ ≤ ∑ j, (|M.w i j| + |N.w i j|) := hsum
+    _ = rowAbsSum M i + rowAbsSum N i := by
+      simp [rowAbsSum, Finset.sum_add_distrib]
+
+/-- Operator norm bounds are subadditive. -/
+theorem operatorNormBound_add_le (M N : SignedMixer S T) [Nonempty S] :
+    operatorNormBound (M + N) ≤ operatorNormBound M + operatorNormBound N := by
+  classical
+  dsimp [operatorNormBound]
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := S))
+    (f := fun i => ∑ j, |(M + N).w i j|)
+    (a := operatorNormBound M + operatorNormBound N)).2 ?_
+  intro i hi
+  have hsum : rowAbsSum (M + N) i ≤ rowAbsSum M i + rowAbsSum N i :=
+    rowAbsSum_add_le (M := M) (N := N) i
+  have hM : rowAbsSum M i ≤ operatorNormBound M := by
+    exact Finset.le_sup' (s := Finset.univ) (f := fun i => rowAbsSum M i) hi
+  have hN : rowAbsSum N i ≤ operatorNormBound N := by
+    exact Finset.le_sup' (s := Finset.univ) (f := fun i => rowAbsSum N i) hi
+  have hbound : rowAbsSum (M + N) i ≤ operatorNormBound M + operatorNormBound N := by
+    exact le_trans hsum (add_le_add hM hN)
+  simpa [rowAbsSum] using hbound
+
+/-- Row absolute sums of a composition are bounded by row sums and the operator norm bound. -/
+lemma rowAbsSum_comp_le (M : SignedMixer S T) (N : SignedMixer T U) (i : S) [Nonempty T] :
+    rowAbsSum (M.comp N) i ≤ rowAbsSum M i * operatorNormBound N := by
+  classical
+  have hterm : ∀ k : U, |∑ j, M.w i j * N.w j k| ≤ ∑ j, |M.w i j| * |N.w j k| := by
+    intro k
+    simpa [abs_mul] using
+      (abs_sum_le_sum_abs (f := fun j => M.w i j * N.w j k) (s := Finset.univ))
+  calc
+    rowAbsSum (M.comp N) i = ∑ k, |∑ j, M.w i j * N.w j k| := by
+      simp [rowAbsSum, comp_w]
+    _ ≤ ∑ k, ∑ j, |M.w i j| * |N.w j k| := by
+      refine Finset.sum_le_sum ?_
+      intro k _hk
+      exact hterm k
+    _ = ∑ j, |M.w i j| * (∑ k, |N.w j k|) := by
+      calc
+        (∑ k, ∑ j, |M.w i j| * |N.w j k|)
+            = ∑ j, ∑ k, |M.w i j| * |N.w j k| := by
+              simpa using
+                (Finset.sum_comm (s := Finset.univ) (t := Finset.univ)
+                  (f := fun k j => |M.w i j| * |N.w j k|))
+        _ = ∑ j, |M.w i j| * (∑ k, |N.w j k|) := by
+          refine Finset.sum_congr rfl ?_
+          intro j _hj
+          simp [Finset.mul_sum]
+    _ ≤ ∑ j, |M.w i j| * operatorNormBound N := by
+      refine Finset.sum_le_sum ?_
+      intro j _hj
+      have hN : rowAbsSum N j ≤ operatorNormBound N := by
+        exact Finset.le_sup' (s := Finset.univ) (f := fun j => rowAbsSum N j) (by simp)
+      have hN' : (∑ k, |N.w j k|) ≤ operatorNormBound N := by
+        simpa [rowAbsSum] using hN
+      have hMnonneg : 0 ≤ |M.w i j| := abs_nonneg _
+      exact mul_le_mul_of_nonneg_left hN' hMnonneg
+    _ = rowAbsSum M i * operatorNormBound N := by
+      simp [rowAbsSum, Finset.sum_mul]
+
+/-- Operator norm bounds are submultiplicative. -/
+theorem operatorNormBound_comp_le (M : SignedMixer S T) (N : SignedMixer T U)
+    [Nonempty S] [Nonempty T] :
+    operatorNormBound (M.comp N) ≤ operatorNormBound M * operatorNormBound N := by
+  classical
+  dsimp [operatorNormBound]
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := S))
+    (f := fun i => ∑ j, |(M.comp N).w i j|)
+    (a := operatorNormBound M * operatorNormBound N)).2 ?_
+  intro i hi
+  have hrow : rowAbsSum (M.comp N) i ≤ rowAbsSum M i * operatorNormBound N :=
+    rowAbsSum_comp_le (M := M) (N := N) i
+  have hM : rowAbsSum M i ≤ operatorNormBound M := by
+    exact Finset.le_sup' (s := Finset.univ) (f := fun i => rowAbsSum M i) hi
+  have hNnonneg : 0 ≤ operatorNormBound N := operatorNormBound_nonneg (M := N)
+  have hmul : rowAbsSum M i * operatorNormBound N ≤ operatorNormBound M * operatorNormBound N := by
+    exact mul_le_mul_of_nonneg_right hM hNnonneg
+  have hbound : rowAbsSum (M.comp N) i ≤ operatorNormBound M * operatorNormBound N :=
+    le_trans hrow hmul
+  simpa [rowAbsSum] using hbound
+
+/-- Operator norm bounds for a triple composition. -/
+theorem operatorNormBound_comp3_le {V : Type*} [Fintype V]
+    (A : SignedMixer S T) (B : SignedMixer T U) (C : SignedMixer U V)
+    [Nonempty S] [Nonempty T] [Nonempty U] :
+    operatorNormBound ((A.comp B).comp C) ≤
+      operatorNormBound A * operatorNormBound B * operatorNormBound C := by
+  have h1 :
+      operatorNormBound ((A.comp B).comp C) ≤
+        operatorNormBound (A.comp B) * operatorNormBound C :=
+    operatorNormBound_comp_le (M := A.comp B) (N := C)
+  have h2 :
+      operatorNormBound (A.comp B) ≤ operatorNormBound A * operatorNormBound B :=
+    operatorNormBound_comp_le (M := A) (N := B)
+  have hC_nonneg : 0 ≤ operatorNormBound C := operatorNormBound_nonneg (M := C)
+  have hmul :
+      operatorNormBound (A.comp B) * operatorNormBound C ≤
+        (operatorNormBound A * operatorNormBound B) * operatorNormBound C := by
+    exact mul_le_mul_of_nonneg_right h2 hC_nonneg
+  calc
+    operatorNormBound ((A.comp B).comp C) ≤
+        operatorNormBound (A.comp B) * operatorNormBound C := h1
+    _ ≤ (operatorNormBound A * operatorNormBound B) * operatorNormBound C := hmul
+    _ = operatorNormBound A * operatorNormBound B * operatorNormBound C := by
+          ring
+
+/-- Bound for `A + M + A.comp M` in terms of operator norms. -/
+theorem operatorNormBound_add_comp_le (A M : SignedMixer S S) [Nonempty S] :
+    operatorNormBound (A + M + A.comp M) ≤
+      operatorNormBound A + operatorNormBound M +
+        operatorNormBound A * operatorNormBound M := by
+  have hsum : operatorNormBound (A + M + A.comp M) ≤
+      operatorNormBound (A + M) + operatorNormBound (A.comp M) :=
+    operatorNormBound_add_le (M := A + M) (N := A.comp M)
+  have hsum' : operatorNormBound (A + M) ≤ operatorNormBound A + operatorNormBound M :=
+    operatorNormBound_add_le (M := A) (N := M)
+  have hcomp : operatorNormBound (A.comp M) ≤ operatorNormBound A * operatorNormBound M :=
+    operatorNormBound_comp_le (M := A) (N := M)
+  calc
+    operatorNormBound (A + M + A.comp M)
+        ≤ operatorNormBound (A + M) + operatorNormBound (A.comp M) := hsum
+    _ ≤ (operatorNormBound A + operatorNormBound M) +
+          (operatorNormBound A * operatorNormBound M) := by
+          exact add_le_add hsum' hcomp
+    _ = operatorNormBound A + operatorNormBound M +
+          operatorNormBound A * operatorNormBound M := by
+          ring
+
+/-- Expand the residual composition `(I + A) ∘ (I + M) - I` into `A + M + A ∘ M`. -/
+theorem residual_comp_eq [DecidableEq S] (A M : SignedMixer S S) :
+    (SignedMixer.identity + A).comp (SignedMixer.identity + M) - SignedMixer.identity =
+      A + M + A.comp M := by
+  classical
+  have h1 :
+      (SignedMixer.identity + A).comp (SignedMixer.identity + M) =
+        SignedMixer.identity.comp (SignedMixer.identity + M) +
+          A.comp (SignedMixer.identity + M) := by
+    exact comp_add_left (M₁ := SignedMixer.identity) (M₂ := A) (N := SignedMixer.identity + M)
+  have h2 :
+      SignedMixer.identity.comp (SignedMixer.identity + M) =
+        SignedMixer.identity.comp SignedMixer.identity + SignedMixer.identity.comp M := by
+    exact comp_add_right (M := SignedMixer.identity) (N₁ := SignedMixer.identity) (N₂ := M)
+  have h3 :
+      A.comp (SignedMixer.identity + M) =
+        A.comp SignedMixer.identity + A.comp M := by
+    exact comp_add_right (M := A) (N₁ := SignedMixer.identity) (N₂ := M)
+  ext i j
+  simp [h1, h2, h3, add_w, sub_w, identity_comp, comp_identity]
+  ring
+
+/-- Residual composition bound with the `A + M + A*M` cross term. -/
+theorem operatorNormBound_residual_comp_le [DecidableEq S] (A M : SignedMixer S S) [Nonempty S] :
+    operatorNormBound ((SignedMixer.identity + A).comp (SignedMixer.identity + M) -
+      SignedMixer.identity) ≤
+      operatorNormBound A + operatorNormBound M +
+        operatorNormBound A * operatorNormBound M := by
+  have hres : (SignedMixer.identity + A).comp (SignedMixer.identity + M) -
+      SignedMixer.identity = A + M + A.comp M :=
+    residual_comp_eq (A := A) (M := M)
+  simpa [hres] using (operatorNormBound_add_comp_le (A := A) (M := M))
+
+/-- Residual composition bound from external operator-norm bounds. -/
+theorem operatorNormBound_residual_comp_le_of_bounds [DecidableEq S]
+    (A M : SignedMixer S S) (a b : ℝ) [Nonempty S]
+    (hA : operatorNormBound A ≤ a) (hM : operatorNormBound M ≤ b) :
+    operatorNormBound ((SignedMixer.identity + A).comp (SignedMixer.identity + M) -
+      SignedMixer.identity) ≤ a + b + a * b := by
+  have hres :
+      operatorNormBound ((SignedMixer.identity + A).comp (SignedMixer.identity + M) -
+        SignedMixer.identity) ≤
+        operatorNormBound A + operatorNormBound M +
+          operatorNormBound A * operatorNormBound M :=
+    operatorNormBound_residual_comp_le (A := A) (M := M)
+  have hA_nonneg : 0 ≤ operatorNormBound A := operatorNormBound_nonneg (M := A)
+  have hM_nonneg : 0 ≤ operatorNormBound M := operatorNormBound_nonneg (M := M)
+  have ha_nonneg : 0 ≤ a := le_trans hA_nonneg hA
+  have hsum : operatorNormBound A + operatorNormBound M ≤ a + b := by
+    exact add_le_add hA hM
+  have hmul : operatorNormBound A * operatorNormBound M ≤ a * b := by
+    exact mul_le_mul hA hM hM_nonneg ha_nonneg
+  have hsum' :
+      operatorNormBound A + operatorNormBound M +
+        operatorNormBound A * operatorNormBound M ≤
+      a + b + a * b := by
+    exact add_le_add hsum hmul
+  exact le_trans hres hsum'
 
 /-! ## Conversion to/from Mixer -/
 

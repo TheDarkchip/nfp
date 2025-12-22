@@ -263,6 +263,88 @@ noncomputable def layerNormJacobian (x : n → ℝ) : SignedMixer n n where
 noncomputable def diagMixer (d : n → ℝ) : SignedMixer n n where
   w := fun i j => if i = j then d j else 0
 
+/-- Operator norm bound for a diagonal mixer from a uniform entry bound. -/
+theorem operatorNormBound_diagMixer_le [Nonempty n] (d : n → ℝ) (b : ℝ)
+    (h : ∀ i, |d i| ≤ b) :
+    SignedMixer.operatorNormBound (diagMixer d) ≤ b := by
+  classical
+  dsimp [SignedMixer.operatorNormBound]
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := n))
+    (f := fun i => ∑ j, |(diagMixer d).w i j|)
+    (a := b)).2 ?_
+  intro i hi
+  have hsum : (∑ j, |(diagMixer d).w i j|) = |d i| := by
+    have hsum' : (∑ j, |(diagMixer d).w i j|) = |(diagMixer d).w i i| := by
+      refine Fintype.sum_eq_single i ?_
+      intro j hne
+      have hne' : i ≠ j := by
+        simpa [ne_comm] using hne
+      simp [diagMixer, hne']
+    simpa [diagMixer] using hsum'
+  simpa [hsum] using h i
+
+/-- Operator norm bound for `A ∘ diag(d) ∘ B` from component bounds. -/
+theorem operatorNormBound_comp_diagMixer_comp_le
+    {S T U : Type*} [Fintype S] [Fintype T] [Fintype U] [DecidableEq T]
+    [Nonempty S] [Nonempty T]
+    (A : SignedMixer S T) (B : SignedMixer T U) (d : T → ℝ)
+    (a c b : ℝ)
+    (hA : SignedMixer.operatorNormBound A ≤ a)
+    (hB : SignedMixer.operatorNormBound B ≤ b)
+    (hD : ∀ i, |d i| ≤ c) :
+    SignedMixer.operatorNormBound ((A.comp (diagMixer d)).comp B) ≤ a * c * b := by
+  classical
+  have hD' : SignedMixer.operatorNormBound (diagMixer d) ≤ c :=
+    operatorNormBound_diagMixer_le (d := d) (b := c) hD
+  have hA_nonneg : 0 ≤ a :=
+    le_trans (SignedMixer.operatorNormBound_nonneg (M := A)) hA
+  have hB_nonneg : 0 ≤ b :=
+    le_trans (SignedMixer.operatorNormBound_nonneg (M := B)) hB
+  have hC_nonneg : 0 ≤ c :=
+    le_trans (SignedMixer.operatorNormBound_nonneg (M := diagMixer d)) hD'
+  have hcomp :
+      SignedMixer.operatorNormBound ((A.comp (diagMixer d)).comp B) ≤
+        SignedMixer.operatorNormBound A *
+          SignedMixer.operatorNormBound (diagMixer d) *
+          SignedMixer.operatorNormBound B := by
+    simpa using
+      (SignedMixer.operatorNormBound_comp3_le
+        (A := A) (B := diagMixer d) (C := B))
+  have hmul1 :
+      SignedMixer.operatorNormBound A *
+        SignedMixer.operatorNormBound (diagMixer d) ≤ a * c := by
+    have h1 :
+        SignedMixer.operatorNormBound A *
+          SignedMixer.operatorNormBound (diagMixer d)
+          ≤ a * SignedMixer.operatorNormBound (diagMixer d) := by
+      exact mul_le_mul_of_nonneg_right hA
+        (SignedMixer.operatorNormBound_nonneg (M := diagMixer d))
+    have h2 :
+        a * SignedMixer.operatorNormBound (diagMixer d) ≤ a * c := by
+      exact mul_le_mul_of_nonneg_left hD' hA_nonneg
+    exact le_trans h1 h2
+  have hmul2 :
+      (SignedMixer.operatorNormBound A *
+        SignedMixer.operatorNormBound (diagMixer d)) *
+        SignedMixer.operatorNormBound B ≤ (a * c) * b := by
+    have h1 :
+        (SignedMixer.operatorNormBound A *
+          SignedMixer.operatorNormBound (diagMixer d)) *
+          SignedMixer.operatorNormBound B ≤
+        (a * c) * SignedMixer.operatorNormBound B := by
+      exact mul_le_mul_of_nonneg_right hmul1
+        (SignedMixer.operatorNormBound_nonneg (M := B))
+    have h2 : (a * c) * SignedMixer.operatorNormBound B ≤ (a * c) * b := by
+      exact mul_le_mul_of_nonneg_left hB (mul_nonneg hA_nonneg hC_nonneg)
+    exact le_trans h1 h2
+  have hmul2' :
+      SignedMixer.operatorNormBound A *
+        SignedMixer.operatorNormBound (diagMixer d) *
+        SignedMixer.operatorNormBound B ≤ a * c * b := by
+    simpa [mul_assoc] using hmul2
+  exact le_trans hcomp hmul2'
+
 /-- Jacobian of LayerNorm with learnable scale γ (bias β has no effect on Jacobian). -/
 noncomputable def layerNormFullJacobian (γ : n → ℝ) (x : n → ℝ) : SignedMixer n n :=
   (layerNormJacobian x).comp (diagMixer γ)
@@ -1069,11 +1151,37 @@ variable {n d : Type*} [Fintype n] [Fintype d] [DecidableEq n] [DecidableEq d]
 
 /-! ### Deep Linearization Structure -/
 
+/-- Factorization of an MLP Jacobian into input/output weights and activation derivatives. -/
+structure MLPFactorization (n d : Type*) [Fintype n] [Fintype d] where
+  /-- Hidden dimension for the MLP layer. -/
+  hidden : Type*
+  /-- Finiteness for the hidden dimension. -/
+  instFintype : Fintype hidden
+  /-- Decidable equality for the hidden dimension (for diagonal mixers). -/
+  instDecEq : DecidableEq hidden
+  /-- Nonempty hidden dimension (for operator-norm bounds). -/
+  instNonempty : Nonempty hidden
+  /-- Input weights: residual stream → hidden. -/
+  win : SignedMixer (n × d) hidden
+  /-- Output weights: hidden → residual stream. -/
+  wout : SignedMixer hidden (n × d)
+  /-- Activation derivative (diagonal) at the linearization point. -/
+  deriv : hidden → ℝ
+
+attribute [instance] MLPFactorization.instFintype
+attribute [instance] MLPFactorization.instDecEq
+attribute [instance] MLPFactorization.instNonempty
+
+/-- The Jacobian represented by an `MLPFactorization`. -/
+noncomputable def MLPFactorization.jacobian
+    (F : MLPFactorization (n := n) (d := d)) : SignedMixer (n × d) (n × d) :=
+  (F.win.comp (diagMixer F.deriv)).comp F.wout
+
 /-- A deep linearization captures the Jacobian decomposition of a multi-layer network.
 
 For a transformer with L layers, this tracks:
 - The per-layer attention Jacobians and their V/P decompositions
-- The MLP Jacobians
+- The MLP Jacobians (via an explicit factorization)
 - The composed end-to-end Jacobian
 
 The key insight: composing (I + A₁)(I + M₁)(I + A₂)(I + M₂)... creates
@@ -1086,8 +1194,8 @@ structure DeepLinearization where
   layers : Fin numLayers → AttentionLinearization n d
   /-- Per-layer LayerNorm Jacobians before attention (ln_1). -/
   ln1Jacobians : Fin numLayers → SignedMixer (n × d) (n × d)
-  /-- Per-layer MLP Jacobians -/
-  mlpJacobians : Fin numLayers → SignedMixer (n × d) (n × d)
+  /-- Per-layer MLP factorization data. -/
+  mlpFactors : Fin numLayers → MLPFactorization (n := n) (d := d)
   /-- Per-layer LayerNorm Jacobians before MLP (ln_2). -/
   ln2Jacobians : Fin numLayers → SignedMixer (n × d) (n × d)
   /-- Final LayerNorm Jacobian (ln_f) applied after the last layer. -/
@@ -1095,12 +1203,41 @@ structure DeepLinearization where
   /-- The composed end-to-end Jacobian -/
   composedJacobian : SignedMixer (n × d) (n × d)
 
+/-- Per-layer MLP Jacobians derived from the factorization data. -/
+noncomputable def DeepLinearization.mlpJacobians
+    (D : DeepLinearization (n := n) (d := d)) :
+    Fin D.numLayers → SignedMixer (n × d) (n × d) :=
+  fun i => (D.mlpFactors i).jacobian
+
 /-- Get the full Jacobian of a specific layer (including residual). -/
 noncomputable def DeepLinearization.layerJacobian (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers) : SignedMixer (n × d) (n × d) :=
   let attnJac := (D.ln1Jacobians i).comp (D.layers i).fullJacobian
   let mlpJac := (D.ln2Jacobians i).comp (D.mlpJacobians i)
   (SignedMixer.identity + attnJac).comp (SignedMixer.identity + mlpJac)
+
+/-- Residual bound for a layer Jacobian from bounds on attention/MLP Jacobians. -/
+theorem DeepLinearization.layerJacobian_residual_bound
+    [Nonempty n] [Nonempty d]
+    (D : DeepLinearization (n := n) (d := d)) (i : Fin D.numLayers)
+    (A M : ℝ)
+    (hA :
+      SignedMixer.operatorNormBound
+          ((D.ln1Jacobians i).comp (D.layers i).fullJacobian) ≤ A)
+    (hM :
+      SignedMixer.operatorNormBound
+          ((D.ln2Jacobians i).comp (D.mlpJacobians i)) ≤ M) :
+    SignedMixer.operatorNormBound
+        (D.layerJacobian i - SignedMixer.identity) ≤ A + M + A * M := by
+  classical
+  set attnJac := (D.ln1Jacobians i).comp (D.layers i).fullJacobian
+  set mlpJac := (D.ln2Jacobians i).comp (D.mlpJacobians i)
+  have hA' : SignedMixer.operatorNormBound attnJac ≤ A := by simpa [attnJac] using hA
+  have hM' : SignedMixer.operatorNormBound mlpJac ≤ M := by simpa [mlpJac] using hM
+  have hres :=
+    SignedMixer.operatorNormBound_residual_comp_le_of_bounds
+      (A := attnJac) (M := mlpJac) (a := A) (b := M) hA' hM'
+  simpa [DeepLinearization.layerJacobian, attnJac, mlpJac] using hres
 
 /-- The composed Jacobian from layer `start` to layer `stop` (exclusive). -/
 noncomputable def DeepLinearization.rangeJacobian (D : DeepLinearization (n := n) (d := d))
