@@ -1130,6 +1130,149 @@ def gramLambdaMaxUpperBrauer (M : ConcreteMatrix) : Float := Id.run do
     -- Combine cheap valid upper bounds by taking `min`.
     return min infBound (min lambdaBrauerUpper lambdaMomentUpper)
 
+/-- Brauer/Cassini upper bound on the spectral radius for a general square matrix.
+
+For any eigenvalue `λ` there exist `i ≠ j` with
+`|λ - a_ii| · |λ - a_jj| ≤ R_i R_j`, where `R_i` is the off-diagonal row sum.
+By the reverse triangle inequality, this yields a real upper bound on `|λ|`.
+-/
+def lambdaMaxUpperBrauer (M : ConcreteMatrix) : Float := Id.run do
+  let n := M.numRows
+  if n = 0 || M.numCols ≠ n then
+    return 0.0
+
+  let mut maxDiag : Float := 0.0
+  let mut infBound : Float := 0.0
+  let mut bad : Bool := false
+  let mut ds : Array Float := Array.mkEmpty n
+  let mut rs : Array Float := Array.mkEmpty n
+
+  for i in [:n] do
+    let di := Float.abs (M.data[i * n + i]!)
+    ds := ds.push di
+    maxDiag := max maxDiag di
+
+  for i in [:n] do
+    let mut ri : Float := 0.0
+    let rowBase := i * n
+    for j in [:n] do
+      if j = i then
+        continue
+      ri := ri + Float.abs (M.data[rowBase + j]!)
+    rs := rs.push ri
+    let di := ds[i]!
+    if Float.isNaN di || Float.isInf di || Float.isNaN ri || Float.isInf ri then
+      bad := true
+    infBound := max infBound (di + ri)
+
+  if bad then
+    return infBound
+  if n < 2 then
+    return maxDiag
+
+  let mut maxPair : Float := 0.0
+  for i in [:n] do
+    let di := ds[i]!
+    let ri := rs[i]!
+    for j in [i + 1:n] do
+      let dj := ds[j]!
+      let rj := rs[j]!
+      let delta := di - dj
+      let disc := max 0.0 (delta * delta + 4.0 * ri * rj)
+      let root := Float.sqrt disc
+      let bij := (di + dj + root) / 2.0
+      if Float.isNaN bij || Float.isInf bij then
+        bad := true
+      maxPair := max maxPair bij
+
+  if bad then
+    return infBound
+  else
+    return max maxDiag maxPair
+
+/-- Gershgorin upper bound on `λ_max` for matrices with nonnegative real eigenvalues.
+
+Uses `λ ≤ max_i (a_ii + Σ_{j≠i} |a_ij|)` (no absolute on the diagonal).
+-/
+def lambdaMaxUpperGershNonneg (M : ConcreteMatrix) : Float := Id.run do
+  let n := M.numRows
+  if n = 0 || M.numCols ≠ n then
+    return 0.0
+  let mut maxBound : Float := 0.0
+  for i in [:n] do
+    let rowBase := i * n
+    let di := M.data[rowBase + i]!
+    let mut ri : Float := 0.0
+    for j in [:n] do
+      if j = i then
+        continue
+      ri := ri + Float.abs (M.data[rowBase + j]!)
+    let bound := max 0.0 (di + ri)
+    if Float.isNaN bound || Float.isInf bound then
+      return M.infNormAbs
+    if bound > maxBound then
+      maxBound := bound
+  return maxBound
+
+/-- Brauer/Cassini upper bound on `λ_max` for matrices with nonnegative real eigenvalues.
+
+This mirrors `lambdaMaxUpperBrauer` but keeps signed diagonals. Since the eigenvalues are
+assumed nonnegative, using `a_ii` (not `|a_ii|`) can tighten the bound.
+-/
+def lambdaMaxUpperBrauerNonneg (M : ConcreteMatrix) : Float := Id.run do
+  let n := M.numRows
+  if n = 0 || M.numCols ≠ n then
+    return 0.0
+
+  let mut maxDiag : Float := 0.0
+  let mut gersh : Float := 0.0
+  let mut bad : Bool := false
+  let mut ds : Array Float := Array.mkEmpty n
+  let mut rs : Array Float := Array.mkEmpty n
+
+  for i in [:n] do
+    let di := M.data[i * n + i]!
+    ds := ds.push di
+    maxDiag := max maxDiag di
+
+  for i in [:n] do
+    let mut ri : Float := 0.0
+    let rowBase := i * n
+    for j in [:n] do
+      if j = i then
+        continue
+      ri := ri + Float.abs (M.data[rowBase + j]!)
+    rs := rs.push ri
+    let di := ds[i]!
+    if Float.isNaN di || Float.isInf di || Float.isNaN ri || Float.isInf ri then
+      bad := true
+    gersh := max gersh (max 0.0 (di + ri))
+
+  if bad then
+    return gersh
+  if n < 2 then
+    return max gersh (max 0.0 maxDiag)
+
+  let mut maxPair : Float := 0.0
+  for i in [:n] do
+    let di := ds[i]!
+    let ri := rs[i]!
+    for j in [i + 1:n] do
+      let dj := ds[j]!
+      let rj := rs[j]!
+      let delta := di - dj
+      let disc := max 0.0 (delta * delta + 4.0 * ri * rj)
+      let root := Float.sqrt disc
+      let bij := (di + dj + root) / 2.0
+      if Float.isNaN bij || Float.isInf bij then
+        bad := true
+      maxPair := max maxPair bij
+
+  if bad then
+    return gersh
+  else
+    return max gersh (max 0.0 maxPair)
+
 /-- Dense (small) spectral-norm upper bound using the Brauer/Cassini Gram bound.
 
 `‖M‖₂² = λ_max(MᵀM) ≤ gramLambdaMaxUpperBrauer(M)`.
@@ -1897,6 +2040,35 @@ def valueOutputProjectionOpBound (layer : ConcreteAttentionLayer) : Float :=
   (layer.noDenseProductBounds).voOpBound
 
 end ConcreteAttentionLayer
+
+/-! ### Local Gram-based operator bounds -/
+
+/-- Tight Gram-based operator bound from an explicit PSD Gram matrix.
+
+This mirrors the logic used for attention-layer weight bounds but is scoped for
+data-dependent activation Grams computed in discovery.
+-/
+private def opBoundFromGramLocal (gram : ConcreteMatrix) (trace : Float) : Float :=
+  if gram.numRows = 0 || gram.numCols = 0 then
+    0.0
+  else
+    let lambdaGersh := gram.infNormAbs
+    let lambdaBrauer := ConcreteMatrix.symmLambdaMaxUpperBrauer gram
+    let lambdaMoment :=
+      ConcreteMatrix.psdLambdaMaxUpperMoment gram.numRows trace gram.frobeniusNormSq
+    let lambdaPow4 : Float :=
+      if gram.numRows ≤ 128 then
+        let gramSq := gram.matmul gram
+        let trace4 := ConcreteMatrix.traceMul gramSq gramSq
+        Float.sqrt (Float.sqrt (max 0.0 trace4))
+      else
+        Float.inf
+    let lambdaUpper := min lambdaGersh (min lambdaBrauer (min lambdaMoment lambdaPow4))
+    let op := Float.sqrt (max 0.0 lambdaUpper)
+    if Float.isNaN op || Float.isInf op then
+      Float.sqrt (max 0.0 lambdaGersh)
+    else
+      op
 
 /-! ## Concrete MLP Layer -/
 
@@ -3465,14 +3637,22 @@ structure PatternTermBoundInputs where
   qFrobBound : Float := 0.0
   /-- Optional direct Frobenius norm bound for K = X·W_K + b_K, if available. -/
   kFrobBound : Float := 0.0
-  /-- Optional direct Frobenius norm bound for V = X·W_V + b_V, if available. -/
+  /-- Optional Frobenius norm bound for centered V = X·W_V + b_V, if available. -/
   vFrobBound : Float := 0.0
   /-- Optional direct operator-norm bound for Q = X·W_Q + b_Q, if available. -/
   qOpBoundAct : Float := 0.0
   /-- Optional direct operator-norm bound for K = X·W_K + b_K, if available. -/
   kOpBoundAct : Float := 0.0
-  /-- Optional direct operator-norm bound for V = X·W_V + b_V, if available. -/
+  /-- Optional operator-norm bound for centered V = X·W_V + b_V, if available. -/
   vOpBoundAct : Float := 0.0
+  /-- Optional Frobenius bound for `‖W_Q·Kᵀ‖_F` after centering keys, if available. -/
+  qkActFrobBound : Float := 0.0
+  /-- Optional Frobenius bound for `‖W_K·Qᵀ‖_F` after centering queries, if available. -/
+  kqActFrobBound : Float := 0.0
+  /-- Optional operator-norm bound for `‖W_Q·Kᵀ‖₂` after centering keys, if available. -/
+  qkActOpBound : Float := 0.0
+  /-- Optional operator-norm bound for `‖W_K·Qᵀ‖₂` after centering queries, if available. -/
+  kqActOpBound : Float := 0.0
   /-- Scaling factor (√d_head) -/
   scaleFactor : Float
   /-- Deterministic Float upper bound on ‖W_Q‖₂. -/
@@ -3483,6 +3663,8 @@ structure PatternTermBoundInputs where
   wvOpBound : Float
   /-- Deterministic Float upper bound on ‖W_O‖₂. -/
   woOpBound : Float
+  /-- Deterministic Float upper bound on ‖W_V·W_O‖₂, if available. -/
+  voOpBound : Float := 0.0
   /-- Query bias Frobenius norm (for the 1×headDim bias row). -/
   bqFrob : Float
   /-- Key bias Frobenius norm (for the 1×headDim bias row). -/
@@ -3490,27 +3672,27 @@ structure PatternTermBoundInputs where
   /-- Value bias Frobenius norm (for the 1×headDim bias row). -/
   bvFrob : Float
 
-/-- Bound ‖patternTerm‖_F without expanding the full Jacobian.
+/-- Selected intermediate bounds for the pattern-term calculation. -/
+structure PatternTermBoundParts where
+  /-- Selected operator-norm bound for `‖W_Q·Kᵀ‖₂` after all min-combination. -/
+  qkActOpUb : Float
+  /-- Selected operator-norm bound for `‖W_K·Qᵀ‖₂` after all min-combination. -/
+  kqActOpUb : Float
+  /-- Selected operator-norm bound for centered `V`. -/
+  vOpUb : Float
+  /-- Selected operator-norm bound for centered `V·W_O`. -/
+  vOpUbWO : Float
+  /-- Frobenius-style candidate bound. -/
+  candFrob : Float
+  /-- Operator-style candidate bound (using `vOpUb`). -/
+  candOp : Float
+  /-- Operator-style candidate bound (using `vOpUbWO`). -/
+  candOpWO : Float
+  /-- Final chosen pattern-term bound. -/
+  patternBound : Float
 
-The pattern term arises from how attention weights A change when input X changes:
-  patternTerm = (∂A/∂X) ⊗ (V·W_O)
-
-The key insight is that ∂A/∂X involves the softmax Jacobian, which is bounded by
-the "softness" of the attention distribution. For sparse (one-hot) attention,
-the softmax Jacobian is nearly zero, giving much tighter bounds.
-
-**Sparsity-aware bound**:
-  ‖patternTerm‖_F ≤ (‖J_softmax‖₂ / scale) · ‖X‖_F · ‖W_Q·W_K^T‖₂ · ‖W_V·W_O‖₂
-
-We use a tight, data-dependent bound on `‖J_softmax‖₂` per row of attention:
-for a probability row `p`, `J = diag(p) - p pᵀ` and
-`‖J‖₂ ≤ min(maxᵢ pᵢ, 1 - Σᵢ pᵢ²)`.
-
-- Perfectly one-hot rows give `‖J‖₂ = 0`.
-- Uniform rows give `‖J‖₂ = 1/n`.
-- Worst-case (all n): `‖J‖₂ ≤ 0.5`.
--/
-def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
+/-- Compute pattern-term bound and expose the selected intermediate bounds. -/
+def computePatternTermBoundParts (inputs : PatternTermBoundInputs) : PatternTermBoundParts :=
   -- Data-dependent bound on the softmax Jacobian operator norm.
   -- Provable global bound: for any probability vector p, J = diag(p) - p pᵀ has ‖J‖₂ ≤ 1/2.
   -- Clamp defensively so callers cannot accidentally exceed this.
@@ -3552,16 +3734,49 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
       kOpUb0
     else
       min kOpUb0 inputs.kOpBoundAct
+  let qkActOpUb0 := inputs.wqOpBound * kOpUb
+  let qkActOpUb1 :=
+    if inputs.qkActOpBound ≤ 0.0 || Float.isNaN inputs.qkActOpBound ||
+        Float.isInf inputs.qkActOpBound then
+      qkActOpUb0
+    else
+      min qkActOpUb0 inputs.qkActOpBound
+  let qkActOpUb :=
+    if inputs.qkActFrobBound ≤ 0.0 || Float.isNaN inputs.qkActFrobBound ||
+        Float.isInf inputs.qkActFrobBound then
+      qkActOpUb1
+    else
+      min qkActOpUb1 inputs.qkActFrobBound
+  let kqActOpUb0 := inputs.wkOpBound * qOpUb
+  let kqActOpUb1 :=
+    if inputs.kqActOpBound ≤ 0.0 || Float.isNaN inputs.kqActOpBound ||
+        Float.isInf inputs.kqActOpBound then
+      kqActOpUb0
+    else
+      min kqActOpUb0 inputs.kqActOpBound
+  let kqActOpUb :=
+    if inputs.kqActFrobBound ≤ 0.0 || Float.isNaN inputs.kqActFrobBound ||
+        Float.isInf inputs.kqActFrobBound then
+      kqActOpUb1
+    else
+      min kqActOpUb1 inputs.kqActFrobBound
   let vOpUb0 := inputs.inputOpBound * inputs.wvOpBound + sqrtN * inputs.bvFrob
   let vOpUb :=
     if inputs.vOpBoundAct ≤ 0.0 || Float.isNaN inputs.vOpBoundAct || Float.isInf inputs.vOpBoundAct then
       vOpUb0
     else
       min vOpUb0 inputs.vOpBoundAct
+  let vOpUbWO0 := inputs.inputOpBound * inputs.voOpBound +
+      sqrtN * inputs.bvFrob * inputs.woOpBound
+  let vOpUbWO :=
+    if inputs.voOpBound ≤ 0.0 || Float.isNaN inputs.voOpBound || Float.isInf inputs.voOpBound then
+      vOpUb * inputs.woOpBound
+    else
+      min (vOpUb * inputs.woOpBound) vOpUbWO0
   -- Logits sensitivity:
   --   dS = (dQ)Kᵀ + Q(dK)ᵀ, with ‖dQ‖_F ≤ ‖dX‖_F‖W_Q‖₂ and ‖dK‖_F ≤ ‖dX‖_F‖W_K‖₂.
   let sCoeffFrob := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
-  let sCoeffOp := (inputs.wqOpBound * kOpUb + inputs.wkOpBound * qOpUb) / inputs.scaleFactor
+  let sCoeffOp := (qkActOpUb + kqActOpUb) / inputs.scaleFactor
   -- Two rigorous candidates:
   -- (A) Frobenius-style activation bounds:
   --   ‖dA·V·W_O‖_F ≤ ‖dA‖_F‖V‖_F‖W_O‖₂.
@@ -3571,7 +3786,39 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
   --   ‖dA·V‖_F ≤ ‖dA‖_F‖V‖₂,
   -- so ‖dA·V·W_O‖_F ≤ ‖J_softmax‖₂‖dS‖_F‖V‖₂‖W_O‖₂.
   let candOp := (softmaxBound * sCoeffOp) * vOpUb * inputs.woOpBound
-  min candFrob candOp
+  let candOpWO := (softmaxBound * sCoeffOp) * vOpUbWO
+  let patternBound := min candFrob (min candOp candOpWO)
+  { qkActOpUb := qkActOpUb
+    kqActOpUb := kqActOpUb
+    vOpUb := vOpUb
+    vOpUbWO := vOpUbWO
+    candFrob := candFrob
+    candOp := candOp
+    candOpWO := candOpWO
+    patternBound := patternBound }
+
+/-- Bound ‖patternTerm‖_F without expanding the full Jacobian.
+
+The pattern term arises from how attention weights A change when input X changes:
+  patternTerm = (∂A/∂X) ⊗ (V·W_O)
+
+The key insight is that ∂A/∂X involves the softmax Jacobian, which is bounded by
+the "softness" of the attention distribution. For sparse (one-hot) attention,
+the softmax Jacobian is nearly zero, giving much tighter bounds.
+
+**Sparsity-aware bound**:
+  ‖patternTerm‖_F ≤ (‖J_softmax‖₂ / scale) · ‖X‖_F · ‖W_Q·W_K^T‖₂ · ‖W_V·W_O‖₂
+
+We use a tight, data-dependent bound on `‖J_softmax‖₂` per row of attention:
+for a probability row `p`, `J = diag(p) - p pᵀ` and
+`‖J‖₂ ≤ min(maxᵢ pᵢ, 1 - Σᵢ pᵢ²)`.
+
+- Perfectly one-hot rows give `‖J‖₂ = 0`.
+- Uniform rows give `‖J‖₂ = 1/n`.
+- Worst-case (all n): `‖J‖₂ ≤ 0.5`.
+-/
+def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
+  (computePatternTermBoundParts inputs).patternBound
 
 /-- Bound ‖patternTerm‖_F using the old pessimistic constant bound.
 
@@ -4275,6 +4522,7 @@ def estimateAttentionLayerNorm (model : ConcreteModel) (fwdResult : ForwardPassR
           wkOpBound := bnds.wkOpGram
           wvOpBound := bnds.wvOpGram
           woOpBound := bnds.woOpGram
+          voOpBound := bnds.voOpBound
           bqFrob := head.b_Q.frobeniusNorm
           bkFrob := head.b_K.frobeniusNorm
           bvFrob := head.b_V.frobeniusNorm
@@ -4475,6 +4723,8 @@ structure PrecomputedHeadData where
   valueTermNormCached : Float
   /-- Cached dimensionless faithfulness ratio `‖PatternTerm‖_F / ‖ValueTerm‖_F`. -/
   faithfulnessRatioCached : Float
+  /-- Optional detailed pattern-term bound diagnostics. -/
+  patternBoundParts? : Option PatternTermBoundParts := none
   /-- Optional lazy diagnostics. Never forced on the main path. -/
   diag? : Option HeadDiagnosticsLazy
   /-- Cached Gram matrix `W_Qᵀ · W_Q` (headDim × headDim). -/
@@ -4489,10 +4739,26 @@ structure PrecomputedHeadData where
   qFrobBound : Float
   /-- Direct (data-dependent) Frobenius norm of `K = X·W_K + b_K` for this head. -/
   kFrobBound : Float
+  /-- Direct (data-dependent) Frobenius norm of centered `V = X·W_V + b_V` for this head. -/
+  vFrobBound : Float
   /-- Direct (data-dependent) operator-norm upper bound on `Q` (computed via a small Gram). -/
   qOpBoundAct : Float
   /-- Direct (data-dependent) operator-norm upper bound on `K` (computed via a small Gram). -/
   kOpBoundAct : Float
+  /-- Direct (data-dependent) operator-norm upper bound on centered `V` (computed via a small Gram). -/
+  vOpBoundAct : Float
+  /-- Frobenius bound for `‖W_Q·Kᵀ‖_F` from centered activations. -/
+  qkActFrobBound : Float
+  /-- Frobenius bound for `‖W_K·Qᵀ‖_F` from centered activations. -/
+  kqActFrobBound : Float
+  /-- Operator-norm bound for `‖W_Q·Kᵀ‖₂` from centered activation Grams. -/
+  qkActOpBound : Float
+  /-- Operator-norm bound for `‖W_K·Qᵀ‖₂` from centered activation Grams. -/
+  kqActOpBound : Float
+  /-- Selected candidate for `‖W_Q·Kᵀ‖₂` activation bound (diagnostics-only). -/
+  qkActOpBoundSource : String := "unknown"
+  /-- Selected candidate for `‖W_K·Qᵀ‖₂` activation bound (diagnostics-only). -/
+  kqActOpBoundSource : String := "unknown"
   /-- Operator-norm bound for ln_1 Jacobian at this layer input. -/
   ln1OpBound : Float
   /-- Scaling factor √d_head -/
@@ -4619,13 +4885,20 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
       inputOpBound := d.inputOpBound
       qFrobBound := d.qFrobBound
       kFrobBound := d.kFrobBound
+      vFrobBound := d.vFrobBound
       qOpBoundAct := d.qOpBoundAct
       kOpBoundAct := d.kOpBoundAct
+      vOpBoundAct := d.vOpBoundAct
+      qkActFrobBound := d.qkActFrobBound
+      kqActFrobBound := d.kqActFrobBound
+      qkActOpBound := d.qkActOpBound
+      kqActOpBound := d.kqActOpBound
       scaleFactor := d.scaleFactor
       wqOpBound := d.wqOpGram
       wkOpBound := d.wkOpGram
       wvOpBound := d.wvOpGram
       woOpBound := d.woOpGram
+      voOpBound := d.valueOutputProjSchurNorm
       bqFrob := d.bqFrob
       bkFrob := d.bkFrob
       bvFrob := d.bvFrob
@@ -4703,11 +4976,11 @@ This precomputes all attention patterns, projections, and norms once.
           let values := (attnInput.matmul head.W_V).addBias head.b_V
           let qFrobBound : Float := queries.frobeniusNorm
           let kFrobBound : Float := keys.frobeniusNorm
-          let vFrobBound : Float := values.frobeniusNorm
+          let vFrobBoundRaw : Float := values.frobeniusNorm
           let smallEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1
           let qOpBoundAct : Float := queries.opNormUpperBoundRectGramEffort smallEffort
           let kOpBoundAct : Float := keys.opNormUpperBoundRectGramEffort smallEffort
-          let vOpBoundAct : Float := values.opNormUpperBoundRectGramEffort smallEffort
+          let vOpBoundActRaw : Float := values.opNormUpperBoundRectGramEffort smallEffort
           let softmaxDiag := attn.softmaxJacobianOpDiag
           let softmaxOpBound := min softmaxDiag.opBound 0.5
           let n := attn.seqLen
@@ -4752,6 +5025,181 @@ This precomputes all attention patterns, projections, and norms once.
           let voNorm := bnds.voDenseFrob
           let qkOpBound := bnds.qkOpBound
           let voOpBound := bnds.voOpBound
+          let qActGram := queries.transpose.matmul queries
+          let kActGram := keys.transpose.matmul keys
+          let meanVec := fun (M : ConcreteMatrix) => Id.run do
+            let cols := M.numCols
+            if M.numRows = 0 || cols = 0 then
+              return Array.replicate cols 0.0
+            let mut sums : Array Float := Array.replicate cols 0.0
+            for r in [:M.numRows] do
+              let rowBase := r * cols
+              for c in [:cols] do
+                sums := sums.set! c (sums[c]! + M.data[rowBase + c]!)
+            let invN := 1.0 / M.numRows.toFloat
+            let mut out : Array Float := Array.mkEmpty cols
+            for c in [:cols] do
+              out := out.push (sums[c]! * invN)
+            return out
+          let centerGram := fun (gram : ConcreteMatrix) (mean : Array Float) (n : Nat) =>
+            if gram.numRows = 0 || gram.numCols = 0 || n = 0 then
+              gram
+            else
+              let nF := n.toFloat
+              { numRows := gram.numRows
+                numCols := gram.numCols
+                data := .ofFn fun idx : Fin (gram.numRows * gram.numCols) => Id.run do
+                  let i := idx.val / gram.numCols
+                  let j := idx.val % gram.numCols
+                  gram.data[idx.val]! - nF * mean[i]! * mean[j]!
+                size_eq := Array.size_ofFn
+              }
+          let gramTrace := fun (M : ConcreteMatrix) => Id.run do
+            if M.numRows = 0 || M.numCols = 0 then
+              return 0.0
+            let mut acc : Float := 0.0
+            for i in [:M.numRows] do
+              acc := acc + M.data[i * M.numCols + i]!
+            return acc
+          -- Center activations to drop row-constant logit shifts (softmax-invariant).
+          let seqLen := keys.numRows
+          let keyMean := meanVec keys
+          let queryMean := meanVec queries
+          let valueMean := meanVec values
+          let nF := seqLen.toFloat
+          let vMeanNormSq : Float := valueMean.foldl (fun acc x => acc + x * x) 0.0
+          let vFrobBound : Float :=
+            Float.sqrt (max 0.0 (vFrobBoundRaw * vFrobBoundRaw - nF * vMeanNormSq))
+          let vActGram := values.transpose.matmul values
+          let vActGramCentered := centerGram vActGram valueMean seqLen
+          let vActTrace : Float := gramTrace vActGramCentered
+          let vActTracePos := max 0.0 vActTrace
+          let vFrobBoundCentered : Float := Float.sqrt vActTracePos
+          let vFrobBound : Float :=
+            if vFrobBoundCentered ≤ 0.0 || Float.isNaN vFrobBoundCentered ||
+                Float.isInf vFrobBoundCentered then
+              vFrobBoundRaw
+            else
+              min vFrobBoundRaw vFrobBoundCentered
+          let vOpBoundActCentered : Float := opBoundFromGramLocal vActGramCentered vActTracePos
+          let vOpBoundAct : Float :=
+            if vOpBoundActRaw ≤ 0.0 || Float.isNaN vOpBoundActRaw || Float.isInf vOpBoundActRaw then
+              vOpBoundActCentered
+            else
+              min vOpBoundActRaw vOpBoundActCentered
+          let kActGramCentered := centerGram kActGram keyMean seqLen
+          let qActGramCentered := centerGram qActGram queryMean seqLen
+          let kActTracePos := max 0.0 (gramTrace kActGramCentered)
+          let qActTracePos := max 0.0 (gramTrace qActGramCentered)
+          let kCenteredOpBound : Float := opBoundFromGramLocal kActGramCentered kActTracePos
+          let qCenteredOpBound : Float := opBoundFromGramLocal qActGramCentered qActTracePos
+          let chooseMinLabel := fun (a b : (String × Float)) =>
+            if a.2 ≤ b.2 then a else b
+          let qkActTrace : Float := ConcreteMatrix.traceMul wqGram kActGramCentered
+          let qkActGram1 := kActGramCentered.matmul wqGram
+          let qkActGram2 := wqGram.matmul kActGramCentered
+          let qkActOpDense1 : Float := qkActGram1.opNormUpperBoundDenseBrauer
+          let qkActOpDense2 : Float := qkActGram2.opNormUpperBoundDenseBrauer
+          let qkActOpBoundDense : Float :=
+            Float.sqrt (max 0.0 (min qkActOpDense1 qkActOpDense2))
+          let qkActF2_1 : Float := ConcreteMatrix.traceMul qkActGram1 qkActGram1
+          let qkActF2_2 : Float := ConcreteMatrix.traceMul qkActGram2 qkActGram2
+          -- `KᵀK·W_QᵀW_Q` has nonnegative real eigenvalues; use trace/trace-square moment bound.
+          let qkActMoment1 : Float :=
+            ConcreteMatrix.psdLambdaMaxUpperMoment qkActGram1.numRows qkActTrace (max 0.0 qkActF2_1)
+          let qkActMoment2 : Float :=
+            ConcreteMatrix.psdLambdaMaxUpperMoment qkActGram2.numRows qkActTrace (max 0.0 qkActF2_2)
+          let qkActOpBoundMoment : Float :=
+            Float.sqrt (max 0.0 (min qkActMoment1 qkActMoment2))
+          let qkActGram1Sq := qkActGram1.matmul qkActGram1
+          let qkActGram2Sq := qkActGram2.matmul qkActGram2
+          let qkActTrace4_1 : Float := ConcreteMatrix.traceMul qkActGram1Sq qkActGram1Sq
+          let qkActTrace4_2 : Float := ConcreteMatrix.traceMul qkActGram2Sq qkActGram2Sq
+          let qkActOpBoundPow4 : Float :=
+            Float.sqrt (Float.sqrt (max 0.0 (min qkActTrace4_1 qkActTrace4_2)))
+          let qkActLambdaBrauer1 : Float := ConcreteMatrix.lambdaMaxUpperBrauer qkActGram1
+          let qkActLambdaBrauer2 : Float := ConcreteMatrix.lambdaMaxUpperBrauer qkActGram2
+          let qkActOpBoundBrauer : Float :=
+            Float.sqrt (max 0.0 (min qkActLambdaBrauer1 qkActLambdaBrauer2))
+          let qkActLambdaGershNN1 : Float := ConcreteMatrix.lambdaMaxUpperGershNonneg qkActGram1
+          let qkActLambdaGershNN2 : Float := ConcreteMatrix.lambdaMaxUpperGershNonneg qkActGram2
+          let qkActOpBoundGershNN : Float :=
+            Float.sqrt (max 0.0 (min qkActLambdaGershNN1 qkActLambdaGershNN2))
+          let qkActLambdaBrauerNN1 : Float := ConcreteMatrix.lambdaMaxUpperBrauerNonneg qkActGram1
+          let qkActLambdaBrauerNN2 : Float := ConcreteMatrix.lambdaMaxUpperBrauerNonneg qkActGram2
+          let qkActOpBoundBrauerNN : Float :=
+            Float.sqrt (max 0.0 (min qkActLambdaBrauerNN1 qkActLambdaBrauerNN2))
+          let qkActOpBound0 : Float :=
+            Float.sqrt (max 0.0 (min qkActGram1.infNormAbs qkActGram2.infNormAbs))
+          let qkActCanFactor : Bool :=
+            !(kCenteredOpBound ≤ 0.0 || Float.isNaN kCenteredOpBound || Float.isInf kCenteredOpBound)
+          let qkActBase0 : (String × Float) := ("gramInf", qkActOpBound0)
+          let qkActBase1 := chooseMinLabel qkActBase0 ("gramGershNN", qkActOpBoundGershNN)
+          let qkActBase2 := chooseMinLabel qkActBase1 ("gramBrauerNN", qkActOpBoundBrauerNN)
+          let qkActBase3 := chooseMinLabel qkActBase2 ("gramBrauer", qkActOpBoundBrauer)
+          let qkActBase4 := chooseMinLabel qkActBase3 ("denseBrauer", qkActOpBoundDense)
+          let qkActBase5 := chooseMinLabel qkActBase4 ("gramMoment", qkActOpBoundMoment)
+          let qkActBase6 := chooseMinLabel qkActBase5 ("gramPow4", qkActOpBoundPow4)
+          let qkActBest :=
+            if qkActCanFactor then
+              chooseMinLabel qkActBase6 ("factor", bnds.wqOpGram * kCenteredOpBound)
+            else
+              qkActBase6
+          let qkActOpBound : Float := qkActBest.2
+          let qkActOpBoundSource : String := qkActBest.1
+          let kqActTrace : Float := ConcreteMatrix.traceMul bnds.wkGram qActGramCentered
+          let kqActGram1 := qActGramCentered.matmul bnds.wkGram
+          let kqActGram2 := bnds.wkGram.matmul qActGramCentered
+          let kqActOpDense1 : Float := kqActGram1.opNormUpperBoundDenseBrauer
+          let kqActOpDense2 : Float := kqActGram2.opNormUpperBoundDenseBrauer
+          let kqActOpBoundDense : Float :=
+            Float.sqrt (max 0.0 (min kqActOpDense1 kqActOpDense2))
+          let kqActF2_1 : Float := ConcreteMatrix.traceMul kqActGram1 kqActGram1
+          let kqActF2_2 : Float := ConcreteMatrix.traceMul kqActGram2 kqActGram2
+          let kqActMoment1 : Float :=
+            ConcreteMatrix.psdLambdaMaxUpperMoment kqActGram1.numRows kqActTrace (max 0.0 kqActF2_1)
+          let kqActMoment2 : Float :=
+            ConcreteMatrix.psdLambdaMaxUpperMoment kqActGram2.numRows kqActTrace (max 0.0 kqActF2_2)
+          let kqActOpBoundMoment : Float :=
+            Float.sqrt (max 0.0 (min kqActMoment1 kqActMoment2))
+          let kqActGram1Sq := kqActGram1.matmul kqActGram1
+          let kqActGram2Sq := kqActGram2.matmul kqActGram2
+          let kqActTrace4_1 : Float := ConcreteMatrix.traceMul kqActGram1Sq kqActGram1Sq
+          let kqActTrace4_2 : Float := ConcreteMatrix.traceMul kqActGram2Sq kqActGram2Sq
+          let kqActOpBoundPow4 : Float :=
+            Float.sqrt (Float.sqrt (max 0.0 (min kqActTrace4_1 kqActTrace4_2)))
+          let kqActLambdaBrauer1 : Float := ConcreteMatrix.lambdaMaxUpperBrauer kqActGram1
+          let kqActLambdaBrauer2 : Float := ConcreteMatrix.lambdaMaxUpperBrauer kqActGram2
+          let kqActOpBoundBrauer : Float :=
+            Float.sqrt (max 0.0 (min kqActLambdaBrauer1 kqActLambdaBrauer2))
+          let kqActLambdaGershNN1 : Float := ConcreteMatrix.lambdaMaxUpperGershNonneg kqActGram1
+          let kqActLambdaGershNN2 : Float := ConcreteMatrix.lambdaMaxUpperGershNonneg kqActGram2
+          let kqActOpBoundGershNN : Float :=
+            Float.sqrt (max 0.0 (min kqActLambdaGershNN1 kqActLambdaGershNN2))
+          let kqActLambdaBrauerNN1 : Float := ConcreteMatrix.lambdaMaxUpperBrauerNonneg kqActGram1
+          let kqActLambdaBrauerNN2 : Float := ConcreteMatrix.lambdaMaxUpperBrauerNonneg kqActGram2
+          let kqActOpBoundBrauerNN : Float :=
+            Float.sqrt (max 0.0 (min kqActLambdaBrauerNN1 kqActLambdaBrauerNN2))
+          let kqActOpBound0 : Float :=
+            Float.sqrt (max 0.0 (min kqActGram1.infNormAbs kqActGram2.infNormAbs))
+          let kqActCanFactor : Bool :=
+            !(qCenteredOpBound ≤ 0.0 || Float.isNaN qCenteredOpBound || Float.isInf qCenteredOpBound)
+          let kqActBase0 : (String × Float) := ("gramInf", kqActOpBound0)
+          let kqActBase1 := chooseMinLabel kqActBase0 ("gramGershNN", kqActOpBoundGershNN)
+          let kqActBase2 := chooseMinLabel kqActBase1 ("gramBrauerNN", kqActOpBoundBrauerNN)
+          let kqActBase3 := chooseMinLabel kqActBase2 ("gramBrauer", kqActOpBoundBrauer)
+          let kqActBase4 := chooseMinLabel kqActBase3 ("denseBrauer", kqActOpBoundDense)
+          let kqActBase5 := chooseMinLabel kqActBase4 ("gramMoment", kqActOpBoundMoment)
+          let kqActBase6 := chooseMinLabel kqActBase5 ("gramPow4", kqActOpBoundPow4)
+          let kqActBest :=
+            if kqActCanFactor then
+              chooseMinLabel kqActBase6 ("factor", bnds.wkOpGram * qCenteredOpBound)
+            else
+              kqActBase6
+          let kqActOpBound : Float := kqActBest.2
+          let kqActOpBoundSource : String := kqActBest.1
+          let qkActFrobBound : Float := Float.sqrt (max 0.0 qkActTrace)
+          let kqActFrobBound : Float := Float.sqrt (max 0.0 kqActTrace)
 
           let diag? : Option HeadDiagnosticsLazy :=
             if storeDiagnostics then
@@ -4774,16 +5222,29 @@ This precomputes all attention patterns, projections, and norms once.
             qOpBoundAct := qOpBoundAct
             kOpBoundAct := kOpBoundAct
             vOpBoundAct := vOpBoundAct
+            qkActFrobBound := qkActFrobBound
+            kqActFrobBound := kqActFrobBound
+            qkActOpBound := qkActOpBound
+            kqActOpBound := kqActOpBound
             scaleFactor := scaleFactor
             wqOpBound := bnds.wqOpGram
             wkOpBound := bnds.wkOpGram
             wvOpBound := bnds.wvOpGram
             woOpBound := bnds.woOpGram
+            voOpBound := voOpBound
             bqFrob := head.b_Q.frobeniusNorm
             bkFrob := head.b_K.frobeniusNorm
             bvFrob := head.b_V.frobeniusNorm
           }
-          let patternBound : Float := computePatternTermBound inputs
+          let patternParts? : Option PatternTermBoundParts :=
+            if storeDiagnostics then
+              some (computePatternTermBoundParts inputs)
+            else
+              none
+          let patternBound : Float :=
+            match patternParts? with
+            | some parts => parts.patternBound
+            | none => computePatternTermBound inputs
           let valueNorm : Float :=
             Float.sqrt attnFrobNormSq * voNorm
           let ratio : Float :=
@@ -4806,6 +5267,7 @@ This precomputes all attention patterns, projections, and norms once.
             patternTermBoundCached := patternBound
             valueTermNormCached := valueNorm
             faithfulnessRatioCached := ratio
+            patternBoundParts? := patternParts?
             diag? := diag?
             wqGram := wqGram
             wvGram := wvGram
@@ -4813,8 +5275,16 @@ This precomputes all attention patterns, projections, and norms once.
             inputOpBound := inputOpBound
             qFrobBound := qFrobBound
             kFrobBound := kFrobBound
+            vFrobBound := vFrobBound
             qOpBoundAct := qOpBoundAct
             kOpBoundAct := kOpBoundAct
+            vOpBoundAct := vOpBoundAct
+            qkActFrobBound := qkActFrobBound
+            kqActFrobBound := kqActFrobBound
+            qkActOpBound := qkActOpBound
+            kqActOpBound := kqActOpBound
+            qkActOpBoundSource := qkActOpBoundSource
+            kqActOpBoundSource := kqActOpBoundSource
             ln1OpBound := ln1Bound
             scaleFactor := scaleFactor
             valueOutputProjNorm := voNorm
@@ -4877,11 +5347,22 @@ This precomputes all attention patterns, projections, and norms once.
               attention := d.attention
               inputNorm := d.inputNorm
               inputOpBound := d.inputOpBound
+              qFrobBound := d.qFrobBound
+              kFrobBound := d.kFrobBound
+              vFrobBound := d.vFrobBound
+              qOpBoundAct := d.qOpBoundAct
+              kOpBoundAct := d.kOpBoundAct
+              vOpBoundAct := d.vOpBoundAct
+              qkActFrobBound := d.qkActFrobBound
+              kqActFrobBound := d.kqActFrobBound
+              qkActOpBound := d.qkActOpBound
+              kqActOpBound := d.kqActOpBound
               scaleFactor := d.scaleFactor
               wqOpBound := d.wqOpGram
               wkOpBound := d.wkOpGram
               wvOpBound := d.wvOpGram
               woOpBound := d.woOpGram
+              voOpBound := d.valueOutputProjSchurNorm
               bqFrob := d.bqFrob
               bkFrob := d.bkFrob
               bvFrob := d.bvFrob
@@ -5547,13 +6028,20 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
         inputOpBound := inputOpBoundTier1
         qFrobBound := d.qFrobBound
         kFrobBound := d.kFrobBound
+        vFrobBound := d.vFrobBound
         qOpBoundAct := d.qOpBoundAct
         kOpBoundAct := d.kOpBoundAct
+        vOpBoundAct := d.vOpBoundAct
+        qkActFrobBound := d.qkActFrobBound
+        kqActFrobBound := d.kqActFrobBound
+        qkActOpBound := d.qkActOpBound
+        kqActOpBound := d.kqActOpBound
         scaleFactor := d.scaleFactor
         wqOpBound := d.wqOpGram
         wkOpBound := d.wkOpGram
         wvOpBound := d.wvOpGram
         woOpBound := d.woOpGram
+        voOpBound := d.valueOutputProjSchurNorm
         bqFrob := d.bqFrob
         bkFrob := d.bkFrob
         bvFrob := d.bvFrob
@@ -5738,13 +6226,20 @@ def runAdaptiveScheduler (cache : PrecomputedCache) (cfg : AdaptiveSchedulerConf
             inputOpBound := inputOpBound
             qFrobBound := d.qFrobBound
             kFrobBound := d.kFrobBound
+            vFrobBound := d.vFrobBound
             qOpBoundAct := d.qOpBoundAct
             kOpBoundAct := d.kOpBoundAct
+            vOpBoundAct := d.vOpBoundAct
+            qkActFrobBound := d.qkActFrobBound
+            kqActFrobBound := d.kqActFrobBound
+            qkActOpBound := d.qkActOpBound
+            kqActOpBound := d.kqActOpBound
             scaleFactor := d.scaleFactor
             wqOpBound := d.wqOpGram
             wkOpBound := d.wkOpGram
             wvOpBound := d.wvOpGram
             woOpBound := d.woOpGram
+            voOpBound := d.valueOutputProjSchurNorm
             bqFrob := d.bqFrob
             bkFrob := d.bkFrob
             bvFrob := d.bvFrob
@@ -6929,6 +7424,7 @@ private def computeHeadMetricsForSAE
         wkOpBound := bnds.wkOpGram
         wvOpBound := bnds.wvOpGram
         woOpBound := bnds.woOpGram
+        voOpBound := bnds.voOpBound
         bqFrob := head.b_Q.frobeniusNorm
         bkFrob := head.b_K.frobeniusNorm
         bvFrob := head.b_V.frobeniusNorm
@@ -7551,6 +8047,7 @@ def computeHeadImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
         wkOpBound := bnds.wkOpGram
         wvOpBound := bnds.wvOpGram
         woOpBound := bnds.woOpGram
+        voOpBound := bnds.voOpBound
         bqFrob := head.b_Q.frobeniusNorm
         bkFrob := head.b_K.frobeniusNorm
         bvFrob := head.b_V.frobeniusNorm
@@ -8131,6 +8628,7 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
         wkOpBound := bnds.wkOpGram
         wvOpBound := bnds.wvOpGram
         woOpBound := bnds.woOpGram
+        voOpBound := bnds.voOpBound
         bqFrob := head.b_Q.frobeniusNorm
         bkFrob := head.b_K.frobeniusNorm
         bvFrob := head.b_V.frobeniusNorm
@@ -8395,6 +8893,7 @@ def estimateLayerPatternBound (model : ConcreteModel) (fwdResult : ForwardPassRe
             wkOpBound := bnds.wkOpGram
             wvOpBound := bnds.wvOpGram
             woOpBound := bnds.woOpGram
+            voOpBound := bnds.voOpBound
             bqFrob := head.b_Q.frobeniusNorm
             bkFrob := head.b_K.frobeniusNorm
             bvFrob := head.b_V.frobeniusNorm
