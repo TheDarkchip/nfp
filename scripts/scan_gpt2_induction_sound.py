@@ -13,11 +13,13 @@ This script:
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import shutil
 import struct
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
 
@@ -34,10 +36,22 @@ def ensure_model(model_path: Path) -> None:
     if model_path.exists():
         return
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    generator = ["python", "scripts/generate_rigorous_induction.py", str(model_path)]
+    generator = [sys.executable, "scripts/generate_rigorous_induction.py", str(model_path)]
     if shutil.which("uv"):
         generator = ["uv", "run"] + generator
     subprocess.run(generator, check=True)
+
+
+def resolve_nfp_cmd(nfp_bin: str | None) -> list[str]:
+    if nfp_bin:
+        return [nfp_bin]
+    env_bin = os.environ.get("NFP_BIN")
+    if env_bin:
+        return [env_bin]
+    local_bin = Path(".lake/build/bin/nfp")
+    if local_bin.exists():
+        return [str(local_bin)]
+    return ["lake", "exe", "nfp"]
 
 
 def read_header_and_tokens(path: Path) -> tuple[dict[str, str], list[int]]:
@@ -120,6 +134,9 @@ def main() -> int:
     parser.add_argument("--offset1", type=int, default=-1)
     parser.add_argument("--offset2", type=int, default=-1)
     parser.add_argument("--maxSeqLen", type=int, default=256)
+    parser.add_argument("--jobs", type=int, default=1)
+    parser.add_argument("--fast", action="store_true")
+    parser.add_argument("--nfp-bin", help="Path to nfp binary (defaults to .lake/build/bin/nfp)")
     parser.add_argument("--tightPattern", action="store_true")
     parser.add_argument("--tightPatternLayers", type=int)
     parser.add_argument("--perRowPatternLayers", type=int)
@@ -127,12 +144,21 @@ def main() -> int:
     parser.add_argument("--queryPos", type=int)
     parser.add_argument("--output", default="reports/gpt2_induction_sound_scan.txt")
     args = parser.parse_args()
+    args.jobs = max(1, args.jobs)
+    top_arg = any(a.startswith("--top") for a in sys.argv[1:])
+    max_seq_len_arg = any(a.startswith("--maxSeqLen") for a in sys.argv[1:])
+    if args.fast and not top_arg and args.top == parser.get_default("top"):
+        args.top = 4
 
     model_path = Path(args.model)
     ensure_model(model_path)
+    nfp_cmd = resolve_nfp_cmd(args.nfp_bin)
 
     header, tokens = read_header_and_tokens(model_path)
     seq_len = int(header.get("seq_len", "0"))
+    if args.fast and not max_seq_len_arg and args.maxSeqLen == parser.get_default("maxSeqLen"):
+        if seq_len <= 128:
+            args.maxSeqLen = 128
     if seq_len > args.maxSeqLen:
         print(
             f"Error: seq_len {seq_len} exceeds maxSeqLen {args.maxSeqLen}",
@@ -142,10 +168,8 @@ def main() -> int:
     target, negative = derive_target_negative(tokens)
 
     induction_out = run_cmd(
-        [
-            "lake",
-            "exe",
-            "nfp",
+        nfp_cmd
+        + [
             "induction",
             str(model_path),
             "--threshold",
@@ -158,11 +182,10 @@ def main() -> int:
         return 1
 
     results: list[tuple[Fraction, tuple[int, int, int, int]]] = []
-    for (l1, h1, l2, h2) in pairs:
-        cmd = [
-            "lake",
-            "exe",
-            "nfp",
+
+    def run_cert(pair: tuple[int, int, int, int]) -> tuple[tuple[int, int, int, int], Fraction | None]:
+        l1, h1, l2, h2 = pair
+        cmd = nfp_cmd + [
             "induction_cert",
             str(model_path),
             "--layer1",
@@ -198,11 +221,26 @@ def main() -> int:
             cmd.append("--bestMatch")
         if args.queryPos is not None:
             cmd.extend(["--queryPos", str(args.queryPos)])
-        cert_out = run_cmd(cmd)
-        logit_lb = parse_logit_lb(cert_out)
-        if logit_lb is None:
-            continue
-        results.append((logit_lb, (l1, h1, l2, h2)))
+        try:
+            cert_out = run_cmd(cmd)
+        except subprocess.CalledProcessError:
+            return pair, None
+        return pair, parse_logit_lb(cert_out)
+
+    if args.jobs == 1:
+        for pair in pairs:
+            pair_out, logit_lb = run_cert(pair)
+            if logit_lb is None:
+                continue
+            results.append((logit_lb, pair_out))
+    else:
+        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+            futures = {executor.submit(run_cert, pair): pair for pair in pairs}
+            for future in as_completed(futures):
+                pair_out, logit_lb = future.result()
+                if logit_lb is None:
+                    continue
+                results.append((logit_lb, pair_out))
 
     if not results:
         print("No sound logit bounds produced.", file=sys.stderr)

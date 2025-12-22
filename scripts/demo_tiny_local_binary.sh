@@ -14,7 +14,11 @@ if [ "${USE_UV:-0}" = "1" ] && command -v uv >/dev/null 2>&1; then
     --input "$INPUT_TEXT" \
     --output "$BINARY_PATH"
 else
-  python scripts/convert_text_fixture_to_binary.py \
+  PYTHON_BIN="python"
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  fi
+  "$PYTHON_BIN" scripts/convert_text_fixture_to_binary.py \
     --model "$MODEL_TEXT" \
     --input "$INPUT_TEXT" \
     --output "$BINARY_PATH"

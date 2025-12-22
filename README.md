@@ -15,6 +15,14 @@ This repo contains:
 
 This is research tooling. Interfaces may change; please treat results as experimental unless they are backed by a certificate/check you trust.
 
+## Soundness statement (what is proven vs checked)
+
+The Lean library defines the core math objects (finite probability, mixers, linearizations, and operator-norm-style bounds) and proves a number of lemmas about them. The CLI sound path produces certificates using exact `Rat` arithmetic and a trusted checker that verifies internal arithmetic relationships between certificate fields.
+
+At present, the checker does **not** include a bridge theorem that connects certificate validity to the Lean-defined Jacobian bounds (for example, a theorem of the form `||layerJacobian - I|| <= C`). Treat sound certificates as **internally consistent bound reports**, not as a fully formal end-to-end verification of transformer Jacobians.
+
+For known gaps and ongoing upgrades, see `SOUNDNESS_LIMITATIONS.md`.
+
 ## North Star
 
 NFP’s long-term direction is **verified circuit discovery**:
@@ -38,6 +46,50 @@ but the certificate story is still evolving and interfaces may change.
 
 Model trajectory: GPT-2 support is currently a proving ground for the end-to-end workflow (export → analyze/search → bound/certify).
 The goal is to gradually cover more modern decoder blocks (e.g. RoPE-style position handling) while keeping the certification/checking layer lightweight.
+
+## Reproduce results
+
+Minimal local demo (no network needed):
+
+```bash
+lake build -q --wfail
+lake build nfp -q --wfail
+lake exe nfp certify tests/fixtures/tiny_sound_binary.nfpt \
+  --output reports/tiny_sound_demo.txt
+```
+
+Expected artifacts:
+- `reports/tiny_sound_demo.txt`
+
+Optional (rebuild the tiny binary from text fixtures and run a fixed induction cert):
+
+```bash
+./scripts/demo_tiny_local_binary.sh
+./scripts/demo_tiny_induction_cert.sh
+```
+
+Expected artifacts (optional path):
+- `reports/tiny_sound_local_binary.txt`
+- `reports/tiny_induction_cert.txt`
+
+End-to-end GPT-2 demo (requires network/model download):
+
+```bash
+./scripts/demo_gpt2_sound.sh
+./scripts/demo_gpt2_induction_sound.sh
+```
+
+Expected artifacts:
+- `reports/gpt2_sound_demo.txt`
+- `reports/gpt2_induction_sound_scan.txt`
+
+Notes:
+- If a legacy `.nfpt` header is missing `gelu_kind`, `demo_gpt2_sound.sh` writes
+  `models/gpt2_with_gelu_kind.nfpt` and uses that for certification.
+- `demo_gpt2_induction_sound.sh` can take a while on CPU; use `--top 1`,
+  `--fast`, or `--jobs 2` to shorten the scan or run it on a larger machine.
+- You can also set `NFP_BIN=./.lake/build/bin/nfp` to avoid repeated `lake exe`
+  startup overhead.
 
 
 ## Requirements

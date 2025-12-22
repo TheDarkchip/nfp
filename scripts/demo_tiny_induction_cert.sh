@@ -8,7 +8,12 @@ REPORT_PATH="${4:-reports/tiny_induction_cert.txt}"
 
 mkdir -p "$(dirname "$BINARY_PATH")" "$(dirname "$REPORT_PATH")"
 
-python scripts/convert_text_fixture_to_binary.py \
+PYTHON_BIN="python"
+if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+  PYTHON_BIN="python3"
+fi
+
+"$PYTHON_BIN" scripts/convert_text_fixture_to_binary.py \
   --model "$MODEL_TEXT" \
   --input "$INPUT_TEXT" \
   --output "$BINARY_PATH"
