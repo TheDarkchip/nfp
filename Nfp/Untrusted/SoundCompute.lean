@@ -2986,11 +2986,8 @@ private def certifyHeadPatternBestMatchLocalBinary
         let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
         let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
         let margin := ratOfScaledInt scalePow10 marginInt
-        let weightLB : Rat :=
-          if marginInt > 0 then
-            (1 + margin) / ((hdr.seqLen : Rat) + margin)
-          else
-            0
+        let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin
+        let softmaxJacobianUB : Rat := softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin
         let cert : HeadBestMatchPatternCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -3002,6 +2999,7 @@ private def certifyHeadPatternBestMatchLocalBinary
           bestNonmatchLogitUpperBound := bestNonmatchUpperRat
           marginLowerBound := margin
           bestMatchWeightLowerBound := weightLB
+          softmaxJacobianNormInfUpperBound := softmaxJacobianUB
         }
         if cert.check then
           return cert
@@ -3225,11 +3223,9 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
           let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
           let margin := ratOfScaledInt scalePow10 marginInt
-          let weightLB : Rat :=
-            if marginInt > 0 then
-              (1 + margin) / ((hdr.seqLen : Rat) + margin)
-            else
-              0
+          let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin
+          let softmaxJacobianUB : Rat :=
+            softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin
           let cert : HeadBestMatchPatternCert := {
             layerIdx := layerIdx
             headIdx := headIdx
@@ -3241,6 +3237,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             bestNonmatchLogitUpperBound := bestNonmatchUpperRat
             marginLowerBound := margin
             bestMatchWeightLowerBound := weightLB
+            softmaxJacobianNormInfUpperBound := softmaxJacobianUB
           }
           if cert.check then
             return cert

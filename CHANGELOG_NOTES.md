@@ -1,5 +1,10 @@
 # CHANGELOG / NOTES
 
+## 2025-12-23
+- Added margin-derived softmax max-probability and Jacobian bounds for best-match pattern certificates.
+- Extended best-match head pattern certs with a recorded softmax Jacobian upper bound and wired untrusted computation to populate it.
+- Noted the conservative exp lower-bound assumption for the new softmax bound in soundness limitations.
+
 ## 2025-12-22
 - Optimized induction head discovery by caching per-head induction scores and per-layer input norms, eliminating redundant pattern scans and repeated Frobenius norm computations.
 - Tightened induction error bounds by using data-dependent V norms (Frobenius/op) in pattern-term calculations.

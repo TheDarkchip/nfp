@@ -219,6 +219,8 @@ structure HeadBestMatchPatternCert where
   bestNonmatchLogitUpperBound : Rat
   marginLowerBound : Rat
   bestMatchWeightLowerBound : Rat
+  /-- Softmax Jacobian row-sum bound derived from the max-probability lower bound. -/
+  softmaxJacobianNormInfUpperBound : Rat
   deriving Repr
 
 namespace HeadBestMatchPatternCert
@@ -229,10 +231,9 @@ def Valid (c : HeadBestMatchPatternCert) : Prop :=
     c.queryPos < c.seqLen ∧
     c.marginLowerBound = c.bestMatchLogitLowerBound - c.bestNonmatchLogitUpperBound ∧
     c.bestMatchWeightLowerBound =
-      (if c.marginLowerBound > 0 then
-        (1 + c.marginLowerBound) / ((c.seqLen : Rat) + c.marginLowerBound)
-      else
-        0)
+      softmaxMaxProbLowerBound c.seqLen c.marginLowerBound ∧
+    c.softmaxJacobianNormInfUpperBound =
+      softmaxJacobianNormInfBoundFromMargin c.seqLen c.marginLowerBound
 
 instance (c : HeadBestMatchPatternCert) : Decidable (Valid c) := by
   unfold Valid

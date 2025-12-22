@@ -199,8 +199,62 @@ theorem softmaxJacobianNormInfBound_def (pLo pHi : Rat) :
         let f : Rat → Rat := fun p => (2 : Rat) * p * (1 - p)
         if lo ≤ half ∧ half ≤ hi then
           half
-        else
-          max (f lo) (f hi) := rfl
+      else
+        max (f lo) (f hi) := rfl
+
+/-! ### Margin-derived softmax bounds -/
+
+/-- Lower bound on the maximum softmax probability from a logit margin.
+
+Uses the inequality `exp(m) ≥ 1 + m` to obtain the conservative bound
+`p_max ≥ (1 + m) / (n + m)` for `m > 0`, with `n = seqLen`. -/
+def softmaxMaxProbLowerBound (seqLen : Nat) (margin : Rat) : Rat :=
+  if seqLen = 0 then
+    0
+  else if margin > 0 then
+    let nRat : Rat := (seqLen : Nat)
+    (1 + margin) / (nRat + margin)
+  else
+    0
+
+theorem softmaxMaxProbLowerBound_def (seqLen : Nat) (margin : Rat) :
+    softmaxMaxProbLowerBound seqLen margin =
+      if seqLen = 0 then
+        0
+      else if margin > 0 then
+        let nRat : Rat := (seqLen : Nat)
+        (1 + margin) / (nRat + margin)
+      else
+        0 := rfl
+
+/-- Upper bound on the row-sum softmax Jacobian norm from a max-probability lower bound.
+
+If the maximum probability is at least `pLo` and `pLo > 1/2`, then every row
+satisfies `2 p (1-p) ≤ 2 pLo (1-pLo)`; otherwise the universal `1/2` bound applies. -/
+def softmaxJacobianNormInfBoundFromMaxProb (pLo : Rat) : Rat :=
+  let half : Rat := (1 : Rat) / 2
+  let p := clamp01 pLo
+  if p > half then
+    (2 : Rat) * p * (1 - p)
+  else
+    half
+
+theorem softmaxJacobianNormInfBoundFromMaxProb_def (pLo : Rat) :
+    softmaxJacobianNormInfBoundFromMaxProb pLo =
+      let half : Rat := (1 : Rat) / 2
+      let p := clamp01 pLo
+      if p > half then
+        (2 : Rat) * p * (1 - p)
+      else
+        half := rfl
+
+/-- Upper bound on the row-sum softmax Jacobian norm from a logit margin. -/
+def softmaxJacobianNormInfBoundFromMargin (seqLen : Nat) (margin : Rat) : Rat :=
+  softmaxJacobianNormInfBoundFromMaxProb (softmaxMaxProbLowerBound seqLen margin)
+
+theorem softmaxJacobianNormInfBoundFromMargin_def (seqLen : Nat) (margin : Rat) :
+    softmaxJacobianNormInfBoundFromMargin seqLen margin =
+      softmaxJacobianNormInfBoundFromMaxProb (softmaxMaxProbLowerBound seqLen margin) := rfl
 
 /-! ### Local (input-dependent) LayerNorm bounds
 

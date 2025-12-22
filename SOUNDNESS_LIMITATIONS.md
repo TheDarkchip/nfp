@@ -10,6 +10,8 @@ soundness upgrade. It is intentionally brief and human-readable.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
 - Softmax Jacobian bounds use probability intervals defaulted to `[0,1]`, so they reduce to worst-case.
+- Best-match pattern certificates now record a margin-derived softmax Jacobian bound, but the
+  mapping uses the conservative `exp(m) ≥ 1 + m` lower bound (no tighter `exp` enclosure yet).
 - GeLU derivative bounds are conservative envelopes; the exact interval supremum is not computed yet.
 - Attention Jacobian bounds currently omit an explicit pattern-term bound with `W_Q/W_K` contributions and
   activation-magnitude factors.
