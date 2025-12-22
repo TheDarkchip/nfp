@@ -329,7 +329,7 @@ private def certifyModelFileGlobalBinary
         let mlpActDerivBound := actDerivBound
         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
-        let C := attnW + mlpW
+        let C := attnW + mlpW + attnW * mlpW
         layers := layers.push {
           layerIdx := l
           ln1MaxAbsGamma := ln1Max
@@ -342,6 +342,8 @@ private def certifyModelFileGlobalBinary
           softmaxProbHi := 1
           attnCoeff := attnCoeff
           mlpCoeff := mlpCoeff
+          mlpWinBound := nWin
+          mlpWoutBound := nWout
           mlpActDerivBound := mlpActDerivBound
           attnWeightContribution := attnW
           mlpWeightContribution := mlpW
@@ -737,7 +739,7 @@ def certifyModelFileGlobal
     let mlpActDerivBound := actDerivBound
     let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
     let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
-    let C := attnW + mlpW
+    let C := attnW + mlpW + attnW * mlpW
     layers := layers.push {
       layerIdx := l
       ln1MaxAbsGamma := ln1Max
@@ -750,6 +752,8 @@ def certifyModelFileGlobal
       softmaxProbHi := 1
       attnCoeff := attnCoeff
       mlpCoeff := mlpCoeff
+      mlpWinBound := mlpWin[l]!
+      mlpWoutBound := mlpWout[l]!
       mlpActDerivBound := mlpActDerivBound
       attnWeightContribution := attnW
       mlpWeightContribution := mlpW
@@ -2130,7 +2134,7 @@ private def certifyModelFileLocalText
                         let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
                         let mlpCoeff := nWin * nWout
                         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
-                        let C := attnW + mlpW
+                        let C := attnW + mlpW + attnW * mlpW
                         layers := layers.push {
                           layerIdx := l
                           ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2143,6 +2147,8 @@ private def certifyModelFileLocalText
                           softmaxProbHi := 1
                           attnCoeff := attnCoeff
                           mlpCoeff := mlpCoeff
+                          mlpWinBound := nWin
+                          mlpWoutBound := nWout
                           mlpActDerivBound := mlpActDerivBound
                           attnWeightContribution := attnW
                           mlpWeightContribution := mlpW
@@ -2273,7 +2279,7 @@ private def certifyModelFileLocal
             let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
             let mlpCoeff := nWin * nWout
             let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
-            let C := attnW + mlpW
+            let C := attnW + mlpW + attnW * mlpW
             layers := layers.push {
               layerIdx := l
               ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2286,6 +2292,8 @@ private def certifyModelFileLocal
               softmaxProbHi := 1
               attnCoeff := attnCoeff
               mlpCoeff := mlpCoeff
+              mlpWinBound := nWin
+              mlpWoutBound := nWout
               mlpActDerivBound := mlpActDerivBound
               attnWeightContribution := attnW
               mlpWeightContribution := mlpW
@@ -2401,7 +2409,7 @@ private def certifyModelFileLocalBinary
       let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
       let mlpCoeff := nWin * nWout
       let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
-      let C := attnW + mlpW
+      let C := attnW + mlpW + attnW * mlpW
       layers := layers.push {
         layerIdx := l
         ln1MaxAbsGamma := ln1MaxAbsGamma
@@ -2414,6 +2422,8 @@ private def certifyModelFileLocalBinary
         softmaxProbHi := 1
         attnCoeff := attnCoeff
         mlpCoeff := mlpCoeff
+        mlpWinBound := nWin
+        mlpWoutBound := nWout
         mlpActDerivBound := mlpActDerivBound
         attnWeightContribution := attnW
         mlpWeightContribution := mlpW
