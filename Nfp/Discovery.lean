@@ -1714,6 +1714,22 @@ structure NoDenseProductBounds where
 private def safeSqrt (x : Float) : Float :=
   Float.sqrt (max 0.0 x)
 
+/-- Tight Gram-based operator bound from an explicit PSD Gram matrix. -/
+private def opBoundFromGram (gram : ConcreteMatrix) (trace : Float) : Float :=
+  if gram.numRows = 0 || gram.numCols = 0 then
+    0.0
+  else
+    let lambdaGersh := gram.infNormAbs
+    let lambdaBrauer := ConcreteMatrix.symmLambdaMaxUpperBrauer gram
+    let lambdaMoment :=
+      ConcreteMatrix.psdLambdaMaxUpperMoment gram.numRows trace gram.frobeniusNormSq
+    let lambdaUpper := min lambdaGersh (min lambdaBrauer lambdaMoment)
+    let op := safeSqrt lambdaUpper
+    if Float.isNaN op || Float.isInf op then
+      safeSqrt lambdaGersh
+    else
+      op
+
 /-- Compute rigorous (in exact ℝ) scalar candidates for `‖W_Q·W_Kᵀ‖₂` and `‖W_V·W_O‖₂`
 without forming any dense `modelDim×modelDim` products. -/
 def noDenseProductBounds (layer : ConcreteAttentionLayer) : NoDenseProductBounds := Id.run do
@@ -1743,15 +1759,19 @@ def noDenseProductBounds (layer : ConcreteAttentionLayer) : NoDenseProductBounds
   -- Factor bounds from submultiplicativity.
   let qkFactorSchur := layer.W_Q.schurNormEst * layer.W_K.schurNormEst
   let qkFactorFrob := layer.W_Q.frobeniusNorm * layer.W_K.frobeniusNorm
-  let wqOpGram := layer.W_Q.opNormUpperBoundViaGramInf
-  let wkOpGram := layer.W_K.opNormUpperBoundViaGramInf
+  let wqOpGram0 := layer.W_Q.opNormUpperBoundViaGramInf
+  let wkOpGram0 := layer.W_K.opNormUpperBoundViaGramInf
+  let wqOpGram := min wqOpGram0 (opBoundFromGram wqGram layer.W_Q.frobeniusNormSq)
+  let wkOpGram := min wkOpGram0 (opBoundFromGram wkGram layer.W_K.frobeniusNormSq)
   let qkFactorGram := wqOpGram * wkOpGram
 
   let voFactorSchur := layer.W_V.schurNormEst * layer.W_O.schurNormEst
   let voFactorFrob := layer.W_V.frobeniusNorm * layer.W_O.frobeniusNorm
-  let wvOpGram := layer.W_V.opNormUpperBoundViaGramInf
+  let wvOpGram0 := layer.W_V.opNormUpperBoundViaGramInf
   -- PERFORMANCE: `W_O` is typically wide (`headDim×modelDim`), so compute on `W_Oᵀ` instead.
-  let woOpGram := layer.W_O.transpose.opNormUpperBoundViaGramInf
+  let woOpGram0 := layer.W_O.transpose.opNormUpperBoundViaGramInf
+  let wvOpGram := min wvOpGram0 (opBoundFromGram wvGram layer.W_V.frobeniusNormSq)
+  let woOpGram := min woOpGram0 (opBoundFromGram woGram layer.W_O.frobeniusNormSq)
   let voFactorGram := wvOpGram * woOpGram
 
   let qkOpBoundCentered := layer.centeredQKOpBound
@@ -4502,9 +4522,9 @@ structure PrecomputedHeadData where
   qkFactorSchur : Float
   qkFactorFrob : Float
 
-  /-- Gram-based operator bound for `W_Q`: `sqrt(‖W_QᵀW_Q‖∞)` (computed implicitly). -/
+  /-- Gram-based operator bound for `W_Q` (min of Gersh/Brauer/moment candidates). -/
   wqOpGram : Float
-  /-- Gram-based operator bound for `W_K`: `sqrt(‖W_KᵀW_K‖∞)` (computed implicitly). -/
+  /-- Gram-based operator bound for `W_K` (min of Gersh/Brauer/moment candidates). -/
   wkOpGram : Float
   /-- Frobenius norm of the 1×headDim query bias row `b_Q`. -/
   bqFrob : Float
@@ -4523,9 +4543,9 @@ structure PrecomputedHeadData where
   voDenseBrauer : Float
   voFactorSchur : Float
   voFactorFrob : Float
-  /-- Gram-based operator bound for `W_V`: `sqrt(‖W_VᵀW_V‖∞)` (computed implicitly). -/
+  /-- Gram-based operator bound for `W_V` (min of Gersh/Brauer/moment candidates). -/
   wvOpGram : Float
-  /-- Gram-based operator bound for `W_O` (computed via `W_Oᵀ` for speed). -/
+  /-- Gram-based operator bound for `W_O` (min of Gersh/Brauer/moment candidates). -/
   woOpGram : Float
   /-- Factorized Gram bound for `‖W_V·W_O‖₂`: `wvOpGram * woOpGram`. -/
   voFactorGram : Float
