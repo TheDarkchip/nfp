@@ -3445,10 +3445,14 @@ structure PatternTermBoundInputs where
   qFrobBound : Float := 0.0
   /-- Optional direct Frobenius norm bound for K = X·W_K + b_K, if available. -/
   kFrobBound : Float := 0.0
+  /-- Optional direct Frobenius norm bound for V = X·W_V + b_V, if available. -/
+  vFrobBound : Float := 0.0
   /-- Optional direct operator-norm bound for Q = X·W_Q + b_Q, if available. -/
   qOpBoundAct : Float := 0.0
   /-- Optional direct operator-norm bound for K = X·W_K + b_K, if available. -/
   kOpBoundAct : Float := 0.0
+  /-- Optional direct operator-norm bound for V = X·W_V + b_V, if available. -/
+  vOpBoundAct : Float := 0.0
   /-- Scaling factor (√d_head) -/
   scaleFactor : Float
   /-- Deterministic Float upper bound on ‖W_Q‖₂. -/
@@ -3508,7 +3512,12 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
       kFrobUb0
     else
       min kFrobUb0 inputs.kFrobBound
-  let vFrobUb := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vFrobUb0 := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vFrobUb :=
+    if inputs.vFrobBound ≤ 0.0 || Float.isNaN inputs.vFrobBound || Float.isInf inputs.vFrobBound then
+      vFrobUb0
+    else
+      min vFrobUb0 inputs.vFrobBound
   -- Bias-aware operator-norm upper bounds on Q/K/V:
   --   ‖X·W_Q + 1·b_Q‖₂ ≤ ‖X‖₂‖W_Q‖₂ + √n·‖b_Q‖₂.
   let qOpUb0 := inputs.inputOpBound * inputs.wqOpBound + sqrtN * inputs.bqFrob
@@ -3523,7 +3532,12 @@ def computePatternTermBound (inputs : PatternTermBoundInputs) : Float :=
       kOpUb0
     else
       min kOpUb0 inputs.kOpBoundAct
-  let vOpUb := inputs.inputOpBound * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vOpUb0 := inputs.inputOpBound * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vOpUb :=
+    if inputs.vOpBoundAct ≤ 0.0 || Float.isNaN inputs.vOpBoundAct || Float.isInf inputs.vOpBoundAct then
+      vOpUb0
+    else
+      min vOpUb0 inputs.vOpBoundAct
   -- Logits sensitivity:
   --   dS = (dQ)Kᵀ + Q(dK)ᵀ, with ‖dQ‖_F ≤ ‖dX‖_F‖W_Q‖₂ and ‖dK‖_F ≤ ‖dX‖_F‖W_K‖₂.
   let sCoeffFrob := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
@@ -3550,7 +3564,12 @@ def computePatternTermBoundPessimistic (inputs : PatternTermBoundInputs) : Float
   let sqrtN := Float.sqrt n.toFloat
   let qFrobUb := inputs.inputNorm * inputs.wqOpBound + sqrtN * inputs.bqFrob
   let kFrobUb := inputs.inputNorm * inputs.wkOpBound + sqrtN * inputs.bkFrob
-  let vFrobUb := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vFrobUb0 := inputs.inputNorm * inputs.wvOpBound + sqrtN * inputs.bvFrob
+  let vFrobUb :=
+    if inputs.vFrobBound ≤ 0.0 || Float.isNaN inputs.vFrobBound || Float.isInf inputs.vFrobBound then
+      vFrobUb0
+    else
+      min vFrobUb0 inputs.vFrobBound
   let sCoeff := (inputs.wqOpBound * kFrobUb + inputs.wkOpBound * qFrobUb) / inputs.scaleFactor
   (softmaxBound * sCoeff) * vFrobUb * inputs.woOpBound
 
@@ -4661,11 +4680,14 @@ This precomputes all attention patterns, projections, and norms once.
           let keys := (attnInput.matmul head.W_K).addBias head.b_K
           let scaleFactor := Float.sqrt head.headDim.toFloat
           let attn := ConcreteAttentionWeights.compute queries keys scaleFactor attnInput.numRows causal
+          let values := (attnInput.matmul head.W_V).addBias head.b_V
           let qFrobBound : Float := queries.frobeniusNorm
           let kFrobBound : Float := keys.frobeniusNorm
+          let vFrobBound : Float := values.frobeniusNorm
           let smallEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1
           let qOpBoundAct : Float := queries.opNormUpperBoundRectGramEffort smallEffort
           let kOpBoundAct : Float := keys.opNormUpperBoundRectGramEffort smallEffort
+          let vOpBoundAct : Float := values.opNormUpperBoundRectGramEffort smallEffort
           let softmaxDiag := attn.softmaxJacobianOpDiag
           let softmaxOpBound := min softmaxDiag.opBound 0.5
           let n := attn.seqLen
@@ -4728,8 +4750,10 @@ This precomputes all attention patterns, projections, and norms once.
             inputOpBound := inputOpBound
             qFrobBound := qFrobBound
             kFrobBound := kFrobBound
+            vFrobBound := vFrobBound
             qOpBoundAct := qOpBoundAct
             kOpBoundAct := kOpBoundAct
+            vOpBoundAct := vOpBoundAct
             scaleFactor := scaleFactor
             wqOpBound := bnds.wqOpGram
             wkOpBound := bnds.wkOpGram

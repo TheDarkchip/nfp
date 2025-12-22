@@ -2,6 +2,7 @@
 
 ## 2025-12-22
 - Optimized induction head discovery by caching per-head induction scores and per-layer input norms, eliminating redundant pattern scans and repeated Frobenius norm computations.
+- Tightened induction error bounds by using data-dependent V norms (Frobenius/op) in pattern-term calculations.
 
 ## 2025-12-21
 - Updated sound certificate algebra to include the attn*mlp cross term and surfaced it in output.
