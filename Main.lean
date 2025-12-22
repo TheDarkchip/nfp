@@ -197,7 +197,37 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   IO.println s!"                 = fallbackRows={data.softmaxRowsFallback}"
   IO.println s!"    scaleFactor    = {fmtFloat data.scaleFactor}"
   IO.println s!"    inputNorm      = {fmtFloat data.inputNorm}"
+  IO.println s!"    inputOpBound   = {fmtFloat data.inputOpBound}"
   IO.println s!"    qkOpBoundUsed  = {fmtFloat data.queryKeyAlignSchurNorm}"
+  IO.println s!"    qkActFrob(c)   = {fmtFloat data.qkActFrobBound}"
+  IO.println s!"    kqActFrob(c)   = {fmtFloat data.kqActFrobBound}"
+  IO.println s!"    qkActOp(c)     = {fmtFloat data.qkActOpBound}"
+  IO.println s!"    kqActOp(c)     = {fmtFloat data.kqActOpBound}"
+  let qkActOpUbStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.qkActOpUb
+    | none => "n/a"
+  let kqActOpUbStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.kqActOpUb
+    | none => "n/a"
+  IO.println s!"    qkActOpUbUsed  = {qkActOpUbStr}"
+  IO.println s!"    kqActOpUbUsed  = {kqActOpUbStr}"
+  IO.println s!"    qkActOpSource  = {data.qkActOpBoundSource}"
+  IO.println s!"    kqActOpSource  = {data.kqActOpBoundSource}"
+  let vOpUbStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.vOpUb
+    | none => "n/a"
+  let vOpUbWOStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.vOpUbWO
+    | none => "n/a"
+  IO.println s!"    vOpUbUsed      = {vOpUbStr}"
+  IO.println s!"    vOpUbWOUsed    = {vOpUbWOStr}"
+  IO.println s!"    qOpBoundAct    = {fmtFloat data.qOpBoundAct}"
+  IO.println s!"    kOpBoundAct    = {fmtFloat data.kOpBoundAct}"
+  IO.println s!"    vOpBoundAct    = {fmtFloat data.vOpBoundAct}"
   IO.println s!"    qkFrob         = {fmtFloat data.queryKeyAlignNorm}"
   IO.println s!"    wqOpGram       = {fmtFloat data.wqOpGram}"
   IO.println s!"    wkOpGram       = {fmtFloat data.wkOpGram}"
@@ -239,6 +269,21 @@ private def printHeadDiagnostics (label : String) (data : PrecomputedHeadData) :
   IO.println s!"    patternCached  = {fmtFloat patternCached}"
   IO.println s!"    valueCached    = {fmtFloat valueCached}"
   IO.println s!"    εCached        = {fmtFloat epsCached}"
+  let candFrobStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.candFrob
+    | none => "n/a"
+  let candOpStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.candOp
+    | none => "n/a"
+  let candOpWOStr : String :=
+    match data.patternBoundParts? with
+    | some parts => fmtFloat parts.candOpWO
+    | none => "n/a"
+  IO.println s!"    candFrob       = {candFrobStr}"
+  IO.println s!"    candOp         = {candOpStr}"
+  IO.println s!"    candOpWO       = {candOpWOStr}"
   IO.println s!"    patternRecon   = {fmtFloat patternRecon}"
   IO.println s!"    valueRecon     = {fmtFloat valueRecon}"
   IO.println s!"    εRecon         = {fmtFloat epsRecon}"
@@ -556,11 +601,22 @@ private def printInductionDiagnostics
               attention := d.attention
               inputNorm := d.inputNorm
               inputOpBound := d.inputOpBound
+              qFrobBound := d.qFrobBound
+              kFrobBound := d.kFrobBound
+              vFrobBound := d.vFrobBound
+              qOpBoundAct := d.qOpBoundAct
+              kOpBoundAct := d.kOpBoundAct
+              vOpBoundAct := d.vOpBoundAct
+              qkActFrobBound := d.qkActFrobBound
+              kqActFrobBound := d.kqActFrobBound
+              qkActOpBound := d.qkActOpBound
+              kqActOpBound := d.kqActOpBound
               scaleFactor := d.scaleFactor
               wqOpBound := d.wqOpGram
               wkOpBound := d.wkOpGram
               wvOpBound := d.wvOpGram
               woOpBound := d.woOpGram
+              voOpBound := d.valueOutputProjSchurNorm
               bqFrob := d.bqFrob
               bkFrob := d.bkFrob
               bvFrob := d.bvFrob
