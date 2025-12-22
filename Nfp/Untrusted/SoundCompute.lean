@@ -2986,8 +2986,10 @@ private def certifyHeadPatternBestMatchLocalBinary
         let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
         let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
         let margin := ratOfScaledInt scalePow10 marginInt
-        let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin
-        let softmaxJacobianUB : Rat := softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin
+        let expEffort : Nat := defaultSoftmaxExpEffort
+        let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin expEffort
+        let softmaxJacobianUB : Rat :=
+          softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin expEffort
         let cert : HeadBestMatchPatternCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -2998,6 +3000,7 @@ private def certifyHeadPatternBestMatchLocalBinary
           bestMatchLogitLowerBound := bestMatchLowerRat
           bestNonmatchLogitUpperBound := bestNonmatchUpperRat
           marginLowerBound := margin
+          softmaxExpEffort := expEffort
           bestMatchWeightLowerBound := weightLB
           softmaxJacobianNormInfUpperBound := softmaxJacobianUB
         }
@@ -3223,9 +3226,10 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
           let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
           let margin := ratOfScaledInt scalePow10 marginInt
-          let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin
+          let expEffort : Nat := defaultSoftmaxExpEffort
+          let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin expEffort
           let softmaxJacobianUB : Rat :=
-            softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin
+            softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin expEffort
           let cert : HeadBestMatchPatternCert := {
             layerIdx := layerIdx
             headIdx := headIdx
@@ -3236,6 +3240,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             bestMatchLogitLowerBound := bestMatchLowerRat
             bestNonmatchLogitUpperBound := bestNonmatchUpperRat
             marginLowerBound := margin
+            softmaxExpEffort := expEffort
             bestMatchWeightLowerBound := weightLB
             softmaxJacobianNormInfUpperBound := softmaxJacobianUB
           }

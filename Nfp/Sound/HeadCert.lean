@@ -218,6 +218,8 @@ structure HeadBestMatchPatternCert where
   bestMatchLogitLowerBound : Rat
   bestNonmatchLogitUpperBound : Rat
   marginLowerBound : Rat
+  /-- Effort level for the `expLB` portfolio used in margin-to-probability bounds. -/
+  softmaxExpEffort : Nat
   bestMatchWeightLowerBound : Rat
   /-- Softmax Jacobian row-sum bound derived from the max-probability lower bound. -/
   softmaxJacobianNormInfUpperBound : Rat
@@ -231,9 +233,9 @@ def Valid (c : HeadBestMatchPatternCert) : Prop :=
     c.queryPos < c.seqLen ∧
     c.marginLowerBound = c.bestMatchLogitLowerBound - c.bestNonmatchLogitUpperBound ∧
     c.bestMatchWeightLowerBound =
-      softmaxMaxProbLowerBound c.seqLen c.marginLowerBound ∧
+      softmaxMaxProbLowerBound c.seqLen c.marginLowerBound c.softmaxExpEffort ∧
     c.softmaxJacobianNormInfUpperBound =
-      softmaxJacobianNormInfBoundFromMargin c.seqLen c.marginLowerBound
+      softmaxJacobianNormInfBoundFromMargin c.seqLen c.marginLowerBound c.softmaxExpEffort
 
 instance (c : HeadBestMatchPatternCert) : Decidable (Valid c) := by
   unfold Valid
