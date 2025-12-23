@@ -1256,6 +1256,32 @@ theorem patternTerm_operatorNormBound_le_of_eq_explicit [Nonempty n] [Nonempty d
   simpa [hEq] using
     (patternTermExplicit_operatorNormBound_le (L := L) (G := G) (V := V) hGrad hValue)
 
+omit [DecidableEq d] in
+/-- Pattern-term operator-norm bound via softmax consistency and score-gradient bounds. -/
+theorem patternTerm_operatorNormBound_le_of_softmax [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (J S V : ℝ)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (hSoftmax :
+      ∀ q, SignedMixer.operatorNormBound (softmaxJacobian (L.state.scores q)) ≤ J)
+    (hScore : ∀ i d_in q, ∑ k, |scoreGradient L q k i d_in| ≤ S)
+    (hValue : SignedMixer.operatorNormBound (valueOutputMixer L) ≤ V)
+    (hEq : patternTerm L = patternTermExplicit L) :
+    SignedMixer.operatorNormBound (patternTerm L) ≤
+      (Fintype.card n : ℝ) * J * S * V := by
+  have hGrad : ∀ i d_in q, ∑ k, |attentionGradient L q k i d_in| ≤ J * S := by
+    intro i d_in q
+    simpa using
+      (attentionGradient_rowAbsSum_le_of_softmax (L := L) (q := q) (i := i) (d_in := d_in)
+        (J := J) (S := S) (hConsistent := hConsistent q)
+        (hSoftmax := hSoftmax q) (hScore := hScore i d_in q))
+  have hBound :=
+    patternTerm_operatorNormBound_le_of_eq_explicit
+      (L := L) (G := J * S) (V := V) hGrad hValue hEq
+  calc
+    SignedMixer.operatorNormBound (patternTerm L) ≤
+        (Fintype.card n : ℝ) * (J * S) * V := hBound
+    _ = (Fintype.card n : ℝ) * J * S * V := by ring
+
 /-! ### Attention Rollout Approximation Error -/
 
 /-- **Attention Approximation Error**: The Frobenius norm of the Pattern Term.
