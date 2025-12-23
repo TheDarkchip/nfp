@@ -17,8 +17,9 @@ soundness upgrade. It is intentionally brief and human-readable.
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.
 - GeLU derivative bounds are conservative envelopes; the exact interval supremum is not computed yet.
-- Attention Jacobian bounds currently omit an explicit pattern-term bound with `W_Q/W_K` contributions and
-  activation-magnitude factors.
+- Attention Jacobian bounds now include an explicit pattern-term coefficient using max `W_Q/W_K`
+  row-sum norms and a conservative LayerNorm output magnitude bound (`max|gamma|*sqrt(d)+max|beta|`),
+  but this is still very conservative and not yet linked to the Lean Jacobian theorems.
 - The current bridge theorem assumes external operator-norm bounds for:
   `ln1Jacobian`, `ln2Jacobian`, and `fullJacobian`. The MLP side now uses an explicit
   factorization (Win ∘ diag(deriv) ∘ Wout) and records `mlpWinBound`/`mlpWoutBound` in

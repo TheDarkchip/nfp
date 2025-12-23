@@ -1,5 +1,10 @@
 # CHANGELOG / NOTES
 
+## 2025-12-24
+- Added attention pattern-term coefficients using max `W_Q/W_K` row-sum norms and a conservative
+  LayerNorm output magnitude bound; updated layer cert formulas and reports accordingly.
+- Added `modelDim`/`headDim` metadata to sound certificates and threaded through the checker.
+
 ## 2025-12-23
 - Added margin-derived softmax max-probability and Jacobian bounds for best-match pattern certificates.
 - Added effort-indexed exp lower bounds (scaled Taylor + squaring) and wired them into best-match softmax bounds.

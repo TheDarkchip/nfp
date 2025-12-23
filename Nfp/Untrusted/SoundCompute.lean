@@ -253,17 +253,23 @@ private def certifyModelFileGlobalBinary
       let mut layers : Array LayerAmplificationCert := Array.mkEmpty hdr.numLayers
       let mut totalAmp : Rat := 1
       for l in [:hdr.numLayers] do
-        let mut attnSum : Rat := 0
+        let mut attnValueCoeff : Rat := 0
+        let mut wqMax : Rat := 0
+        let mut wkMax : Rat := 0
         for _h in [:hdr.numHeads] do
-          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
+          let wqScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
+          let wqScaled ←
+            match wqScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
-          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
-          | .error e => return .error e
-          | .ok _ => pure ()
+          let wkScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
+          let wkScaled ←
+            match wkScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
           match ← skipF64Array h hdr.headDim with
           | .error e => return .error e
           | .ok _ => pure ()
@@ -280,9 +286,13 @@ private def certifyModelFileGlobalBinary
             match noScaledE with
             | .error e => return .error e
             | .ok v => pure v
+          let wq := ratOfScaledInt scalePow10 wqScaled
+          let wk := ratOfScaledInt scalePow10 wkScaled
           let nv := ratOfScaledInt scalePow10 nvScaled
           let no := ratOfScaledInt scalePow10 noScaled
-          attnSum := attnSum + nv * no
+          wqMax := max wqMax wq
+          wkMax := max wkMax wk
+          attnValueCoeff := attnValueCoeff + nv * no
         match ← skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -309,24 +319,30 @@ private def certifyModelFileGlobalBinary
           match ln1GammaScaledE with
           | .error e => return .error e
           | .ok v => pure v
-        match ← skipF64Array h hdr.modelDim with
-        | .error e => return .error e
-        | .ok _ => pure ()
+        let ln1BetaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln1BetaScaled ←
+          match ln1BetaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
         let ln2GammaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
         let ln2GammaScaled ←
           match ln2GammaScaledE with
           | .error e => return .error e
           | .ok v => pure v
-        match ← skipF64Array h hdr.modelDim with
+        let ln2BetaScaledE ← readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        match ln2BetaScaledE with
         | .error e => return .error e
         | .ok _ => pure ()
         let ln1Max := ratOfScaledInt scalePow10 ln1GammaScaled
+        let ln1MaxAbsBeta := ratOfScaledInt scalePow10 ln1BetaScaled
         let ln2Max := ratOfScaledInt scalePow10 ln2GammaScaled
         let nWin := ratOfScaledInt scalePow10 nWinScaled
         let nWout := ratOfScaledInt scalePow10 nWoutScaled
         let ln1Bound := layerNormOpBoundConservative ln1Max eps soundnessBits
         let ln2Bound := layerNormOpBoundConservative ln2Max eps soundnessBits
-        let attnCoeff := attnSum
+        let ln1OutMaxAbsBound := layerNormOutputMaxAbsBound hdr.modelDim ln1Max ln1MaxAbsBeta
+        let attnPatternCoeff :=
+          attnPatternCoeffBound hdr.headDim ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
         let mlpCoeff := nWin * nWout
         let mlpActDerivBound := actDerivBound
         let softmaxProbLo : Rat := 0
@@ -335,23 +351,29 @@ private def certifyModelFileGlobalBinary
         let softmaxMarginBound :=
           softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
         let softmaxBound := min softmaxIntervalBound softmaxMarginBound
-        let attnW := ln1Bound * softmaxBound * attnCoeff
+        let attnW :=
+          ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
         let C := attnW + mlpW + attnW * mlpW
         layers := layers.push {
           layerIdx := l
           ln1MaxAbsGamma := ln1Max
+          ln1MaxAbsBeta := ln1MaxAbsBeta
           ln2MaxAbsGamma := ln2Max
           ln1VarianceLowerBound? := none
           ln2VarianceLowerBound? := none
           ln1Bound := ln1Bound
           ln2Bound := ln2Bound
+          ln1OutMaxAbsBound := ln1OutMaxAbsBound
           softmaxProbLo := softmaxProbLo
           softmaxProbHi := softmaxProbHi
           softmaxMarginLowerBound := softmaxMarginLowerBound
           softmaxExpEffort := softmaxExpEffort
           softmaxJacobianNormInfUpperBound := softmaxBound
-          attnCoeff := attnCoeff
+          wqOpBoundMax := wqMax
+          wkOpBoundMax := wkMax
+          attnValueCoeff := attnValueCoeff
+          attnPatternCoeff := attnPatternCoeff
           mlpCoeff := mlpCoeff
           mlpWinBound := nWin
           mlpWoutBound := nWout
@@ -376,6 +398,8 @@ private def certifyModelFileGlobalBinary
         inputDelta := 0
         eps := eps
         seqLen := hdr.seqLen
+        modelDim := hdr.modelDim
+        headDim := hdr.headDim
         soundnessBits := soundnessBits
         geluDerivTarget := geluDerivTarget
         actDerivBound := actDerivBound
@@ -674,8 +698,11 @@ def certifyModelFileGlobal
   let inputVarLowerMin? : Option Rat := none
   -- Accumulators
   let mut ln1GammaMax : Array Rat := Array.replicate L 1
+  let mut ln1BetaMax : Array Rat := Array.replicate L 0
   let mut ln2GammaMax : Array Rat := Array.replicate L 1
-  let mut attnSum : Array Rat := Array.replicate L 0
+  let mut attnValueCoeff : Array Rat := Array.replicate L 0
+  let mut wqMax : Array Rat := Array.replicate L 0
+  let mut wkMax : Array Rat := Array.replicate L 0
   let mut mlpWin : Array Rat := Array.replicate L 0
   let mut mlpWout : Array Rat := Array.replicate L 0
   let mut curLayer : Nat := 0
@@ -687,6 +714,22 @@ def certifyModelFileGlobal
       if parts.length >= 2 then
         curLayer := (parts[1]!).toNat? |>.getD 0
       i := i + 1
+    else if line = "W_Q" then
+      let r := curLayer
+      match consumeMatrixNormInf lines (i + 1) d dh with
+      | .error e => return .error e
+      | .ok (nq, next) =>
+        if r < wqMax.size then
+          wqMax := wqMax.set! r (max wqMax[r]! nq)
+        i := next
+    else if line = "W_K" then
+      let r := curLayer
+      match consumeMatrixNormInf lines (i + 1) d dh with
+      | .error e => return .error e
+      | .ok (nk, next) =>
+        if r < wkMax.size then
+          wkMax := wkMax.set! r (max wkMax[r]! nk)
+        i := next
     else if line = "W_V" then
       -- Expect: modelDim × headDim
       let r := curLayer
@@ -702,8 +745,8 @@ def certifyModelFileGlobal
         match consumeMatrixNormInf lines (i + 1) dh d with
         | .error e => return .error e
         | .ok (no, next2) =>
-          if r < attnSum.size then
-            attnSum := attnSum.set! r (attnSum[r]! + (nv * no))
+          if r < attnValueCoeff.size then
+            attnValueCoeff := attnValueCoeff.set! r (attnValueCoeff[r]! + (nv * no))
           i := next2
     else if line = "W_in" then
       match consumeMatrixNormInf lines (i + 1) d dhid with
@@ -726,6 +769,13 @@ def certifyModelFileGlobal
         if curLayer < ln1GammaMax.size then
           ln1GammaMax := ln1GammaMax.set! curLayer m
         i := next
+    else if line = "LN1_BETA" then
+      match consumeMaxAbs lines (i + 1) d with
+      | .error e => return .error e
+      | .ok (m, next) =>
+        if curLayer < ln1BetaMax.size then
+          ln1BetaMax := ln1BetaMax.set! curLayer m
+        i := next
     else if line = "LN2_GAMMA" then
       match consumeMaxAbs lines (i + 1) d with
       | .error e => return .error e
@@ -742,6 +792,7 @@ def certifyModelFileGlobal
   let mut actDerivBoundMax : Rat := 0
   for l in [:L] do
     let ln1Max := ln1GammaMax[l]!
+    let ln1MaxAbsBeta := ln1BetaMax[l]!
     let ln2Max := ln2GammaMax[l]!
     let ln1Var? : Option Rat := if l = 0 then inputVarLowerMin? else none
     let ln2Var? : Option Rat := none
@@ -753,7 +804,10 @@ def certifyModelFileGlobal
       match ln2Var? with
       | some v => layerNormOpBoundLocal ln2Max v eps soundnessBits
       | none => layerNormOpBoundConservative ln2Max eps soundnessBits
-    let attnCoeff := attnSum[l]!
+    let ln1OutMaxAbsBound := layerNormOutputMaxAbsBound d ln1Max ln1MaxAbsBeta
+    let attnValueCoeffLayer := attnValueCoeff[l]!
+    let attnPatternCoeff :=
+      attnPatternCoeffBound dh ln1OutMaxAbsBound (wqMax[l]!) (wkMax[l]!) attnValueCoeffLayer
     let mlpCoeff := mlpWin[l]! * mlpWout[l]!
     let mlpActDerivBound := actDerivBound
     let softmaxProbLo : Rat := 0
@@ -762,23 +816,29 @@ def certifyModelFileGlobal
     let softmaxMarginBound :=
       softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound softmaxExpEffort
     let softmaxBound := min softmaxIntervalBound softmaxMarginBound
-    let attnW := ln1Bound * softmaxBound * attnCoeff
+    let attnW :=
+      ln1Bound * (attnValueCoeffLayer + softmaxBound * attnPatternCoeff)
     let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
     let C := attnW + mlpW + attnW * mlpW
     layers := layers.push {
       layerIdx := l
       ln1MaxAbsGamma := ln1Max
+      ln1MaxAbsBeta := ln1MaxAbsBeta
       ln2MaxAbsGamma := ln2Max
       ln1VarianceLowerBound? := ln1Var?
       ln2VarianceLowerBound? := ln2Var?
       ln1Bound := ln1Bound
       ln2Bound := ln2Bound
+      ln1OutMaxAbsBound := ln1OutMaxAbsBound
       softmaxProbLo := softmaxProbLo
       softmaxProbHi := softmaxProbHi
       softmaxMarginLowerBound := softmaxMarginLowerBound
       softmaxExpEffort := softmaxExpEffort
       softmaxJacobianNormInfUpperBound := softmaxBound
-      attnCoeff := attnCoeff
+      wqOpBoundMax := wqMax[l]!
+      wkOpBoundMax := wkMax[l]!
+      attnValueCoeff := attnValueCoeffLayer
+      attnPatternCoeff := attnPatternCoeff
       mlpCoeff := mlpCoeff
       mlpWinBound := mlpWin[l]!
       mlpWoutBound := mlpWout[l]!
@@ -795,6 +855,8 @@ def certifyModelFileGlobal
     inputDelta := inputDelta
     eps := eps
     seqLen := n
+    modelDim := d
+    headDim := dh
     soundnessBits := soundnessBits
     geluDerivTarget := geluDerivTarget
     actDerivBound := actDerivBoundMax
@@ -1952,6 +2014,83 @@ private def ensureSoundCache
     return .error "sound cache size mismatch"
   return .ok (cpath, hdr)
 
+private def readWqWkMaxBinary
+    (path : System.FilePath)
+    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    IO (Except String (Array Rat × Array Rat)) := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  match ← readBinaryHeader h with
+  | .error e => return .error e
+  | .ok hdr =>
+      match ← skipI32Array h hdr.seqLen with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← skipF64Array h (hdr.seqLen * hdr.modelDim) with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      let mut wqMax : Array Rat := Array.replicate hdr.numLayers 0
+      let mut wkMax : Array Rat := Array.replicate hdr.numLayers 0
+      for l in [:hdr.numLayers] do
+        let mut wqLayer : Rat := 0
+        let mut wkLayer : Rat := 0
+        for _h in [:hdr.numHeads] do
+          let wqScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
+          let wqScaled ←
+            match wqScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let wkScaledE ← readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10
+          let wkScaled ←
+            match wkScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h (hdr.modelDim * hdr.headDim) with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          match ← skipF64Array h (hdr.headDim * hdr.modelDim) with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let wq := ratOfScaledInt scalePow10 wqScaled
+          let wk := ratOfScaledInt scalePow10 wkScaled
+          wqLayer := max wqLayer wq
+          wkLayer := max wkLayer wk
+        wqMax := wqMax.set! l wqLayer
+        wkMax := wkMax.set! l wkLayer
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h (hdr.modelDim * hdr.hiddenDim) with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h hdr.hiddenDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h (hdr.hiddenDim * hdr.modelDim) with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        match ← skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+      return .ok (wqMax, wkMax)
+
 /-- Local (input-dependent) certificate path using streaming interval propagation.
 
 This is conservative in two key ways to remain streaming/memory-safe:
@@ -2042,15 +2181,19 @@ private def certifyModelFileLocalText
         let (ln1Out, ln1VarLB) :=
           layerNormRowApprox residualUnion p1.gamma p1.beta eps soundnessBits
         let ln1MaxAbsGamma := maxAbsOfVector p1.gamma
+        let ln1MaxAbsBeta := maxAbsOfVector p1.beta
         let ln1Bound :=
           if ln1VarLB > 0 then
             layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
           else
             layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
+        let ln1OutMaxAbsBound := layerNormOutputMaxAbsBound d ln1MaxAbsGamma ln1MaxAbsBeta
         let ln1Union := ln1Out
         -- Attention (streaming): use union input box.
         let mut attnUnion : Array RatInterval := zeroIntervals d
-        let mut attnCoeff : Rat := 0
+        let mut attnValueCoeff : Rat := 0
+        let mut wqMax : Rat := 0
+        let mut wkMax : Rat := 0
         for _h in [:H] do
           pos := skipBlankLines lines pos
           if !(pos < lines.size) then
@@ -2061,9 +2204,11 @@ private def certifyModelFileLocalText
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_Q") then
             return .error "missing W_Q"
-          match consumeMatrixSkipFast lines (pos + 1) d dh with
+          match consumeMatrixNormInf lines (pos + 1) d dh with
           | .error e => return .error e
-          | .ok next => pos := next
+          | .ok (nq, next) =>
+              wqMax := max wqMax nq
+              pos := next
           -- Optional per-head Q bias (does not affect Jacobian,
           -- but must be parsed to stay in sync).
           pos := skipBlankLines lines pos
@@ -2074,9 +2219,11 @@ private def certifyModelFileLocalText
           pos := skipBlankLines lines pos
           if !(pos < lines.size && lines[pos]!.trim = "W_K") then
             return .error "missing W_K"
-          match consumeMatrixSkipFast lines (pos + 1) d dh with
+          match consumeMatrixNormInf lines (pos + 1) d dh with
           | .error e => return .error e
-          | .ok next => pos := next
+          | .ok (nk, next) =>
+              wkMax := max wkMax nk
+              pos := next
           -- Optional per-head K bias (does not affect Jacobian,
           -- but must be parsed to stay in sync).
           pos := skipBlankLines lines pos
@@ -2110,7 +2257,7 @@ private def certifyModelFileLocalText
               | .ok (vOut, no, nextO) =>
                   pos := nextO
                   attnUnion := addVecIntervals attnUnion vOut
-                  attnCoeff := attnCoeff + vCenteredOpBound * no
+                  attnValueCoeff := attnValueCoeff + vCenteredOpBound * no
         -- Shared attention projection bias (affects forward activations / variance,
         -- so we include it).
         pos := skipBlankLines lines pos
@@ -2178,24 +2325,32 @@ private def certifyModelFileLocalText
                           softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound
                             softmaxExpEffort
                         let softmaxBound := min softmaxIntervalBound softmaxMarginBound
-                        let attnW := ln1Bound * softmaxBound * attnCoeff
+                        let attnPatternCoeff :=
+                          attnPatternCoeffBound dh ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
+                        let attnW :=
+                          ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
                         let mlpCoeff := nWin * nWout
                         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
                         let C := attnW + mlpW + attnW * mlpW
                         layers := layers.push {
                           layerIdx := l
                           ln1MaxAbsGamma := ln1MaxAbsGamma
+                          ln1MaxAbsBeta := ln1MaxAbsBeta
                           ln2MaxAbsGamma := ln2MaxAbsGamma
                           ln1VarianceLowerBound? := some ln1VarLB
                           ln2VarianceLowerBound? := some ln2VarLB
                           ln1Bound := ln1Bound
                           ln2Bound := ln2Bound
+                          ln1OutMaxAbsBound := ln1OutMaxAbsBound
                           softmaxProbLo := softmaxProbLo
                           softmaxProbHi := softmaxProbHi
                           softmaxMarginLowerBound := softmaxMarginLowerBound
                           softmaxExpEffort := softmaxExpEffort
                           softmaxJacobianNormInfUpperBound := softmaxBound
-                          attnCoeff := attnCoeff
+                          wqOpBoundMax := wqMax
+                          wkOpBoundMax := wkMax
+                          attnValueCoeff := attnValueCoeff
+                          attnPatternCoeff := attnPatternCoeff
                           mlpCoeff := mlpCoeff
                           mlpWinBound := nWin
                           mlpWoutBound := nWout
@@ -2213,6 +2368,8 @@ private def certifyModelFileLocalText
         inputDelta := inputDelta
         eps := eps
         seqLen := n
+        modelDim := d
+        headDim := dh
         soundnessBits := soundnessBits
         geluDerivTarget := geluDerivTarget
         actDerivBound := actDerivBoundMax
@@ -2249,6 +2406,11 @@ private def certifyModelFileLocal
       let hiddenDim := hdr.hiddenDim.toNat
       let L := hdr.numLayers.toNat
       let H := hdr.numHeads.toNat
+      let wqWkE ← readWqWkMaxBinary path (scalePow10 := hdr.scalePow10.toNat)
+      let (wqMaxArr, wkMaxArr) ←
+        match wqWkE with
+        | .error e => return .error e
+        | .ok v => pure v
       -- For now we read embeddings from the input `.nfpt` file and use a union box.
       let residualUnionE ← loadEmbeddingsUnionFixed cfg inputPath modelDim inputDelta
       match residualUnionE with
@@ -2276,15 +2438,21 @@ private def certifyModelFileLocal
               Rat.normalize (maxAbsVecFixed ln1Gamma) cfg.scaleNat (den_nz := by
                 have h10pos : (0 : Nat) < 10 := by decide
                 exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+            let ln1MaxAbsBeta : Rat :=
+              Rat.normalize (maxAbsVecFixed ln1Beta) cfg.scaleNat (den_nz := by
+                have h10pos : (0 : Nat) < 10 := by decide
+                exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
             let ln1Bound :=
               if ln1VarLB > 0 then
                 layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
               else
                 layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
+            let ln1OutMaxAbsBound :=
+              layerNormOutputMaxAbsBound modelDim ln1MaxAbsGamma ln1MaxAbsBeta
             -- Attention (streaming from cache)
             let mut attnUnion : Array Fixed10Interval :=
               Array.replicate modelDim { lo := 0, hi := 0 }
-            let mut attnCoeff : Rat := 0
+            let mut attnValueCoeff : Rat := 0
             for _h in [:H] do
               let (vHidden0, _nWv, rrV) ←
                 consumeMatrixMulAndNormInfFixed cfg slack rr modelDim headDim ln1Out
@@ -2297,7 +2465,7 @@ private def certifyModelFileLocal
                 consumeMatrixMulAndNormInfFixed cfg slack rr headDim modelDim vHidden
               rr := rrO
               attnUnion := addVecFixed attnUnion vOut
-              attnCoeff := attnCoeff + vCenteredOpBound * nWo
+              attnValueCoeff := attnValueCoeff + vCenteredOpBound * nWo
             let (attnBias, rrB) ← readVecIntervals rr modelDim slack
             rr := rrB
             attnUnion := addVecFixed attnUnion attnBias
@@ -2337,24 +2505,33 @@ private def certifyModelFileLocal
               softmaxJacobianNormInfBoundFromMargin inputSeqLen softmaxMarginLowerBound
                 softmaxExpEffort
             let softmaxBound := min softmaxIntervalBound softmaxMarginBound
-            let attnW := ln1Bound * softmaxBound * attnCoeff
+            let attnPatternCoeff :=
+              attnPatternCoeffBound headDim ln1OutMaxAbsBound (wqMaxArr[l]!) (wkMaxArr[l]!)
+                attnValueCoeff
+            let attnW :=
+              ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
             let mlpCoeff := nWin * nWout
             let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
             let C := attnW + mlpW + attnW * mlpW
             layers := layers.push {
               layerIdx := l
               ln1MaxAbsGamma := ln1MaxAbsGamma
+              ln1MaxAbsBeta := ln1MaxAbsBeta
               ln2MaxAbsGamma := ln2MaxAbsGamma
               ln1VarianceLowerBound? := some ln1VarLB
               ln2VarianceLowerBound? := some ln2VarLB
               ln1Bound := ln1Bound
               ln2Bound := ln2Bound
+              ln1OutMaxAbsBound := ln1OutMaxAbsBound
               softmaxProbLo := softmaxProbLo
               softmaxProbHi := softmaxProbHi
               softmaxMarginLowerBound := softmaxMarginLowerBound
               softmaxExpEffort := softmaxExpEffort
               softmaxJacobianNormInfUpperBound := softmaxBound
-              attnCoeff := attnCoeff
+              wqOpBoundMax := wqMaxArr[l]!
+              wkOpBoundMax := wkMaxArr[l]!
+              attnValueCoeff := attnValueCoeff
+              attnPatternCoeff := attnPatternCoeff
               mlpCoeff := mlpCoeff
               mlpWinBound := nWin
               mlpWoutBound := nWout
@@ -2371,6 +2548,8 @@ private def certifyModelFileLocal
             inputDelta := inputDelta
             eps := eps
             seqLen := inputSeqLen
+            modelDim := modelDim
+            headDim := headDim
             soundnessBits := soundnessBits
             geluDerivTarget := geluDerivTarget
             actDerivBound := actDerivBoundMax
@@ -2422,18 +2601,30 @@ private def certifyModelFileLocalBinary
         Rat.normalize (maxAbsVecFixed p1.gamma) cfg.scaleNat (den_nz := by
           have h10pos : (0 : Nat) < 10 := by decide
           exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
+      let ln1MaxAbsBeta : Rat :=
+        Rat.normalize (maxAbsVecFixed p1.beta) cfg.scaleNat (den_nz := by
+          have h10pos : (0 : Nat) < 10 := by decide
+          exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
       let ln1Bound :=
         if ln1VarLB > 0 then
           layerNormOpBoundLocal ln1MaxAbsGamma ln1VarLB eps soundnessBits
         else
           layerNormOpBoundConservative ln1MaxAbsGamma eps soundnessBits
+      let ln1OutMaxAbsBound :=
+        layerNormOutputMaxAbsBound hdr.modelDim ln1MaxAbsGamma ln1MaxAbsBeta
       let mut attnUnion : Array Fixed10Interval :=
         Array.replicate hdr.modelDim { lo := 0, hi := 0 }
-      let mut attnCoeff : Rat := 0
+      let mut attnValueCoeff : Rat := 0
+      let mut wqMax : Rat := 0
+      let mut wkMax : Rat := 0
       for _h in [:hdr.numHeads] do
-        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let wqScaled ←
+          ExceptT.mk (readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10)
+        wqMax := max wqMax (ratOfScaledInt scalePow10 wqScaled)
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
-        let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
+        let wkScaled ←
+          ExceptT.mk (readMatrixNormInfScaled h hdr.modelDim hdr.headDim scalePow10)
+        wkMax := max wkMax (ratOfScaledInt scalePow10 wkScaled)
         let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
         let (vHidden0, _nWv) ←
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
@@ -2445,7 +2636,7 @@ private def certifyModelFileLocalBinary
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
-        attnCoeff := attnCoeff + vCenteredOpBound * nWo
+        attnValueCoeff := attnValueCoeff + vCenteredOpBound * nWo
       let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       attnUnion := addVecFixed attnUnion attnBias
       residualUnion := addVecFixed residualUnion attnUnion
@@ -2480,24 +2671,32 @@ private def certifyModelFileLocalBinary
       let softmaxMarginBound :=
         softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
       let softmaxBound := min softmaxIntervalBound softmaxMarginBound
-      let attnW := ln1Bound * softmaxBound * attnCoeff
+      let attnPatternCoeff :=
+        attnPatternCoeffBound hdr.headDim ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
+      let attnW :=
+        ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
       let mlpCoeff := nWin * nWout
       let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
       let C := attnW + mlpW + attnW * mlpW
       layers := layers.push {
         layerIdx := l
         ln1MaxAbsGamma := ln1MaxAbsGamma
+        ln1MaxAbsBeta := ln1MaxAbsBeta
         ln2MaxAbsGamma := ln2MaxAbsGamma
         ln1VarianceLowerBound? := some ln1VarLB
         ln2VarianceLowerBound? := some ln2VarLB
         ln1Bound := ln1Bound
         ln2Bound := ln2Bound
+        ln1OutMaxAbsBound := ln1OutMaxAbsBound
         softmaxProbLo := softmaxProbLo
         softmaxProbHi := softmaxProbHi
         softmaxMarginLowerBound := softmaxMarginLowerBound
         softmaxExpEffort := softmaxExpEffort
         softmaxJacobianNormInfUpperBound := softmaxBound
-        attnCoeff := attnCoeff
+        wqOpBoundMax := wqMax
+        wkOpBoundMax := wkMax
+        attnValueCoeff := attnValueCoeff
+        attnPatternCoeff := attnPatternCoeff
         mlpCoeff := mlpCoeff
         mlpWinBound := nWin
         mlpWoutBound := nWout
@@ -2518,6 +2717,8 @@ private def certifyModelFileLocalBinary
       inputDelta := inputDelta
       eps := eps
       seqLen := hdr.seqLen
+      modelDim := hdr.modelDim
+      headDim := hdr.headDim
       soundnessBits := soundnessBits
       geluDerivTarget := geluDerivTarget
       actDerivBound := actDerivBoundMax
