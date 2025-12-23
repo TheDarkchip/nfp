@@ -124,7 +124,9 @@ def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
       attnPatternCoeffBound seqLen modelDim headDim l.ln1OutMaxAbsBound l.wqOpBoundMax
         l.wkOpBoundMax l.attnValueCoeff ∧
     l.attnWeightContribution =
-      l.ln1Bound * (l.attnValueCoeff + l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) ∧
+      l.ln1Bound *
+        ((seqLen : Rat) * l.attnValueCoeff +
+          l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) ∧
     l.mlpCoeff = l.mlpWinBound * l.mlpWoutBound ∧
     l.mlpWeightContribution =
       l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) ∧
@@ -164,7 +166,7 @@ theorem attnWeightContribution_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
     l.attnWeightContribution =
       l.ln1Bound *
-        (l.attnValueCoeff +
+        ((seqLen : Rat) * l.attnValueCoeff +
           l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) := by
   rcases h with
     ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, hattn, _hmlpCoeff, _hmlp, _hC⟩
@@ -204,11 +206,11 @@ theorem attnWeightContribution_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
     (l.attnWeightContribution : ℝ) =
       (l.ln1Bound : ℝ) *
-        ((l.attnValueCoeff : ℝ) +
+        ((seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)) := by
   have hAttn := attnWeightContribution_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
   have hAttn' := congrArg (fun (x : Rat) => (x : ℝ)) hAttn
-  simpa [Rat.cast_mul, Rat.cast_add, mul_assoc, add_assoc] using hAttn'
+  simpa [Rat.cast_mul, Rat.cast_add, Rat.cast_natCast, mul_assoc, add_assoc] using hAttn'
 
 /-- Cast the MLP coefficient identity to `ℝ` using `Valid`. -/
 theorem mlpCoeff_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)

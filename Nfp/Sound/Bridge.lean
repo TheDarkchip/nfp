@@ -386,14 +386,14 @@ theorem attn_component_bound_of_cert
     (hLn1_nonneg : 0 ≤ (l.ln1Bound : ℝ))
     (hFull :
       SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-        (l.attnValueCoeff : ℝ) +
+        (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)) :
     SignedMixer.operatorNormBound
         ((D.ln1Jacobians i).comp (D.layers i).fullJacobian)
         ≤ (l.attnWeightContribution : ℝ) := by
   classical
   let attnTotal : ℝ :=
-    (l.attnValueCoeff : ℝ) +
+    (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
       (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)
   have hcomp :
       SignedMixer.operatorNormBound
@@ -540,7 +540,7 @@ theorem layerJacobian_residual_bound_of_cert_components
     (hLn1_nonneg : 0 ≤ (l.ln1Bound : ℝ))
     (hFull :
       SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-        (l.attnValueCoeff : ℝ) +
+        (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ))
     (hLn2 :
       SignedMixer.operatorNormBound (D.ln2Jacobians i) ≤ (l.ln2Bound : ℝ))
@@ -574,6 +574,7 @@ theorem layerJacobian_residual_bound_of_cert_assuming
     (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat)
     (hValid : l.Valid eps sqrtPrecBits seqLen modelDim headDim)
+    (hSeqLen_pos : 1 ≤ seqLen)
     (h : LayerComponentNormAssumptions (D := D) (i := i) (l := l)) :
     SignedMixer.operatorNormBound
         (D.layerJacobian i - SignedMixer.identity) ≤ (l.C : ℝ) := by
@@ -593,11 +594,31 @@ theorem layerJacobian_residual_bound_of_cert_assuming
         h.mlpDerivBound hCoeff)
   have hFull :
       SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-        (l.attnValueCoeff : ℝ) +
+        (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) := by
-    simpa using
-      (attention_fullJacobian_bound_of_terms (L := D.layers i)
-        (hValue := h.attnValueBound) (hPattern := h.attnPatternBound))
+    have hFullBase :
+        SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
+          (l.attnValueCoeff : ℝ) +
+            (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) := by
+      simpa using
+        (attention_fullJacobian_bound_of_terms (L := D.layers i)
+          (hValue := h.attnValueBound) (hPattern := h.attnPatternBound))
+    have hVal_nonneg : 0 ≤ (l.attnValueCoeff : ℝ) := by
+      exact le_trans
+        (SignedMixer.operatorNormBound_nonneg (M := valueTerm (D.layers i)))
+        h.attnValueBound
+    have hSeq_ge_one : (1 : ℝ) ≤ (seqLen : ℝ) := by
+      exact_mod_cast hSeqLen_pos
+    have hValue_le :
+        (l.attnValueCoeff : ℝ) ≤ (seqLen : ℝ) * (l.attnValueCoeff : ℝ) := by
+      exact le_mul_of_one_le_left hVal_nonneg hSeq_ge_one
+    have hFull' :
+        (l.attnValueCoeff : ℝ) +
+            (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) ≤
+          (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
+            (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) := by
+      exact add_le_add hValue_le (le_rfl)
+    exact le_trans hFullBase hFull'
   exact layerJacobian_residual_bound_of_cert_components
     (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
     (seqLen := seqLen) (modelDim := modelDim) (headDim := headDim)

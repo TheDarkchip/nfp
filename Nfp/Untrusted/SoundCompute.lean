@@ -353,7 +353,8 @@ private def certifyModelFileGlobalBinary
           softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
         let softmaxBound := min softmaxIntervalBound softmaxMarginBound
         let attnW :=
-          ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
+          ln1Bound *
+            ((hdr.seqLen : Rat) * attnValueCoeff + softmaxBound * attnPatternCoeff)
         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
         let C := attnW + mlpW + attnW * mlpW
         layers := layers.push {
@@ -819,7 +820,7 @@ def certifyModelFileGlobal
       softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound softmaxExpEffort
     let softmaxBound := min softmaxIntervalBound softmaxMarginBound
     let attnW :=
-      ln1Bound * (attnValueCoeffLayer + softmaxBound * attnPatternCoeff)
+      ln1Bound * ((n : Rat) * attnValueCoeffLayer + softmaxBound * attnPatternCoeff)
     let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
     let C := attnW + mlpW + attnW * mlpW
     layers := layers.push {
@@ -2331,7 +2332,8 @@ private def certifyModelFileLocalText
                           attnPatternCoeffBound n d dh ln1OutMaxAbsBound wqMax wkMax
                             attnValueCoeff
                         let attnW :=
-                          ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
+                          ln1Bound *
+                            ((n : Rat) * attnValueCoeff + softmaxBound * attnPatternCoeff)
                         let mlpCoeff := nWin * nWout
                         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
                         let C := attnW + mlpW + attnW * mlpW
@@ -2512,7 +2514,8 @@ private def certifyModelFileLocal
               attnPatternCoeffBound inputSeqLen modelDim headDim ln1OutMaxAbsBound
                 (wqMaxArr[l]!) (wkMaxArr[l]!) attnValueCoeff
             let attnW :=
-              ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
+              ln1Bound *
+                ((inputSeqLen : Rat) * attnValueCoeff + softmaxBound * attnPatternCoeff)
             let mlpCoeff := nWin * nWout
             let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
             let C := attnW + mlpW + attnW * mlpW
@@ -2678,7 +2681,8 @@ private def certifyModelFileLocalBinary
         attnPatternCoeffBound hdr.seqLen hdr.modelDim hdr.headDim ln1OutMaxAbsBound
           wqMax wkMax attnValueCoeff
       let attnW :=
-        ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
+        ln1Bound *
+          ((hdr.seqLen : Rat) * attnValueCoeff + softmaxBound * attnPatternCoeff)
       let mlpCoeff := nWin * nWout
       let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
       let C := attnW + mlpW + attnW * mlpW
