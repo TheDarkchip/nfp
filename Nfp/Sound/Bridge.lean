@@ -105,6 +105,23 @@ structure LayerComponentNormAssumptions
   mlpDerivBound :
     ∀ j, |(D.mlpFactors i).deriv j| ≤ (l.mlpActDerivBound : ℝ)
 
+/-- Pattern-term bound from the explicit formula and row-sum gradient/value bounds. -/
+theorem attn_pattern_bound_of_explicit
+    {n d : Type*} [Fintype n] [Fintype d] [DecidableEq n] [DecidableEq d]
+    [Nonempty n] [Nonempty d]
+    (D : DeepLinearization (n := n) (d := d))
+    (i : Fin D.numLayers)
+    (G V : ℝ)
+    (hGrad : ∀ (pos : n) (d_in : d) (q : n),
+      ∑ k, |attentionGradient (D.layers i) q k pos d_in| ≤ G)
+    (hValue : SignedMixer.operatorNormBound (valueOutputMixer (D.layers i)) ≤ V)
+    (hEq : patternTerm (D.layers i) = patternTermExplicit (D.layers i)) :
+    SignedMixer.operatorNormBound (patternTerm (D.layers i)) ≤
+      (Fintype.card n : ℝ) * G * V := by
+  simpa using
+    (patternTerm_operatorNormBound_le_of_eq_explicit
+      (L := D.layers i) (G := G) (V := V) hGrad hValue hEq)
+
 /-- MLP coefficient bound from certificate validity and component bounds. -/
 theorem mlp_coeff_bound_of_valid
     {n d : Type*} [Fintype n] [Fintype d] [Nonempty n] [Nonempty d]

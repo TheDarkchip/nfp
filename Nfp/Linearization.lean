@@ -928,6 +928,98 @@ theorem attentionGradient_via_softmax (L : AttentionLinearization n d) (q k i : 
     simp [h, hne]
 
 omit [DecidableEq n] [DecidableEq d] in
+/-- Sum of absolute values after applying a signed mixer is controlled by the operator norm. -/
+theorem sum_abs_apply_le {S T : Type*} [Fintype S] [Fintype T] [Nonempty S]
+    (M : SignedMixer S T) (v : S → ℝ) :
+    ∑ j, |M.apply v j| ≤ (∑ i, |v i|) * SignedMixer.operatorNormBound M := by
+  classical
+  have hterm : ∀ j, |M.apply v j| ≤ ∑ i, |v i| * |M.w i j| := by
+    intro j
+    have h :=
+      (abs_sum_le_sum_abs (f := fun i => v i * M.w i j) (s := Finset.univ))
+    simpa [SignedMixer.apply_def, abs_mul] using h
+  have hsum :
+      ∑ j, |M.apply v j| ≤ ∑ j, ∑ i, |v i| * |M.w i j| := by
+    refine Finset.sum_le_sum ?_
+    intro j _hj
+    exact hterm j
+  have hswap :
+      (∑ j, ∑ i, |v i| * |M.w i j|) =
+        ∑ i, |v i| * (∑ j, |M.w i j|) := by
+    calc
+      (∑ j, ∑ i, |v i| * |M.w i j|)
+          = ∑ i, ∑ j, |v i| * |M.w i j| := by
+            simpa using
+              (Finset.sum_comm (s := Finset.univ) (t := Finset.univ)
+                (f := fun j i => |v i| * |M.w i j|))
+      _ = ∑ i, |v i| * (∑ j, |M.w i j|) := by
+            refine Finset.sum_congr rfl ?_
+            intro i _hi
+            simp [Finset.mul_sum]
+  have hrow :
+      ∀ i, (∑ j, |M.w i j|) ≤ SignedMixer.operatorNormBound M := by
+    intro i
+    exact Finset.le_sup' (s := Finset.univ)
+      (f := fun i => SignedMixer.rowAbsSum M i) (by simp)
+  have hfinal :
+      ∑ i, |v i| * (∑ j, |M.w i j|) ≤
+        ∑ i, |v i| * SignedMixer.operatorNormBound M := by
+    refine Finset.sum_le_sum ?_
+    intro i _hi
+    have hnonneg : 0 ≤ |v i| := abs_nonneg _
+    exact mul_le_mul_of_nonneg_left (hrow i) hnonneg
+  have hmul :
+      ∑ i, |v i| * SignedMixer.operatorNormBound M =
+        (∑ i, |v i|) * SignedMixer.operatorNormBound M := by
+    simp [Finset.sum_mul]
+  calc
+    ∑ j, |M.apply v j| ≤ ∑ j, ∑ i, |v i| * |M.w i j| := hsum
+    _ = ∑ i, |v i| * (∑ j, |M.w i j|) := hswap
+    _ ≤ ∑ i, |v i| * SignedMixer.operatorNormBound M := hfinal
+    _ = (∑ i, |v i|) * SignedMixer.operatorNormBound M := hmul
+
+omit [DecidableEq d] in
+/-- Row-sum bound for attention gradients from softmax Jacobian and score-gradient bounds. -/
+theorem attentionGradient_rowAbsSum_le_of_softmax [Nonempty n]
+    (L : AttentionLinearization n d) (q i : n) (d_in : d) (J S : ℝ)
+    (hConsistent : L.state.attentionWeights q = softmax (L.state.scores q))
+    (hSoftmax :
+      SignedMixer.operatorNormBound (softmaxJacobian (L.state.scores q)) ≤ J)
+    (hScore : ∑ k, |scoreGradient L q k i d_in| ≤ S) :
+    ∑ k, |attentionGradient L q k i d_in| ≤ J * S := by
+  classical
+  let M := softmaxJacobian (L.state.scores q)
+  let v : n → ℝ := fun k => scoreGradient L q k i d_in
+  have hApply : ∀ k, attentionGradient L q k i d_in = M.apply v k := by
+    intro k
+    have h :=
+      attentionGradient_via_softmax (L := L) (q := q) (k := k) (i := i) (d_in := d_in)
+        hConsistent
+    simpa [SignedMixer.apply_def, M, v, mul_comm] using h
+  have hSum :
+      ∑ k, |attentionGradient L q k i d_in| = ∑ k, |M.apply v k| := by
+    refine Finset.sum_congr rfl ?_
+    intro k _hk
+    simp [hApply]
+  have hBound := sum_abs_apply_le (M := M) (v := v)
+  have hSum_nonneg : 0 ≤ ∑ k, |v k| :=
+    Finset.sum_nonneg (fun _ _ => abs_nonneg _)
+  have hJ_nonneg : 0 ≤ J :=
+    le_trans (SignedMixer.operatorNormBound_nonneg (M := M)) hSoftmax
+  have hMul1 :
+      (∑ k, |v k|) * SignedMixer.operatorNormBound M ≤ (∑ k, |v k|) * J := by
+    exact mul_le_mul_of_nonneg_left hSoftmax hSum_nonneg
+  have hMul2 :
+      (∑ k, |v k|) * J ≤ S * J := by
+    exact mul_le_mul_of_nonneg_right hScore hJ_nonneg
+  calc
+    ∑ k, |attentionGradient L q k i d_in| = ∑ k, |M.apply v k| := hSum
+    _ ≤ (∑ k, |v k|) * SignedMixer.operatorNormBound M := hBound
+    _ ≤ (∑ k, |v k|) * J := hMul1
+    _ ≤ S * J := hMul2
+    _ = J * S := by ring
+
+omit [DecidableEq n] [DecidableEq d] in
 /-- Attention weights are nonnegative when consistent with softmax. -/
 theorem attentionWeights_nonneg (L : AttentionLinearization n d)
     (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
@@ -1007,6 +1099,7 @@ theorem valueTerm_operatorNormBound_le_card [Nonempty n] [Nonempty d]
 
 /-! ### Explicit Pattern Term Formula -/
 
+omit [DecidableEq n] [DecidableEq d] in
 /-- **Explicit formula for the Pattern Term**.
 
 PatternTerm_{(i,d_in), (q,d_out)} =
@@ -1019,6 +1112,149 @@ noncomputable def patternTermExplicit (L : AttentionLinearization n d) :
   w := fun ⟨i, d_in⟩ ⟨q, d_out⟩ =>
     ∑ k, attentionGradient L q k i d_in *
          (∑ d', L.state.values k d' * L.layer.W_O.w d' d_out)
+
+omit [DecidableEq d] in
+/-- Pattern term equals the explicit formula when the full Jacobian matches the explicit split. -/
+theorem patternTerm_eq_explicit_of_fullJacobian_eq (L : AttentionLinearization n d)
+    (hEq : L.fullJacobian = valueTerm L + patternTermExplicit L) :
+    patternTerm L = patternTermExplicit L := by
+  have hDecomp := attention_jacobian_decomposition (L := L)
+  have hMixers : valueTerm L + patternTerm L = valueTerm L + patternTermExplicit L := by
+    exact hDecomp.symm.trans hEq
+  ext i j
+  have hEq' := congrArg (fun M => M.w i j) hMixers
+  have hEq'' :
+      (valueTerm L).w i j + (patternTerm L).w i j =
+        (valueTerm L).w i j + (patternTermExplicit L).w i j := by
+    simpa [SignedMixer.add_w] using hEq'
+  exact add_left_cancel hEq''
+
+/-! ### Pattern Term Bounds -/
+
+/-- Output mixer using cached values and the output projection. -/
+noncomputable def valueOutputMixer (L : AttentionLinearization n d) : SignedMixer n d :=
+  ⟨fun k d_out => ∑ d', L.state.values k d' * L.layer.W_O.w d' d_out⟩
+
+/-- Mixer capturing attention gradients for a fixed input coordinate. -/
+noncomputable def attentionGradientMixer (L : AttentionLinearization n d) (i : n) (d_in : d) :
+    SignedMixer n n :=
+  ⟨fun q k => attentionGradient L q k i d_in⟩
+
+omit [DecidableEq d] in
+/-- Pattern term entries as a gradient mixer composed with value output. -/
+theorem patternTermExplicit_w_eq (L : AttentionLinearization n d)
+    (i : n) (d_in : d) (q : n) (d_out : d) :
+    (patternTermExplicit L).w (i, d_in) (q, d_out) =
+      ((attentionGradientMixer L i d_in).comp (valueOutputMixer L)).w q d_out := by
+  simp [patternTermExplicit, attentionGradientMixer, valueOutputMixer, SignedMixer.comp_w]
+
+omit [DecidableEq d] in
+/-- Row-absolute-sum bound for the explicit pattern term. -/
+theorem patternTermExplicit_rowAbsSum_le [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (i : n) (d_in : d) (G V : ℝ)
+    (hGrad : ∀ q, ∑ k, |attentionGradient L q k i d_in| ≤ G)
+    (hValue : SignedMixer.operatorNormBound (valueOutputMixer L) ≤ V) :
+    SignedMixer.rowAbsSum (patternTermExplicit L) (i, d_in) ≤
+      (Fintype.card n : ℝ) * G * V := by
+  classical
+  let A := attentionGradientMixer L i d_in
+  let B := valueOutputMixer L
+  have hRow :
+      SignedMixer.rowAbsSum (patternTermExplicit L) (i, d_in) =
+        ∑ q, SignedMixer.rowAbsSum (A.comp B) q := by
+    have hRow1 :
+        SignedMixer.rowAbsSum (patternTermExplicit L) (i, d_in) =
+          ∑ q, ∑ d_out,
+            |∑ k, attentionGradient L q k i d_in *
+              (∑ d', L.state.values k d' * L.layer.W_O.w d' d_out)| := by
+      simpa [SignedMixer.rowAbsSum, patternTermExplicit] using
+        (Fintype.sum_prod_type'
+          (f := fun q d_out =>
+            |∑ k, attentionGradient L q k i d_in *
+              (∑ d', L.state.values k d' * L.layer.W_O.w d' d_out)|))
+    have hRow2 :
+        ∑ q, SignedMixer.rowAbsSum (A.comp B) q =
+          ∑ q, ∑ d_out,
+            |∑ k, attentionGradient L q k i d_in *
+              (∑ d', L.state.values k d' * L.layer.W_O.w d' d_out)| := by
+      simp [SignedMixer.rowAbsSum, A, B, attentionGradientMixer, valueOutputMixer,
+        SignedMixer.comp_w]
+    exact hRow1.trans hRow2.symm
+  have hRow_q :
+      ∀ q, SignedMixer.rowAbsSum (A.comp B) q ≤ G * SignedMixer.operatorNormBound B := by
+    intro q
+    have hA :
+        SignedMixer.rowAbsSum A q ≤ G := by
+      simpa [A, SignedMixer.rowAbsSum] using hGrad q
+    have hB_nonneg : 0 ≤ SignedMixer.operatorNormBound B :=
+      SignedMixer.operatorNormBound_nonneg (M := B)
+    have hcomp :
+        SignedMixer.rowAbsSum (A.comp B) q ≤
+          SignedMixer.rowAbsSum A q * SignedMixer.operatorNormBound B :=
+      SignedMixer.rowAbsSum_comp_le (M := A) (N := B) (i := q)
+    have hmul :
+        SignedMixer.rowAbsSum A q * SignedMixer.operatorNormBound B ≤
+          G * SignedMixer.operatorNormBound B :=
+      mul_le_mul_of_nonneg_right hA hB_nonneg
+    exact le_trans hcomp hmul
+  have hSum :
+      (∑ q : n, SignedMixer.rowAbsSum (A.comp B) q) ≤
+        ∑ q : n, G * SignedMixer.operatorNormBound B := by
+    refine Finset.sum_le_sum ?_
+    intro q _hq
+    exact hRow_q q
+  have hCard :
+      (∑ q : n, G * SignedMixer.operatorNormBound B) =
+        (Fintype.card n : ℝ) * (G * SignedMixer.operatorNormBound B) := by
+    simp
+  have hCard_nonneg : 0 ≤ (Fintype.card n : ℝ) := by
+    exact_mod_cast Nat.zero_le _
+  have hG_nonneg : 0 ≤ G := by
+    rcases (inferInstance : Nonempty n) with ⟨q⟩
+    have h := hGrad q
+    exact le_trans (Finset.sum_nonneg (fun _ _ => abs_nonneg _)) h
+  have hGV : G * SignedMixer.operatorNormBound B ≤ G * V := by
+    exact mul_le_mul_of_nonneg_left hValue hG_nonneg
+  calc
+    SignedMixer.rowAbsSum (patternTermExplicit L) (i, d_in)
+        = ∑ q, SignedMixer.rowAbsSum (A.comp B) q := hRow
+    _ ≤ ∑ q, G * SignedMixer.operatorNormBound B := hSum
+    _ = (Fintype.card n : ℝ) * (G * SignedMixer.operatorNormBound B) := hCard
+    _ ≤ (Fintype.card n : ℝ) * (G * V) := by
+      exact mul_le_mul_of_nonneg_left hGV hCard_nonneg
+    _ = (Fintype.card n : ℝ) * G * V := by ring
+
+omit [DecidableEq d] in
+/-- Operator-norm bound for the explicit pattern term. -/
+theorem patternTermExplicit_operatorNormBound_le [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (G V : ℝ)
+    (hGrad : ∀ i d_in q, ∑ k, |attentionGradient L q k i d_in| ≤ G)
+    (hValue : SignedMixer.operatorNormBound (valueOutputMixer L) ≤ V) :
+    SignedMixer.operatorNormBound (patternTermExplicit L) ≤
+      (Fintype.card n : ℝ) * G * V := by
+  classical
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := n × d))
+    (f := fun i => SignedMixer.rowAbsSum (patternTermExplicit L) i)
+    (a := (Fintype.card n : ℝ) * G * V)).2 ?_
+  intro id _hid
+  rcases id with ⟨i, d_in⟩
+  have hRow :=
+    patternTermExplicit_rowAbsSum_le (L := L) (i := i) (d_in := d_in) (G := G) (V := V)
+      (hGrad := hGrad i d_in) hValue
+  simpa using hRow
+
+omit [DecidableEq d] in
+/-- Pattern-term operator-norm bound from equality with the explicit formula. -/
+theorem patternTerm_operatorNormBound_le_of_eq_explicit [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (G V : ℝ)
+    (hGrad : ∀ i d_in q, ∑ k, |attentionGradient L q k i d_in| ≤ G)
+    (hValue : SignedMixer.operatorNormBound (valueOutputMixer L) ≤ V)
+    (hEq : patternTerm L = patternTermExplicit L) :
+    SignedMixer.operatorNormBound (patternTerm L) ≤
+      (Fintype.card n : ℝ) * G * V := by
+  simpa [hEq] using
+    (patternTermExplicit_operatorNormBound_le (L := L) (G := G) (V := V) hGrad hValue)
 
 /-! ### Attention Rollout Approximation Error -/
 
