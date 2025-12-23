@@ -5,6 +5,8 @@
 - Added effort-indexed exp lower bounds (scaled Taylor + squaring) and wired them into best-match softmax bounds.
 - Extended best-match head pattern certs with a recorded softmax Jacobian upper bound and wired untrusted computation to populate it.
 - Noted that the exp lower-bound correctness is not yet formalized in Lean.
+- Layer-level sound certificates now use a portfolio softmax Jacobian bound field, with margin-based
+  tightening available when margins are supplied (defaults remain worst-case today).
 
 ## 2025-12-22
 - Optimized induction head discovery by caching per-head induction scores and per-layer input norms, eliminating redundant pattern scans and repeated Frobenius norm computations.

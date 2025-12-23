@@ -82,6 +82,7 @@ def demoBadCert : ModelCert :=
     inputPath? := none
     inputDelta := 0
     eps := 0
+    seqLen := 0
     soundnessBits := 20
     geluDerivTarget := .tanh
     actDerivBound := 0

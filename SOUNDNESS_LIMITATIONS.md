@@ -10,6 +10,8 @@ soundness upgrade. It is intentionally brief and human-readable.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
 - Softmax Jacobian bounds use probability intervals defaulted to `[0,1]`, so they reduce to worst-case.
+- Layer amplification certificates now accept a margin-derived softmax Jacobian bound, but the
+  main certify path does not compute per-layer margins yet (defaults to 0, yielding the worst-case).
 - Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.

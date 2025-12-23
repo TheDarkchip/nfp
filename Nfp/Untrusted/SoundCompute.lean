@@ -327,7 +327,15 @@ private def certifyModelFileGlobalBinary
         let attnCoeff := attnSum
         let mlpCoeff := nWin * nWout
         let mlpActDerivBound := actDerivBound
-        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+        let softmaxProbLo : Rat := 0
+        let softmaxProbHi : Rat := 1
+        let softmaxMarginLowerBound : Rat := 0
+        let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
+        let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
+        let softmaxMarginBound :=
+          softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
+        let softmaxBound := min softmaxIntervalBound softmaxMarginBound
+        let attnW := ln1Bound * softmaxBound * attnCoeff
         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
         let C := attnW + mlpW + attnW * mlpW
         layers := layers.push {
@@ -338,8 +346,11 @@ private def certifyModelFileGlobalBinary
           ln2VarianceLowerBound? := none
           ln1Bound := ln1Bound
           ln2Bound := ln2Bound
-          softmaxProbLo := 0
-          softmaxProbHi := 1
+          softmaxProbLo := softmaxProbLo
+          softmaxProbHi := softmaxProbHi
+          softmaxMarginLowerBound := softmaxMarginLowerBound
+          softmaxExpEffort := softmaxExpEffort
+          softmaxJacobianNormInfUpperBound := softmaxBound
           attnCoeff := attnCoeff
           mlpCoeff := mlpCoeff
           mlpWinBound := nWin
@@ -364,6 +375,7 @@ private def certifyModelFileGlobalBinary
         inputPath? := none
         inputDelta := 0
         eps := eps
+        seqLen := hdr.seqLen
         soundnessBits := soundnessBits
         geluDerivTarget := geluDerivTarget
         actDerivBound := actDerivBound
@@ -656,6 +668,7 @@ def certifyModelFileGlobal
   let some d := modelDim | return .error "missing model_dim"
   let some dh := headDim | return .error "missing head_dim"
   let some dhid := hiddenDim | return .error "missing hidden_dim"
+  let some n := seqLen | return .error "missing seq_len"
   let inputVarLowerMin? : Option Rat := none
   -- Accumulators
   let mut ln1GammaMax : Array Rat := Array.replicate L 1
@@ -741,7 +754,15 @@ def certifyModelFileGlobal
     let attnCoeff := attnSum[l]!
     let mlpCoeff := mlpWin[l]! * mlpWout[l]!
     let mlpActDerivBound := actDerivBound
-    let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+    let softmaxProbLo : Rat := 0
+    let softmaxProbHi : Rat := 1
+    let softmaxMarginLowerBound : Rat := 0
+    let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
+    let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
+    let softmaxMarginBound :=
+      softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound softmaxExpEffort
+    let softmaxBound := min softmaxIntervalBound softmaxMarginBound
+    let attnW := ln1Bound * softmaxBound * attnCoeff
     let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
     let C := attnW + mlpW + attnW * mlpW
     layers := layers.push {
@@ -752,8 +773,11 @@ def certifyModelFileGlobal
       ln2VarianceLowerBound? := ln2Var?
       ln1Bound := ln1Bound
       ln2Bound := ln2Bound
-      softmaxProbLo := 0
-      softmaxProbHi := 1
+      softmaxProbLo := softmaxProbLo
+      softmaxProbHi := softmaxProbHi
+      softmaxMarginLowerBound := softmaxMarginLowerBound
+      softmaxExpEffort := softmaxExpEffort
+      softmaxJacobianNormInfUpperBound := softmaxBound
       attnCoeff := attnCoeff
       mlpCoeff := mlpCoeff
       mlpWinBound := mlpWin[l]!
@@ -770,6 +794,7 @@ def certifyModelFileGlobal
     inputPath? := inputPath?.map (·.toString)
     inputDelta := inputDelta
     eps := eps
+    seqLen := n
     soundnessBits := soundnessBits
     geluDerivTarget := geluDerivTarget
     actDerivBound := actDerivBoundMax
@@ -1283,7 +1308,7 @@ private def loadEmbeddingsUnionFixed
     (cfg : Fixed10Cfg)
     (path : System.FilePath)
     (expectedModelDim : Nat)
-    (delta : Rat) : IO (Except String (Array Fixed10Interval)) := do
+    (delta : Rat) : IO (Except String (Array Fixed10Interval × Nat)) := do
   let deltaInt : Int := ratCeilMulNat delta cfg.scaleNat
   let mut out : Array Fixed10Interval := Array.replicate expectedModelDim { lo := 0, hi := 0 }
   let mut iCol : Nat := 0
@@ -1353,7 +1378,7 @@ private def loadEmbeddingsUnionFixed
           out := out.set! iCol { lo := min cur.lo lo, hi := max cur.hi hi }
           iCol := (iCol + 1) % expectedModelDim
           remaining := remaining - 1
-  return .ok out
+  return .ok (out, n)
 
 /-- Parse binary embeddings into a union-box of fixed-point intervals. -/
 private def loadEmbeddingsUnionFixedBinary
@@ -2143,7 +2168,17 @@ private def certifyModelFileLocalText
                         pos := nextBout
                         let mlpOut := addConstVec mlpOut0 bout
                         residualUnion := addVecIntervals residualUnion mlpOut
-                        let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+                        let softmaxProbLo : Rat := 0
+                        let softmaxProbHi : Rat := 1
+                        let softmaxMarginLowerBound : Rat := 0
+                        let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
+                        let softmaxIntervalBound :=
+                          softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
+                        let softmaxMarginBound :=
+                          softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound
+                            softmaxExpEffort
+                        let softmaxBound := min softmaxIntervalBound softmaxMarginBound
+                        let attnW := ln1Bound * softmaxBound * attnCoeff
                         let mlpCoeff := nWin * nWout
                         let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
                         let C := attnW + mlpW + attnW * mlpW
@@ -2155,8 +2190,11 @@ private def certifyModelFileLocalText
                           ln2VarianceLowerBound? := some ln2VarLB
                           ln1Bound := ln1Bound
                           ln2Bound := ln2Bound
-                          softmaxProbLo := 0
-                          softmaxProbHi := 1
+                          softmaxProbLo := softmaxProbLo
+                          softmaxProbHi := softmaxProbHi
+                          softmaxMarginLowerBound := softmaxMarginLowerBound
+                          softmaxExpEffort := softmaxExpEffort
+                          softmaxJacobianNormInfUpperBound := softmaxBound
                           attnCoeff := attnCoeff
                           mlpCoeff := mlpCoeff
                           mlpWinBound := nWin
@@ -2174,6 +2212,7 @@ private def certifyModelFileLocalText
         inputPath? := some inputPath.toString
         inputDelta := inputDelta
         eps := eps
+        seqLen := n
         soundnessBits := soundnessBits
         geluDerivTarget := geluDerivTarget
         actDerivBound := actDerivBoundMax
@@ -2212,7 +2251,7 @@ private def certifyModelFileLocal
       let residualUnionE ← loadEmbeddingsUnionFixed cfg inputPath modelDim inputDelta
       match residualUnionE with
       | .error e => return .error e
-      | .ok residualUnion0 =>
+      | .ok (residualUnion0, inputSeqLen) =>
           let mut residualUnion := residualUnion0
           -- Open cache and position reader after header.
           let ch ← IO.FS.Handle.mk cpath IO.FS.Mode.read
@@ -2289,7 +2328,16 @@ private def certifyModelFileLocal
             rr := rrBout
             let mlpOut := addVecFixed mlpOut0 bOut
             residualUnion := addVecFixed residualUnion mlpOut
-            let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+            let softmaxProbLo : Rat := 0
+            let softmaxProbHi : Rat := 1
+            let softmaxMarginLowerBound : Rat := 0
+            let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
+            let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
+            let softmaxMarginBound :=
+              softmaxJacobianNormInfBoundFromMargin inputSeqLen softmaxMarginLowerBound
+                softmaxExpEffort
+            let softmaxBound := min softmaxIntervalBound softmaxMarginBound
+            let attnW := ln1Bound * softmaxBound * attnCoeff
             let mlpCoeff := nWin * nWout
             let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
             let C := attnW + mlpW + attnW * mlpW
@@ -2301,8 +2349,11 @@ private def certifyModelFileLocal
               ln2VarianceLowerBound? := some ln2VarLB
               ln1Bound := ln1Bound
               ln2Bound := ln2Bound
-              softmaxProbLo := 0
-              softmaxProbHi := 1
+              softmaxProbLo := softmaxProbLo
+              softmaxProbHi := softmaxProbHi
+              softmaxMarginLowerBound := softmaxMarginLowerBound
+              softmaxExpEffort := softmaxExpEffort
+              softmaxJacobianNormInfUpperBound := softmaxBound
               attnCoeff := attnCoeff
               mlpCoeff := mlpCoeff
               mlpWinBound := nWin
@@ -2319,6 +2370,7 @@ private def certifyModelFileLocal
             inputPath? := some inputPath.toString
             inputDelta := inputDelta
             eps := eps
+            seqLen := inputSeqLen
             soundnessBits := soundnessBits
             geluDerivTarget := geluDerivTarget
             actDerivBound := actDerivBoundMax
@@ -2420,7 +2472,15 @@ private def certifyModelFileLocalBinary
       let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       let mlpOut := addVecFixed mlpOut0 bOut
       residualUnion := addVecFixed residualUnion mlpOut
-      let attnW := ln1Bound * softmaxJacobianNormInfWorst * attnCoeff
+      let softmaxProbLo : Rat := 0
+      let softmaxProbHi : Rat := 1
+      let softmaxMarginLowerBound : Rat := 0
+      let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
+      let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
+      let softmaxMarginBound :=
+        softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
+      let softmaxBound := min softmaxIntervalBound softmaxMarginBound
+      let attnW := ln1Bound * softmaxBound * attnCoeff
       let mlpCoeff := nWin * nWout
       let mlpW := ln2Bound * (mlpCoeff * mlpActDerivBound)
       let C := attnW + mlpW + attnW * mlpW
@@ -2432,8 +2492,11 @@ private def certifyModelFileLocalBinary
         ln2VarianceLowerBound? := some ln2VarLB
         ln1Bound := ln1Bound
         ln2Bound := ln2Bound
-        softmaxProbLo := 0
-        softmaxProbHi := 1
+        softmaxProbLo := softmaxProbLo
+        softmaxProbHi := softmaxProbHi
+        softmaxMarginLowerBound := softmaxMarginLowerBound
+        softmaxExpEffort := softmaxExpEffort
+        softmaxJacobianNormInfUpperBound := softmaxBound
         attnCoeff := attnCoeff
         mlpCoeff := mlpCoeff
         mlpWinBound := nWin
@@ -2454,6 +2517,7 @@ private def certifyModelFileLocalBinary
       inputPath? := some inputPath.toString
       inputDelta := inputDelta
       eps := eps
+      seqLen := hdr.seqLen
       soundnessBits := soundnessBits
       geluDerivTarget := geluDerivTarget
       actDerivBound := actDerivBoundMax

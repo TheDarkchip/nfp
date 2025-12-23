@@ -90,7 +90,7 @@ structure LayerComponentNormAssumptions
   ln1Bound_nonneg : 0 ≤ (l.ln1Bound : ℝ)
   attnFullBound :
     SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-      (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi : ℝ) *
+      (l.softmaxJacobianNormInfUpperBound : ℝ) *
         (l.attnCoeff : ℝ)
   ln2Bound :
     SignedMixer.operatorNormBound (D.ln2Jacobians i) ≤ (l.ln2Bound : ℝ)
@@ -108,8 +108,8 @@ structure LayerComponentNormAssumptions
 theorem mlp_coeff_bound_of_valid
     {n d : Type*} [Fintype n] [Fintype d] [Nonempty n] [Nonempty d]
     (F : MLPFactorization (n := n) (d := d))
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (hWin : SignedMixer.operatorNormBound F.win ≤ (l.mlpWinBound : ℝ))
     (hWin_nonneg : 0 ≤ (l.mlpWinBound : ℝ))
     (hWout : SignedMixer.operatorNormBound F.wout ≤ (l.mlpWoutBound : ℝ)) :
@@ -131,7 +131,7 @@ theorem mlp_coeff_bound_of_valid
         (l.mlpWinBound : ℝ) * (l.mlpWoutBound : ℝ) := by
     exact le_trans hMul1 hMul2
   have hCoeff := LayerAmplificationCert.mlpCoeff_eq_cast_of_valid
-    (eps := eps) (sqrtPrecBits := sqrtPrecBits) (l := l) hValid
+    (eps := eps) (sqrtPrecBits := sqrtPrecBits) (seqLen := seqLen) (l := l) hValid
   simpa [hCoeff] using hMul
 
 /-- MLP operator-norm bound from a factored Jacobian plus coefficient bounds. -/
@@ -184,21 +184,20 @@ theorem attn_component_bound_of_cert
     [Nonempty n] [Nonempty d]
     (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers)
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (hLn1 :
       SignedMixer.operatorNormBound (D.ln1Jacobians i) ≤ (l.ln1Bound : ℝ))
     (hLn1_nonneg : 0 ≤ (l.ln1Bound : ℝ))
     (hFull :
       SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-        (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi : ℝ) *
-          (l.attnCoeff : ℝ)) :
+        (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnCoeff : ℝ)) :
     SignedMixer.operatorNormBound
         ((D.ln1Jacobians i).comp (D.layers i).fullJacobian)
         ≤ (l.attnWeightContribution : ℝ) := by
   classical
   let softmaxBound : ℝ :=
-    (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi : ℝ)
+    (l.softmaxJacobianNormInfUpperBound : ℝ)
   have hcomp :
       SignedMixer.operatorNormBound
           ((D.ln1Jacobians i).comp (D.layers i).fullJacobian) ≤
@@ -230,7 +229,7 @@ theorem attn_component_bound_of_cert
         (l.attnWeightContribution : ℝ) := by
     have hAttn :=
       LayerAmplificationCert.attnWeightContribution_eq_cast_of_valid
-        eps sqrtPrecBits l hValid
+        (eps := eps) (sqrtPrecBits := sqrtPrecBits) (seqLen := seqLen) (l := l) hValid
     simpa [softmaxBound, mul_assoc] using hAttn.symm
   calc
     SignedMixer.operatorNormBound
@@ -246,8 +245,8 @@ theorem mlp_component_bound_of_cert
     [Nonempty n] [Nonempty d]
     (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers)
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (hLn2 :
       SignedMixer.operatorNormBound (D.ln2Jacobians i) ≤ (l.ln2Bound : ℝ))
     (hLn2_nonneg : 0 ≤ (l.ln2Bound : ℝ))
@@ -288,7 +287,7 @@ theorem mlp_component_bound_of_cert
       (l.ln2Bound : ℝ) * mlpBound = (l.mlpWeightContribution : ℝ) := by
     have hMlpEq :=
       LayerAmplificationCert.mlpWeightContribution_eq_cast_of_valid
-        eps sqrtPrecBits l hValid
+        (eps := eps) (sqrtPrecBits := sqrtPrecBits) (seqLen := seqLen) (l := l) hValid
     simpa [mlpBound, mul_assoc] using hMlpEq.symm
   calc
     SignedMixer.operatorNormBound
@@ -304,8 +303,8 @@ theorem layerJacobian_residual_bound_of_cert
     [Nonempty n] [Nonempty d]
     (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers)
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (hA :
       SignedMixer.operatorNormBound
         ((D.ln1Jacobians i).comp (D.layers i).fullJacobian)
@@ -316,7 +315,8 @@ theorem layerJacobian_residual_bound_of_cert
         ≤ (l.mlpWeightContribution : ℝ)) :
     SignedMixer.operatorNormBound
         (D.layerJacobian i - SignedMixer.identity) ≤ (l.C : ℝ) := by
-  have hC := LayerAmplificationCert.c_eq_cast_of_valid eps sqrtPrecBits l hValid
+  have hC := LayerAmplificationCert.c_eq_cast_of_valid
+    (eps := eps) (sqrtPrecBits := sqrtPrecBits) (seqLen := seqLen) (l := l) hValid
   have hres :=
     DeepLinearization.layerJacobian_residual_bound
       (D := D) (i := i)
@@ -330,15 +330,14 @@ theorem layerJacobian_residual_bound_of_cert_components
     [Nonempty n] [Nonempty d]
     (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers)
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (hLn1 :
       SignedMixer.operatorNormBound (D.ln1Jacobians i) ≤ (l.ln1Bound : ℝ))
     (hLn1_nonneg : 0 ≤ (l.ln1Bound : ℝ))
     (hFull :
       SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-        (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi : ℝ) *
-          (l.attnCoeff : ℝ))
+        (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnCoeff : ℝ))
     (hLn2 :
       SignedMixer.operatorNormBound (D.ln2Jacobians i) ≤ (l.ln2Bound : ℝ))
     (hLn2_nonneg : 0 ≤ (l.ln2Bound : ℝ))
@@ -350,13 +349,16 @@ theorem layerJacobian_residual_bound_of_cert_components
   have hA :=
     attn_component_bound_of_cert
       (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
+      (seqLen := seqLen)
       hValid hLn1 hLn1_nonneg hFull
   have hM :=
     mlp_component_bound_of_cert
       (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
+      (seqLen := seqLen)
       hValid hLn2 hLn2_nonneg hMlp
   exact layerJacobian_residual_bound_of_cert
     (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
+    (seqLen := seqLen)
     hValid hA hM
 
 /-- Layer Jacobian residual bound from a certificate plus component-norm assumptions. -/
@@ -365,8 +367,8 @@ theorem layerJacobian_residual_bound_of_cert_assuming
     [Nonempty n] [Nonempty d]
     (D : DeepLinearization (n := n) (d := d))
     (i : Fin D.numLayers)
-    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
-    (hValid : l.Valid eps sqrtPrecBits)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat) (seqLen : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLen)
     (h : LayerComponentNormAssumptions (D := D) (i := i) (l := l)) :
     SignedMixer.operatorNormBound
         (D.layerJacobian i - SignedMixer.identity) ≤ (l.C : ℝ) := by
@@ -375,7 +377,7 @@ theorem layerJacobian_residual_bound_of_cert_assuming
         SignedMixer.operatorNormBound (D.mlpFactors i).wout ≤ (l.mlpCoeff : ℝ) :=
     mlp_coeff_bound_of_valid
       (F := D.mlpFactors i) (l := l)
-      (eps := eps) (sqrtPrecBits := sqrtPrecBits) hValid
+      (eps := eps) (sqrtPrecBits := sqrtPrecBits) (seqLen := seqLen) hValid
       h.mlpWinBound h.mlpWinBound_nonneg h.mlpWoutBound
   have hMlp :
       SignedMixer.operatorNormBound (D.mlpJacobians i) ≤
@@ -385,6 +387,7 @@ theorem layerJacobian_residual_bound_of_cert_assuming
         h.mlpDerivBound hCoeff)
   exact layerJacobian_residual_bound_of_cert_components
     (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
+    (seqLen := seqLen)
     hValid h.ln1Bound h.ln1Bound_nonneg h.attnFullBound
     h.ln2Bound h.ln2Bound_nonneg hMlp
 
