@@ -721,6 +721,98 @@ theorem valueTerm_factorizes (L : AttentionLinearization n d) (q k : n) (d_in d_
     (valueTerm L).w (k, d_in) (q, d_out) =
     L.state.attentionWeights q k * (L.layer.W_V.comp L.layer.W_O).w d_in d_out := rfl
 
+omit [DecidableEq n] [DecidableEq d] in
+/-- Row absolute sum for the Value Term splits into attention column mass and value row mass. -/
+theorem valueTerm_rowAbsSum (L : AttentionLinearization n d) (k : n) (d_in : d) :
+    SignedMixer.rowAbsSum (valueTerm L) (k, d_in) =
+      (∑ q, |L.state.attentionWeights q k|) *
+        SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in := by
+  classical
+  let voEntry : d → d → ℝ :=
+    fun d_in d_out => ∑ j, L.layer.W_V.w d_in j * L.layer.W_O.w j d_out
+  have hprod :
+      (∑ q, |L.state.attentionWeights q k|) *
+          ∑ d_out, |voEntry d_in d_out| =
+        ∑ q, ∑ d_out,
+          |L.state.attentionWeights q k| * |voEntry d_in d_out| := by
+    simpa using
+      (Fintype.sum_mul_sum
+        (f := fun q => |L.state.attentionWeights q k|)
+        (g := fun d_out => |voEntry d_in d_out|))
+  have hrow :
+      SignedMixer.rowAbsSum (valueTerm L) (k, d_in) =
+        ∑ x : n × d,
+          |L.state.attentionWeights x.1 k| * |voEntry d_in x.2| := by
+    simp [SignedMixer.rowAbsSum, valueTerm, abs_mul, voEntry, SignedMixer.comp_w]
+  have hrow' :
+      ∑ x : n × d,
+          |L.state.attentionWeights x.1 k| * |voEntry d_in x.2| =
+        ∑ q, ∑ d_out,
+          |L.state.attentionWeights q k| * |voEntry d_in d_out| := by
+    simpa using
+      (Fintype.sum_prod_type'
+        (f := fun q d_out =>
+          |L.state.attentionWeights q k| * |voEntry d_in d_out|))
+  calc
+    SignedMixer.rowAbsSum (valueTerm L) (k, d_in)
+        = ∑ q, ∑ d_out,
+            |L.state.attentionWeights q k| *
+              |(L.layer.W_V.comp L.layer.W_O).w d_in d_out| := by
+        simpa [hrow'] using hrow
+    _ = (∑ q, |L.state.attentionWeights q k|) *
+          SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in := by
+        simpa [SignedMixer.rowAbsSum, voEntry, SignedMixer.comp_w] using hprod.symm
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Value-term operator-norm bound from attention column mass and value projection bound. -/
+theorem valueTerm_operatorNormBound_le [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (A B : ℝ)
+    (hAttn : ∀ k, ∑ q, |L.state.attentionWeights q k| ≤ A)
+    (hVO : SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤ B) :
+    SignedMixer.operatorNormBound (valueTerm L) ≤ A * B := by
+  classical
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := n × d))
+    (f := fun i => SignedMixer.rowAbsSum (valueTerm L) i)
+    (a := A * B)).2 ?_
+  intro kd hkd
+  rcases kd with ⟨k, d_in⟩
+  have hRow :
+      SignedMixer.rowAbsSum (valueTerm L) (k, d_in) =
+        (∑ q, |L.state.attentionWeights q k|) *
+          SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in :=
+    valueTerm_rowAbsSum (L := L) k d_in
+  have hAttn_nonneg : 0 ≤ A := by
+    rcases (inferInstance : Nonempty n) with ⟨k0⟩
+    have hsum_nonneg :
+        0 ≤ ∑ q, |L.state.attentionWeights q k0| := by
+      exact Finset.sum_nonneg (fun _ _ => abs_nonneg _)
+    exact le_trans hsum_nonneg (hAttn k0)
+  have hVOnonneg :
+      0 ≤ SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in :=
+    SignedMixer.rowAbsSum_nonneg (M := L.layer.W_V.comp L.layer.W_O) d_in
+  have hVOrow :
+      SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in ≤ B := by
+    have hsup :
+        SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in ≤
+          SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) := by
+      exact Finset.le_sup' (s := Finset.univ)
+        (f := fun i => SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) i) (by simp)
+    exact le_trans hsup hVO
+  have hMul1 :
+      (∑ q, |L.state.attentionWeights q k|) *
+          SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in ≤
+        A * SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in := by
+    exact mul_le_mul_of_nonneg_right (hAttn k) hVOnonneg
+  have hMul2 :
+      A * SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in ≤ A * B := by
+    exact mul_le_mul_of_nonneg_left hVOrow hAttn_nonneg
+  have hMul :
+      (∑ q, |L.state.attentionWeights q k|) *
+          SignedMixer.rowAbsSum (L.layer.W_V.comp L.layer.W_O) d_in ≤ A * B := by
+    exact le_trans hMul1 hMul2
+  simpa [hRow] using hMul
+
 /-! ### The Pattern Term -/
 
 /-- **Pattern Term** of the attention Jacobian.
@@ -758,6 +850,25 @@ theorem attention_jacobian_decomposition (L : AttentionLinearization n d) :
   ext ⟨i, d_in⟩ ⟨q, d_out⟩
   simp only [SignedMixer.add_w, valueTerm, patternTerm]
   ring
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Operator-norm bound for the full attention Jacobian from Value/Pattern term bounds. -/
+theorem attention_fullJacobian_bound_of_terms [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) {A B : ℝ}
+    (hValue : SignedMixer.operatorNormBound (valueTerm L) ≤ A)
+    (hPattern : SignedMixer.operatorNormBound (patternTerm L) ≤ B) :
+    SignedMixer.operatorNormBound L.fullJacobian ≤ A + B := by
+  have hdecomp := attention_jacobian_decomposition (L := L)
+  calc
+    SignedMixer.operatorNormBound L.fullJacobian =
+        SignedMixer.operatorNormBound (valueTerm L + patternTerm L) := by
+      simp [hdecomp]
+    _ ≤ SignedMixer.operatorNormBound (valueTerm L) +
+          SignedMixer.operatorNormBound (patternTerm L) := by
+      simpa using
+        (SignedMixer.operatorNormBound_add_le
+          (M := valueTerm L) (N := patternTerm L))
+    _ ≤ A + B := add_le_add hValue hPattern
 
 /-! ### Score Gradient -/
 
@@ -815,6 +926,84 @@ theorem attentionGradient_via_softmax (L : AttentionLinearization n d) (q k i : 
   · simp [h]
   · have hne : k' ≠ k := fun h' => h h'.symm
     simp [h, hne]
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Attention weights are nonnegative when consistent with softmax. -/
+theorem attentionWeights_nonneg (L : AttentionLinearization n d)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (q k : n) : 0 ≤ L.state.attentionWeights q k := by
+  simpa [hConsistent q] using
+    (softmax_nonneg (x := L.state.scores q) (j := k))
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Attention weights for a query sum to one when consistent with softmax. -/
+theorem attentionWeights_row_sum_one [Nonempty n] (L : AttentionLinearization n d)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (q : n) : ∑ k, L.state.attentionWeights q k = 1 := by
+  simpa [hConsistent q] using (softmax_sum_one (x := L.state.scores q))
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Attention weights are at most one when consistent with softmax. -/
+theorem attentionWeights_le_one [Nonempty n] (L : AttentionLinearization n d)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (q k : n) : L.state.attentionWeights q k ≤ 1 := by
+  classical
+  have hnonneg : ∀ j, 0 ≤ L.state.attentionWeights q j := by
+    intro j
+    exact attentionWeights_nonneg (L := L) hConsistent q j
+  have hle :
+      L.state.attentionWeights q k ≤ ∑ j, L.state.attentionWeights q j := by
+    simpa using
+      (single_le_sum (s := Finset.univ) (f := fun j => L.state.attentionWeights q j)
+        (by
+          intro j _hj
+          exact hnonneg j) (by simp))
+  have hsum := attentionWeights_row_sum_one (L := L) hConsistent q
+  simpa [hsum] using hle
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Column mass of attention weights is bounded by the sequence length under softmax consistency. -/
+theorem attentionWeights_column_sum_le_card [Nonempty n] (L : AttentionLinearization n d)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (k : n) :
+    ∑ q, |L.state.attentionWeights q k| ≤ (Fintype.card n : ℝ) := by
+  classical
+  have hle1 : ∀ q, L.state.attentionWeights q k ≤ 1 := by
+    intro q
+    exact attentionWeights_le_one (L := L) hConsistent q k
+  have hnonneg : ∀ q, 0 ≤ L.state.attentionWeights q k := by
+    intro q
+    exact attentionWeights_nonneg (L := L) hConsistent q k
+  have hsum_abs :
+      (∑ q, |L.state.attentionWeights q k|) =
+        ∑ q, L.state.attentionWeights q k := by
+    refine Finset.sum_congr rfl ?_
+    intro q _hq
+    exact abs_of_nonneg (hnonneg q)
+  have hsum_le :
+      (∑ q : n, L.state.attentionWeights q k) ≤ ∑ q : n, (1 : ℝ) := by
+    refine Finset.sum_le_sum ?_
+    intro q _hq
+    exact hle1 q
+  have hsum_one : (∑ q : n, (1 : ℝ)) = (Fintype.card n : ℝ) := by
+    simp
+  calc
+    ∑ q, |L.state.attentionWeights q k|
+        = ∑ q, L.state.attentionWeights q k := hsum_abs
+    _ ≤ ∑ q, (1 : ℝ) := hsum_le
+    _ = (Fintype.card n : ℝ) := hsum_one
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Value-term operator-norm bound using softmax column-mass control. -/
+theorem valueTerm_operatorNormBound_le_card [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (B : ℝ)
+    (hConsistent : ∀ q, L.state.attentionWeights q = softmax (L.state.scores q))
+    (hVO : SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤ B) :
+    SignedMixer.operatorNormBound (valueTerm L) ≤ (Fintype.card n : ℝ) * B := by
+  have hAttn := attentionWeights_column_sum_le_card (L := L) hConsistent
+  simpa using
+    (valueTerm_operatorNormBound_le (L := L) (A := (Fintype.card n : ℝ)) (B := B)
+      hAttn hVO)
 
 /-! ### Explicit Pattern Term Formula -/
 

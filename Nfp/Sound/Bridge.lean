@@ -88,10 +88,11 @@ structure LayerComponentNormAssumptions
   ln1Bound :
     SignedMixer.operatorNormBound (D.ln1Jacobians i) ≤ (l.ln1Bound : ℝ)
   ln1Bound_nonneg : 0 ≤ (l.ln1Bound : ℝ)
-  attnFullBound :
-    SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
-      (l.attnValueCoeff : ℝ) +
-        (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)
+  attnValueBound :
+    SignedMixer.operatorNormBound (valueTerm (D.layers i)) ≤ (l.attnValueCoeff : ℝ)
+  attnPatternBound :
+    SignedMixer.operatorNormBound (patternTerm (D.layers i)) ≤
+      (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)
   ln2Bound :
     SignedMixer.operatorNormBound (D.ln2Jacobians i) ≤ (l.ln2Bound : ℝ)
   ln2Bound_nonneg : 0 ≤ (l.ln2Bound : ℝ)
@@ -399,10 +400,17 @@ theorem layerJacobian_residual_bound_of_cert_assuming
     simpa using
       (mlp_bound_of_factorization (F := D.mlpFactors i) (l := l)
         h.mlpDerivBound hCoeff)
+  have hFull :
+      SignedMixer.operatorNormBound (D.layers i).fullJacobian ≤
+        (l.attnValueCoeff : ℝ) +
+          (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) := by
+    simpa using
+      (attention_fullJacobian_bound_of_terms (L := D.layers i)
+        (hValue := h.attnValueBound) (hPattern := h.attnPatternBound))
   exact layerJacobian_residual_bound_of_cert_components
     (D := D) (i := i) (l := l) (eps := eps) (sqrtPrecBits := sqrtPrecBits)
     (seqLen := seqLen) (modelDim := modelDim) (headDim := headDim)
-    hValid h.ln1Bound h.ln1Bound_nonneg h.attnFullBound
+    hValid h.ln1Bound h.ln1Bound_nonneg hFull
     h.ln2Bound h.ln2Bound_nonneg hMlp
 
 end Nfp.Sound
