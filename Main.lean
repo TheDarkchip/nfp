@@ -871,6 +871,8 @@ private structure CertifyArgs where
   partitionDepth : Nat
   deltaFlag? : Option String
   deltaStr : String
+  softmaxMarginStr : String
+  softmaxExpEffort : Nat
   outputPath? : Option System.FilePath
 
 private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
@@ -880,6 +882,9 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
   let partitionDepth := p.flag? "partitionDepth" |>.map (·.as! Nat) |>.getD 0
   let deltaFlag? := p.flag? "delta" |>.map (·.as! String)
   let deltaStr := deltaFlag?.getD "0"
+  let softmaxMarginStr := p.flag? "softmaxMargin" |>.map (·.as! String) |>.getD "0"
+  let softmaxExpEffort :=
+    p.flag? "softmaxExpEffort" |>.map (·.as! Nat) |>.getD Nfp.Sound.defaultSoftmaxExpEffort
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   { modelPath := ⟨modelPathStr⟩
     modelPathStr := modelPathStr
@@ -888,6 +893,8 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
     partitionDepth := partitionDepth
     deltaFlag? := deltaFlag?
     deltaStr := deltaStr
+    softmaxMarginStr := softmaxMarginStr
+    softmaxExpEffort := softmaxExpEffort
     outputPath? := outputPath? }
 
 private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.ModelCert := do
@@ -895,6 +902,10 @@ private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.
     match Nfp.Sound.parseRat args.deltaStr with
     | .ok r => pure r
     | .error e => throw s!"invalid --delta '{args.deltaStr}': {e}"
+  let softmaxMarginLowerBound ←
+    match Nfp.Sound.parseRat args.softmaxMarginStr with
+    | .ok r => pure r
+    | .error e => throw s!"invalid --softmaxMargin '{args.softmaxMarginStr}': {e}"
   /- If `--input` is omitted but `--delta` is provided, try to use `modelPath` as the input file
      (for `.nfpt` exports that embed `EMBEDDINGS` in the same file). This keeps `nfp certify`
      ergonomic without changing the default behavior when `--delta` is absent. -/
@@ -917,6 +928,8 @@ containing EMBEDDINGS or omit --delta for global certification."
   let cert ← ExceptT.mk <|
     Nfp.Sound.certifyModelFile args.modelPath args.soundnessBits
       (inputPath? := inputPath?) (inputDelta := delta) (partitionDepth := args.partitionDepth)
+      (softmaxMarginLowerBound := softmaxMarginLowerBound)
+      (softmaxExpEffort := args.softmaxExpEffort)
   return cert
 
 private structure HeadBoundsArgs where
@@ -1573,6 +1586,8 @@ LayerNorm epsilon and GeLU kind are read from the model header."
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local certification (default: 0; \
 if --input is omitted, uses EMBEDDINGS in the model file when present)"
+    softmaxMargin : String; "Lower bound on softmax logit margin (default: 0)"
+    softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     partitionDepth : Nat; "Partition depth for input splitting (default: 0; >0 scaffold only)"
     o, output : String; "Write report to file instead of stdout"

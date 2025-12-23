@@ -68,13 +68,16 @@ def certifyModelFileGlobal
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
-    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
+    (partitionDepth : Nat := 0)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   match ← readModelHeader path with
   | .error e => return .error e
   | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFileGlobal
-            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth with
+            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth
+            softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then
@@ -93,13 +96,16 @@ def certifyModelFile
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
-    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
+    (partitionDepth : Nat := 0)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   match ← readModelHeader path with
   | .error e => return .error e
   | .ok (eps, geluTarget) =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyModelFile
-            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth with
+            path eps geluTarget soundnessBits inputPath? inputDelta partitionDepth
+            softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.eps ≠ eps then

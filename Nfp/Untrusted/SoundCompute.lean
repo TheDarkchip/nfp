@@ -233,7 +233,9 @@ private def certifyModelFileGlobalBinary
     (eps : Rat)
     (geluDerivTarget : GeluDerivTarget)
     (soundnessBits : Nat)
-    (partitionDepth : Nat) : IO (Except String ModelCert) := do
+    (partitionDepth : Nat)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -329,8 +331,6 @@ private def certifyModelFileGlobalBinary
         let mlpActDerivBound := actDerivBound
         let softmaxProbLo : Rat := 0
         let softmaxProbHi : Rat := 1
-        let softmaxMarginLowerBound : Rat := 0
-        let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
         let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
         let softmaxMarginBound :=
           softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
@@ -623,7 +623,9 @@ def certifyModelFileGlobal
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
-    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
+    (partitionDepth : Nat := 0)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   let actDerivBound := geluDerivBoundGlobal geluDerivTarget
@@ -756,8 +758,6 @@ def certifyModelFileGlobal
     let mlpActDerivBound := actDerivBound
     let softmaxProbLo : Rat := 0
     let softmaxProbHi : Rat := 1
-    let softmaxMarginLowerBound : Rat := 0
-    let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
     let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
     let softmaxMarginBound :=
       softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound softmaxExpEffort
@@ -1966,7 +1966,9 @@ private def certifyModelFileLocalText
     (soundnessBits : Nat)
     (partitionDepth : Nat)
     (inputPath : System.FilePath)
-    (inputDelta : Rat) : IO (Except String ModelCert) := do
+    (inputDelta : Rat)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   let contents ← IO.FS.readFile path
@@ -2170,8 +2172,6 @@ private def certifyModelFileLocalText
                         residualUnion := addVecIntervals residualUnion mlpOut
                         let softmaxProbLo : Rat := 0
                         let softmaxProbHi : Rat := 1
-                        let softmaxMarginLowerBound : Rat := 0
-                        let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
                         let softmaxIntervalBound :=
                           softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
                         let softmaxMarginBound :=
@@ -2231,14 +2231,16 @@ private def certifyModelFileLocal
     (soundnessBits : Nat)
     (partitionDepth : Nat)
     (inputPath : System.FilePath)
-    (inputDelta : Rat) : IO (Except String ModelCert) := do
+    (inputDelta : Rat)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   -- Prefer cached fixed-point path; fall back to the (slow) Rat-based path on any cache error.
   match (← ensureSoundCache path) with
   | .error _ =>
       certifyModelFileLocalText path eps geluDerivTarget soundnessBits partitionDepth
-        inputPath inputDelta
+        inputPath inputDelta softmaxMarginLowerBound softmaxExpEffort
   | .ok (cpath, hdr) =>
       let cfg : Fixed10Cfg := scaleCfgOfPow10 hdr.scalePow10.toNat
       let slack : Int := fixedUlpSlack
@@ -2330,8 +2332,6 @@ private def certifyModelFileLocal
             residualUnion := addVecFixed residualUnion mlpOut
             let softmaxProbLo : Rat := 0
             let softmaxProbHi : Rat := 1
-            let softmaxMarginLowerBound : Rat := 0
-            let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
             let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
             let softmaxMarginBound :=
               softmaxJacobianNormInfBoundFromMargin inputSeqLen softmaxMarginLowerBound
@@ -2389,7 +2389,9 @@ private def certifyModelFileLocalBinary
     (soundnessBits : Nat)
     (partitionDepth : Nat)
     (inputPath : System.FilePath)
-    (inputDelta : Rat) : IO (Except String ModelCert) := do
+    (inputDelta : Rat)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   let scalePow10 := defaultBinaryScalePow10
@@ -2474,8 +2476,6 @@ private def certifyModelFileLocalBinary
       residualUnion := addVecFixed residualUnion mlpOut
       let softmaxProbLo : Rat := 0
       let softmaxProbHi : Rat := 1
-      let softmaxMarginLowerBound : Rat := 0
-      let softmaxExpEffort : Nat := defaultSoftmaxExpEffort
       let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
       let softmaxMarginBound :=
         softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
@@ -3849,7 +3849,9 @@ def certifyModelFile
     (soundnessBits : Nat)
     (inputPath? : Option System.FilePath := none)
     (inputDelta : Rat := 0)
-    (partitionDepth : Nat := 0) : IO (Except String ModelCert) := do
+    (partitionDepth : Nat := 0)
+    (softmaxMarginLowerBound : Rat := 0)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   let firstLine := (← h.getLine).trim
   if firstLine = "NFP_BINARY_V1" then
@@ -3859,21 +3861,25 @@ def certifyModelFile
     | none =>
         if inputDelta = 0 then
           certifyModelFileGlobalBinary path eps geluDerivTarget soundnessBits partitionDepth
+            softmaxMarginLowerBound softmaxExpEffort
         else
           certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits partitionDepth
-            path inputDelta
+            path inputDelta softmaxMarginLowerBound softmaxExpEffort
     | some ip =>
         certifyModelFileLocalBinary path eps geluDerivTarget soundnessBits partitionDepth
-          ip inputDelta
+          ip inputDelta softmaxMarginLowerBound softmaxExpEffort
   else
     match inputPath? with
     | none =>
         certifyModelFileGlobal path eps geluDerivTarget soundnessBits
           (inputPath? := none) (inputDelta := inputDelta) (partitionDepth := partitionDepth)
+          (softmaxMarginLowerBound := softmaxMarginLowerBound)
+          (softmaxExpEffort := softmaxExpEffort)
     | some ip =>
         if inputDelta < 0 then
           return .error "delta must be nonnegative"
         certifyModelFileLocal path eps geluDerivTarget soundnessBits partitionDepth ip inputDelta
+          softmaxMarginLowerBound softmaxExpEffort
 
 /-- Compute weight-only per-head contribution bounds for a `.nfpt` model file. -/
 def certifyHeadBounds

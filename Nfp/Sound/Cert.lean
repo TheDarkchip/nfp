@@ -296,6 +296,8 @@ def toString (c : ModelCert) : String :=
 mlp={l.mlpWeightContribution}, cross={l.attnWeightContribution * l.mlpWeightContribution}, \
 mlpWinBound={l.mlpWinBound}, mlpWoutBound={l.mlpWoutBound}, \
 mlpActDerivBound={l.mlpActDerivBound}, \
+softmaxJacobianNormInfUpperBound={l.softmaxJacobianNormInfUpperBound}, \
+softmaxMarginLowerBound={l.softmaxMarginLowerBound}, softmaxExpEffort={l.softmaxExpEffort}, \
 ln1Bound={l.ln1Bound}, ln2Bound={l.ln2Bound}" ++
         (match l.ln1VarianceLowerBound? with
          | some v => s!", ln1Var≥{v}"

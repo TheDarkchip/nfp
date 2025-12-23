@@ -7,6 +7,8 @@
 - Noted that the exp lower-bound correctness is not yet formalized in Lean.
 - Layer-level sound certificates now use a portfolio softmax Jacobian bound field, with margin-based
   tightening available when margins are supplied (defaults remain worst-case today).
+- Added `nfp certify --softmaxMargin/--softmaxExpEffort` flags and report fields to pass margin
+  evidence into layer-level softmax portfolio bounds.
 
 ## 2025-12-22
 - Optimized induction head discovery by caching per-head induction scores and per-layer input norms, eliminating redundant pattern scans and repeated Frobenius norm computations.
