@@ -122,6 +122,180 @@ theorem attn_pattern_bound_of_explicit
     (patternTerm_operatorNormBound_le_of_eq_explicit
       (L := D.layers i) (G := G) (V := V) hGrad hValue hEq)
 
+/-- Pattern-term bound from certificate validity and attention-state assumptions. -/
+theorem attn_pattern_bound_of_cert
+    {n d : Type*} [Fintype n] [Fintype d] [DecidableEq n] [DecidableEq d]
+    [Nonempty n] [Nonempty d]
+    (D : DeepLinearization (n := n) (d := d))
+    (i : Fin D.numLayers)
+    (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
+    (seqLenNat modelDimNat headDimNat : Nat)
+    (hValid : l.Valid eps sqrtPrecBits seqLenNat modelDimNat headDimNat)
+    (hSeqLen : seqLenNat = Fintype.card n)
+    (hModelDim : modelDimNat = Fintype.card d)
+    (hScale : (1 / Real.sqrt (modelDim d)) ≤ (invSqrtUpperBound headDimNat : ℝ))
+    (hInputBound :
+      ∀ pos d_in, |(D.layers i).state.input pos d_in| ≤ (l.ln1OutMaxAbsBound : ℝ))
+    (hKeys :
+      ∀ pos d', (D.layers i).state.keys pos d' =
+        ∑ d_in, (D.layers i).state.input pos d_in *
+          (D.layers i).layer.W_K.w d_in d')
+    (hQueries :
+      ∀ pos d', (D.layers i).state.queries pos d' =
+        ∑ d_in, (D.layers i).state.input pos d_in *
+          (D.layers i).layer.W_Q.w d_in d')
+    (hValues :
+      ∀ pos d', (D.layers i).state.values pos d' =
+        ∑ d_in, (D.layers i).state.input pos d_in *
+          (D.layers i).layer.W_V.w d_in d')
+    (hWQ :
+      SignedMixer.operatorNormBound (D.layers i).layer.W_Q ≤ (l.wqOpBoundMax : ℝ))
+    (hWK :
+      SignedMixer.operatorNormBound (D.layers i).layer.W_K ≤ (l.wkOpBoundMax : ℝ))
+    (hVO :
+      SignedMixer.operatorNormBound
+          ((D.layers i).layer.W_V.comp (D.layers i).layer.W_O) ≤
+        (l.attnValueCoeff : ℝ))
+    (hConsistent :
+      ∀ q, (D.layers i).state.attentionWeights q =
+        softmax ((D.layers i).state.scores q))
+    (hSoftmax :
+      ∀ q, SignedMixer.operatorNormBound
+        (softmaxJacobian ((D.layers i).state.scores q)) ≤
+          (l.softmaxJacobianNormInfUpperBound : ℝ))
+    (hEq : patternTerm (D.layers i) = patternTermExplicit (D.layers i)) :
+    SignedMixer.operatorNormBound (patternTerm (D.layers i)) ≤
+      (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ) := by
+  classical
+  let L := D.layers i
+  let B : ℝ := (modelDimNat : ℝ) * (l.ln1OutMaxAbsBound : ℝ)
+  let wq : ℝ := (l.wqOpBoundMax : ℝ)
+  let wk : ℝ := (l.wkOpBoundMax : ℝ)
+  let J : ℝ := (l.softmaxJacobianNormInfUpperBound : ℝ)
+  let S : ℝ :=
+    (Fintype.card n : ℝ) *
+      ((1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk))
+  let V : ℝ := B * (l.attnValueCoeff : ℝ)
+  have hSeqLen' : (Fintype.card n : ℝ) = (seqLenNat : ℝ) := by
+    exact_mod_cast hSeqLen.symm
+  have hModelDim' : (Fintype.card d : ℝ) = (modelDimNat : ℝ) := by
+    exact_mod_cast hModelDim.symm
+  have hB_nonneg : 0 ≤ B := by
+    have hln1_nonneg : 0 ≤ (l.ln1OutMaxAbsBound : ℝ) := by
+      rcases (inferInstance : Nonempty n) with ⟨pos⟩
+      rcases (inferInstance : Nonempty d) with ⟨d_in⟩
+      have h := hInputBound pos d_in
+      exact le_trans (abs_nonneg _) h
+    have hdim_nonneg : 0 ≤ (modelDimNat : ℝ) := by
+      exact_mod_cast (Nat.zero_le _)
+    exact mul_nonneg hdim_nonneg hln1_nonneg
+  have hWQ_nonneg : 0 ≤ wq := by
+    exact le_trans
+      (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_Q)) hWQ
+  have hWK_nonneg : 0 ≤ wk := by
+    exact le_trans
+      (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_K)) hWK
+  have hInput :
+      ∀ pos, ∑ d', |L.state.input pos d'| ≤ B := by
+    intro pos
+    have hsum :
+        ∑ d', |L.state.input pos d'| ≤
+          ∑ d' : d, (l.ln1OutMaxAbsBound : ℝ) := by
+      refine Finset.sum_le_sum ?_
+      intro d' _hd
+      exact hInputBound pos d'
+    have hconst :
+        (∑ d' : d, (l.ln1OutMaxAbsBound : ℝ)) = B := by
+      simp [B, hModelDim']
+    exact le_trans hsum (by simp [hconst])
+  have hScore :
+      ∀ i' d_in q, ∑ k, |scoreGradient L q k i' d_in| ≤ S := by
+    intro i' d_in q
+    have h :=
+      scoreGradient_sum_le_of_input (L := L) (q := q) (i := i') (d_in := d_in)
+        (B := B) (wq := wq) (wk := wk)
+        hInput (hKeys := hKeys) (hQueries := hQueries) hWQ hWK
+    simpa [S, wq, wk] using h
+  have hValue :
+      SignedMixer.operatorNormBound (valueOutputMixer L) ≤ V := by
+    have h :=
+      valueOutputMixer_operatorNormBound_le_of_input (L := L) (B := B)
+        (V := (l.attnValueCoeff : ℝ)) hInput (hValues := hValues) hVO
+    simpa [V] using h
+  have hPattern :=
+    patternTerm_operatorNormBound_le_of_softmax (L := L) (J := J) (S := S) (V := V)
+      (hConsistent := hConsistent) (hSoftmax := hSoftmax)
+      (hScore := hScore) (hValue := hValue) hEq
+  have hJ_nonneg : 0 ≤ J := by
+    rcases (inferInstance : Nonempty n) with ⟨q⟩
+    exact le_trans
+      (SignedMixer.operatorNormBound_nonneg
+        (M := softmaxJacobian (L.state.scores q))) (hSoftmax q)
+  have hS_nonneg : 0 ≤ 2 * B * wq * wk := by
+    have h2 : 0 ≤ (2 : ℝ) := by norm_num
+    exact mul_nonneg (mul_nonneg (mul_nonneg h2 hB_nonneg) hWQ_nonneg) hWK_nonneg
+  let S_bound : ℝ :=
+    (seqLenNat : ℝ) * ((invSqrtUpperBound headDimNat : ℝ) * (2 * B * wq * wk))
+  have hS_le : S ≤ S_bound := by
+    have hSeq_nonneg : 0 ≤ (seqLenNat : ℝ) := by
+      exact_mod_cast (Nat.zero_le _)
+    calc
+      S = (seqLenNat : ℝ) *
+          ((1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk)) := by
+            simp [S, hSeqLen']
+      _ ≤ (seqLenNat : ℝ) *
+          ((invSqrtUpperBound headDimNat : ℝ) * (2 * B * wq * wk)) := by
+            exact mul_le_mul_of_nonneg_left
+              (mul_le_mul_of_nonneg_right hScale hS_nonneg) hSeq_nonneg
+      _ = S_bound := rfl
+  have hValue_nonneg : 0 ≤ V := by
+    have hVal_nonneg : 0 ≤ (l.attnValueCoeff : ℝ) := by
+      exact le_trans
+        (SignedMixer.operatorNormBound_nonneg
+          (M := L.layer.W_V.comp L.layer.W_O)) hVO
+    exact mul_nonneg hB_nonneg hVal_nonneg
+  have hSV_le :
+      (Fintype.card n : ℝ) * S * V ≤ (seqLenNat : ℝ) * S_bound * V := by
+    have hSeq_nonneg : 0 ≤ (seqLenNat : ℝ) := by
+      exact_mod_cast (Nat.zero_le _)
+    have hS_le' : (seqLenNat : ℝ) * S ≤ (seqLenNat : ℝ) * S_bound := by
+      exact mul_le_mul_of_nonneg_left hS_le hSeq_nonneg
+    calc
+      (Fintype.card n : ℝ) * S * V = (seqLenNat : ℝ) * S * V := by
+        simp [hSeqLen']
+      _ ≤ (seqLenNat : ℝ) * S_bound * V := by
+        exact mul_le_mul_of_nonneg_right hS_le' hValue_nonneg
+  have hPat :
+      (l.attnPatternCoeff : ℝ) =
+        (attnPatternCoeffBound seqLenNat modelDimNat headDimNat
+          l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax l.attnValueCoeff : ℝ) := by
+    rcases hValid with ⟨_hln1, _hln2, _hln1Out, _hsoftmax, hpat, _hattn, _hmlpCoeff, _hmlp, _hC⟩
+    exact congrArg (fun x : Rat => (x : ℝ)) hpat
+  have hCoeff_eq :
+      (seqLenNat : ℝ) * S_bound * V =
+        (attnPatternCoeffBound seqLenNat modelDimNat headDimNat
+          l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax l.attnValueCoeff : ℝ) := by
+    simp [S_bound, V, B, wq, wk, attnPatternCoeffBound_def, attnScoreGradBound_def,
+      Rat.cast_mul, Rat.cast_natCast, Rat.cast_ofNat, mul_assoc, mul_left_comm,
+      mul_comm, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
+  have hCoeff :
+      (Fintype.card n : ℝ) * S * V ≤ (l.attnPatternCoeff : ℝ) := by
+    calc
+      (Fintype.card n : ℝ) * S * V ≤ (seqLenNat : ℝ) * S_bound * V := hSV_le
+      _ = (attnPatternCoeffBound seqLenNat modelDimNat headDimNat
+            l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax l.attnValueCoeff : ℝ) := hCoeff_eq
+      _ = (l.attnPatternCoeff : ℝ) := by simp [hPat]
+  have hCoeffMul' :
+      J * ((Fintype.card n : ℝ) * S * V) ≤ J * (l.attnPatternCoeff : ℝ) :=
+    mul_le_mul_of_nonneg_left hCoeff hJ_nonneg
+  have hCoeffMul :
+      (Fintype.card n : ℝ) * J * S * V ≤ J * (l.attnPatternCoeff : ℝ) := by
+    have hRearrange :
+        (Fintype.card n : ℝ) * J * S * V = J * ((Fintype.card n : ℝ) * S * V) := by
+      ring
+    simpa [hRearrange] using hCoeffMul'
+  exact le_trans hPattern hCoeffMul
+
 /-- MLP coefficient bound from certificate validity and component bounds. -/
 theorem mlp_coeff_bound_of_valid
     {n d : Type*} [Fintype n] [Fintype d] [Nonempty n] [Nonempty d]
