@@ -284,6 +284,8 @@ but you **must** update this list in the same commit.
   - Pure header parsing helpers for SOUND metadata (e.g., LayerNorm epsilon).
 - `Sound/BinaryPure.lean`
   - Pure binary parsing/decoding helpers (IO-free, used by untrusted IO wrappers).
+- `Sound/TextPure.lean`
+  - Pure text parsing helpers for model-weight norms used in sound verification.
 - `Sound/CachePure.lean`
   - Pure cache parsing/encoding helpers used by untrusted IO wrappers.
 - `Untrusted/SoundBinary.lean`

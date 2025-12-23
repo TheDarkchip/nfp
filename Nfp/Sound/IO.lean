@@ -1,9 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Std
+import Nfp.Sound.BinaryPure
 import Nfp.Sound.Cert
 import Nfp.Sound.HeadCert
 import Nfp.Sound.ModelHeader
+import Nfp.Sound.TextPure
 import Nfp.Untrusted.SoundBinary
 import Nfp.Untrusted.SoundCompute
 
@@ -49,6 +51,156 @@ private def readModelEps (path : System.FilePath) : IO (Except String Rat) := do
   | .error e => return .error e
   | .ok (eps, _) => return .ok eps
 
+private def checkAttnValueCoeff (cert : ModelCert) (expected : Array Rat) : Except String Unit :=
+  Id.run do
+    if expected.size ≠ cert.layers.size then
+      return .error "attnValueCoeff layer count mismatch"
+    for idx in [:expected.size] do
+      let exp := expected[idx]!
+      let actual := cert.layers[idx]!.attnValueCoeff
+      if exp ≠ actual then
+        return .error s!"attnValueCoeff mismatch at layer {idx}"
+    return .ok ()
+
+theorem checkAttnValueCoeff_spec_io :
+    checkAttnValueCoeff = checkAttnValueCoeff := rfl
+
+private def recomputeAttnValueCoeffBinary
+    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  match ← Nfp.Untrusted.SoundBinary.readBinaryHeader h with
+  | .error e => return .error e
+  | .ok hdr =>
+      let scalePow10 := defaultBinaryScalePow10
+      match ← Nfp.Untrusted.SoundBinary.skipI32Array h hdr.seqLen with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.seqLen * hdr.modelDim) with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      let mut coeffs : Array Rat := Array.mkEmpty hdr.numLayers
+      for _l in [:hdr.numLayers] do
+        let mut pairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
+        for _h in [:hdr.numHeads] do
+          let wqScaledE ←
+            Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+              h hdr.modelDim hdr.headDim scalePow10
+          let wqScaled ←
+            match wqScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let wkScaledE ←
+            Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+              h hdr.modelDim hdr.headDim scalePow10
+          let wkScaled ←
+            match wkScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let nvScaledE ←
+            Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+              h hdr.modelDim hdr.headDim scalePow10
+          let nvScaled ←
+            match nvScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.headDim with
+          | .error e => return .error e
+          | .ok _ => pure ()
+          let noScaledE ←
+            Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+              h hdr.headDim hdr.modelDim scalePow10
+          let noScaled ←
+            match noScaledE with
+            | .error e => return .error e
+            | .ok v => pure v
+          let _ := wqScaled
+          let _ := wkScaled
+          pairs := pairs.push (nvScaled, noScaled)
+        match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let nWinScaledE ←
+          Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+            h hdr.modelDim hdr.hiddenDim scalePow10
+        let nWinScaled ←
+          match nWinScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.hiddenDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let nWoutScaledE ←
+          Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
+            h hdr.hiddenDim hdr.modelDim scalePow10
+        let nWoutScaled ←
+          match nWoutScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let ln1GammaScaledE ←
+          Nfp.Untrusted.SoundBinary.readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln1GammaScaled ←
+          match ln1GammaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        let ln1BetaScaledE ←
+          Nfp.Untrusted.SoundBinary.readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln1BetaScaled ←
+          match ln1BetaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        let ln2GammaScaledE ←
+          Nfp.Untrusted.SoundBinary.readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        let ln2GammaScaled ←
+          match ln2GammaScaledE with
+          | .error e => return .error e
+          | .ok v => pure v
+        let ln2BetaScaledE ←
+          Nfp.Untrusted.SoundBinary.readVectorMaxAbsScaled h hdr.modelDim scalePow10
+        match ln2BetaScaledE with
+        | .error e => return .error e
+        | .ok _ => pure ()
+        let _ := nWinScaled
+        let _ := nWoutScaled
+        let _ := ln1GammaScaled
+        let _ := ln1BetaScaled
+        let _ := ln2GammaScaled
+        let coeff := attnValueCoeffFromScaledPairs scalePow10 pairs
+        coeffs := coeffs.push coeff
+      match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.modelDim * hdr.vocabSize) with
+      | .error e => return .error e
+      | .ok _ => pure ()
+      return .ok coeffs
+
+private def recomputeAttnValueCoeffText
+    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+  let contents ← IO.FS.readFile path
+  let lines : Array String := (contents.splitOn "\n").toArray
+  return attnValueCoeffFromTextLines lines
+
+private def recomputeAttnValueCoeff
+    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+  let firstLine ←
+    IO.FS.withFile path IO.FS.Mode.read fun h => h.getLine
+  if firstLine.trim = "NFP_BINARY_V1" then
+    recomputeAttnValueCoeffBinary path
+  else
+    recomputeAttnValueCoeffText path
+
 /-- Compute weight-only per-head contribution bounds from a binary `.nfpt`. -/
 def certifyHeadBoundsBinary
     (path : System.FilePath)
@@ -87,7 +239,13 @@ def certifyModelFileGlobal
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            return .ok cert
+            match ← recomputeAttnValueCoeff path with
+            | .error e =>
+                return .error s!"attnValueCoeff verification failed: {e}"
+            | .ok coeffs =>
+                match checkAttnValueCoeff cert coeffs with
+                | .error e => return .error e
+                | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"
 
 /-- Entry point for sound certification (global or local). -/
@@ -115,7 +273,13 @@ def certifyModelFile
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            return .ok cert
+            match ← recomputeAttnValueCoeff path with
+            | .error e =>
+                return .error s!"attnValueCoeff verification failed: {e}"
+            | .ok coeffs =>
+                match checkAttnValueCoeff cert coeffs with
+                | .error e => return .error e
+                | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"
 
 /-- Compute per-head contribution bounds (global). -/

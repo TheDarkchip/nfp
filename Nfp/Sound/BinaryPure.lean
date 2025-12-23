@@ -301,6 +301,14 @@ def ratOfScaledInt (scalePow10 : Nat) (x : Int) : Rat :=
     have h10pos : (0 : Nat) < 10 := by decide
     exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos))
 
+def defaultBinaryScalePow10 : Nat := 9
+
+/-- Sum of per-head value-output norm products in scaled-int form. -/
+def attnValueCoeffFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)) : Rat :=
+  pairs.foldl
+    (fun acc p =>
+      acc + ratOfScaledInt scalePow10 p.1 * ratOfScaledInt scalePow10 p.2) 0
+
 /-! ### Derived properties -/
 
 private theorem pure_eq_ok {ε α : Type} (x : α) : (pure x : Except ε α) = .ok x := rfl
@@ -359,5 +367,9 @@ theorem opBoundScaledFromOneInf_spec_binary_pure :
     opBoundScaledFromOneInf = opBoundScaledFromOneInf := rfl
 theorem ratOfScaledNat_spec_binary_pure : ratOfScaledNat = ratOfScaledNat := rfl
 theorem ratOfScaledInt_spec_binary_pure : ratOfScaledInt = ratOfScaledInt := rfl
+theorem defaultBinaryScalePow10_spec_binary_pure :
+    defaultBinaryScalePow10 = defaultBinaryScalePow10 := rfl
+theorem attnValueCoeffFromScaledPairs_spec_binary_pure :
+    attnValueCoeffFromScaledPairs = attnValueCoeffFromScaledPairs := rfl
 
 end Nfp.Sound
