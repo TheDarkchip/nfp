@@ -978,6 +978,320 @@ theorem sum_abs_apply_le {S T : Type*} [Fintype S] [Fintype T] [Nonempty S]
     _ ≤ ∑ i, |v i| * SignedMixer.operatorNormBound M := hfinal
     _ = (∑ i, |v i|) * SignedMixer.operatorNormBound M := hmul
 
+omit [DecidableEq n] [DecidableEq d] in
+/-- L1 bound on keys from inputs and the W_K operator norm. -/
+theorem keys_sum_abs_le_of_input [Nonempty d]
+    (L : AttentionLinearization n d) (k : n)
+    (hKeys :
+      ∀ d', L.state.keys k d' =
+        ∑ d_in, L.state.input k d_in * L.layer.W_K.w d_in d') :
+    ∑ d', |L.state.keys k d'| ≤
+      (∑ d_in, |L.state.input k d_in|) *
+        SignedMixer.operatorNormBound L.layer.W_K := by
+  classical
+  let v : d → ℝ := fun d_in => L.state.input k d_in
+  have hKeys' :
+      ∀ d', ∑ d_in, L.state.input k d_in * L.layer.W_K.w d_in d' =
+        L.state.keys k d' := by
+    intro d'
+    exact (hKeys d').symm
+  have hSum := sum_abs_apply_le (M := L.layer.W_K) (v := v)
+  simpa [v, SignedMixer.apply_def, hKeys'] using hSum
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- L1 bound on queries from inputs and the W_Q operator norm. -/
+theorem queries_sum_abs_le_of_input [Nonempty d]
+    (L : AttentionLinearization n d) (q : n)
+    (hQueries :
+      ∀ d', L.state.queries q d' =
+        ∑ d_in, L.state.input q d_in * L.layer.W_Q.w d_in d') :
+    ∑ d', |L.state.queries q d'| ≤
+      (∑ d_in, |L.state.input q d_in|) *
+        SignedMixer.operatorNormBound L.layer.W_Q := by
+  classical
+  let v : d → ℝ := fun d_in => L.state.input q d_in
+  have hQueries' :
+      ∀ d', ∑ d_in, L.state.input q d_in * L.layer.W_Q.w d_in d' =
+        L.state.queries q d' := by
+    intro d'
+    exact (hQueries d').symm
+  have hSum := sum_abs_apply_le (M := L.layer.W_Q) (v := v)
+  simpa [v, SignedMixer.apply_def, hQueries'] using hSum
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- L1 bound on values from inputs and the W_V operator norm. -/
+theorem values_sum_abs_le_of_input [Nonempty d]
+    (L : AttentionLinearization n d) (k : n)
+    (hValues :
+      ∀ d', L.state.values k d' =
+        ∑ d_in, L.state.input k d_in * L.layer.W_V.w d_in d') :
+    ∑ d', |L.state.values k d'| ≤
+      (∑ d_in, |L.state.input k d_in|) *
+        SignedMixer.operatorNormBound L.layer.W_V := by
+  classical
+  let v : d → ℝ := fun d_in => L.state.input k d_in
+  have hValues' :
+      ∀ d', ∑ d_in, L.state.input k d_in * L.layer.W_V.w d_in d' =
+        L.state.values k d' := by
+    intro d'
+    exact (hValues d').symm
+  have hSum := sum_abs_apply_le (M := L.layer.W_V) (v := v)
+  simpa [v, SignedMixer.apply_def, hValues'] using hSum
+
+omit [DecidableEq d] in
+/-- Score-gradient entry bound from input L1 bounds and W_Q/W_K operator norms. -/
+theorem scoreGradient_abs_le_of_input [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (q k i : n) (d_in : d)
+    (B wq wk : ℝ)
+    (hInput : ∀ pos, ∑ d', |L.state.input pos d'| ≤ B)
+    (hKeys :
+      ∀ pos d', L.state.keys pos d' =
+        ∑ d_in, L.state.input pos d_in * L.layer.W_K.w d_in d')
+    (hQueries :
+      ∀ pos d', L.state.queries pos d' =
+        ∑ d_in, L.state.input pos d_in * L.layer.W_Q.w d_in d')
+    (hWQ : SignedMixer.operatorNormBound L.layer.W_Q ≤ wq)
+    (hWK : SignedMixer.operatorNormBound L.layer.W_K ≤ wk) :
+    |scoreGradient L q k i d_in| ≤
+      (1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk) := by
+  classical
+  let scale : ℝ := 1 / Real.sqrt (modelDim d)
+  let queryContrib : ℝ :=
+    ∑ d', L.layer.W_Q.w d_in d' * L.state.keys k d'
+  let keyContrib : ℝ :=
+    ∑ d', L.state.queries q d' * L.layer.W_K.w d_in d'
+  have hB_nonneg : 0 ≤ B := by
+    rcases (inferInstance : Nonempty n) with ⟨pos⟩
+    have hsum_nonneg :
+        0 ≤ ∑ d', |L.state.input pos d'| := by
+      exact Finset.sum_nonneg (fun _ _ => abs_nonneg _)
+    exact le_trans hsum_nonneg (hInput pos)
+  have hWQ_nonneg : 0 ≤ wq := by
+    exact le_trans (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_Q)) hWQ
+  have hWK_nonneg : 0 ≤ wk := by
+    exact le_trans (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_K)) hWK
+  have hScale_nonneg : 0 ≤ scale := by
+    have hcard : 0 < (Fintype.card d : ℝ) := by
+      exact_mod_cast Fintype.card_pos_iff.mpr (inferInstance : Nonempty d)
+    have hsqrt : 0 < Real.sqrt (modelDim d) := by
+      simpa [modelDim] using (Real.sqrt_pos.2 hcard)
+    exact div_nonneg (show (0 : ℝ) ≤ 1 by exact zero_le_one) (le_of_lt hsqrt)
+  have hQuery_abs :
+      |queryContrib| ≤ B * wq * wk := by
+    have hsum :
+        |queryContrib| ≤ ∑ d', |L.layer.W_Q.w d_in d'| * |L.state.keys k d'| := by
+      simpa [queryContrib, abs_mul] using
+        (abs_sum_le_sum_abs
+          (f := fun d' => L.layer.W_Q.w d_in d' * L.state.keys k d')
+          (s := Finset.univ))
+    have hle :
+        ∀ d', |L.layer.W_Q.w d_in d'| * |L.state.keys k d'| ≤
+          SignedMixer.rowAbsSum L.layer.W_Q d_in * |L.state.keys k d'| := by
+      intro d'
+      have hrow :
+          |L.layer.W_Q.w d_in d'| ≤ SignedMixer.rowAbsSum L.layer.W_Q d_in := by
+        have hnonneg :
+            ∀ j ∈ (Finset.univ : Finset d), 0 ≤ |L.layer.W_Q.w d_in j| := by
+          intro j _hj
+          exact abs_nonneg _
+        simpa [SignedMixer.rowAbsSum] using
+          (single_le_sum (s := (Finset.univ : Finset d))
+            (f := fun j => |L.layer.W_Q.w d_in j|) hnonneg (by simp))
+      exact mul_le_mul_of_nonneg_right hrow (abs_nonneg _)
+    have hsum' :
+        ∑ d', |L.layer.W_Q.w d_in d'| * |L.state.keys k d'| ≤
+          ∑ d', SignedMixer.rowAbsSum L.layer.W_Q d_in * |L.state.keys k d'| := by
+      refine Finset.sum_le_sum ?_
+      intro d' _hd
+      exact hle d'
+    have hsum'' :
+        ∑ d', SignedMixer.rowAbsSum L.layer.W_Q d_in * |L.state.keys k d'| =
+          SignedMixer.rowAbsSum L.layer.W_Q d_in *
+            (∑ d', |L.state.keys k d'|) := by
+      simp [Finset.mul_sum]
+    have hkeys :=
+      keys_sum_abs_le_of_input (L := L) (k := k) (hKeys := hKeys k)
+    have hkeys' :
+        ∑ d', |L.state.keys k d'| ≤ B * wk := by
+      have hmul1 :
+          (∑ d', |L.state.input k d'|) * SignedMixer.operatorNormBound L.layer.W_K ≤
+            B * SignedMixer.operatorNormBound L.layer.W_K := by
+        exact mul_le_mul_of_nonneg_right (hInput k)
+          (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_K))
+      have hmul2 :
+          B * SignedMixer.operatorNormBound L.layer.W_K ≤ B * wk := by
+        exact mul_le_mul_of_nonneg_left hWK hB_nonneg
+      exact le_trans hkeys (le_trans hmul1 hmul2)
+    have hrow_le :
+        SignedMixer.rowAbsSum L.layer.W_Q d_in ≤ wq := by
+      have hsup :
+          SignedMixer.rowAbsSum L.layer.W_Q d_in ≤
+            SignedMixer.operatorNormBound L.layer.W_Q := by
+        exact Finset.le_sup' (s := Finset.univ)
+          (f := fun j => SignedMixer.rowAbsSum L.layer.W_Q j) (by simp)
+      exact le_trans hsup hWQ
+    have hmul1 :
+        SignedMixer.rowAbsSum L.layer.W_Q d_in *
+            (∑ d', |L.state.keys k d'|) ≤
+          wq * (∑ d', |L.state.keys k d'|) := by
+      exact mul_le_mul_of_nonneg_right hrow_le
+        (Finset.sum_nonneg (fun _ _ => abs_nonneg _))
+    have hmul2 :
+        wq * (∑ d', |L.state.keys k d'|) ≤
+          wq * (B * wk) := by
+      exact mul_le_mul_of_nonneg_left hkeys' hWQ_nonneg
+    have hmul3 :
+        wq * (B * wk) = B * wq * wk := by ring
+    calc
+      |queryContrib| ≤ ∑ d', |L.layer.W_Q.w d_in d'| * |L.state.keys k d'| := hsum
+      _ ≤ ∑ d', SignedMixer.rowAbsSum L.layer.W_Q d_in * |L.state.keys k d'| := hsum'
+      _ = SignedMixer.rowAbsSum L.layer.W_Q d_in * (∑ d', |L.state.keys k d'|) := hsum''
+      _ ≤ wq * (∑ d', |L.state.keys k d'|) := hmul1
+      _ ≤ wq * (B * wk) := hmul2
+      _ = B * wq * wk := hmul3
+  have hKey_abs :
+      |keyContrib| ≤ B * wq * wk := by
+    have hsum :
+        |keyContrib| ≤ ∑ d', |L.state.queries q d'| * |L.layer.W_K.w d_in d'| := by
+      simpa [keyContrib, abs_mul, mul_comm] using
+        (abs_sum_le_sum_abs
+          (f := fun d' => L.state.queries q d' * L.layer.W_K.w d_in d')
+          (s := Finset.univ))
+    have hle :
+        ∀ d', |L.state.queries q d'| * |L.layer.W_K.w d_in d'| ≤
+          |L.state.queries q d'| * SignedMixer.rowAbsSum L.layer.W_K d_in := by
+      intro d'
+      have hrow :
+          |L.layer.W_K.w d_in d'| ≤ SignedMixer.rowAbsSum L.layer.W_K d_in := by
+        have hnonneg :
+            ∀ j ∈ (Finset.univ : Finset d), 0 ≤ |L.layer.W_K.w d_in j| := by
+          intro j _hj
+          exact abs_nonneg _
+        simpa [SignedMixer.rowAbsSum] using
+          (single_le_sum (s := (Finset.univ : Finset d))
+            (f := fun j => |L.layer.W_K.w d_in j|) hnonneg (by simp))
+      exact mul_le_mul_of_nonneg_left hrow (abs_nonneg _)
+    have hsum' :
+        ∑ d', |L.state.queries q d'| * |L.layer.W_K.w d_in d'| ≤
+          ∑ d', |L.state.queries q d'| * SignedMixer.rowAbsSum L.layer.W_K d_in := by
+      refine Finset.sum_le_sum ?_
+      intro d' _hd
+      exact hle d'
+    have hsum'' :
+        ∑ d', |L.state.queries q d'| * SignedMixer.rowAbsSum L.layer.W_K d_in =
+          (∑ d', |L.state.queries q d'|) *
+            SignedMixer.rowAbsSum L.layer.W_K d_in := by
+      simp [Finset.sum_mul]
+    have hqueries :=
+      queries_sum_abs_le_of_input (L := L) (q := q) (hQueries := hQueries q)
+    have hqueries' :
+        ∑ d', |L.state.queries q d'| ≤ B * wq := by
+      have hmul1 :
+          (∑ d', |L.state.input q d'|) * SignedMixer.operatorNormBound L.layer.W_Q ≤
+            B * SignedMixer.operatorNormBound L.layer.W_Q := by
+        exact mul_le_mul_of_nonneg_right (hInput q)
+          (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_Q))
+      have hmul2 :
+          B * SignedMixer.operatorNormBound L.layer.W_Q ≤ B * wq := by
+        exact mul_le_mul_of_nonneg_left hWQ hB_nonneg
+      exact le_trans hqueries (le_trans hmul1 hmul2)
+    have hrow_le :
+        SignedMixer.rowAbsSum L.layer.W_K d_in ≤ wk := by
+      have hsup :
+          SignedMixer.rowAbsSum L.layer.W_K d_in ≤
+            SignedMixer.operatorNormBound L.layer.W_K := by
+        exact Finset.le_sup' (s := Finset.univ)
+          (f := fun j => SignedMixer.rowAbsSum L.layer.W_K j) (by simp)
+      exact le_trans hsup hWK
+    have hmul1 :
+        (∑ d', |L.state.queries q d'|) *
+            SignedMixer.rowAbsSum L.layer.W_K d_in ≤
+          (∑ d', |L.state.queries q d'|) * wk := by
+      exact mul_le_mul_of_nonneg_left hrow_le
+        (Finset.sum_nonneg (fun _ _ => abs_nonneg _))
+    have hmul2 :
+        (∑ d', |L.state.queries q d'|) * wk ≤
+          (B * wq) * wk := by
+      exact mul_le_mul_of_nonneg_right hqueries' hWK_nonneg
+    have hmul3 :
+        (B * wq) * wk = B * wq * wk := by ring
+    calc
+      |keyContrib| ≤ ∑ d', |L.state.queries q d'| * |L.layer.W_K.w d_in d'| := hsum
+      _ ≤ ∑ d', |L.state.queries q d'| * SignedMixer.rowAbsSum L.layer.W_K d_in := hsum'
+      _ = (∑ d', |L.state.queries q d'|) * SignedMixer.rowAbsSum L.layer.W_K d_in := hsum''
+      _ ≤ (∑ d', |L.state.queries q d'|) * wk := hmul1
+      _ ≤ (B * wq) * wk := hmul2
+      _ = B * wq * wk := hmul3
+  have hQuery_term :
+      |if q = i then queryContrib else 0| ≤ B * wq * wk := by
+    by_cases hqi : q = i
+    · simp [hqi, hQuery_abs]
+    · have hnonneg : 0 ≤ B * wq * wk :=
+        mul_nonneg (mul_nonneg hB_nonneg hWQ_nonneg) hWK_nonneg
+      simpa [hqi] using hnonneg
+  have hKey_term :
+      |if k = i then keyContrib else 0| ≤ B * wq * wk := by
+    by_cases hki : k = i
+    · simp [hki, hKey_abs]
+    · have hnonneg : 0 ≤ B * wq * wk :=
+        mul_nonneg (mul_nonneg hB_nonneg hWQ_nonneg) hWK_nonneg
+      simpa [hki] using hnonneg
+  have hsum :
+      |(if q = i then queryContrib else 0) + (if k = i then keyContrib else 0)| ≤
+        B * wq * wk + B * wq * wk := by
+    exact le_trans (abs_add_le _ _) (add_le_add hQuery_term hKey_term)
+  have hsum_eq : B * wq * wk + B * wq * wk = 2 * B * wq * wk := by
+    ring
+  have hmul :
+      scale *
+          (B * wq * wk + B * wq * wk) =
+        scale * (2 * B * wq * wk) := by
+    simp [hsum_eq]
+  calc
+    |scoreGradient L q k i d_in|
+        = |scale| *
+          |(if q = i then queryContrib else 0) + (if k = i then keyContrib else 0)| := by
+          simp [scoreGradient, scale, queryContrib, keyContrib, abs_mul]
+    _ = scale *
+          |(if q = i then queryContrib else 0) + (if k = i then keyContrib else 0)| := by
+          simp [abs_of_nonneg hScale_nonneg]
+    _ ≤ scale * (B * wq * wk + B * wq * wk) := by
+          exact mul_le_mul_of_nonneg_left hsum hScale_nonneg
+    _ = scale * (2 * B * wq * wk) := hmul
+    _ = (1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk) := by simp [scale]
+
+omit [DecidableEq d] in
+/-- L1 bound on score-gradient rows from input L1 bounds and W_Q/W_K operator norms. -/
+theorem scoreGradient_sum_le_of_input [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (q i : n) (d_in : d)
+    (B wq wk : ℝ)
+    (hInput : ∀ pos, ∑ d', |L.state.input pos d'| ≤ B)
+    (hKeys :
+      ∀ pos d', L.state.keys pos d' =
+        ∑ d_in, L.state.input pos d_in * L.layer.W_K.w d_in d')
+    (hQueries :
+      ∀ pos d', L.state.queries pos d' =
+        ∑ d_in, L.state.input pos d_in * L.layer.W_Q.w d_in d')
+    (hWQ : SignedMixer.operatorNormBound L.layer.W_Q ≤ wq)
+    (hWK : SignedMixer.operatorNormBound L.layer.W_K ≤ wk) :
+    ∑ k, |scoreGradient L q k i d_in| ≤
+      (Fintype.card n : ℝ) *
+        ((1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk)) := by
+  classical
+  have hEach :
+      ∀ k, |scoreGradient L q k i d_in| ≤
+        (1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk) := by
+    intro k
+    exact scoreGradient_abs_le_of_input (L := L) (q := q) (k := k) (i := i) (d_in := d_in)
+      (B := B) (wq := wq) (wk := wk) hInput hKeys hQueries hWQ hWK
+  have hSum :
+      ∑ k, |scoreGradient L q k i d_in| ≤
+        ∑ k : n, (1 / Real.sqrt (modelDim d)) * (2 * B * wq * wk) := by
+    refine Finset.sum_le_sum ?_
+    intro k _hk
+    exact hEach k
+  exact le_trans hSum (by simp)
+
 omit [DecidableEq d] in
 /-- Row-sum bound for attention gradients from softmax Jacobian and score-gradient bounds. -/
 theorem attentionGradient_rowAbsSum_le_of_softmax [Nonempty n]
@@ -1134,6 +1448,104 @@ theorem patternTerm_eq_explicit_of_fullJacobian_eq (L : AttentionLinearization n
 /-- Output mixer using cached values and the output projection. -/
 noncomputable def valueOutputMixer (L : AttentionLinearization n d) : SignedMixer n d :=
   ⟨fun k d_out => ∑ d', L.state.values k d' * L.layer.W_O.w d' d_out⟩
+
+omit [DecidableEq n] [DecidableEq d] in
+/-- Value-output mixer bound from input L1 bounds and a `W_V·W_O` operator-norm bound. -/
+theorem valueOutputMixer_operatorNormBound_le_of_input [Nonempty n] [Nonempty d]
+    (L : AttentionLinearization n d) (B V : ℝ)
+    (hInput : ∀ pos, ∑ d', |L.state.input pos d'| ≤ B)
+    (hValues :
+      ∀ pos d', L.state.values pos d' =
+        ∑ d_in, L.state.input pos d_in * L.layer.W_V.w d_in d')
+    (hVO : SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤ V) :
+    SignedMixer.operatorNormBound (valueOutputMixer L) ≤ B * V := by
+  classical
+  have hB_nonneg : 0 ≤ B := by
+    rcases (inferInstance : Nonempty n) with ⟨pos⟩
+    have hsum_nonneg :
+        0 ≤ ∑ d', |L.state.input pos d'| := by
+      exact Finset.sum_nonneg (fun _ _ => abs_nonneg _)
+    exact le_trans hsum_nonneg (hInput pos)
+  refine (Finset.sup'_le_iff (s := Finset.univ)
+    (H := Finset.univ_nonempty (α := n))
+    (f := fun k => SignedMixer.rowAbsSum (valueOutputMixer L) k)
+    (a := B * V)).2 ?_
+  intro k _hk
+  have hInputSum := hInput k
+  have hW :
+      ∀ d_out, (valueOutputMixer L).w k d_out =
+        ∑ d_in, L.state.input k d_in * (L.layer.W_V.comp L.layer.W_O).w d_in d_out := by
+    intro d_out
+    have hValues' := hValues k
+    calc
+      (valueOutputMixer L).w k d_out
+          = ∑ d', L.state.values k d' * L.layer.W_O.w d' d_out := by
+              simp [valueOutputMixer]
+      _ = ∑ d', (∑ d_in, L.state.input k d_in * L.layer.W_V.w d_in d') *
+            L.layer.W_O.w d' d_out := by
+              simp [hValues']
+      _ = ∑ d_in, L.state.input k d_in *
+            (∑ d', L.layer.W_V.w d_in d' * L.layer.W_O.w d' d_out) := by
+              calc
+                ∑ d', (∑ d_in, L.state.input k d_in * L.layer.W_V.w d_in d') *
+                      L.layer.W_O.w d' d_out
+                    = ∑ d', L.layer.W_O.w d' d_out *
+                        (∑ d_in, L.state.input k d_in * L.layer.W_V.w d_in d') := by
+                        simp [mul_comm]
+                _ = ∑ d', ∑ d_in,
+                        L.layer.W_O.w d' d_out *
+                          (L.state.input k d_in * L.layer.W_V.w d_in d') := by
+                        simp [Finset.mul_sum]
+                _ = ∑ d_in, ∑ d',
+                        L.layer.W_O.w d' d_out *
+                          (L.state.input k d_in * L.layer.W_V.w d_in d') := by
+                        simpa using
+                          (Finset.sum_comm (s := Finset.univ) (t := Finset.univ)
+                            (f := fun d' d_in =>
+                              L.layer.W_O.w d' d_out *
+                                (L.state.input k d_in * L.layer.W_V.w d_in d')))
+                _ = ∑ d_in, L.state.input k d_in *
+                      (∑ d', L.layer.W_V.w d_in d' * L.layer.W_O.w d' d_out) := by
+                        refine Finset.sum_congr rfl ?_
+                        intro d_in _hd
+                        simp [Finset.mul_sum, mul_comm, mul_assoc]
+      _ = ∑ d_in, L.state.input k d_in * (L.layer.W_V.comp L.layer.W_O).w d_in d_out := by
+            simp [SignedMixer.comp_w]
+  have hRow :
+      SignedMixer.rowAbsSum (valueOutputMixer L) k =
+        ∑ d_out, |∑ d_in, L.state.input k d_in *
+          (L.layer.W_V.comp L.layer.W_O).w d_in d_out| := by
+    simp [SignedMixer.rowAbsSum, hW]
+  have hSum :=
+    sum_abs_apply_le (M := L.layer.W_V.comp L.layer.W_O)
+      (v := fun d_in => L.state.input k d_in)
+  have hSum' :
+      ∑ d_out, |(L.layer.W_V.comp L.layer.W_O).apply (fun d_in =>
+        L.state.input k d_in) d_out| ≤
+        (∑ d_in, |L.state.input k d_in|) *
+          SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) := by
+    simpa using hSum
+  have hMul :
+      (∑ d_in, |L.state.input k d_in|) *
+          SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤ B * V := by
+    have hmul1 :
+        (∑ d_in, |L.state.input k d_in|) *
+            SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤
+          B * SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) := by
+      exact mul_le_mul_of_nonneg_right hInputSum
+        (SignedMixer.operatorNormBound_nonneg (M := L.layer.W_V.comp L.layer.W_O))
+    have hmul2 :
+        B * SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) ≤ B * V := by
+      exact mul_le_mul_of_nonneg_left hVO hB_nonneg
+    exact le_trans hmul1 hmul2
+  calc
+    SignedMixer.rowAbsSum (valueOutputMixer L) k
+        = ∑ d_out, |(L.layer.W_V.comp L.layer.W_O).apply (fun d_in =>
+            L.state.input k d_in) d_out| := by
+              simpa [SignedMixer.apply_def] using hRow
+    _ ≤ (∑ d_in, |L.state.input k d_in|) *
+        SignedMixer.operatorNormBound (L.layer.W_V.comp L.layer.W_O) := hSum'
+    _ ≤ B * V := hMul
 
 /-- Mixer capturing attention gradients for a fixed input coordinate. -/
 noncomputable def attentionGradientMixer (L : AttentionLinearization n d) (i : n) (d_in : d) :

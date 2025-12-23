@@ -364,23 +364,35 @@ theorem layerNormOutputMaxAbsBound_def (dim : Nat) (maxAbsGamma maxAbsBeta : Rat
     layerNormOutputMaxAbsBound dim maxAbsGamma maxAbsBeta =
       maxAbsGamma * sqrtUpperRat dim + maxAbsBeta := rfl
 
-/-- Score-gradient coefficient bound for attention pattern terms. -/
-def attnScoreGradBound (headDim : Nat) (ln1OutMaxAbs wqBound wkBound : Rat) : Rat :=
+/-- Score-gradient L1 bound for attention pattern terms. -/
+def attnScoreGradBound (seqLen modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound : Rat) : Rat :=
   let scale := invSqrtUpperBound headDim
-  scale * ((2 : Rat) * ln1OutMaxAbs * wqBound * wkBound)
+  (seqLen : Rat) * scale *
+    ((2 : Rat) * (modelDim : Rat) * ln1OutMaxAbs * wqBound * wkBound)
 
-theorem attnScoreGradBound_def (headDim : Nat) (ln1OutMaxAbs wqBound wkBound : Rat) :
-    attnScoreGradBound headDim ln1OutMaxAbs wqBound wkBound =
+theorem attnScoreGradBound_def (seqLen modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound : Rat) :
+    attnScoreGradBound seqLen modelDim headDim ln1OutMaxAbs wqBound wkBound =
       let scale := invSqrtUpperBound headDim
-      scale * ((2 : Rat) * ln1OutMaxAbs * wqBound * wkBound) := rfl
+      (seqLen : Rat) * scale *
+        ((2 : Rat) * (modelDim : Rat) * ln1OutMaxAbs * wqBound * wkBound) := rfl
 
-/-- Pattern-term coefficient bound from the value coefficient and score-gradient bound. -/
-def attnPatternCoeffBound (headDim : Nat) (ln1OutMaxAbs wqBound wkBound valueCoeff : Rat) : Rat :=
-  attnScoreGradBound headDim ln1OutMaxAbs wqBound wkBound * valueCoeff
+/-- Pattern-term coefficient bound from value and score-gradient bounds. -/
+def attnPatternCoeffBound (seqLen modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound valueCoeff : Rat) : Rat :=
+  let inputL1 := (modelDim : Rat) * ln1OutMaxAbs
+  (seqLen : Rat) *
+    attnScoreGradBound seqLen modelDim headDim ln1OutMaxAbs wqBound wkBound *
+      (inputL1 * valueCoeff)
 
-theorem attnPatternCoeffBound_def (headDim : Nat) (ln1OutMaxAbs wqBound wkBound valueCoeff : Rat) :
-    attnPatternCoeffBound headDim ln1OutMaxAbs wqBound wkBound valueCoeff =
-      attnScoreGradBound headDim ln1OutMaxAbs wqBound wkBound * valueCoeff := rfl
+theorem attnPatternCoeffBound_def (seqLen modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound valueCoeff : Rat) :
+    attnPatternCoeffBound seqLen modelDim headDim ln1OutMaxAbs wqBound wkBound valueCoeff =
+      let inputL1 := (modelDim : Rat) * ln1OutMaxAbs
+      (seqLen : Rat) *
+        attnScoreGradBound seqLen modelDim headDim ln1OutMaxAbs wqBound wkBound *
+          (inputL1 * valueCoeff) := rfl
 
 /-! ### Local (input-dependent) LayerNorm bounds
 

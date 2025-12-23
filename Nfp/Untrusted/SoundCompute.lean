@@ -342,7 +342,8 @@ private def certifyModelFileGlobalBinary
         let ln2Bound := layerNormOpBoundConservative ln2Max eps soundnessBits
         let ln1OutMaxAbsBound := layerNormOutputMaxAbsBound hdr.modelDim ln1Max ln1MaxAbsBeta
         let attnPatternCoeff :=
-          attnPatternCoeffBound hdr.headDim ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
+          attnPatternCoeffBound hdr.seqLen hdr.modelDim hdr.headDim ln1OutMaxAbsBound
+            wqMax wkMax attnValueCoeff
         let mlpCoeff := nWin * nWout
         let mlpActDerivBound := actDerivBound
         let softmaxProbLo : Rat := 0
@@ -807,7 +808,8 @@ def certifyModelFileGlobal
     let ln1OutMaxAbsBound := layerNormOutputMaxAbsBound d ln1Max ln1MaxAbsBeta
     let attnValueCoeffLayer := attnValueCoeff[l]!
     let attnPatternCoeff :=
-      attnPatternCoeffBound dh ln1OutMaxAbsBound (wqMax[l]!) (wkMax[l]!) attnValueCoeffLayer
+      attnPatternCoeffBound n d dh ln1OutMaxAbsBound (wqMax[l]!) (wkMax[l]!)
+        attnValueCoeffLayer
     let mlpCoeff := mlpWin[l]! * mlpWout[l]!
     let mlpActDerivBound := actDerivBound
     let softmaxProbLo : Rat := 0
@@ -2326,7 +2328,8 @@ private def certifyModelFileLocalText
                             softmaxExpEffort
                         let softmaxBound := min softmaxIntervalBound softmaxMarginBound
                         let attnPatternCoeff :=
-                          attnPatternCoeffBound dh ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
+                          attnPatternCoeffBound n d dh ln1OutMaxAbsBound wqMax wkMax
+                            attnValueCoeff
                         let attnW :=
                           ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
                         let mlpCoeff := nWin * nWout
@@ -2506,8 +2509,8 @@ private def certifyModelFileLocal
                 softmaxExpEffort
             let softmaxBound := min softmaxIntervalBound softmaxMarginBound
             let attnPatternCoeff :=
-              attnPatternCoeffBound headDim ln1OutMaxAbsBound (wqMaxArr[l]!) (wkMaxArr[l]!)
-                attnValueCoeff
+              attnPatternCoeffBound inputSeqLen modelDim headDim ln1OutMaxAbsBound
+                (wqMaxArr[l]!) (wkMaxArr[l]!) attnValueCoeff
             let attnW :=
               ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
             let mlpCoeff := nWin * nWout
@@ -2672,7 +2675,8 @@ private def certifyModelFileLocalBinary
         softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
       let softmaxBound := min softmaxIntervalBound softmaxMarginBound
       let attnPatternCoeff :=
-        attnPatternCoeffBound hdr.headDim ln1OutMaxAbsBound wqMax wkMax attnValueCoeff
+        attnPatternCoeffBound hdr.seqLen hdr.modelDim hdr.headDim ln1OutMaxAbsBound
+          wqMax wkMax attnValueCoeff
       let attnW :=
         ln1Bound * (attnValueCoeff + softmaxBound * attnPatternCoeff)
       let mlpCoeff := nWin * nWout

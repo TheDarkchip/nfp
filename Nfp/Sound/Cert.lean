@@ -48,7 +48,7 @@ structure LayerAmplificationCert where
   wkOpBoundMax : Rat
   /-- Value-term coefficient (sum of per-head `W_V`/`W_O` bounds). -/
   attnValueCoeff : Rat
-  /-- Pattern-term coefficient (score-gradient × value coefficient). -/
+  /-- Pattern-term coefficient (score-gradient L1 × input L1 × value coefficient). -/
   attnPatternCoeff : Rat
   mlpCoeff : Rat
   /-- Upper bound on the operator norm of the MLP input weights. -/
@@ -121,8 +121,8 @@ def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     l.softmaxJacobianNormInfUpperBound =
       softmaxJacobianNormInfPortfolioBound seqLen l ∧
     l.attnPatternCoeff =
-      attnPatternCoeffBound headDim l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax
-        l.attnValueCoeff ∧
+      attnPatternCoeffBound seqLen modelDim headDim l.ln1OutMaxAbsBound l.wqOpBoundMax
+        l.wkOpBoundMax l.attnValueCoeff ∧
     l.attnWeightContribution =
       l.ln1Bound * (l.attnValueCoeff + l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) ∧
     l.mlpCoeff = l.mlpWinBound * l.mlpWoutBound ∧
