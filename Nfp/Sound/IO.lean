@@ -51,22 +51,34 @@ private def readModelEps (path : System.FilePath) : IO (Except String Rat) := do
   | .error e => return .error e
   | .ok (eps, _) => return .ok eps
 
-private def checkAttnValueCoeff (cert : ModelCert) (expected : Array Rat) : Except String Unit :=
+private def checkAttnWeightBounds
+    (cert : ModelCert)
+    (expected : AttnWeightBounds) : Except String Unit :=
   Id.run do
-    if expected.size ≠ cert.layers.size then
+    if expected.attnValueCoeff.size ≠ cert.layers.size then
       return .error "attnValueCoeff layer count mismatch"
-    for idx in [:expected.size] do
-      let exp := expected[idx]!
-      let actual := cert.layers[idx]!.attnValueCoeff
-      if exp ≠ actual then
+    if expected.wqOpBoundMax.size ≠ cert.layers.size then
+      return .error "wqOpBoundMax layer count mismatch"
+    if expected.wkOpBoundMax.size ≠ cert.layers.size then
+      return .error "wkOpBoundMax layer count mismatch"
+    for idx in [:cert.layers.size] do
+      let expValue := expected.attnValueCoeff[idx]!
+      let expWq := expected.wqOpBoundMax[idx]!
+      let expWk := expected.wkOpBoundMax[idx]!
+      let layer := cert.layers[idx]!
+      if expValue ≠ layer.attnValueCoeff then
         return .error s!"attnValueCoeff mismatch at layer {idx}"
+      if expWq ≠ layer.wqOpBoundMax then
+        return .error s!"wqOpBoundMax mismatch at layer {idx}"
+      if expWk ≠ layer.wkOpBoundMax then
+        return .error s!"wkOpBoundMax mismatch at layer {idx}"
     return .ok ()
 
-theorem checkAttnValueCoeff_spec_io :
-    checkAttnValueCoeff = checkAttnValueCoeff := rfl
+theorem checkAttnWeightBounds_spec_io :
+    checkAttnWeightBounds = checkAttnWeightBounds := rfl
 
-private def recomputeAttnValueCoeffBinary
-    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+private def recomputeAttnWeightBoundsBinary
+    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   match ← Nfp.Untrusted.SoundBinary.readBinaryHeader h with
   | .error e => return .error e
@@ -79,8 +91,11 @@ private def recomputeAttnValueCoeffBinary
       | .error e => return .error e
       | .ok _ => pure ()
       let mut coeffs : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut wqMaxs : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut wkMaxs : Array Rat := Array.mkEmpty hdr.numLayers
       for _l in [:hdr.numLayers] do
-        let mut pairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
+        let mut valuePairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
+        let mut qkPairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
         for _h in [:hdr.numHeads] do
           let wqScaledE ←
             Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
@@ -119,9 +134,8 @@ private def recomputeAttnValueCoeffBinary
             match noScaledE with
             | .error e => return .error e
             | .ok v => pure v
-          let _ := wqScaled
-          let _ := wkScaled
-          pairs := pairs.push (nvScaled, noScaled)
+          qkPairs := qkPairs.push (wqScaled, wkScaled)
+          valuePairs := valuePairs.push (nvScaled, noScaled)
         match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -173,8 +187,11 @@ private def recomputeAttnValueCoeffBinary
         let _ := ln1GammaScaled
         let _ := ln1BetaScaled
         let _ := ln2GammaScaled
-        let coeff := attnValueCoeffFromScaledPairs scalePow10 pairs
+        let coeff := attnValueCoeffFromScaledPairs scalePow10 valuePairs
+        let (wqMax, wkMax) := attnQKMaxFromScaledPairs scalePow10 qkPairs
         coeffs := coeffs.push coeff
+        wqMaxs := wqMaxs.push wqMax
+        wkMaxs := wkMaxs.push wkMax
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
       | .error e => return .error e
       | .ok _ => pure ()
@@ -184,22 +201,26 @@ private def recomputeAttnValueCoeffBinary
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.modelDim * hdr.vocabSize) with
       | .error e => return .error e
       | .ok _ => pure ()
-      return .ok coeffs
+      return .ok {
+        attnValueCoeff := coeffs
+        wqOpBoundMax := wqMaxs
+        wkOpBoundMax := wkMaxs
+      }
 
-private def recomputeAttnValueCoeffText
-    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+private def recomputeAttnWeightBoundsText
+    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
-  return attnValueCoeffFromTextLines lines
+  return attnWeightBoundsFromTextLines lines
 
-private def recomputeAttnValueCoeff
-    (path : System.FilePath) : IO (Except String (Array Rat)) := do
+private def recomputeAttnWeightBounds
+    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let firstLine ←
     IO.FS.withFile path IO.FS.Mode.read fun h => h.getLine
   if firstLine.trim = "NFP_BINARY_V1" then
-    recomputeAttnValueCoeffBinary path
+    recomputeAttnWeightBoundsBinary path
   else
-    recomputeAttnValueCoeffText path
+    recomputeAttnWeightBoundsText path
 
 /-- Compute weight-only per-head contribution bounds from a binary `.nfpt`. -/
 def certifyHeadBoundsBinary
@@ -239,11 +260,11 @@ def certifyModelFileGlobal
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match ← recomputeAttnValueCoeff path with
+            match ← recomputeAttnWeightBounds path with
             | .error e =>
-                return .error s!"attnValueCoeff verification failed: {e}"
-            | .ok coeffs =>
-                match checkAttnValueCoeff cert coeffs with
+                return .error s!"attnWeightBounds verification failed: {e}"
+            | .ok bounds =>
+                match checkAttnWeightBounds cert bounds with
                 | .error e => return .error e
                 | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"
@@ -273,11 +294,11 @@ def certifyModelFile
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match ← recomputeAttnValueCoeff path with
+            match ← recomputeAttnWeightBounds path with
             | .error e =>
-                return .error s!"attnValueCoeff verification failed: {e}"
-            | .ok coeffs =>
-                match checkAttnValueCoeff cert coeffs with
+                return .error s!"attnWeightBounds verification failed: {e}"
+            | .ok bounds =>
+                match checkAttnWeightBounds cert bounds with
                 | .error e => return .error e
                 | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"

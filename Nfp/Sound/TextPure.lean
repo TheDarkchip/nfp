@@ -23,6 +23,13 @@ structure TextModelDims where
   start : Nat
   deriving Repr
 
+/-- Per-layer attention weight bounds extracted from a text model. -/
+structure AttnWeightBounds where
+  attnValueCoeff : Array Rat
+  wqOpBoundMax : Array Rat
+  wkOpBoundMax : Array Rat
+  deriving Repr
+
 def parseTextHeaderDims (lines : Array String) : Except String TextModelDims :=
   Id.run do
     let mut i : Nat := 0
@@ -123,8 +130,8 @@ def consumeMatrixNormInf
   | .error e => .error e
   | .ok (xs, next) => .ok (matrixNormInfOfRowMajor rows cols xs, next)
 
-/-- Compute per-layer `attnValueCoeff` from text model lines. -/
-def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Rat) :=
+/-- Compute per-layer attention value and `W_Q/W_K` bounds from text model lines. -/
+def attnWeightBoundsFromTextLines (lines : Array String) : Except String AttnWeightBounds :=
   Id.run do
     let infoE := parseTextHeaderDims lines
     let info ←
@@ -134,6 +141,8 @@ def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Ra
     let mut i := info.start
     let mut curLayer : Nat := 0
     let mut attnValueCoeff : Array Rat := Array.replicate info.numLayers 0
+    let mut wqMax : Array Rat := Array.replicate info.numLayers 0
+    let mut wkMax : Array Rat := Array.replicate info.numLayers 0
     while i < lines.size do
       let line := lines[i]!.trim
       if line.startsWith "LAYER" then
@@ -141,6 +150,22 @@ def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Ra
         if parts.length >= 2 then
           curLayer := (parts[1]!).toNat? |>.getD 0
         i := i + 1
+      else if line = "W_Q" then
+        let r := curLayer
+        match consumeMatrixNormInf lines (i + 1) info.modelDim info.headDim with
+        | .error e => return .error e
+        | .ok (nq, next) =>
+            if r < wqMax.size then
+              wqMax := wqMax.set! r (max wqMax[r]! nq)
+            i := next
+      else if line = "W_K" then
+        let r := curLayer
+        match consumeMatrixNormInf lines (i + 1) info.modelDim info.headDim with
+        | .error e => return .error e
+        | .ok (nk, next) =>
+            if r < wkMax.size then
+              wkMax := wkMax.set! r (max wkMax[r]! nk)
+            i := next
       else if line = "W_V" then
         let r := curLayer
         match consumeMatrixNormInf lines (i + 1) info.modelDim info.headDim with
@@ -160,15 +185,27 @@ def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Ra
                 i := next2
       else
         i := i + 1
-    return .ok attnValueCoeff
+    return .ok {
+      attnValueCoeff := attnValueCoeff
+      wqOpBoundMax := wqMax
+      wkOpBoundMax := wkMax
+    }
+
+/-- Compute per-layer `attnValueCoeff` from text model lines. -/
+def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Rat) := do
+  let bounds ← attnWeightBoundsFromTextLines lines
+  return bounds.attnValueCoeff
 
 /-! ### Specs -/
 
 theorem parseTextHeaderDims_spec : parseTextHeaderDims = parseTextHeaderDims := rfl
+theorem AttnWeightBounds_spec : AttnWeightBounds = AttnWeightBounds := rfl
 theorem foldRatTokens_spec (α : Type) :
     @foldRatTokens α = @foldRatTokens α := rfl
 theorem consumeVector_spec : consumeVector = consumeVector := rfl
 theorem consumeMatrixNormInf_spec : consumeMatrixNormInf = consumeMatrixNormInf := rfl
+theorem attnWeightBoundsFromTextLines_spec :
+    attnWeightBoundsFromTextLines = attnWeightBoundsFromTextLines := rfl
 theorem attnValueCoeffFromTextLines_spec :
     attnValueCoeffFromTextLines = attnValueCoeffFromTextLines := rfl
 

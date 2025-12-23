@@ -309,6 +309,14 @@ def attnValueCoeffFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)
     (fun acc p =>
       acc + ratOfScaledInt scalePow10 p.1 * ratOfScaledInt scalePow10 p.2) 0
 
+/-- Max per-head W_Q/W_K bounds in scaled-int form. -/
+def attnQKMaxFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)) : Rat × Rat :=
+  pairs.foldl
+    (fun acc p =>
+      (max acc.1 (ratOfScaledInt scalePow10 p.1),
+       max acc.2 (ratOfScaledInt scalePow10 p.2)))
+    (0, 0)
+
 /-! ### Derived properties -/
 
 private theorem pure_eq_ok {ε α : Type} (x : α) : (pure x : Except ε α) = .ok x := rfl
@@ -371,5 +379,7 @@ theorem defaultBinaryScalePow10_spec_binary_pure :
     defaultBinaryScalePow10 = defaultBinaryScalePow10 := rfl
 theorem attnValueCoeffFromScaledPairs_spec_binary_pure :
     attnValueCoeffFromScaledPairs = attnValueCoeffFromScaledPairs := rfl
+theorem attnQKMaxFromScaledPairs_spec_binary_pure :
+    attnQKMaxFromScaledPairs = attnQKMaxFromScaledPairs := rfl
 
 end Nfp.Sound
