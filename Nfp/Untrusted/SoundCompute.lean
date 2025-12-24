@@ -4210,6 +4210,66 @@ def certifyHeadPatternBestMatchLocalSweep
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
+/-- Compute layer-level best-match margin evidence for a `.nfpt` layer (binary only). -/
+def certifyLayerBestMatchMarginLocal
+    (path : System.FilePath)
+    (layerIdx : Nat)
+    (eps : Rat)
+    (soundnessBits : Nat)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (targetOffset : Int := -1)
+    (maxSeqLen : Nat := 256)
+    (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
+    IO (Except String LayerBestMatchMarginCert) := do
+  if inputDelta < 0 then
+    return .error "delta must be nonnegative"
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let firstLine := (← h.getLine).trim
+  if firstLine = "NFP_BINARY_V1" then
+    let hdrE ← readBinaryHeader h
+    match hdrE with
+    | .error e => return .error e
+    | .ok hdr =>
+        if layerIdx ≥ hdr.numLayers then
+          return .error s!"layer index {layerIdx} out of range"
+        if hdr.seqLen > maxSeqLen then
+          return .error s!"seq_len {hdr.seqLen} exceeds maxSeqLen {maxSeqLen}"
+        let inputPath := inputPath?.getD path
+        let mut headCerts : Array HeadBestMatchPatternCert := Array.mkEmpty 0
+        for hIdx in [:hdr.numHeads] do
+          match ←
+              certifyHeadPatternBestMatchLocalBinarySweep
+                path layerIdx hIdx eps soundnessBits inputPath inputDelta targetOffset
+                maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+                softmaxExpEffort with
+          | .error e => return .error e
+          | .ok certs =>
+              for cert in certs do
+                headCerts := headCerts.push cert
+        match marginsFromBestMatchCerts hdr.numHeads hdr.seqLen headCerts with
+        | none => return .error "best-match margin coverage failed"
+        | some margins =>
+            let marginLowerBound := minMarginArray margins
+            let cert : LayerBestMatchMarginCert := {
+              layerIdx := layerIdx
+              seqLen := hdr.seqLen
+              numHeads := hdr.numHeads
+              softmaxExpEffort := softmaxExpEffort
+              marginLowerBound := marginLowerBound
+              margins := margins
+              headCerts := headCerts
+            }
+            if cert.check then
+              return .ok cert
+            return .error "layer best-match margin certificate failed internal checks"
+  else
+    return .error "layer best-match margins require NFP_BINARY_V1"
+
 /-- Compute local head value lower bounds for a specific `.nfpt` head (binary only). -/
 def certifyHeadValueLowerBoundLocal
     (path : System.FilePath)
@@ -4651,6 +4711,9 @@ theorem certifyHeadPatternBestMatchLocal_spec_io :
 
 theorem certifyHeadPatternBestMatchLocalSweep_spec_io :
     certifyHeadPatternBestMatchLocalSweep = certifyHeadPatternBestMatchLocalSweep := rfl
+
+theorem certifyLayerBestMatchMarginLocal_spec_io :
+    certifyLayerBestMatchMarginLocal = certifyLayerBestMatchMarginLocal := rfl
 
 theorem certifyHeadValueLowerBoundLocal_spec_io :
     certifyHeadValueLowerBoundLocal = certifyHeadValueLowerBoundLocal := rfl

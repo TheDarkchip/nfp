@@ -107,6 +107,24 @@ theorem softmaxJacobianNormInfPortfolioBound_def (seqLen : Nat) (l : LayerAmplif
         #[softmaxJacobianNormInfBoundFromMargin seqLen l.softmaxMarginLowerBound
           l.softmaxExpEffort] := rfl
 
+/-- Update margin evidence and recompute dependent softmax + residual bounds. -/
+def withSoftmaxMargin (seqLen : Nat) (marginLowerBound : Rat) (softmaxExpEffort : Nat)
+    (l : LayerAmplificationCert) : LayerAmplificationCert :=
+  let l' :=
+    { l with
+      softmaxMarginLowerBound := marginLowerBound
+      softmaxExpEffort := softmaxExpEffort }
+  let softmaxBound := softmaxJacobianNormInfPortfolioBound seqLen l'
+  let attnJacBound :=
+    l'.ln1Bound *
+      ((seqLen : Rat) * l'.attnValueCoeff + softmaxBound * l'.attnPatternCoeff)
+  let mlpJacBound := l'.mlpJacBound
+  let C := attnJacBound + mlpJacBound + attnJacBound * mlpJacBound
+  { l' with
+    softmaxJacobianNormInfUpperBound := softmaxBound
+    attnJacBound := attnJacBound
+    C := C }
+
 /-- Internal consistency checks for per-layer bounds. -/
 def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     (l : LayerAmplificationCert) : Prop :=
@@ -268,6 +286,8 @@ theorem residual_bound_of_component_bounds_valid
   exact residual_bound_of_component_bounds (l := l) (A := A) (M := M) hC hA hM
 
 
+theorem withSoftmaxMargin_spec :
+    withSoftmaxMargin = withSoftmaxMargin := rfl
 theorem Valid_spec : Valid = Valid := rfl
 theorem check_spec : check = check := rfl
 
@@ -321,6 +341,18 @@ def check (c : ModelCert) : Bool :=
 theorem check_iff (c : ModelCert) : c.check = true ↔ c.Valid := by
   simp [check, Valid]
 
+/-- Replace a layer and recompute total amplification factor. -/
+def withUpdatedLayer (c : ModelCert) (layerIdx : Nat) (layer : LayerAmplificationCert) :
+    Option ModelCert :=
+  if layer.layerIdx ≠ layerIdx then
+    none
+  else if layerIdx < c.layers.size then
+    let layers := c.layers.set! layerIdx layer
+    let total := layers.foldl (fun acc l => acc * (1 + l.C)) 1
+    some { c with layers := layers, totalAmplificationFactor := total }
+  else
+    none
+
 /-- Pretty printer. -/
 def toString (c : ModelCert) : String :=
   let header :=
@@ -360,6 +392,7 @@ instance : ToString ModelCert := ⟨toString⟩
 
 theorem Valid_spec : Valid = Valid := rfl
 theorem check_spec : check = check := rfl
+theorem withUpdatedLayer_spec : withUpdatedLayer = withUpdatedLayer := rfl
 theorem toString_spec : toString = toString := rfl
 
 end ModelCert

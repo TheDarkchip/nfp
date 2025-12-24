@@ -101,6 +101,47 @@ private def checkSoftmaxProbIntervalWorst (cert : ModelCert) : Except String Uni
 theorem checkSoftmaxProbIntervalWorst_spec_io :
     checkSoftmaxProbIntervalWorst = checkSoftmaxProbIntervalWorst := rfl
 
+private def tightenLayerSoftmaxFromBestMatch
+    (seqLen : Nat) (layer : LayerAmplificationCert) (cert : LayerBestMatchMarginCert) :
+    Except String LayerAmplificationCert :=
+  Id.run do
+    if !cert.check then
+      return .error "layer best-match margin cert failed internal checks"
+    if cert.layerIdx ≠ layer.layerIdx then
+      return .error "layer margin cert does not match layer index"
+    if cert.seqLen ≠ seqLen then
+      return .error "layer margin cert seq_len mismatch"
+    let updated :=
+      LayerAmplificationCert.withSoftmaxMargin seqLen cert.marginLowerBound
+        cert.softmaxExpEffort layer
+    if updated.softmaxJacobianNormInfUpperBound > layer.softmaxJacobianNormInfUpperBound then
+      return .error "best-match softmax bound is worse than baseline"
+    return .ok updated
+
+theorem tightenLayerSoftmaxFromBestMatch_spec_io :
+    tightenLayerSoftmaxFromBestMatch = tightenLayerSoftmaxFromBestMatch := rfl
+
+def tightenModelCertBestMatchMargins
+    (c : ModelCert) (certs : Array LayerBestMatchMarginCert) :
+    Except String ModelCert :=
+  certs.foldl (fun acc cert =>
+    match acc with
+    | .error e => .error e
+    | .ok cur =>
+        if cert.layerIdx < cur.layers.size then
+          let layer := cur.layers[cert.layerIdx]!
+          match tightenLayerSoftmaxFromBestMatch cur.seqLen layer cert with
+          | .error e => .error e
+          | .ok updatedLayer =>
+              match ModelCert.withUpdatedLayer cur cert.layerIdx updatedLayer with
+              | none => .error "failed to update model cert layer"
+              | some updated => .ok updated
+        else
+          .error s!"layer margin cert index {cert.layerIdx} out of range") (.ok c)
+
+theorem tightenModelCertBestMatchMargins_spec_io :
+    tightenModelCertBestMatchMargins = tightenModelCertBestMatchMargins := rfl
+
 private def recomputeAttnWeightBoundsBinary
     (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -461,6 +502,34 @@ def certifyHeadPatternBestMatchLocalSweep
           if ok then
             return .ok certs
           return .error "head best-match sweep certificate failed internal checks"
+
+/-- Compute layer-level best-match margin evidence (binary only). -/
+def certifyLayerBestMatchMarginLocal
+    (path : System.FilePath)
+    (layerIdx : Nat)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
+    (targetOffset : Int := -1)
+    (maxSeqLen : Nat := 256)
+    (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
+    IO (Except String LayerBestMatchMarginCert) := do
+  match ← readModelEps path with
+  | .error e => return .error e
+  | .ok eps =>
+      match ←
+          Nfp.Untrusted.SoundCompute.certifyLayerBestMatchMarginLocal
+            path layerIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
+            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
+      | .error e => return .error e
+      | .ok cert =>
+          if cert.check then
+            return .ok cert
+          return .error "layer best-match margin certificate failed internal checks"
 
 /-- Compute local per-head attention contribution bounds tightened by
     best-match pattern evidence. -/

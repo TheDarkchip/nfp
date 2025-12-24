@@ -253,6 +253,79 @@ theorem check_iff (c : HeadBestMatchPatternCert) : c.check = true ↔ c.Valid :=
 
 end HeadBestMatchPatternCert
 
+/-! ## Layer-level best-match margin aggregation -/
+
+/-- Index into a `(numHeads × seqLen)` margin array. -/
+def headQueryIndex (seqLen : Nat) (headIdx queryPos : Nat) : Nat :=
+  headIdx * seqLen + queryPos
+
+/-- Populate a margin array from best-match certs; fails on duplicates or out-of-range indices. -/
+def marginsFromBestMatchCerts
+    (numHeads seqLen : Nat) (certs : Array HeadBestMatchPatternCert) :
+    Option (Array Rat) :=
+  Id.run do
+    let size := numHeads * seqLen
+    let mut margins : Array Rat := Array.replicate size 0
+    let mut seen : Array Bool := Array.replicate size false
+    for cert in certs do
+      if cert.headIdx < numHeads && cert.queryPos < seqLen then
+        let idx := headQueryIndex seqLen cert.headIdx cert.queryPos
+        if seen[idx]! then
+          return none
+        seen := seen.set! idx true
+        margins := margins.set! idx cert.marginLowerBound
+      else
+        return none
+    return some margins
+
+/-- Minimum margin over a nonempty array (defaults to `0` for empty input). -/
+def minMarginArray (margins : Array Rat) : Rat :=
+  if margins.size = 0 then
+    0
+  else
+    margins.foldl (fun acc m => min acc m) margins[0]!
+
+/-- Layer-level best-match margin evidence aggregated across heads and query positions. -/
+structure LayerBestMatchMarginCert where
+  layerIdx : Nat
+  seqLen : Nat
+  numHeads : Nat
+  softmaxExpEffort : Nat
+  marginLowerBound : Rat
+  margins : Array Rat
+  headCerts : Array HeadBestMatchPatternCert
+  deriving Repr
+
+namespace LayerBestMatchMarginCert
+
+/-- Internal consistency checks for aggregated margins. -/
+def Valid (c : LayerBestMatchMarginCert) : Prop :=
+  c.seqLen > 0 ∧
+    c.numHeads > 0 ∧
+    c.margins.size = c.numHeads * c.seqLen ∧
+    c.headCerts.all (fun cert =>
+      cert.check &&
+        cert.layerIdx == c.layerIdx &&
+        cert.seqLen == c.seqLen &&
+        cert.softmaxExpEffort == c.softmaxExpEffort &&
+        cert.headIdx < c.numHeads &&
+        cert.queryPos < c.seqLen) = true ∧
+    marginsFromBestMatchCerts c.numHeads c.seqLen c.headCerts = some c.margins ∧
+    c.marginLowerBound = minMarginArray c.margins
+
+instance (c : LayerBestMatchMarginCert) : Decidable (Valid c) := by
+  unfold Valid
+  infer_instance
+
+/-- Boolean checker for `Valid`. -/
+def check (c : LayerBestMatchMarginCert) : Bool :=
+  decide (Valid c)
+
+theorem check_iff (c : LayerBestMatchMarginCert) : c.check = true ↔ c.Valid := by
+  simp [check, Valid]
+
+end LayerBestMatchMarginCert
+
 /-! ## Best-match value/logit bounds -/
 
 /-- Local per-head output lower bound for a single coordinate (single query position). -/
@@ -456,6 +529,12 @@ theorem HeadPatternCert.Valid_spec :
     HeadPatternCert.Valid = HeadPatternCert.Valid := rfl
 theorem HeadPatternCert.check_spec :
     HeadPatternCert.check = HeadPatternCert.check := rfl
+theorem headQueryIndex_spec :
+    headQueryIndex = headQueryIndex := rfl
+theorem marginsFromBestMatchCerts_spec :
+    marginsFromBestMatchCerts = marginsFromBestMatchCerts := rfl
+theorem minMarginArray_spec :
+    minMarginArray = minMarginArray := rfl
 theorem HeadPatternCert.toTokenMatchPattern_spec :
     HeadPatternCert.toTokenMatchPattern = HeadPatternCert.toTokenMatchPattern := rfl
 theorem HeadPatternCert.toInductionPatternWitness_spec :
@@ -472,6 +551,10 @@ theorem HeadBestMatchPatternCert.Valid_spec :
     HeadBestMatchPatternCert.Valid = HeadBestMatchPatternCert.Valid := rfl
 theorem HeadBestMatchPatternCert.check_spec :
     HeadBestMatchPatternCert.check = HeadBestMatchPatternCert.check := rfl
+theorem LayerBestMatchMarginCert.Valid_spec :
+    LayerBestMatchMarginCert.Valid = LayerBestMatchMarginCert.Valid := rfl
+theorem LayerBestMatchMarginCert.check_spec :
+    LayerBestMatchMarginCert.check = LayerBestMatchMarginCert.check := rfl
 theorem HeadValueLowerBoundPosCert.Valid_spec :
     HeadValueLowerBoundPosCert.Valid = HeadValueLowerBoundPosCert.Valid := rfl
 theorem HeadValueLowerBoundPosCert.check_spec :

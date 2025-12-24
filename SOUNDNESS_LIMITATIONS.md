@@ -15,6 +15,9 @@ soundness upgrade. It is intentionally brief and human-readable.
   currently **rejects nonzero** `softmaxMarginLowerBound` because margin evidence is unverified.
 - Local per-head contribution bounds can now be tightened using a best-match pattern certificate,
   but this tightening does **not** propagate to layer-level ModelCert bounds.
+- Layer-level best-match margin certificates can be computed (binary only) and applied via
+  `tightenModelCertBestMatchMargins`, but this is not yet wired into the CLI and may not tighten
+  unless the best-match sweep covers all heads and query positions.
 - Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.
