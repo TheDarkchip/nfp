@@ -459,7 +459,7 @@ theorem attn_component_bound_of_cert
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)) :
     SignedMixer.operatorNormBound
         ((D.ln1Jacobians i).comp (D.layers i).fullJacobian)
-        ≤ (l.attnWeightContribution : ℝ) := by
+        ≤ (l.attnJacBound : ℝ) := by
   classical
   let attnTotal : ℝ :=
     (seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
@@ -492,9 +492,9 @@ theorem attn_component_bound_of_cert
     exact le_trans hmul1 hmul2
   have hAttn :
       (l.ln1Bound : ℝ) * attnTotal =
-        (l.attnWeightContribution : ℝ) := by
+        (l.attnJacBound : ℝ) := by
     have hAttn :=
-      LayerAmplificationCert.attnWeightContribution_eq_cast_of_valid
+      LayerAmplificationCert.attnJacBound_eq_cast_of_valid
         (eps := eps) (sqrtPrecBits := sqrtPrecBits)
         (seqLen := seqLen) (modelDim := modelDim) (headDim := headDim) (l := l) hValid
     simpa [attnTotal, mul_assoc, add_assoc] using hAttn.symm
@@ -504,7 +504,7 @@ theorem attn_component_bound_of_cert
         ≤ SignedMixer.operatorNormBound (D.ln1Jacobians i) *
           SignedMixer.operatorNormBound (D.layers i).fullJacobian := hcomp
     _ ≤ (l.ln1Bound : ℝ) * attnTotal := hmul
-    _ = (l.attnWeightContribution : ℝ) := hAttn
+    _ = (l.attnJacBound : ℝ) := hAttn
 
 /-- MLP-component bound from certificate identities and component bounds. -/
 theorem mlp_component_bound_of_cert
@@ -523,7 +523,7 @@ theorem mlp_component_bound_of_cert
         (l.mlpCoeff : ℝ) * (l.mlpActDerivBound : ℝ)) :
     SignedMixer.operatorNormBound
         ((D.ln2Jacobians i).comp (D.mlpJacobians i))
-        ≤ (l.mlpWeightContribution : ℝ) := by
+        ≤ (l.mlpJacBound : ℝ) := by
   classical
   let mlpBound : ℝ := (l.mlpCoeff : ℝ) * (l.mlpActDerivBound : ℝ)
   have hcomp :
@@ -552,9 +552,9 @@ theorem mlp_component_bound_of_cert
         (l.ln2Bound : ℝ) * mlpBound := by
     exact le_trans hmul1 hmul2
   have hMlpEq :
-      (l.ln2Bound : ℝ) * mlpBound = (l.mlpWeightContribution : ℝ) := by
+      (l.ln2Bound : ℝ) * mlpBound = (l.mlpJacBound : ℝ) := by
     have hMlpEq :=
-      LayerAmplificationCert.mlpWeightContribution_eq_cast_of_valid
+      LayerAmplificationCert.mlpJacBound_eq_cast_of_valid
         (eps := eps) (sqrtPrecBits := sqrtPrecBits)
         (seqLen := seqLen) (modelDim := modelDim) (headDim := headDim) (l := l) hValid
     simpa [mlpBound, mul_assoc] using hMlpEq.symm
@@ -564,7 +564,7 @@ theorem mlp_component_bound_of_cert
         ≤ SignedMixer.operatorNormBound (D.ln2Jacobians i) *
           SignedMixer.operatorNormBound (D.mlpJacobians i) := hcomp
     _ ≤ (l.ln2Bound : ℝ) * mlpBound := hmul
-    _ = (l.mlpWeightContribution : ℝ) := hMlpEq
+    _ = (l.mlpJacBound : ℝ) := hMlpEq
 
 /-- Layer Jacobian residual bound from a layer amplification certificate. -/
 theorem layerJacobian_residual_bound_of_cert
@@ -578,11 +578,11 @@ theorem layerJacobian_residual_bound_of_cert
     (hA :
       SignedMixer.operatorNormBound
         ((D.ln1Jacobians i).comp (D.layers i).fullJacobian)
-        ≤ (l.attnWeightContribution : ℝ))
+        ≤ (l.attnJacBound : ℝ))
     (hM :
       SignedMixer.operatorNormBound
         ((D.ln2Jacobians i).comp (D.mlpJacobians i))
-        ≤ (l.mlpWeightContribution : ℝ)) :
+        ≤ (l.mlpJacBound : ℝ)) :
     SignedMixer.operatorNormBound
         (D.layerJacobian i - SignedMixer.identity) ≤ (l.C : ℝ) := by
   have hC := LayerAmplificationCert.c_eq_cast_of_valid
@@ -591,8 +591,8 @@ theorem layerJacobian_residual_bound_of_cert
   have hres :=
     DeepLinearization.layerJacobian_residual_bound
       (D := D) (i := i)
-      (A := (l.attnWeightContribution : ℝ))
-      (M := (l.mlpWeightContribution : ℝ)) hA hM
+      (A := (l.attnJacBound : ℝ))
+      (M := (l.mlpJacBound : ℝ)) hA hM
   simpa [hC] using hres
 
 /-- Layer Jacobian residual bound from a certificate, with component-norm assumptions. -/

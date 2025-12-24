@@ -77,6 +77,17 @@ private def checkAttnWeightBounds
 theorem checkAttnWeightBounds_spec_io :
     checkAttnWeightBounds = checkAttnWeightBounds := rfl
 
+private def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
+  Id.run do
+    for idx in [:cert.layers.size] do
+      let layer := cert.layers[idx]!
+      if layer.softmaxMarginLowerBound ≠ 0 then
+        return .error s!"softmaxMarginLowerBound is unverified (layer {idx})"
+    return .ok ()
+
+theorem checkSoftmaxMarginZero_spec_io :
+    checkSoftmaxMarginZero = checkSoftmaxMarginZero := rfl
+
 private def recomputeAttnWeightBoundsBinary
     (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -260,7 +271,10 @@ def certifyModelFileGlobal
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match ← recomputeAttnWeightBounds path with
+            match checkSoftmaxMarginZero cert with
+            | .error e => return .error e
+            | .ok _ =>
+                match ← recomputeAttnWeightBounds path with
             | .error e =>
                 return .error s!"attnWeightBounds verification failed: {e}"
             | .ok bounds =>
@@ -294,7 +308,10 @@ def certifyModelFile
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match ← recomputeAttnWeightBounds path with
+            match checkSoftmaxMarginZero cert with
+            | .error e => return .error e
+            | .ok _ =>
+                match ← recomputeAttnWeightBounds path with
             | .error e =>
                 return .error s!"attnWeightBounds verification failed: {e}"
             | .ok bounds =>

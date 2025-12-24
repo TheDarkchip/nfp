@@ -57,8 +57,10 @@ structure LayerAmplificationCert where
   mlpWoutBound : Rat
   /-- Upper bound on the max GeLU derivative over this layer's preactivations. -/
   mlpActDerivBound : Rat
-  attnWeightContribution : Rat
-  mlpWeightContribution : Rat
+  /-- Upper bound on the attention residual Jacobian contribution. -/
+  attnJacBound : Rat
+  /-- Upper bound on the MLP residual Jacobian contribution. -/
+  mlpJacBound : Rat
   /-- Combined residual amplification bound: `attn + mlp + attn*mlp`. -/
   C : Rat
   deriving Repr
@@ -89,8 +91,8 @@ instance : Inhabited LayerAmplificationCert :=
     mlpWinBound := 0
     mlpWoutBound := 0
     mlpActDerivBound := 0
-    attnWeightContribution := 0
-    mlpWeightContribution := 0
+    attnJacBound := 0
+    mlpJacBound := 0
     C := 0
   }⟩
 
@@ -123,16 +125,16 @@ def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     l.attnPatternCoeff =
       attnPatternCoeffBound seqLen modelDim headDim l.ln1OutMaxAbsBound l.wqOpBoundMax
         l.wkOpBoundMax l.attnValueCoeff ∧
-    l.attnWeightContribution =
+    l.attnJacBound =
       l.ln1Bound *
         ((seqLen : Rat) * l.attnValueCoeff +
           l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) ∧
     l.mlpCoeff = l.mlpWinBound * l.mlpWoutBound ∧
-    l.mlpWeightContribution =
+    l.mlpJacBound =
       l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) ∧
     l.C =
-      l.attnWeightContribution + l.mlpWeightContribution +
-        l.attnWeightContribution * l.mlpWeightContribution
+      l.attnJacBound + l.mlpJacBound +
+        l.attnJacBound * l.mlpJacBound
 
 instance (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     (l : LayerAmplificationCert) :
@@ -154,17 +156,17 @@ theorem check_iff (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Na
 /-- Extract the `C` identity from `Valid`. -/
 theorem c_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     (l : LayerAmplificationCert) (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
-    l.C = l.attnWeightContribution + l.mlpWeightContribution +
-      l.attnWeightContribution * l.mlpWeightContribution := by
+    l.C = l.attnJacBound + l.mlpJacBound +
+      l.attnJacBound * l.mlpJacBound := by
   rcases h with
     ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, _hattn, _hmlpCoeff, _hmlp, hC⟩
   exact hC
 
 /-- Extract the attention contribution identity from `Valid`. -/
-theorem attnWeightContribution_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
+theorem attnJacBound_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat) (l : LayerAmplificationCert)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
-    l.attnWeightContribution =
+    l.attnJacBound =
       l.ln1Bound *
         ((seqLen : Rat) * l.attnValueCoeff +
           l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) := by
@@ -181,10 +183,10 @@ theorem mlpCoeff_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim h
   exact hCoeff
 
 /-- Extract the MLP contribution identity from `Valid`. -/
-theorem mlpWeightContribution_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
+theorem mlpJacBound_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat) (l : LayerAmplificationCert)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
-    l.mlpWeightContribution = l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) := by
+    l.mlpJacBound = l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) := by
   rcases h with
     ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, _hattn, _hmlpCoeff, hmlp, _hC⟩
   exact hmlp
@@ -193,22 +195,22 @@ theorem mlpWeightContribution_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
 theorem c_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     (l : LayerAmplificationCert) (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
     (l.C : ℝ) =
-      (l.attnWeightContribution : ℝ) +
-        (l.mlpWeightContribution : ℝ) +
-          (l.attnWeightContribution : ℝ) * (l.mlpWeightContribution : ℝ) := by
+      (l.attnJacBound : ℝ) +
+        (l.mlpJacBound : ℝ) +
+          (l.attnJacBound : ℝ) * (l.mlpJacBound : ℝ) := by
   have hC := c_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
   have hC' := congrArg (fun (x : Rat) => (x : ℝ)) hC
   simpa [Rat.cast_add, Rat.cast_mul, add_assoc] using hC'
 
 /-- Cast the attention contribution identity to `ℝ` using `Valid`. -/
-theorem attnWeightContribution_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat)
+theorem attnJacBound_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat) (l : LayerAmplificationCert)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
-    (l.attnWeightContribution : ℝ) =
+    (l.attnJacBound : ℝ) =
       (l.ln1Bound : ℝ) *
         ((seqLen : ℝ) * (l.attnValueCoeff : ℝ) +
           (l.softmaxJacobianNormInfUpperBound : ℝ) * (l.attnPatternCoeff : ℝ)) := by
-  have hAttn := attnWeightContribution_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
+  have hAttn := attnJacBound_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
   have hAttn' := congrArg (fun (x : Rat) => (x : ℝ)) hAttn
   simpa [Rat.cast_mul, Rat.cast_add, Rat.cast_natCast, mul_assoc, add_assoc] using hAttn'
 
@@ -221,12 +223,12 @@ theorem mlpCoeff_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen model
   simpa [Rat.cast_mul] using hCoeff'
 
 /-- Cast the MLP contribution identity to `ℝ` using `Valid`. -/
-theorem mlpWeightContribution_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat)
+theorem mlpJacBound_eq_cast_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat) (l : LayerAmplificationCert)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
-    (l.mlpWeightContribution : ℝ) =
+    (l.mlpJacBound : ℝ) =
       (l.ln2Bound : ℝ) * ((l.mlpCoeff : ℝ) * (l.mlpActDerivBound : ℝ)) := by
-  have hMlp := mlpWeightContribution_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
+  have hMlp := mlpJacBound_eq_of_valid eps sqrtPrecBits seqLen modelDim headDim l h
   have hMlp' := congrArg (fun (x : Rat) => (x : ℝ)) hMlp
   simpa [Rat.cast_mul, mul_assoc] using hMlp'
 
@@ -236,19 +238,19 @@ theorem residual_bound_of_component_bounds
     (l : LayerAmplificationCert)
     (A M : SignedMixer S S)
     (hC : (l.C : ℝ) =
-      (l.attnWeightContribution : ℝ) +
-        (l.mlpWeightContribution : ℝ) +
-          (l.attnWeightContribution : ℝ) * (l.mlpWeightContribution : ℝ))
-    (hA : SignedMixer.operatorNormBound A ≤ (l.attnWeightContribution : ℝ))
-    (hM : SignedMixer.operatorNormBound M ≤ (l.mlpWeightContribution : ℝ)) :
+      (l.attnJacBound : ℝ) +
+        (l.mlpJacBound : ℝ) +
+          (l.attnJacBound : ℝ) * (l.mlpJacBound : ℝ))
+    (hA : SignedMixer.operatorNormBound A ≤ (l.attnJacBound : ℝ))
+    (hM : SignedMixer.operatorNormBound M ≤ (l.mlpJacBound : ℝ)) :
     SignedMixer.operatorNormBound
         ((SignedMixer.identity + A).comp (SignedMixer.identity + M) - SignedMixer.identity)
         ≤ (l.C : ℝ) := by
   have hres :=
     SignedMixer.operatorNormBound_residual_comp_le_of_bounds
       (A := A) (M := M)
-      (a := (l.attnWeightContribution : ℝ))
-      (b := (l.mlpWeightContribution : ℝ)) hA hM
+      (a := (l.attnJacBound : ℝ))
+      (b := (l.mlpJacBound : ℝ)) hA hM
   simpa [hC] using hres
 
 /-- Residual composition bound from `Valid` plus component bounds. -/
@@ -257,8 +259,8 @@ theorem residual_bound_of_component_bounds_valid
     (l : LayerAmplificationCert) (eps : Rat) (sqrtPrecBits : Nat)
     (seqLen modelDim headDim : Nat) (A M : SignedMixer S S)
     (hValid : l.Valid eps sqrtPrecBits seqLen modelDim headDim)
-    (hA : SignedMixer.operatorNormBound A ≤ (l.attnWeightContribution : ℝ))
-    (hM : SignedMixer.operatorNormBound M ≤ (l.mlpWeightContribution : ℝ)) :
+    (hA : SignedMixer.operatorNormBound A ≤ (l.attnJacBound : ℝ))
+    (hM : SignedMixer.operatorNormBound M ≤ (l.mlpJacBound : ℝ)) :
     SignedMixer.operatorNormBound
         ((SignedMixer.identity + A).comp (SignedMixer.identity + M) - SignedMixer.identity)
         ≤ (l.C : ℝ) := by
@@ -335,8 +337,8 @@ def toString (c : ModelCert) : String :=
   let body :=
     c.layers.foldl (fun acc l =>
       acc ++
-      s!"Layer {l.layerIdx}: C={l.C} (attn={l.attnWeightContribution}, \
-mlp={l.mlpWeightContribution}, cross={l.attnWeightContribution * l.mlpWeightContribution}, \
+      s!"Layer {l.layerIdx}: C={l.C} (attn={l.attnJacBound}, \
+mlp={l.mlpJacBound}, cross={l.attnJacBound * l.mlpJacBound}, \
 attnValueCoeff={l.attnValueCoeff}, attnPatternCoeff={l.attnPatternCoeff}, \
 wqOpBoundMax={l.wqOpBoundMax}, wkOpBoundMax={l.wkOpBoundMax}, \
 ln1OutMaxAbsBound={l.ln1OutMaxAbsBound}, \

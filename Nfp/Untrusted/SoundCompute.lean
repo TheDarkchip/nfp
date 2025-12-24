@@ -380,8 +380,8 @@ private def certifyModelFileGlobalBinary
           mlpWinBound := nWin
           mlpWoutBound := nWout
           mlpActDerivBound := mlpActDerivBound
-          attnWeightContribution := attnW
-          mlpWeightContribution := mlpW
+          attnJacBound := attnW
+          mlpJacBound := mlpW
           C := C
         }
         totalAmp := totalAmp * (1 + C)
@@ -846,8 +846,8 @@ def certifyModelFileGlobal
       mlpWinBound := mlpWin[l]!
       mlpWoutBound := mlpWout[l]!
       mlpActDerivBound := mlpActDerivBound
-      attnWeightContribution := attnW
-      mlpWeightContribution := mlpW
+      attnJacBound := attnW
+      mlpJacBound := mlpW
       C := C
     }
     totalAmp := totalAmp * (1 + C)
@@ -2360,8 +2360,8 @@ private def certifyModelFileLocalText
                           mlpWinBound := nWin
                           mlpWoutBound := nWout
                           mlpActDerivBound := mlpActDerivBound
-                          attnWeightContribution := attnW
-                          mlpWeightContribution := mlpW
+                          attnJacBound := attnW
+                          mlpJacBound := mlpW
                           C := C
                         }
                         totalAmp := totalAmp * (1 + C)
@@ -2542,8 +2542,8 @@ private def certifyModelFileLocal
               mlpWinBound := nWin
               mlpWoutBound := nWout
               mlpActDerivBound := mlpActDerivBound
-              attnWeightContribution := attnW
-              mlpWeightContribution := mlpW
+              attnJacBound := attnW
+              mlpJacBound := mlpW
               C := C
             }
             totalAmp := totalAmp * (1 + C)
@@ -2709,8 +2709,8 @@ private def certifyModelFileLocalBinary
         mlpWinBound := nWin
         mlpWoutBound := nWout
         mlpActDerivBound := mlpActDerivBound
-        attnWeightContribution := attnW
-        mlpWeightContribution := mlpW
+        attnJacBound := attnW
+        mlpJacBound := mlpW
         C := C
       }
       totalAmp := totalAmp * (1 + C)
@@ -2813,7 +2813,7 @@ private def certifyHeadBoundsLocalBinary
           wvOpBound := vCenteredOpBound
           woOpBound := nWo
           qkFactorBound := wqOp * wkOp
-          attnWeightContribution := attnW
+          attnJacBound := attnW
         }
         if cert.check eps then
           heads := heads.push cert

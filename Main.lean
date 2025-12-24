@@ -976,7 +976,7 @@ private def formatHeadBoundsLocal
           s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
           s!"qk={h.qkFactorBound}, " ++
           s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
-          s!"attn={h.attnWeightContribution}\n") ""
+          s!"attn={h.attnJacBound}\n") ""
   header ++ body
 
 private def formatHeadBoundsGlobal
