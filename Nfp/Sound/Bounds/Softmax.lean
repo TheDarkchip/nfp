@@ -2,6 +2,7 @@
 
 import Mathlib.Algebra.Order.Ring.Unbundled.Rat
 import Nfp.Sound.Bounds.Exp
+import Nfp.Sound.Bounds.Portfolio
 
 namespace Nfp.Sound
 
@@ -102,7 +103,7 @@ def softmaxTargetWeightLowerBound (seqLen targetCount : Nat) (margin : Rat)
     let base := tRat / nRat
     let e := expLB margin expEffort
     let cand := (tRat * e) / (tRat * e + (nRat - tRat))
-    max base cand
+    lbBest base #[cand]
   else
     0
 
@@ -117,7 +118,7 @@ theorem softmaxTargetWeightLowerBound_def (seqLen targetCount : Nat) (margin : R
         let base := tRat / nRat
         let e := expLB margin expEffort
         let cand := (tRat * e) / (tRat * e + (nRat - tRat))
-        max base cand
+        lbBest base #[cand]
       else
         0 := rfl
 

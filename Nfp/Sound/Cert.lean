@@ -96,14 +96,14 @@ instance : Inhabited LayerAmplificationCert :=
 
 /-- Portfolio softmax Jacobian bound from interval and margin candidates. -/
 def softmaxJacobianNormInfPortfolioBound (seqLen : Nat) (l : LayerAmplificationCert) : Rat :=
-  min (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi)
-    (softmaxJacobianNormInfBoundFromMargin seqLen l.softmaxMarginLowerBound l.softmaxExpEffort)
+  ubBest (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi)
+    #[softmaxJacobianNormInfBoundFromMargin seqLen l.softmaxMarginLowerBound l.softmaxExpEffort]
 
 theorem softmaxJacobianNormInfPortfolioBound_def (seqLen : Nat) (l : LayerAmplificationCert) :
     softmaxJacobianNormInfPortfolioBound seqLen l =
-      min (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi)
-        (softmaxJacobianNormInfBoundFromMargin seqLen l.softmaxMarginLowerBound
-          l.softmaxExpEffort) := rfl
+      ubBest (softmaxJacobianNormInfBound l.softmaxProbLo l.softmaxProbHi)
+        #[softmaxJacobianNormInfBoundFromMargin seqLen l.softmaxMarginLowerBound
+          l.softmaxExpEffort] := rfl
 
 /-- Internal consistency checks for per-layer bounds. -/
 def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
