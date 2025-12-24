@@ -101,6 +101,8 @@ structure HeadPatternCert where
   targetLogitLowerBound : Rat
   otherLogitUpperBound : Rat
   marginLowerBound : Rat
+  /-- Effort level for the `expLB` portfolio used in margin-to-weight bounds. -/
+  softmaxExpEffort : Nat
   targetWeightLowerBound : Rat
   deriving Repr
 
@@ -112,10 +114,8 @@ def Valid (c : HeadPatternCert) : Prop :=
     c.targetCountLowerBound ≤ c.seqLen ∧
     c.marginLowerBound = c.targetLogitLowerBound - c.otherLogitUpperBound ∧
     c.targetWeightLowerBound =
-      (if c.marginLowerBound > 0 then
-        (c.targetCountLowerBound : Rat) / (c.seqLen : Rat)
-      else
-        0)
+      softmaxTargetWeightLowerBound c.seqLen c.targetCountLowerBound
+        c.marginLowerBound c.softmaxExpEffort
 
 instance (c : HeadPatternCert) : Decidable (Valid c) := by
   unfold Valid
@@ -328,6 +328,7 @@ def toTokenMatchPattern (c : HeadPatternCert) : Nfp.TokenMatchPattern := {
   seqLen := c.seqLen
   targetOffset := c.targetOffset
   targetCountLowerBound := c.targetCountLowerBound
+  softmaxExpEffort := c.softmaxExpEffort
   targetWeightLowerBound := c.targetWeightLowerBound
   marginLowerBound := c.marginLowerBound
 }

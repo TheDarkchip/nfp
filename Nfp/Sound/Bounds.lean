@@ -306,6 +306,39 @@ theorem softmaxMaxProbLowerBound_def (seqLen : Nat) (margin : Rat) (expEffort : 
       else
         0 := rfl
 
+/-- Lower bound on total target softmax weight from a logit margin.
+
+If at least `targetCount` logits exceed the rest by `margin`, then the total
+target weight is at least `t*exp(m)/(t*exp(m)+(n-t))`. -/
+def softmaxTargetWeightLowerBound (seqLen targetCount : Nat) (margin : Rat)
+    (expEffort : Nat) : Rat :=
+  if seqLen = 0 || targetCount = 0 then
+    0
+  else if margin > 0 then
+    let nRat : Rat := (seqLen : Nat)
+    let tRat : Rat := (targetCount : Nat)
+    let base := tRat / nRat
+    let e := expLB margin expEffort
+    let cand := (tRat * e) / (tRat * e + (nRat - tRat))
+    max base cand
+  else
+    0
+
+theorem softmaxTargetWeightLowerBound_def (seqLen targetCount : Nat) (margin : Rat)
+    (expEffort : Nat) :
+    softmaxTargetWeightLowerBound seqLen targetCount margin expEffort =
+      if seqLen = 0 || targetCount = 0 then
+        0
+      else if margin > 0 then
+        let nRat : Rat := (seqLen : Nat)
+        let tRat : Rat := (targetCount : Nat)
+        let base := tRat / nRat
+        let e := expLB margin expEffort
+        let cand := (tRat * e) / (tRat * e + (nRat - tRat))
+        max base cand
+      else
+        0 := rfl
+
 /-- Upper bound on the row-sum softmax Jacobian norm from a max-probability lower bound.
 
 If the maximum probability is at least `pLo` and `pLo > 1/2`, then every row

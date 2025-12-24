@@ -12,7 +12,8 @@ soundness upgrade. It is intentionally brief and human-readable.
 - Softmax Jacobian bounds use probability intervals defaulted to `[0,1]`, so they reduce to worst-case.
 - Layer amplification certificates accept a margin-derived softmax Jacobian bound, but the
   certify path still defaults to margin 0 unless the user supplies `--softmaxMargin`. User-supplied
-  margins are **not verified** today.
+  margins are **not verified** today; trusted IO only recomputes model-derived weight norms
+  (`W_Q/W_K` maxima and `W_V/W_O` value coefficients).
 - Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.

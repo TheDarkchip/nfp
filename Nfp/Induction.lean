@@ -7,6 +7,7 @@ import Mathlib.Algebra.BigOperators.Ring.Finset
 import Mathlib.Algebra.Order.BigOperators.Ring.Finset
 import Nfp.Linearization
 import Nfp.SignedMixer
+import Nfp.Sound.Bounds
 
 /-!
 # True Induction Head Formalization
@@ -98,6 +99,8 @@ structure TokenMatchPattern where
   targetOffset : Int
   /-- Lower bound on the number of matching-token keys. -/
   targetCountLowerBound : Nat
+  /-- Effort level for the `expLB` portfolio used in margin-to-weight bounds. -/
+  softmaxExpEffort : Nat
   /-- Lower bound on total attention weight assigned to matching tokens. -/
   targetWeightLowerBound : Rat
   /-- Lower bound on logit margin between matching vs non-matching keys. -/
@@ -111,10 +114,8 @@ def Valid (p : TokenMatchPattern) : Prop :=
   p.seqLen > 0 ∧
     p.targetCountLowerBound ≤ p.seqLen ∧
     p.targetWeightLowerBound =
-      (if p.marginLowerBound > 0 then
-        (p.targetCountLowerBound : Rat) / (p.seqLen : Rat)
-      else
-        0)
+      Sound.softmaxTargetWeightLowerBound p.seqLen p.targetCountLowerBound
+        p.marginLowerBound p.softmaxExpEffort
 
 instance (p : TokenMatchPattern) : Decidable (Valid p) := by
   unfold Valid
@@ -127,14 +128,22 @@ def check (p : TokenMatchPattern) : Bool :=
 theorem check_iff (p : TokenMatchPattern) : p.check = true ↔ p.Valid := by
   simp [check, Valid]
 
-/-- If the margin is positive, the weight lower bound matches the uniform share
-of matching tokens. -/
+/-- If the margin and target count are positive, the weight lower bound matches
+the portfolio bound derived from `expLB`. -/
 theorem weight_lower_bound_of_margin_pos
-    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0) :
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
+    (hcount : 0 < p.targetCountLowerBound) :
     p.targetWeightLowerBound =
-      (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
-  rcases h with ⟨_hseq, _hcount, hweight⟩
-  simpa [hm] using hweight
+      let nRat : Rat := (p.seqLen : Nat)
+      let tRat : Rat := (p.targetCountLowerBound : Nat)
+      let base := tRat / nRat
+      let e := Sound.expLB p.marginLowerBound p.softmaxExpEffort
+      let cand := (tRat * e) / (tRat * e + (nRat - tRat))
+      max base cand := by
+  rcases h with ⟨hseq, _hcount, hweight⟩
+  have hseq0 : p.seqLen ≠ 0 := Nat.ne_of_gt hseq
+  have hcount0 : p.targetCountLowerBound ≠ 0 := Nat.ne_of_gt hcount
+  simpa [Sound.softmaxTargetWeightLowerBound_def, hseq0, hcount0, hm] using hweight
 
 /-- If the margin is nonpositive, the weight lower bound is zero. -/
 theorem weight_lower_bound_of_margin_nonpos
@@ -143,24 +152,37 @@ theorem weight_lower_bound_of_margin_nonpos
   rcases h with ⟨_hseq, _hcount, hweight⟩
   have hm' : ¬ p.marginLowerBound > 0 := by
     exact not_lt.mpr hm
-  simpa [hm'] using hweight
+  by_cases hzero : p.seqLen = 0 || p.targetCountLowerBound = 0
+  · simpa [Sound.softmaxTargetWeightLowerBound_def, hzero] using hweight
+  · simpa [Sound.softmaxTargetWeightLowerBound_def, hzero, hm'] using hweight
 
 /-- Positive margin and a positive target count imply positive attention mass. -/
 theorem weight_lower_bound_pos_of_margin_pos
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
     (hcount : 0 < p.targetCountLowerBound) :
     0 < p.targetWeightLowerBound := by
-  have hweight := weight_lower_bound_of_margin_pos p h hm
+  let nRat : Rat := (p.seqLen : Nat)
+  let tRat : Rat := (p.targetCountLowerBound : Nat)
+  let base : Rat := tRat / nRat
+  let e := Sound.expLB p.marginLowerBound p.softmaxExpEffort
+  let cand : Rat := (tRat * e) / (tRat * e + (nRat - tRat))
+  have hweight := weight_lower_bound_of_margin_pos p h hm hcount
   rcases h with ⟨hseq, _hcount, _hweight⟩
-  have hseq' : (0 : Rat) < (p.seqLen : Rat) := by
-    exact_mod_cast hseq
-  have hcount' : (0 : Rat) < (p.targetCountLowerBound : Rat) := by
-    exact_mod_cast hcount
-  have hdiv :
-      (0 : Rat) <
-        (p.targetCountLowerBound : Rat) / (p.seqLen : Rat) := by
+  have hseq' : (0 : Rat) < nRat := by
+    have hseq'' : (0 : Rat) < (p.seqLen : Rat) := by
+      exact_mod_cast hseq
+    simpa [nRat] using hseq''
+  have hcount' : (0 : Rat) < tRat := by
+    have hcount'' : (0 : Rat) < (p.targetCountLowerBound : Rat) := by
+      exact_mod_cast hcount
+    simpa [tRat] using hcount''
+  have hbase : (0 : Rat) < base := by
     exact div_pos hcount' hseq'
-  simpa [hweight] using hdiv
+  have hmax : base ≤ max base cand := by
+    exact le_max_left _ _
+  have hpos : (0 : Rat) < max base cand := by
+    exact lt_of_lt_of_le hbase hmax
+  simpa [nRat, tRat, base, e, cand, hweight] using hpos
 
 /-- Either the margin is nonpositive (so the bound is zero),
 or the bound is positive when the match count is positive. -/

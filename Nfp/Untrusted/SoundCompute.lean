@@ -3004,11 +3004,9 @@ private def certifyHeadPatternLocalBinary
         let targetLower := ratOfScaledInt scalePow10 minTargetLower
         let otherUpper := ratOfScaledInt scalePow10 maxOtherUpper
         let margin := ratOfScaledInt scalePow10 marginInt
+        let expEffort := defaultSoftmaxExpEffort
         let weightLB : Rat :=
-          if marginInt > 0 then
-            (targetCountLB : Rat) / (hdr.seqLen : Rat)
-          else
-            0
+          softmaxTargetWeightLowerBound hdr.seqLen targetCountLB margin expEffort
         let cert : HeadPatternCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -3018,6 +3016,7 @@ private def certifyHeadPatternLocalBinary
           targetLogitLowerBound := targetLower
           otherLogitUpperBound := otherUpper
           marginLowerBound := margin
+          softmaxExpEffort := expEffort
           targetWeightLowerBound := weightLB
         }
         if cert.check then
