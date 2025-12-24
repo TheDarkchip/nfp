@@ -2857,7 +2857,8 @@ private def certifyHeadPatternLocalBinary
     (tightPattern : Bool)
     (tightPatternLayers : Nat)
     (perRowPatternLayers : Nat)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadPatternCert) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
@@ -3004,9 +3005,8 @@ private def certifyHeadPatternLocalBinary
         let targetLower := ratOfScaledInt scalePow10 minTargetLower
         let otherUpper := ratOfScaledInt scalePow10 maxOtherUpper
         let margin := ratOfScaledInt scalePow10 marginInt
-        let expEffort := defaultSoftmaxExpEffort
         let weightLB : Rat :=
-          softmaxTargetWeightLowerBound hdr.seqLen targetCountLB margin expEffort
+          softmaxTargetWeightLowerBound hdr.seqLen targetCountLB margin softmaxExpEffort
         let cert : HeadPatternCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -3016,7 +3016,7 @@ private def certifyHeadPatternLocalBinary
           targetLogitLowerBound := targetLower
           otherLogitUpperBound := otherUpper
           marginLowerBound := margin
-          softmaxExpEffort := expEffort
+          softmaxExpEffort := softmaxExpEffort
           targetWeightLowerBound := weightLB
         }
         if cert.check then
@@ -3148,7 +3148,8 @@ private def certifyHeadPatternBestMatchLocalBinary
     (tightPattern : Bool)
     (tightPatternLayers : Nat)
     (perRowPatternLayers : Nat)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadBestMatchPatternCert) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
@@ -3258,10 +3259,10 @@ private def certifyHeadPatternBestMatchLocalBinary
         let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
         let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
         let margin := ratOfScaledInt scalePow10 marginInt
-        let expEffort : Nat := defaultSoftmaxExpEffort
-        let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin expEffort
+        let weightLB : Rat :=
+          softmaxMaxProbLowerBound hdr.seqLen margin softmaxExpEffort
         let softmaxJacobianUB : Rat :=
-          softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin expEffort
+          softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin softmaxExpEffort
         let cert : HeadBestMatchPatternCert := {
           layerIdx := layerIdx
           headIdx := headIdx
@@ -3272,7 +3273,7 @@ private def certifyHeadPatternBestMatchLocalBinary
           bestMatchLogitLowerBound := bestMatchLowerRat
           bestNonmatchLogitUpperBound := bestNonmatchUpperRat
           marginLowerBound := margin
-          softmaxExpEffort := expEffort
+          softmaxExpEffort := softmaxExpEffort
           bestMatchWeightLowerBound := weightLB
           softmaxJacobianNormInfUpperBound := softmaxJacobianUB
         }
@@ -3381,7 +3382,8 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
     (tightPattern : Bool)
     (tightPatternLayers : Nat)
     (perRowPatternLayers : Nat)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String (Array HeadBestMatchPatternCert)) := do
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
@@ -3498,10 +3500,10 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
           let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
           let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
           let margin := ratOfScaledInt scalePow10 marginInt
-          let expEffort : Nat := defaultSoftmaxExpEffort
-          let weightLB : Rat := softmaxMaxProbLowerBound hdr.seqLen margin expEffort
+          let weightLB : Rat :=
+            softmaxMaxProbLowerBound hdr.seqLen margin softmaxExpEffort
           let softmaxJacobianUB : Rat :=
-            softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin expEffort
+            softmaxJacobianNormInfBoundFromMargin hdr.seqLen margin softmaxExpEffort
           let cert : HeadBestMatchPatternCert := {
             layerIdx := layerIdx
             headIdx := headIdx
@@ -3512,7 +3514,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             bestMatchLogitLowerBound := bestMatchLowerRat
             bestNonmatchLogitUpperBound := bestNonmatchUpperRat
             marginLowerBound := margin
-            softmaxExpEffort := expEffort
+            softmaxExpEffort := softmaxExpEffort
             bestMatchWeightLowerBound := weightLB
             softmaxJacobianNormInfUpperBound := softmaxJacobianUB
           }
@@ -4133,7 +4135,8 @@ def certifyHeadPatternLocal
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadPatternCert) := do
   if inputDelta < 0 then
     return .error "delta must be nonnegative"
@@ -4143,6 +4146,7 @@ def certifyHeadPatternLocal
     let inputPath := inputPath?.getD path
     certifyHeadPatternLocalBinary path layerIdx headIdx eps soundnessBits inputPath inputDelta
       targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+      softmaxExpEffort
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
@@ -4160,7 +4164,8 @@ def certifyHeadPatternBestMatchLocal
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadBestMatchPatternCert) := do
   if inputDelta < 0 then
     return .error "delta must be nonnegative"
@@ -4171,7 +4176,7 @@ def certifyHeadPatternBestMatchLocal
     certifyHeadPatternBestMatchLocalBinary path layerIdx headIdx queryPos? eps soundnessBits
       inputPath
       inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers
-      perRowPatternLayers scalePow10
+      perRowPatternLayers scalePow10 softmaxExpEffort
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
@@ -4188,7 +4193,8 @@ def certifyHeadPatternBestMatchLocalSweep
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := defaultBinaryScalePow10) :
+    (scalePow10 : Nat := defaultBinaryScalePow10)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String (Array HeadBestMatchPatternCert)) := do
   if inputDelta < 0 then
     return .error "delta must be nonnegative"
@@ -4198,7 +4204,7 @@ def certifyHeadPatternBestMatchLocalSweep
     let inputPath := inputPath?.getD path
     certifyHeadPatternBestMatchLocalBinarySweep path layerIdx headIdx eps soundnessBits inputPath
       inputDelta targetOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers
-      scalePow10
+      scalePow10 softmaxExpEffort
   else
     return .error "head pattern bounds require NFP_BINARY_V1"
 
@@ -4282,7 +4288,8 @@ def certifyInductionSound
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
-    (negativeToken? : Option Nat := none) :
+    (negativeToken? : Option Nat := none)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String InductionHeadSoundCert) := do
   if inputDelta < 0 then
     return .error "delta must be nonnegative"
@@ -4293,12 +4300,14 @@ def certifyInductionSound
     let p1E ←
       certifyHeadPatternLocalBinary path layer1 head1 eps soundnessBits inputPath inputDelta
         offset1 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+        softmaxExpEffort
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
           certifyHeadPatternLocalBinary path layer2 head2 eps soundnessBits inputPath inputDelta
             offset2 maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+            softmaxExpEffort
         match p2E with
         | .error e => return .error e
         | .ok p2 =>
@@ -4352,7 +4361,8 @@ def certifyInductionSoundBestMatch
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
-    (negativeToken? : Option Nat := none) :
+    (negativeToken? : Option Nat := none)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String InductionHeadBestMatchSoundCert) := do
   if inputDelta < 0 then
     return .error "delta must be nonnegative"
@@ -4363,14 +4373,14 @@ def certifyInductionSoundBestMatch
     let p1E ←
       certifyHeadPatternBestMatchLocalBinary path layer1 head1 queryPos? eps soundnessBits
         inputPath inputDelta offset1 maxSeqLen tightPattern tightPatternLayers
-        perRowPatternLayers scalePow10
+        perRowPatternLayers scalePow10 softmaxExpEffort
     match p1E with
     | .error e => return .error e
     | .ok p1 =>
         let p2E ←
           certifyHeadPatternBestMatchLocalBinary path layer2 head2 queryPos? eps soundnessBits
             inputPath inputDelta offset2 maxSeqLen tightPattern tightPatternLayers
-            perRowPatternLayers scalePow10
+            perRowPatternLayers scalePow10 softmaxExpEffort
         match p2E with
         | .error e => return .error e
         | .ok p2 =>

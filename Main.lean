@@ -1028,6 +1028,7 @@ private structure HeadPatternArgs where
   headIdx : Nat
   offset : Int
   soundnessBits : Nat
+  softmaxExpEffort : Nat
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
@@ -1045,6 +1046,9 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
   let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
+  let softmaxExpEffort :=
+    p.flag? "softmaxExpEffort" |>.map (·.as! Nat)
+      |>.getD Nfp.Sound.defaultSoftmaxExpEffort
   let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
@@ -1061,6 +1065,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
     headIdx := headIdx
     offset := offset
     soundnessBits := soundnessBits
+    softmaxExpEffort := softmaxExpEffort
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
@@ -1096,7 +1101,8 @@ private def formatHeadPatternBestMatch
       s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
       s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
     s!"marginLB={cert.marginLowerBound}, " ++
-      s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}\n"
+      s!"bestMatchWeightLB={cert.bestMatchWeightLowerBound}, " ++
+      s!"softmaxExpEffort={cert.softmaxExpEffort}\n"
 
 private def formatHeadPatternLocal
     (cert : Nfp.Sound.HeadPatternCert) : String :=
@@ -1107,7 +1113,8 @@ private def formatHeadPatternLocal
     s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
     s!"otherLogitUB={cert.otherLogitUpperBound}\n" ++
     s!"marginLB={cert.marginLowerBound}, " ++
-    s!"targetWeightLB={cert.targetWeightLowerBound}\n"
+    s!"targetWeightLB={cert.targetWeightLowerBound}, " ++
+    s!"softmaxExpEffort={cert.softmaxExpEffort}\n"
 
 private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO String := do
   let delta ←
@@ -1135,6 +1142,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
           (tightPattern := args.tightPattern)
           (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
+          (softmaxExpEffort := args.softmaxExpEffort)
       return formatHeadPatternBestMatchSweep args.layerIdx args.headIdx args.offset certs
     else
       let cert ← ExceptT.mk <|
@@ -1144,6 +1152,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
           (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
           (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
+          (softmaxExpEffort := args.softmaxExpEffort)
       return formatHeadPatternBestMatch cert
   else
     if args.sweep then
@@ -1155,6 +1164,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
         (maxSeqLen := args.maxSeqLen)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
+        (softmaxExpEffort := args.softmaxExpEffort)
     return formatHeadPatternLocal cert
 
 /-- Run the certify command - compute conservative, exact bounds in sound mode. -/
@@ -1204,6 +1214,7 @@ private structure InductionCertArgs where
   targetToken? : Option Nat
   negativeToken? : Option Nat
   soundnessBits : Nat
+  softmaxExpEffort : Nat
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
@@ -1228,6 +1239,9 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let targetToken := p.flag? "target" |>.map (·.as! Nat)
   let negativeToken := p.flag? "negative" |>.map (·.as! Nat)
   let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
+  let softmaxExpEffort :=
+    p.flag? "softmaxExpEffort" |>.map (·.as! Nat)
+      |>.getD Nfp.Sound.defaultSoftmaxExpEffort
   let tightPatternLayers? := p.flag? "tightPatternLayers" |>.map (·.as! Nat)
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
@@ -1267,6 +1281,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     targetToken? := targetToken
     negativeToken? := negativeToken
     soundnessBits := soundnessBits
+    softmaxExpEffort := softmaxExpEffort
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
@@ -1312,11 +1327,13 @@ private def formatInductionBestMatch
     s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
       s!"targetTok={p1.targetToken} " ++
       s!"marginLB={p1.marginLowerBound} " ++
-      s!"weightLB={p1.bestMatchWeightLowerBound}\n" ++
+      s!"weightLB={p1.bestMatchWeightLowerBound} " ++
+      s!"softmaxExpEffort={p1.softmaxExpEffort}\n" ++
     s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
       s!"targetTok={p2.targetToken} " ++
       s!"marginLB={p2.marginLowerBound} " ++
-      s!"weightLB={p2.bestMatchWeightLowerBound}\n" ++
+      s!"weightLB={p2.bestMatchWeightLowerBound} " ++
+      s!"softmaxExpEffort={p2.softmaxExpEffort}\n" ++
     s!"coord={v.coord} matchCoordLB={v.matchCoordLowerBound} " ++
       s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
     s!"deltaLB={cert.deltaLowerBound}\n" ++
@@ -1331,9 +1348,11 @@ private def formatInductionLocal
   let logitLine := formatInductionLogitLine cert.layer2Logit?
   "SOUND induction cert:\n" ++
     s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
-      s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound}\n" ++
+      s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound} " ++
+      s!"softmaxExpEffort={p1.softmaxExpEffort}\n" ++
     s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
-      s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound}\n" ++
+      s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound} " ++
+      s!"softmaxExpEffort={p2.softmaxExpEffort}\n" ++
     s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
       s!"matchCoordLB={v.matchCoordLowerBound} " ++
       s!"nonmatchCoordLB={v.nonmatchCoordLowerBound}\n" ++
@@ -1353,6 +1372,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
+        (softmaxExpEffort := args.softmaxExpEffort)
     return formatInductionBestMatch cert
   else
     let cert ← ExceptT.mk <|
@@ -1364,6 +1384,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
+        (softmaxExpEffort := args.softmaxExpEffort)
     return formatInductionLocal cert
 
 /-- Run the induction-cert command - compute a sound induction head certificate. -/
@@ -1631,6 +1652,7 @@ LayerNorm epsilon is read from the model header."
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
+    softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
@@ -1661,6 +1683,7 @@ LayerNorm epsilon is read from the model header."
 for legacy text)"
     delta : String; "Input ℓ∞ radius δ for local bounds (default: 0)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
+    softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:

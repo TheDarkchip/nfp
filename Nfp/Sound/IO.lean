@@ -351,7 +351,8 @@ def certifyHeadPatternLocal
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := 9) :
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadPatternCert) := do
   match ← readModelEps path with
   | .error e => return .error e
@@ -359,7 +360,7 @@ def certifyHeadPatternLocal
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternLocal
             path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
+            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -379,7 +380,8 @@ def certifyHeadPatternBestMatchLocal
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := 9) :
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String HeadBestMatchPatternCert) := do
   match ← readModelEps path with
   | .error e => return .error e
@@ -387,8 +389,8 @@ def certifyHeadPatternBestMatchLocal
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocal
             path layerIdx headIdx queryPos? eps soundnessBits inputPath? inputDelta targetOffset
-              maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
+              maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+              softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -407,7 +409,8 @@ def certifyHeadPatternBestMatchLocalSweep
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
-    (scalePow10 : Nat := 9) :
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String (Array HeadBestMatchPatternCert)) := do
   match ← readModelEps path with
   | .error e => return .error e
@@ -415,7 +418,7 @@ def certifyHeadPatternBestMatchLocalSweep
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocalSweep
             path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
+            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
       | .error e => return .error e
       | .ok certs =>
           let ok := certs.foldl (fun acc c => acc && c.check) true
@@ -496,7 +499,8 @@ def certifyInductionSound
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
-    (negativeToken? : Option Nat := none) :
+    (negativeToken? : Option Nat := none)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String InductionHeadSoundCert) := do
   match ← readModelEps path with
   | .error e => return .error e
@@ -505,7 +509,7 @@ def certifyInductionSound
           Nfp.Untrusted.SoundCompute.certifyInductionSound
             path layer1 head1 layer2 head2 coord eps soundnessBits inputPath? inputDelta
             offset1 offset2 maxSeqLen scalePow10 tightPattern tightPatternLayers
-            perRowPatternLayers targetToken? negativeToken? with
+            perRowPatternLayers targetToken? negativeToken? softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
@@ -529,7 +533,8 @@ def certifyInductionSoundBestMatch
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
     (targetToken? : Option Nat := none)
-    (negativeToken? : Option Nat := none) :
+    (negativeToken? : Option Nat := none)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
     IO (Except String InductionHeadBestMatchSoundCert) := do
   match ← readModelEps path with
   | .error e => return .error e
@@ -538,7 +543,7 @@ def certifyInductionSoundBestMatch
           Nfp.Untrusted.SoundCompute.certifyInductionSoundBestMatch
             path layer1 head1 layer2 head2 coord queryPos? eps soundnessBits inputPath? inputDelta
             offset1 offset2 maxSeqLen scalePow10 tightPattern
-            tightPatternLayers perRowPatternLayers targetToken? negativeToken? with
+            tightPatternLayers perRowPatternLayers targetToken? negativeToken? softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
           if cert.check then
