@@ -293,7 +293,25 @@ but you **must** update this list in the same commit.
 - `Untrusted/SoundCacheIO.lean`
   - IO wrappers for the SOUND fixed-point cache (untrusted).
 - `Sound/Bounds.lean`
-  - Exact (`Rat`) norm/bound utilities used by sound certification (no Float).
+  - Umbrella import for SOUND bound utilities (exact `Rat` arithmetic, no Float).
+- `Sound/Bounds/Basic.lean`
+  - Basic `Rat` helpers used across bounds modules.
+- `Sound/Bounds/MatrixNorm.lean`
+  - Rat matrices, row-sum norms, and multiplicativity bounds.
+- `Sound/Bounds/Gelu.lean`
+  - GeLU derivative envelopes (global).
+- `Sound/Bounds/Exp.lean`
+  - exp lower bounds (scaled Taylor + squaring).
+- `Sound/Bounds/Softmax.lean`
+  - Softmax Jacobian bounds and margin-derived weight helpers.
+- `Sound/Bounds/Attention.lean`
+  - Attention pattern-term coefficient helpers.
+- `Sound/Bounds/LayerNorm.lean`
+  - LayerNorm operator bounds (global/local).
+- `Sound/Bounds/Portfolio.lean`
+  - Placeholder for portfolio combinators.
+- `Sound/Bounds/Effort.lean`
+  - Placeholder for effort-tier records.
 - `Sound/Affine.lean`
   - Affine-form scaffolding for future local soundness improvements.
 - `Sound/HeadCert.lean`
