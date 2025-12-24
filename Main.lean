@@ -975,6 +975,7 @@ private def formatHeadBoundsLocal
           s!"ln1Bound={h.ln1Bound}, " ++
           s!"wqOp={h.wqOpBound}, wkOp={h.wkOpBound}, " ++
           s!"qk={h.qkFactorBound}, " ++
+          s!"softmaxJacobianNormInfUB={h.softmaxJacobianNormInfUpperBound}, " ++
           s!"wvOp={h.wvOpBound}, woOp={h.woOpBound}, " ++
           s!"attn={h.attnJacBound}\n") ""
   header ++ body

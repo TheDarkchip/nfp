@@ -88,6 +88,19 @@ private def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
 theorem checkSoftmaxMarginZero_spec_io :
     checkSoftmaxMarginZero = checkSoftmaxMarginZero := rfl
 
+private def checkSoftmaxProbIntervalWorst (cert : ModelCert) : Except String Unit :=
+  Id.run do
+    for idx in [:cert.layers.size] do
+      let layer := cert.layers[idx]!
+      if layer.softmaxProbLo ≠ 0 then
+        return .error s!"softmaxProbLo is unverified (layer {idx})"
+      if layer.softmaxProbHi ≠ 1 then
+        return .error s!"softmaxProbHi is unverified (layer {idx})"
+    return .ok ()
+
+theorem checkSoftmaxProbIntervalWorst_spec_io :
+    checkSoftmaxProbIntervalWorst = checkSoftmaxProbIntervalWorst := rfl
+
 private def recomputeAttnWeightBoundsBinary
     (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -271,16 +284,19 @@ def certifyModelFileGlobal
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match checkSoftmaxMarginZero cert with
+            match checkSoftmaxProbIntervalWorst cert with
             | .error e => return .error e
             | .ok _ =>
-                match ← recomputeAttnWeightBounds path with
-            | .error e =>
-                return .error s!"attnWeightBounds verification failed: {e}"
-            | .ok bounds =>
-                match checkAttnWeightBounds cert bounds with
+                match checkSoftmaxMarginZero cert with
                 | .error e => return .error e
-                | .ok _ => return .ok cert
+                | .ok _ =>
+                    match ← recomputeAttnWeightBounds path with
+                    | .error e =>
+                        return .error s!"attnWeightBounds verification failed: {e}"
+                    | .ok bounds =>
+                        match checkAttnWeightBounds cert bounds with
+                        | .error e => return .error e
+                        | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"
 
 /-- Entry point for sound certification (global or local). -/
@@ -308,16 +324,19 @@ def certifyModelFile
           if cert.geluDerivTarget ≠ geluTarget then
             return .error "model header gelu_kind mismatch"
           if cert.check then
-            match checkSoftmaxMarginZero cert with
+            match checkSoftmaxProbIntervalWorst cert with
             | .error e => return .error e
             | .ok _ =>
-                match ← recomputeAttnWeightBounds path with
-            | .error e =>
-                return .error s!"attnWeightBounds verification failed: {e}"
-            | .ok bounds =>
-                match checkAttnWeightBounds cert bounds with
+                match checkSoftmaxMarginZero cert with
                 | .error e => return .error e
-                | .ok _ => return .ok cert
+                | .ok _ =>
+                    match ← recomputeAttnWeightBounds path with
+                    | .error e =>
+                        return .error s!"attnWeightBounds verification failed: {e}"
+                    | .ok bounds =>
+                        match checkAttnWeightBounds cert bounds with
+                        | .error e => return .error e
+                        | .ok _ => return .ok cert
           return .error "sound certificate failed internal consistency checks"
 
 /-- Compute per-head contribution bounds (global). -/
@@ -442,6 +461,65 @@ def certifyHeadPatternBestMatchLocalSweep
           if ok then
             return .ok certs
           return .error "head best-match sweep certificate failed internal checks"
+
+/-- Compute local per-head attention contribution bounds tightened by
+    best-match pattern evidence. -/
+def certifyHeadBoundsLocalBestMatch
+    (path : System.FilePath)
+    (layerIdx headIdx : Nat)
+    (queryPos? : Option Nat := none)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (soundnessBits : Nat)
+    (targetOffset : Int := -1)
+    (maxSeqLen : Nat := 256)
+    (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) :
+    IO (Except String HeadLocalContributionCert) := do
+  match ← readModelEps path with
+  | .error e => return .error e
+  | .ok eps =>
+      match ←
+          certifyHeadBoundsLocal path
+            (inputPath? := inputPath?) (inputDelta := inputDelta)
+            (soundnessBits := soundnessBits) (scalePow10 := scalePow10) with
+      | .error e => return .error e
+      | .ok certs =>
+          let base? :=
+            certs.find? (fun c => c.layerIdx == layerIdx && c.headIdx == headIdx)
+          match base? with
+          | none =>
+              return .error s!"no local head contribution cert for layer {layerIdx} head {headIdx}"
+          | some base =>
+              match ←
+                  certifyHeadPatternBestMatchLocal path layerIdx headIdx
+                    (queryPos? := queryPos?) (inputPath? := inputPath?)
+                    (inputDelta := inputDelta) (soundnessBits := soundnessBits)
+                    (targetOffset := targetOffset) (maxSeqLen := maxSeqLen)
+                    (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
+                    (perRowPatternLayers := perRowPatternLayers)
+                    (softmaxExpEffort := softmaxExpEffort) with
+              | .error e => return .error e
+              | .ok pattern =>
+                  if pattern.layerIdx ≠ layerIdx || pattern.headIdx ≠ headIdx then
+                    return .error "best-match pattern cert layer/head mismatch"
+                  if pattern.softmaxExpEffort ≠ softmaxExpEffort then
+                    return .error "best-match pattern cert softmax effort mismatch"
+                  let softmaxBound := pattern.softmaxJacobianNormInfUpperBound
+                  if softmaxBound > base.softmaxJacobianNormInfUpperBound then
+                    return .error "best-match softmax bound is worse than baseline"
+                  let attnJacBound :=
+                    base.ln1Bound * softmaxBound * base.wvOpBound * base.woOpBound
+                  let tightened :=
+                    { base with
+                      softmaxJacobianNormInfUpperBound := softmaxBound
+                      attnJacBound := attnJacBound }
+                  if tightened.check eps then
+                    return .ok tightened
+                  return .error "tightened head contribution certificate failed internal checks"
 
 /-- Compute local head output lower bounds. -/
 def certifyHeadValueLowerBoundLocal

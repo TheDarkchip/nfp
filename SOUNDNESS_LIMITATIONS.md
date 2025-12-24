@@ -10,10 +10,11 @@ soundness upgrade. It is intentionally brief and human-readable.
   discharge those assumptions from model weights.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
-- Softmax Jacobian bounds typically use probability intervals defaulted to `[0,1]`, so they
-  reduce to the worst case. Margin-derived tightening is computed by the untrusted path, but
-  trusted IO currently **rejects nonzero** `softmaxMarginLowerBound` because margin evidence is
-  unverified.
+- Softmax Jacobian bounds are enforced to use the worst-case probability interval `[0,1]` in
+  trusted IO. Margin-derived tightening is computed by the untrusted path, but trusted IO
+  currently **rejects nonzero** `softmaxMarginLowerBound` because margin evidence is unverified.
+- Local per-head contribution bounds can now be tightened using a best-match pattern certificate,
+  but this tightening does **not** propagate to layer-level ModelCert bounds.
 - Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.

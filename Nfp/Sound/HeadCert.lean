@@ -60,6 +60,8 @@ structure HeadLocalContributionCert where
   wvOpBound : Rat
   woOpBound : Rat
   qkFactorBound : Rat
+  /-- Upper bound on the softmax Jacobian row-sum norm for this head. -/
+  softmaxJacobianNormInfUpperBound : Rat
   /-- Upper bound on the per-head attention Jacobian contribution. -/
   attnJacBound : Rat
   deriving Repr
@@ -76,7 +78,7 @@ def Valid (eps : Rat) (c : HeadLocalContributionCert) : Prop :=
         layerNormOpBoundConservative c.ln1MaxAbsGamma eps c.soundnessBits) ∧
     c.qkFactorBound = c.wqOpBound * c.wkOpBound ∧
     c.attnJacBound =
-      c.ln1Bound * softmaxJacobianNormInfWorst * c.wvOpBound * c.woOpBound
+      c.ln1Bound * c.softmaxJacobianNormInfUpperBound * c.wvOpBound * c.woOpBound
 
 instance (eps : Rat) (c : HeadLocalContributionCert) : Decidable (Valid eps c) := by
   unfold Valid

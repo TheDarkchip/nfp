@@ -2800,7 +2800,8 @@ private def certifyHeadBoundsLocalBinary
           ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
             hdr.headDim hdr.modelDim vHidden scalePow10)
         attnUnion := addVecFixed attnUnion vOut
-        let attnW := ln1Bound * softmaxJacobianNormInfWorst * vCenteredOpBound * nWo
+        let softmaxJacobianBound := softmaxJacobianNormInfWorst
+        let attnW := ln1Bound * softmaxJacobianBound * vCenteredOpBound * nWo
         let cert : HeadLocalContributionCert := {
           layerIdx := l
           headIdx := hIdx
@@ -2813,6 +2814,7 @@ private def certifyHeadBoundsLocalBinary
           wvOpBound := vCenteredOpBound
           woOpBound := nWo
           qkFactorBound := wqOp * wkOp
+          softmaxJacobianNormInfUpperBound := softmaxJacobianBound
           attnJacBound := attnW
         }
         if cert.check eps then
