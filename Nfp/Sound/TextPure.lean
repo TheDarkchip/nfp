@@ -2,6 +2,7 @@
 
 import Std
 import Nfp.Sound.Bounds
+import Nfp.Sound.Cert
 import Nfp.Sound.Decimal
 import Nfp.Sound.ModelHeader
 
@@ -29,6 +30,28 @@ structure AttnWeightBounds where
   wqOpBoundMax : Array Rat
   wkOpBoundMax : Array Rat
   deriving Repr
+
+/-- Verify that attention-weight bounds match the certificate layer fields. -/
+def checkAttnWeightBounds (cert : ModelCert) (expected : AttnWeightBounds) : Except String Unit :=
+  Id.run do
+    if expected.attnValueCoeff.size ≠ cert.layers.size then
+      return .error "attnValueCoeff layer count mismatch"
+    if expected.wqOpBoundMax.size ≠ cert.layers.size then
+      return .error "wqOpBoundMax layer count mismatch"
+    if expected.wkOpBoundMax.size ≠ cert.layers.size then
+      return .error "wkOpBoundMax layer count mismatch"
+    for idx in [:cert.layers.size] do
+      let expValue := expected.attnValueCoeff[idx]!
+      let expWq := expected.wqOpBoundMax[idx]!
+      let expWk := expected.wkOpBoundMax[idx]!
+      let layer := cert.layers[idx]!
+      if expValue ≠ layer.attnValueCoeff then
+        return .error s!"attnValueCoeff mismatch at layer {idx}"
+      if expWq ≠ layer.wqOpBoundMax then
+        return .error s!"wqOpBoundMax mismatch at layer {idx}"
+      if expWk ≠ layer.wkOpBoundMax then
+        return .error s!"wkOpBoundMax mismatch at layer {idx}"
+    return .ok ()
 
 def parseTextHeaderDims (lines : Array String) : Except String TextModelDims :=
   Id.run do
@@ -200,6 +223,8 @@ def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Ra
 
 theorem parseTextHeaderDims_spec : parseTextHeaderDims = parseTextHeaderDims := rfl
 theorem AttnWeightBounds_spec : AttnWeightBounds = AttnWeightBounds := rfl
+theorem checkAttnWeightBounds_spec :
+    checkAttnWeightBounds = checkAttnWeightBounds := rfl
 theorem foldRatTokens_spec (α : Type) :
     @foldRatTokens α = @foldRatTokens α := rfl
 theorem consumeVector_spec : consumeVector = consumeVector := rfl

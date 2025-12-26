@@ -4,6 +4,7 @@ import Std
 import Mathlib.Data.Rat.Cast.Order
 import Nfp.SignedMixer
 import Nfp.Sound.Bounds
+import Nfp.Sound.HeadCert
 
 namespace Nfp.Sound
 
@@ -396,6 +397,77 @@ theorem withUpdatedLayer_spec : withUpdatedLayer = withUpdatedLayer := rfl
 theorem toString_spec : toString = toString := rfl
 
 end ModelCert
+
+/-! ### Certificate verification helpers -/
+
+/-- Ensure all layers have zero softmax margin evidence. -/
+def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
+  Id.run do
+    for idx in [:cert.layers.size] do
+      let layer := cert.layers[idx]!
+      if layer.softmaxMarginLowerBound ≠ 0 then
+        return .error s!"softmaxMarginLowerBound is unverified (layer {idx})"
+    return .ok ()
+
+theorem checkSoftmaxMarginZero_spec :
+    checkSoftmaxMarginZero = checkSoftmaxMarginZero := rfl
+
+/-- Ensure the softmax probability interval is the worst-case `[0,1]`. -/
+def checkSoftmaxProbIntervalWorst (cert : ModelCert) : Except String Unit :=
+  Id.run do
+    for idx in [:cert.layers.size] do
+      let layer := cert.layers[idx]!
+      if layer.softmaxProbLo ≠ 0 then
+        return .error s!"softmaxProbLo is unverified (layer {idx})"
+      if layer.softmaxProbHi ≠ 1 then
+        return .error s!"softmaxProbHi is unverified (layer {idx})"
+    return .ok ()
+
+theorem checkSoftmaxProbIntervalWorst_spec :
+    checkSoftmaxProbIntervalWorst = checkSoftmaxProbIntervalWorst := rfl
+
+/-- Update a layer certificate with best-match softmax evidence if it is valid and tighter. -/
+def tightenLayerSoftmaxFromBestMatch
+    (seqLen : Nat) (layer : LayerAmplificationCert) (cert : LayerBestMatchMarginCert) :
+    Except String LayerAmplificationCert :=
+  Id.run do
+    if !cert.check then
+      return .error "layer best-match margin cert failed internal checks"
+    if cert.layerIdx ≠ layer.layerIdx then
+      return .error "layer margin cert does not match layer index"
+    if cert.seqLen ≠ seqLen then
+      return .error "layer margin cert seq_len mismatch"
+    let updated :=
+      LayerAmplificationCert.withSoftmaxMargin seqLen cert.marginLowerBound
+        cert.softmaxExpEffort layer
+    if updated.softmaxJacobianNormInfUpperBound > layer.softmaxJacobianNormInfUpperBound then
+      return .error "best-match softmax bound is worse than baseline"
+    return .ok updated
+
+theorem tightenLayerSoftmaxFromBestMatch_spec :
+    tightenLayerSoftmaxFromBestMatch = tightenLayerSoftmaxFromBestMatch := rfl
+
+/-- Apply best-match margin updates to a whole model certificate. -/
+def tightenModelCertBestMatchMargins
+    (c : ModelCert) (certs : Array LayerBestMatchMarginCert) :
+    Except String ModelCert :=
+  certs.foldl (fun acc cert =>
+    match acc with
+    | .error e => .error e
+    | .ok cur =>
+        if cert.layerIdx < cur.layers.size then
+          let layer := cur.layers[cert.layerIdx]!
+          match tightenLayerSoftmaxFromBestMatch cur.seqLen layer cert with
+          | .error e => .error e
+          | .ok updatedLayer =>
+              match ModelCert.withUpdatedLayer cur cert.layerIdx updatedLayer with
+              | none => .error "failed to update model cert layer"
+              | some updated => .ok updated
+        else
+          .error s!"layer margin cert index {cert.layerIdx} out of range") (.ok c)
+
+theorem tightenModelCertBestMatchMargins_spec :
+    tightenModelCertBestMatchMargins = tightenModelCertBestMatchMargins := rfl
 
 /-! ### Specs -/
 
