@@ -618,7 +618,345 @@ theorem encodeHeader_magic_prefix (hdr : Header) :
     (encodeHeader hdr).extract 0 magic.size = magic := by
   simp [encodeHeader, ByteArray.append_assoc, ByteArray.extract_append_eq_left]
 
--- TODO: Prove round-trip lemmas for `u32FromLE`/`u64FromLE` and `decodeHeader (encodeHeader _)`.
+/-- `get!` agrees with `getElem` when the index is in bounds. -/
+theorem get!_eq_getElem {b : ByteArray} {i : Nat} (h : i < b.size) : b.get! i = b[i]'h := by
+  cases b with
+  | mk bs =>
+    have h' : i < bs.size := by simpa using h
+    simpa [ByteArray.get!, ByteArray.get] using (getElem!_pos (c := bs) (i := i) h')
+
+/-- `get!` on an appended array reduces to the left part when the index is in bounds. -/
+theorem get!_append_left {a b : ByteArray} {i : Nat}
+    (hi : i < (a ++ b).size) (hlt : i < a.size) : (a ++ b).get! i = a.get! i := by
+  calc
+    (a ++ b).get! i = (a ++ b)[i]'hi := get!_eq_getElem hi
+    _ = a[i]'hlt := by
+      simpa using
+        (ByteArray.getElem_append_left (i := i) (a := a) (b := b) (h := hi) hlt)
+    _ = a.get! i := by
+      symm
+      exact get!_eq_getElem hlt
+
+/-- `get!` on an appended array reduces to the right part when the index is in bounds. -/
+theorem get!_append_right {a b : ByteArray} {i : Nat}
+    (hi : i < (a ++ b).size) (hle : a.size ≤ i) :
+    (a ++ b).get! i = b.get! (i - a.size) := by
+  have h' : i - a.size < b.size := by
+    have hi' : i < a.size + b.size := by
+      simpa [ByteArray.size_append] using hi
+    exact (Nat.sub_lt_iff_lt_add hle).2 (by simpa [Nat.add_comm] using hi')
+  calc
+    (a ++ b).get! i = (a ++ b)[i]'hi := get!_eq_getElem hi
+    _ = b[i - a.size]'h' := by
+      simpa using
+        (ByteArray.getElem_append_right (i := i) (a := a) (b := b) (h := hi) hle)
+    _ = b.get! (i - a.size) := by
+      symm
+      exact get!_eq_getElem h'
+
+/-- `u32FromLE` is a left inverse of `u32le` at offset `0`. -/
+theorem u32FromLE_u32le (x : UInt32) : u32FromLE (u32le x) 0 = x := by
+  apply (UInt32.toBitVec_inj).1
+  have h255 : (255 : UInt8) = -1 := by decide
+  simp [u32FromLE, u32le, ByteArray.get!, h255]
+  bv_decide
+
+/-- `u64FromLE` is a left inverse of `u64le` at offset `0`. -/
+theorem u64FromLE_u64le (x : UInt64) : u64FromLE (u64le x) 0 = x := by
+  apply (UInt64.toBitVec_inj).1
+  have h255 : (255 : UInt8) = -1 := by decide
+  simp [u64FromLE, u64le, ByteArray.get!, h255]
+  bv_decide
+
+/-- `u32FromLE` depends only on the left prefix when it has enough bytes. -/
+theorem u32FromLE_append_left (a b : ByteArray) (h : 3 < a.size) :
+    u32FromLE (a ++ b) 0 = u32FromLE a 0 := by
+  have h0 : 0 < a.size := by omega
+  have h1 : 1 < a.size := by omega
+  have h2 : 2 < a.size := by omega
+  have h3 : 3 < a.size := h
+  have hi0 : 0 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h0 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi1 : 1 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h1 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi2 : 2 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h2 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi3 : 3 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h3 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  simp [u32FromLE, get!_append_left hi0 h0, get!_append_left hi1 h1,
+    get!_append_left hi2 h2, get!_append_left hi3 h3]
+
+/-- `u64FromLE` depends only on the left prefix when it has enough bytes. -/
+theorem u64FromLE_append_left (a b : ByteArray) (h : 7 < a.size) :
+    u64FromLE (a ++ b) 0 = u64FromLE a 0 := by
+  have h0 : 0 < a.size := by omega
+  have h1 : 1 < a.size := by omega
+  have h2 : 2 < a.size := by omega
+  have h3 : 3 < a.size := by omega
+  have h4 : 4 < a.size := by omega
+  have h5 : 5 < a.size := by omega
+  have h6 : 6 < a.size := by omega
+  have h7 : 7 < a.size := h
+  have hi0 : 0 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h0 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi1 : 1 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h1 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi2 : 2 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h2 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi3 : 3 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h3 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi4 : 4 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h4 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi5 : 5 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h5 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi6 : 6 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h6 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  have hi7 : 7 < (a ++ b).size := by
+    have := Nat.lt_of_lt_of_le h7 (Nat.le_add_right a.size b.size)
+    simpa [ByteArray.size_append] using this
+  simp [u64FromLE, get!_append_left hi0 h0, get!_append_left hi1 h1,
+    get!_append_left hi2 h2, get!_append_left hi3 h3, get!_append_left hi4 h4,
+    get!_append_left hi5 h5, get!_append_left hi6 h6, get!_append_left hi7 h7]
+
+/-- `u32FromLE` ignores a left prefix when reading from the right. -/
+theorem u32FromLE_append_right (a b : ByteArray) (off : Nat) (h : off + 3 < b.size) :
+    u32FromLE (a ++ b) (a.size + off) = u32FromLE b off := by
+  have h0' : off < b.size := by omega
+  have h1' : off + 1 < b.size := by omega
+  have h2' : off + 2 < b.size := by omega
+  have h3' : off + 3 < b.size := h
+  have h0 : a.size + off < (a ++ b).size := by
+    have := Nat.add_lt_add_left h0' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h1 : a.size + off + 1 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h1' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h2 : a.size + off + 2 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h2' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h3 : a.size + off + 3 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h3' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have hle0 : a.size ≤ a.size + off := by omega
+  have hle1 : a.size ≤ a.size + off + 1 := by omega
+  have hle2 : a.size ≤ a.size + off + 2 := by omega
+  have hle3 : a.size ≤ a.size + off + 3 := by omega
+  unfold u32FromLE
+  simp [get!_append_right h0 hle0, get!_append_right h1 hle1,
+    get!_append_right h2 hle2, get!_append_right h3 hle3]
+  simp [Nat.add_assoc, Nat.add_sub_cancel_left]
+
+/-- `u64FromLE` ignores a left prefix when reading from the right. -/
+theorem u64FromLE_append_right (a b : ByteArray) (off : Nat) (h : off + 7 < b.size) :
+    u64FromLE (a ++ b) (a.size + off) = u64FromLE b off := by
+  have h0' : off < b.size := by omega
+  have h1' : off + 1 < b.size := by omega
+  have h2' : off + 2 < b.size := by omega
+  have h3' : off + 3 < b.size := by omega
+  have h4' : off + 4 < b.size := by omega
+  have h5' : off + 5 < b.size := by omega
+  have h6' : off + 6 < b.size := by omega
+  have h7' : off + 7 < b.size := h
+  have h0 : a.size + off < (a ++ b).size := by
+    have := Nat.add_lt_add_left h0' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h1 : a.size + off + 1 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h1' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h2 : a.size + off + 2 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h2' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h3 : a.size + off + 3 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h3' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h4 : a.size + off + 4 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h4' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h5 : a.size + off + 5 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h5' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h6 : a.size + off + 6 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h6' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have h7 : a.size + off + 7 < (a ++ b).size := by
+    have := Nat.add_lt_add_left h7' a.size
+    simpa [ByteArray.size_append, Nat.add_assoc] using this
+  have hle0 : a.size ≤ a.size + off := by omega
+  have hle1 : a.size ≤ a.size + off + 1 := by omega
+  have hle2 : a.size ≤ a.size + off + 2 := by omega
+  have hle3 : a.size ≤ a.size + off + 3 := by omega
+  have hle4 : a.size ≤ a.size + off + 4 := by omega
+  have hle5 : a.size ≤ a.size + off + 5 := by omega
+  have hle6 : a.size ≤ a.size + off + 6 := by omega
+  have hle7 : a.size ≤ a.size + off + 7 := by omega
+  unfold u64FromLE
+  simp [get!_append_right h0 hle0, get!_append_right h1 hle1,
+    get!_append_right h2 hle2, get!_append_right h3 hle3, get!_append_right h4 hle4,
+    get!_append_right h5 hle5, get!_append_right h6 hle6, get!_append_right h7 hle7]
+  simp [Nat.add_assoc, Nat.add_sub_cancel_left]
+
+/-- `u32FromLE` round-trips a `u32le` prefix. -/
+theorem u32FromLE_u32le_append (x : UInt32) (b : ByteArray) :
+    u32FromLE (u32le x ++ b) 0 = x := by
+  have h : 3 < (u32le x).size := by
+    simp [u32le_size]
+  calc
+    u32FromLE (u32le x ++ b) 0 = u32FromLE (u32le x) 0 :=
+      u32FromLE_append_left (a := u32le x) (b := b) h
+    _ = x := u32FromLE_u32le x
+
+/-- `u64FromLE` round-trips a `u64le` prefix. -/
+theorem u64FromLE_u64le_append (x : UInt64) (b : ByteArray) :
+    u64FromLE (u64le x ++ b) 0 = x := by
+  have h : 7 < (u64le x).size := by
+    simp [u64le_size]
+  calc
+    u64FromLE (u64le x ++ b) 0 = u64FromLE (u64le x) 0 :=
+      u64FromLE_append_left (a := u64le x) (b := b) h
+    _ = x := u64FromLE_u64le x
+
+/-- `u32FromLE` round-trips a `u32le` block after a prefix. -/
+theorem u32FromLE_append_u32le (a : ByteArray) (x : UInt32) (b : ByteArray) :
+    u32FromLE (a ++ u32le x ++ b) a.size = x := by
+  calc
+    u32FromLE (a ++ u32le x ++ b) a.size = u32FromLE (u32le x ++ b) 0 := by
+      have h : 0 + 3 < (u32le x ++ b).size := by
+        simp [ByteArray.size_append, u32le_size]
+        omega
+      simpa [ByteArray.append_assoc] using
+        (u32FromLE_append_right (a := a) (b := u32le x ++ b) (off := 0) h)
+    _ = x := u32FromLE_u32le_append x b
+
+/-- `u64FromLE` round-trips a `u64le` block after a prefix. -/
+theorem u64FromLE_append_u64le (a : ByteArray) (x : UInt64) (b : ByteArray) :
+    u64FromLE (a ++ u64le x ++ b) a.size = x := by
+  calc
+    u64FromLE (a ++ u64le x ++ b) a.size = u64FromLE (u64le x ++ b) 0 := by
+      have h : 0 + 7 < (u64le x ++ b).size := by
+        simp [ByteArray.size_append, u64le_size]
+        omega
+      simpa [ByteArray.append_assoc] using
+        (u64FromLE_append_right (a := a) (b := u64le x ++ b) (off := 0) h)
+    _ = x := u64FromLE_u64le_append x b
+
+/-- `decodeHeader` recovers any header encoded by `encodeHeader`. -/
+theorem decodeHeader_encodeHeader (hdr : Header) :
+    decodeHeader (encodeHeader hdr) = .ok hdr := by
+  have h1 : magic.size + 4 = (magic ++ u32le version).size := by
+    simp [ByteArray.size_append, u32le_size]
+  have h2 : magic.size + 4 + 8 =
+      (magic ++ u32le version ++ u64le hdr.modelHash).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h3 : magic.size + 4 + 8 + 8 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h4 : magic.size + 4 + 8 + 8 + 4 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+        u32le hdr.scalePow10).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h5 : magic.size + 4 + 8 + 8 + 4 + 4 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+        u32le hdr.scalePow10 ++ u32le hdr.numLayers).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h6 : magic.size + 4 + 8 + 8 + 4 + 4 + 4 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+        u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h7 : magic.size + 4 + 8 + 8 + 4 + 4 + 4 + 4 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+        u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads ++
+        u32le hdr.modelDim).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h8 : magic.size + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4 =
+      (magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+        u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads ++
+        u32le hdr.modelDim ++ u32le hdr.headDim).size := by
+    simp [ByteArray.size_append, u32le_size, u64le_size]
+  have h_version : u32FromLE (encodeHeader hdr) magic.size = version := by
+    simpa [encodeHeader] using
+      (u32FromLE_append_u32le (a := magic) (x := version)
+        (b := u64le hdr.modelHash ++ u64le hdr.modelSize ++ u32le hdr.scalePow10 ++
+          u32le hdr.numLayers ++ u32le hdr.numHeads ++ u32le hdr.modelDim ++
+          u32le hdr.headDim ++ u32le hdr.hiddenDim))
+  have h_modelHash : u64FromLE (encodeHeader hdr) (magic.size + 4) = hdr.modelHash := by
+    simpa [encodeHeader, h1] using
+      (u64FromLE_append_u64le (a := magic ++ u32le version) (x := hdr.modelHash)
+        (b := u64le hdr.modelSize ++ u32le hdr.scalePow10 ++ u32le hdr.numLayers ++
+          u32le hdr.numHeads ++ u32le hdr.modelDim ++ u32le hdr.headDim ++
+          u32le hdr.hiddenDim))
+  have h_modelSize : u64FromLE (encodeHeader hdr) (magic.size + 4 + 8) = hdr.modelSize := by
+    simpa [encodeHeader, h2] using
+      (u64FromLE_append_u64le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash)
+        (x := hdr.modelSize)
+        (b := u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads ++
+          u32le hdr.modelDim ++ u32le hdr.headDim ++ u32le hdr.hiddenDim))
+  have h_scalePow10 :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8) = hdr.scalePow10 := by
+    simpa [encodeHeader, h3] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize)
+        (x := hdr.scalePow10)
+        (b := u32le hdr.numLayers ++ u32le hdr.numHeads ++ u32le hdr.modelDim ++
+          u32le hdr.headDim ++ u32le hdr.hiddenDim))
+  have h_numLayers :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8 + 4) = hdr.numLayers := by
+    simpa [encodeHeader, h4] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+          u32le hdr.scalePow10)
+        (x := hdr.numLayers)
+        (b := u32le hdr.numHeads ++ u32le hdr.modelDim ++ u32le hdr.headDim ++
+          u32le hdr.hiddenDim))
+  have h_numHeads :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8 + 4 + 4) = hdr.numHeads := by
+    simpa [encodeHeader, h5] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+          u32le hdr.scalePow10 ++ u32le hdr.numLayers)
+        (x := hdr.numHeads)
+        (b := u32le hdr.modelDim ++ u32le hdr.headDim ++ u32le hdr.hiddenDim))
+  have h_modelDim :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8 + 4 + 4 + 4) = hdr.modelDim := by
+    simpa [encodeHeader, h6] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+          u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads)
+        (x := hdr.modelDim)
+        (b := u32le hdr.headDim ++ u32le hdr.hiddenDim))
+  have h_headDim :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8 + 4 + 4 + 4 + 4) = hdr.headDim := by
+    simpa [encodeHeader, h7] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+          u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads ++
+          u32le hdr.modelDim)
+        (x := hdr.headDim)
+        (b := u32le hdr.hiddenDim))
+  have h_hiddenDim :
+      u32FromLE (encodeHeader hdr) (magic.size + 4 + 8 + 8 + 4 + 4 + 4 + 4 + 4) =
+        hdr.hiddenDim := by
+    simpa [encodeHeader, h8] using
+      (u32FromLE_append_u32le
+        (a := magic ++ u32le version ++ u64le hdr.modelHash ++ u64le hdr.modelSize ++
+          u32le hdr.scalePow10 ++ u32le hdr.numLayers ++ u32le hdr.numHeads ++
+          u32le hdr.modelDim ++ u32le hdr.headDim)
+        (x := hdr.hiddenDim)
+        (b := ByteArray.empty))
+  simp [decodeHeader, encodeHeader_size, encodeHeader_magic_prefix, h_version, h_modelHash,
+    h_modelSize, h_scalePow10, h_numLayers, h_numHeads, h_modelDim, h_headDim, h_hiddenDim]
+  cases hdr <;> rfl
 
 /-! ### Specs -/
 
