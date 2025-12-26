@@ -317,6 +317,25 @@ def attnQKMaxFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)) : R
        max acc.2 (ratOfScaledInt scalePow10 p.2)))
     (0, 0)
 
+/-- Compute per-layer attention-weight bound arrays from scaled-int pairs. -/
+def attnWeightBoundsArraysFromScaledPairs (scalePow10 : Nat)
+    (valuePairs qkPairs : Array (Array (Int × Int))) :
+    Except String (Array Rat × Array Rat × Array Rat) :=
+  Id.run do
+    if valuePairs.size ≠ qkPairs.size then
+      return .error s!"attn weight bounds layer count mismatch: \
+value={valuePairs.size}, qk={qkPairs.size}"
+    let mut coeffs : Array Rat := Array.mkEmpty valuePairs.size
+    let mut wqMaxs : Array Rat := Array.mkEmpty valuePairs.size
+    let mut wkMaxs : Array Rat := Array.mkEmpty valuePairs.size
+    for idx in [:valuePairs.size] do
+      let coeff := attnValueCoeffFromScaledPairs scalePow10 valuePairs[idx]!
+      let (wqMax, wkMax) := attnQKMaxFromScaledPairs scalePow10 qkPairs[idx]!
+      coeffs := coeffs.push coeff
+      wqMaxs := wqMaxs.push wqMax
+      wkMaxs := wkMaxs.push wkMax
+    return .ok (coeffs, wqMaxs, wkMaxs)
+
 /-! ### Derived properties -/
 
 private theorem pure_eq_ok {ε α : Type} (x : α) : (pure x : Except ε α) = .ok x := rfl
@@ -381,5 +400,7 @@ theorem attnValueCoeffFromScaledPairs_spec_binary_pure :
     attnValueCoeffFromScaledPairs = attnValueCoeffFromScaledPairs := rfl
 theorem attnQKMaxFromScaledPairs_spec_binary_pure :
     attnQKMaxFromScaledPairs = attnQKMaxFromScaledPairs := rfl
+theorem attnWeightBoundsArraysFromScaledPairs_spec_binary_pure :
+    attnWeightBoundsArraysFromScaledPairs = attnWeightBoundsArraysFromScaledPairs := rfl
 
 end Nfp.Sound

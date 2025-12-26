@@ -64,9 +64,8 @@ private def recomputeAttnWeightBoundsBinary
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.seqLen * hdr.modelDim) with
       | .error e => return .error e
       | .ok _ => pure ()
-      let mut coeffs : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut wqMaxs : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut wkMaxs : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut valuePairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
+      let mut qkPairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
       for _l in [:hdr.numLayers] do
         let mut valuePairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
         let mut qkPairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
@@ -161,11 +160,8 @@ private def recomputeAttnWeightBoundsBinary
         let _ := ln1GammaScaled
         let _ := ln1BetaScaled
         let _ := ln2GammaScaled
-        let coeff := attnValueCoeffFromScaledPairs scalePow10 valuePairs
-        let (wqMax, wkMax) := attnQKMaxFromScaledPairs scalePow10 qkPairs
-        coeffs := coeffs.push coeff
-        wqMaxs := wqMaxs.push wqMax
-        wkMaxs := wkMaxs.push wkMax
+        valuePairsLayers := valuePairsLayers.push valuePairs
+        qkPairsLayers := qkPairsLayers.push qkPairs
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
       | .error e => return .error e
       | .ok _ => pure ()
@@ -175,11 +171,14 @@ private def recomputeAttnWeightBoundsBinary
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.modelDim * hdr.vocabSize) with
       | .error e => return .error e
       | .ok _ => pure ()
-      return .ok {
-        attnValueCoeff := coeffs
-        wqOpBoundMax := wqMaxs
-        wkOpBoundMax := wkMaxs
-      }
+      match attnWeightBoundsArraysFromScaledPairs scalePow10 valuePairsLayers qkPairsLayers with
+      | .error e => return .error e
+      | .ok (coeffs, wqMaxs, wkMaxs) =>
+          return .ok {
+            attnValueCoeff := coeffs
+            wqOpBoundMax := wqMaxs
+            wkOpBoundMax := wkMaxs
+          }
 
 private def recomputeAttnWeightBoundsText
     (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
