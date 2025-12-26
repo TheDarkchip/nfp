@@ -400,9 +400,10 @@ end ModelCert
 
 /-! ### Certificate verification helpers -/
 
-/-- Verify attention-weight bounds from per-layer arrays. -/
-def checkAttnWeightBoundsArrays (cert : ModelCert)
-    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat) : Except String Unit :=
+/-- Verify weight-derived bounds from per-layer arrays. -/
+def checkWeightBoundsArrays (cert : ModelCert)
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax mlpWinBound mlpWoutBound
+      ln1MaxAbsGamma ln1MaxAbsBeta ln2MaxAbsGamma : Array Rat) : Except String Unit :=
   Id.run do
     if attnValueCoeff.size ≠ cert.layers.size then
       return .error "attnValueCoeff layer count mismatch"
@@ -410,10 +411,25 @@ def checkAttnWeightBoundsArrays (cert : ModelCert)
       return .error "wqOpBoundMax layer count mismatch"
     if wkOpBoundMax.size ≠ cert.layers.size then
       return .error "wkOpBoundMax layer count mismatch"
+    if mlpWinBound.size ≠ cert.layers.size then
+      return .error "mlpWinBound layer count mismatch"
+    if mlpWoutBound.size ≠ cert.layers.size then
+      return .error "mlpWoutBound layer count mismatch"
+    if ln1MaxAbsGamma.size ≠ cert.layers.size then
+      return .error "ln1MaxAbsGamma layer count mismatch"
+    if ln1MaxAbsBeta.size ≠ cert.layers.size then
+      return .error "ln1MaxAbsBeta layer count mismatch"
+    if ln2MaxAbsGamma.size ≠ cert.layers.size then
+      return .error "ln2MaxAbsGamma layer count mismatch"
     for idx in [:cert.layers.size] do
       let expValue := attnValueCoeff[idx]!
       let expWq := wqOpBoundMax[idx]!
       let expWk := wkOpBoundMax[idx]!
+      let expMlpWin := mlpWinBound[idx]!
+      let expMlpWout := mlpWoutBound[idx]!
+      let expLn1Gamma := ln1MaxAbsGamma[idx]!
+      let expLn1Beta := ln1MaxAbsBeta[idx]!
+      let expLn2Gamma := ln2MaxAbsGamma[idx]!
       let layer := cert.layers[idx]!
       if expValue ≠ layer.attnValueCoeff then
         return .error s!"attnValueCoeff mismatch at layer {idx}"
@@ -421,10 +437,20 @@ def checkAttnWeightBoundsArrays (cert : ModelCert)
         return .error s!"wqOpBoundMax mismatch at layer {idx}"
       if expWk ≠ layer.wkOpBoundMax then
         return .error s!"wkOpBoundMax mismatch at layer {idx}"
+      if expMlpWin ≠ layer.mlpWinBound then
+        return .error s!"mlpWinBound mismatch at layer {idx}"
+      if expMlpWout ≠ layer.mlpWoutBound then
+        return .error s!"mlpWoutBound mismatch at layer {idx}"
+      if expLn1Gamma ≠ layer.ln1MaxAbsGamma then
+        return .error s!"ln1MaxAbsGamma mismatch at layer {idx}"
+      if expLn1Beta ≠ layer.ln1MaxAbsBeta then
+        return .error s!"ln1MaxAbsBeta mismatch at layer {idx}"
+      if expLn2Gamma ≠ layer.ln2MaxAbsGamma then
+        return .error s!"ln2MaxAbsGamma mismatch at layer {idx}"
     return .ok ()
 
-theorem checkAttnWeightBoundsArrays_spec :
-    checkAttnWeightBoundsArrays = checkAttnWeightBoundsArrays := rfl
+theorem checkWeightBoundsArrays_spec :
+    checkWeightBoundsArrays = checkWeightBoundsArrays := rfl
 
 /-- Ensure all layers have zero softmax margin evidence. -/
 def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
@@ -501,7 +527,9 @@ def verifyModelCert
     (eps : Rat)
     (soundnessBits : Nat)
     (geluDerivTarget : GeluDerivTarget)
-    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat) : Except String ModelCert :=
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax mlpWinBound mlpWoutBound
+      ln1MaxAbsGamma ln1MaxAbsBeta ln2MaxAbsGamma : Array Rat) :
+    Except String ModelCert :=
   Id.run do
     if cert.eps ≠ eps then
       return .error "model header eps mismatch"
@@ -516,7 +544,8 @@ def verifyModelCert
           match checkSoftmaxMarginZero cert with
           | .error e => return .error e
           | .ok _ =>
-              match checkAttnWeightBoundsArrays cert attnValueCoeff wqOpBoundMax wkOpBoundMax with
+              match checkWeightBoundsArrays cert attnValueCoeff wqOpBoundMax wkOpBoundMax
+                  mlpWinBound mlpWoutBound ln1MaxAbsGamma ln1MaxAbsBeta ln2MaxAbsGamma with
               | .error e => return .error e
               | .ok _ => return .ok cert
     return .error "sound certificate failed internal consistency checks"
@@ -530,11 +559,13 @@ def verifyModelCertBestMatchMargins
     (eps : Rat)
     (soundnessBits : Nat)
     (geluDerivTarget : GeluDerivTarget)
-    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat)
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax mlpWinBound mlpWoutBound
+      ln1MaxAbsGamma ln1MaxAbsBeta ln2MaxAbsGamma : Array Rat)
     (marginCerts : Array LayerBestMatchMarginCert) : Except String ModelCert :=
   Id.run do
     match verifyModelCert cert eps soundnessBits geluDerivTarget
-        attnValueCoeff wqOpBoundMax wkOpBoundMax with
+        attnValueCoeff wqOpBoundMax wkOpBoundMax
+        mlpWinBound mlpWoutBound ln1MaxAbsGamma ln1MaxAbsBeta ln2MaxAbsGamma with
     | .error e => return .error e
     | .ok base =>
         match tightenModelCertBestMatchMargins base marginCerts with

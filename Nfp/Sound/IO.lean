@@ -51,8 +51,8 @@ private def readModelEps (path : System.FilePath) : IO (Except String Rat) := do
   | .error e => return .error e
   | .ok (eps, _) => return .ok eps
 
-private def recomputeAttnWeightBoundsBinary
-    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
+private def recomputeModelWeightBoundsBinary
+    (path : System.FilePath) : IO (Except String ModelWeightBounds) := do
   let h ← IO.FS.Handle.mk path IO.FS.Mode.read
   match ← Nfp.Untrusted.SoundBinary.readBinaryHeader h with
   | .error e => return .error e
@@ -66,6 +66,11 @@ private def recomputeAttnWeightBoundsBinary
       | .ok _ => pure ()
       let mut valuePairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
       let mut qkPairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
+      let mut mlpWinBound : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut mlpWoutBound : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut ln1MaxAbsGamma : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut ln1MaxAbsBeta : Array Rat := Array.mkEmpty hdr.numLayers
+      let mut ln2MaxAbsGamma : Array Rat := Array.mkEmpty hdr.numLayers
       for _l in [:hdr.numLayers] do
         let mut valuePairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
         let mut qkPairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
@@ -155,11 +160,16 @@ private def recomputeAttnWeightBoundsBinary
         match ln2BetaScaledE with
         | .error e => return .error e
         | .ok _ => pure ()
-        let _ := nWinScaled
-        let _ := nWoutScaled
-        let _ := ln1GammaScaled
-        let _ := ln1BetaScaled
-        let _ := ln2GammaScaled
+        let nWin := ratOfScaledInt scalePow10 nWinScaled
+        let nWout := ratOfScaledInt scalePow10 nWoutScaled
+        let ln1Gamma := ratOfScaledInt scalePow10 ln1GammaScaled
+        let ln1Beta := ratOfScaledInt scalePow10 ln1BetaScaled
+        let ln2Gamma := ratOfScaledInt scalePow10 ln2GammaScaled
+        mlpWinBound := mlpWinBound.push nWin
+        mlpWoutBound := mlpWoutBound.push nWout
+        ln1MaxAbsGamma := ln1MaxAbsGamma.push ln1Gamma
+        ln1MaxAbsBeta := ln1MaxAbsBeta.push ln1Beta
+        ln2MaxAbsGamma := ln2MaxAbsGamma.push ln2Gamma
         valuePairsLayers := valuePairsLayers.push valuePairs
         qkPairsLayers := qkPairsLayers.push qkPairs
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
@@ -178,22 +188,27 @@ private def recomputeAttnWeightBoundsBinary
             attnValueCoeff := coeffs
             wqOpBoundMax := wqMaxs
             wkOpBoundMax := wkMaxs
+            mlpWinBound := mlpWinBound
+            mlpWoutBound := mlpWoutBound
+            ln1MaxAbsGamma := ln1MaxAbsGamma
+            ln1MaxAbsBeta := ln1MaxAbsBeta
+            ln2MaxAbsGamma := ln2MaxAbsGamma
           }
 
-private def recomputeAttnWeightBoundsText
-    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
+private def recomputeModelWeightBoundsText
+    (path : System.FilePath) : IO (Except String ModelWeightBounds) := do
   let contents ← IO.FS.readFile path
   let lines : Array String := (contents.splitOn "\n").toArray
-  return attnWeightBoundsFromTextLines lines
+  return modelWeightBoundsFromTextLines lines
 
-private def recomputeAttnWeightBounds
-    (path : System.FilePath) : IO (Except String AttnWeightBounds) := do
+private def recomputeModelWeightBounds
+    (path : System.FilePath) : IO (Except String ModelWeightBounds) := do
   let firstLine ←
     IO.FS.withFile path IO.FS.Mode.read fun h => h.getLine
   if firstLine.trim = "NFP_BINARY_V1" then
-    recomputeAttnWeightBoundsBinary path
+    recomputeModelWeightBoundsBinary path
   else
-    recomputeAttnWeightBoundsText path
+    recomputeModelWeightBoundsText path
 
 /-- Compute weight-only per-head contribution bounds from a binary `.nfpt`. -/
 def certifyHeadBoundsBinary
@@ -223,12 +238,14 @@ def certifyModelFileGlobal
             softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          match ← recomputeAttnWeightBounds path with
+          match ← recomputeModelWeightBounds path with
           | .error e =>
-              return .error s!"attnWeightBounds verification failed: {e}"
+              return .error s!"model weight bounds verification failed: {e}"
           | .ok bounds =>
               return verifyModelCert cert eps soundnessBits geluTarget
                 bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax
+                bounds.mlpWinBound bounds.mlpWoutBound
+                bounds.ln1MaxAbsGamma bounds.ln1MaxAbsBeta bounds.ln2MaxAbsGamma
 
 /-- Entry point for sound certification (global or local). -/
 def certifyModelFile
@@ -248,12 +265,14 @@ def certifyModelFile
             softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          match ← recomputeAttnWeightBounds path with
+          match ← recomputeModelWeightBounds path with
           | .error e =>
-              return .error s!"attnWeightBounds verification failed: {e}"
+              return .error s!"model weight bounds verification failed: {e}"
           | .ok bounds =>
               return verifyModelCert cert eps soundnessBits geluTarget
                 bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax
+                bounds.mlpWinBound bounds.mlpWoutBound
+                bounds.ln1MaxAbsGamma bounds.ln1MaxAbsBeta bounds.ln2MaxAbsGamma
 
 /-- Compute per-head contribution bounds (global). -/
 def certifyHeadBounds
@@ -415,9 +434,9 @@ def certifyModelFileBestMatchMargins
             (softmaxMarginLowerBound := 0) (softmaxExpEffort := softmaxExpEffort) with
       | .error e => return .error e
       | .ok cert =>
-          match ← recomputeAttnWeightBounds path with
+          match ← recomputeModelWeightBounds path with
           | .error e =>
-              return .error s!"attnWeightBounds verification failed: {e}"
+              return .error s!"model weight bounds verification failed: {e}"
           | .ok bounds =>
               let mut marginCerts : Array LayerBestMatchMarginCert := Array.mkEmpty hdr.numLayers
               for layerIdx in [:hdr.numLayers] do
@@ -434,7 +453,10 @@ def certifyModelFileBestMatchMargins
                 | .error e => return .error e
                 | .ok cert => marginCerts := marginCerts.push cert
               return verifyModelCertBestMatchMargins cert hdr.eps soundnessBits hdr.geluDerivTarget
-                bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax marginCerts
+                bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax
+                bounds.mlpWinBound bounds.mlpWoutBound
+                bounds.ln1MaxAbsGamma bounds.ln1MaxAbsBeta bounds.ln2MaxAbsGamma
+                marginCerts
 
 /-- Compute local per-head attention contribution bounds tightened by
     best-match pattern evidence. -/

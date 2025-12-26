@@ -6,8 +6,10 @@ soundness upgrade. It is intentionally brief and human-readable.
 ### Current limitations
 - The bridge theorem in `Nfp/Sound/Bridge.lean` links `LayerAmplificationCert` bounds to
   `DeepLinearization` residual Jacobians, but it requires external operator-norm assumptions
-  (LN Jacobians, attention full Jacobian, and MLP factors). The trusted checker does not yet
-  discharge those assumptions from model weights.
+  (LN Jacobians, attention full Jacobian, and MLP factors). The trusted checker now recomputes
+  weight-derived bounds (W_Q/W_K/W_V/W_O, MLP W_in/W_out, LN1 gamma/beta, LN2 gamma) from model files,
+  but it still treats softmax probability or margin evidence as external and does not derive those
+  bounds from logits.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
 - Softmax Jacobian bounds in the standard `certify` path still use the worst-case probability

@@ -24,17 +24,24 @@ structure TextModelDims where
   start : Nat
   deriving Repr
 
-/-- Per-layer attention weight bounds extracted from a text model. -/
-structure AttnWeightBounds where
+/-- Per-layer weight-derived bounds extracted from a text model. -/
+structure ModelWeightBounds where
   attnValueCoeff : Array Rat
   wqOpBoundMax : Array Rat
   wkOpBoundMax : Array Rat
+  mlpWinBound : Array Rat
+  mlpWoutBound : Array Rat
+  ln1MaxAbsGamma : Array Rat
+  ln1MaxAbsBeta : Array Rat
+  ln2MaxAbsGamma : Array Rat
   deriving Repr
 
-/-- Verify that attention-weight bounds match the certificate layer fields. -/
-def checkAttnWeightBounds (cert : ModelCert) (expected : AttnWeightBounds) : Except String Unit :=
-  checkAttnWeightBoundsArrays cert expected.attnValueCoeff expected.wqOpBoundMax
-    expected.wkOpBoundMax
+/-- Verify that weight-derived bounds match the certificate layer fields. -/
+def checkModelWeightBounds (cert : ModelCert) (expected : ModelWeightBounds) :
+    Except String Unit :=
+  checkWeightBoundsArrays cert expected.attnValueCoeff expected.wqOpBoundMax
+    expected.wkOpBoundMax expected.mlpWinBound expected.mlpWoutBound
+    expected.ln1MaxAbsGamma expected.ln1MaxAbsBeta expected.ln2MaxAbsGamma
 
 def parseTextHeaderDims (lines : Array String) : Except String TextModelDims :=
   Id.run do
@@ -126,6 +133,14 @@ def consumeVector
   let step := fun (acc : Array Rat) (x : Rat) => acc.push x
   foldRatTokens lines start n (Array.mkEmpty n) step
 
+/-- Consume a vector of length `n` and return its max absolute entry. -/
+def consumeVectorMaxAbs
+    (lines : Array String)
+    (start : Nat)
+    (n : Nat) : Except String (Rat × Nat) :=
+  let step := fun (acc : Rat) (x : Rat) => max acc (ratAbs x)
+  foldRatTokens lines start n 0 step
+
 /-- Consume a matrix and return its row-sum norm. -/
 def consumeMatrixNormInf
     (lines : Array String)
@@ -136,8 +151,8 @@ def consumeMatrixNormInf
   | .error e => .error e
   | .ok (xs, next) => .ok (matrixNormInfOfRowMajor rows cols xs, next)
 
-/-- Compute per-layer attention value and `W_Q/W_K` bounds from text model lines. -/
-def attnWeightBoundsFromTextLines (lines : Array String) : Except String AttnWeightBounds :=
+/-- Compute per-layer weight bounds from text model lines. -/
+def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelWeightBounds :=
   Id.run do
     let infoE := parseTextHeaderDims lines
     let info ←
@@ -149,6 +164,11 @@ def attnWeightBoundsFromTextLines (lines : Array String) : Except String AttnWei
     let mut attnValueCoeff : Array Rat := Array.replicate info.numLayers 0
     let mut wqMax : Array Rat := Array.replicate info.numLayers 0
     let mut wkMax : Array Rat := Array.replicate info.numLayers 0
+    let mut mlpWinBound : Array Rat := Array.replicate info.numLayers 0
+    let mut mlpWoutBound : Array Rat := Array.replicate info.numLayers 0
+    let mut ln1MaxAbsGamma : Array Rat := Array.replicate info.numLayers 0
+    let mut ln1MaxAbsBeta : Array Rat := Array.replicate info.numLayers 0
+    let mut ln2MaxAbsGamma : Array Rat := Array.replicate info.numLayers 0
     while i < lines.size do
       let line := lines[i]!.trim
       if line.startsWith "LAYER" then
@@ -189,31 +209,82 @@ def attnWeightBoundsFromTextLines (lines : Array String) : Except String AttnWei
                   attnValueCoeff :=
                     attnValueCoeff.set! r (attnValueCoeff[r]! + (nv * no))
                 i := next2
+      else if line = "W_in" then
+        let r := curLayer
+        match consumeMatrixNormInf lines (i + 1) info.modelDim info.hiddenDim with
+        | .error e => return .error e
+        | .ok (nwin, next) =>
+            if r < mlpWinBound.size then
+              mlpWinBound := mlpWinBound.set! r nwin
+            i := next
+      else if line = "W_out" then
+        let r := curLayer
+        match consumeMatrixNormInf lines (i + 1) info.hiddenDim info.modelDim with
+        | .error e => return .error e
+        | .ok (nwout, next) =>
+            if r < mlpWoutBound.size then
+              mlpWoutBound := mlpWoutBound.set! r nwout
+            i := next
+      else if line = "LN1_GAMMA" then
+        let r := curLayer
+        match consumeVectorMaxAbs lines (i + 1) info.modelDim with
+        | .error e => return .error e
+        | .ok (g, next) =>
+            if r < ln1MaxAbsGamma.size then
+              ln1MaxAbsGamma := ln1MaxAbsGamma.set! r g
+            i := next
+      else if line = "LN1_BETA" then
+        let r := curLayer
+        match consumeVectorMaxAbs lines (i + 1) info.modelDim with
+        | .error e => return .error e
+        | .ok (b, next) =>
+            if r < ln1MaxAbsBeta.size then
+              ln1MaxAbsBeta := ln1MaxAbsBeta.set! r b
+            i := next
+      else if line = "LN2_GAMMA" then
+        let r := curLayer
+        match consumeVectorMaxAbs lines (i + 1) info.modelDim with
+        | .error e => return .error e
+        | .ok (g, next) =>
+            if r < ln2MaxAbsGamma.size then
+              ln2MaxAbsGamma := ln2MaxAbsGamma.set! r g
+            i := next
+      else if line = "LN2_BETA" then
+        match consumeVectorMaxAbs lines (i + 1) info.modelDim with
+        | .error e => return .error e
+        | .ok (_, next) =>
+            i := next
       else
         i := i + 1
     return .ok {
       attnValueCoeff := attnValueCoeff
       wqOpBoundMax := wqMax
       wkOpBoundMax := wkMax
+      mlpWinBound := mlpWinBound
+      mlpWoutBound := mlpWoutBound
+      ln1MaxAbsGamma := ln1MaxAbsGamma
+      ln1MaxAbsBeta := ln1MaxAbsBeta
+      ln2MaxAbsGamma := ln2MaxAbsGamma
     }
 
 /-- Compute per-layer `attnValueCoeff` from text model lines. -/
 def attnValueCoeffFromTextLines (lines : Array String) : Except String (Array Rat) := do
-  let bounds ← attnWeightBoundsFromTextLines lines
+  let bounds ← modelWeightBoundsFromTextLines lines
   return bounds.attnValueCoeff
 
 /-! ### Specs -/
 
 theorem parseTextHeaderDims_spec : parseTextHeaderDims = parseTextHeaderDims := rfl
-theorem AttnWeightBounds_spec : AttnWeightBounds = AttnWeightBounds := rfl
-theorem checkAttnWeightBounds_spec :
-    checkAttnWeightBounds = checkAttnWeightBounds := rfl
+theorem ModelWeightBounds_spec : ModelWeightBounds = ModelWeightBounds := rfl
+theorem checkModelWeightBounds_spec :
+    checkModelWeightBounds = checkModelWeightBounds := rfl
 theorem foldRatTokens_spec (α : Type) :
     @foldRatTokens α = @foldRatTokens α := rfl
 theorem consumeVector_spec : consumeVector = consumeVector := rfl
+theorem consumeVectorMaxAbs_spec : consumeVectorMaxAbs = consumeVectorMaxAbs := rfl
 theorem consumeMatrixNormInf_spec : consumeMatrixNormInf = consumeMatrixNormInf := rfl
-theorem attnWeightBoundsFromTextLines_spec :
-    attnWeightBoundsFromTextLines = attnWeightBoundsFromTextLines := rfl
+theorem modelWeightBoundsFromTextLines_spec :
+    modelWeightBoundsFromTextLines = modelWeightBoundsFromTextLines := rfl
 theorem attnValueCoeffFromTextLines_spec :
     attnValueCoeffFromTextLines = attnValueCoeffFromTextLines := rfl
 
