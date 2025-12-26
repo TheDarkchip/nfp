@@ -4,6 +4,7 @@ import Mathlib.Algebra.Order.Ring.Unbundled.Rat
 import Mathlib.Data.Finset.Lattice.Fold
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.Nat.Factorial.Basic
+import Nfp.Sound.Bounds.Portfolio
 
 namespace Nfp.Sound
 
@@ -61,27 +62,41 @@ def expLBPortfolio : Array (Nat × Nat) :=
 
 theorem expLBPortfolio_def : expLBPortfolio = #[(2, 4), (3, 6), (4, 8)] := rfl
 
+/-- Portfolio of `expLBScaledTaylor` candidates, truncated by effort. -/
+def expLBCandidates (x : Rat) (effort : Nat) : Array Rat :=
+  Id.run do
+    let limit := min effort expLBPortfolio.size
+    let mut out : Array Rat := Array.mkEmpty limit
+    for i in [:limit] do
+      let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
+      out := out.push cand
+    return out
+
+theorem expLBCandidates_def (x : Rat) (effort : Nat) :
+    expLBCandidates x effort =
+      Id.run do
+        let limit := min effort expLBPortfolio.size
+        let mut out : Array Rat := Array.mkEmpty limit
+        for i in [:limit] do
+          let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
+          out := out.push cand
+        return out := rfl
+
 /-- Portfolio lower bound on `exp`, with a baseline `1 + x` candidate. -/
 def expLB (x : Rat) (effort : Nat) : Rat :=
   let base : Rat := max 0 ((1 : Rat) + x)
-  let limit := min effort expLBPortfolio.size
-  Id.run do
-    let mut best := base
-    for i in [:limit] do
-      let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
-      best := max best cand
-    return best
+  lbBest base (expLBCandidates x effort)
 
 theorem expLB_def (x : Rat) (effort : Nat) :
     expLB x effort =
       let base : Rat := max 0 ((1 : Rat) + x)
-      let limit := min effort expLBPortfolio.size
-      Id.run do
-        let mut best := base
-        for i in [:limit] do
-          let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
-          best := max best cand
-        return best := rfl
+      lbBest base (expLBCandidates x effort) := rfl
+
+/-- `expLB` never undercuts its baseline `1 + x` lower bound. -/
+theorem expLB_ge_base (x : Rat) (effort : Nat) :
+    max 0 ((1 : Rat) + x) ≤ expLB x effort := by
+  dsimp [expLB]
+  exact lbBest_ge_base (base := max 0 ((1 : Rat) + x)) (cands := expLBCandidates x effort)
 
 /-- Default effort used for margin-derived softmax bounds. -/
 def defaultSoftmaxExpEffort : Nat := 1

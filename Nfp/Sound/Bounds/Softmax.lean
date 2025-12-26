@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.Order.Ring.Unbundled.Rat
+import Mathlib.Tactic.Linarith
 import Nfp.Sound.Bounds.Exp
 import Nfp.Sound.Bounds.Portfolio
 
@@ -28,6 +29,20 @@ private def clamp01 (x : Rat) : Rat :=
   max 0 (min x 1)
 
 theorem clamp01_def (x : Rat) : clamp01 x = max 0 (min x 1) := rfl
+
+private theorem clamp01_nonneg (x : Rat) : 0 ≤ clamp01 x := by
+  dsimp [clamp01]
+  exact le_max_left _ _
+
+private theorem clamp01_le_one (x : Rat) : clamp01 x ≤ 1 := by
+  have h0 : (0 : Rat) ≤ 1 := by
+    decide
+  have hmin : min x 1 ≤ (1 : Rat) := by
+    exact min_le_right _ _
+  have hmax : max 0 (min x 1) ≤ (1 : Rat) := by
+    exact max_le_iff.mpr ⟨h0, hmin⟩
+  dsimp [clamp01]
+  exact hmax
 
 /-- Local upper bound on the row-sum softmax Jacobian norm given `p ∈ [pLo, pHi]`. -/
 def softmaxJacobianNormInfBound (pLo pHi : Rat) : Rat :=
@@ -143,6 +158,19 @@ theorem softmaxJacobianNormInfBoundFromMaxProb_def (pLo : Rat) :
       else
         half := rfl
 
+/-- Margin-derived Jacobian bounds never exceed the worst-case `1/2`. -/
+theorem softmaxJacobianNormInfBoundFromMaxProb_le_worst (pLo : Rat) :
+    softmaxJacobianNormInfBoundFromMaxProb pLo ≤ softmaxJacobianNormInfWorst := by
+  have hp0 : 0 ≤ clamp01 pLo := clamp01_nonneg pLo
+  have hp1 : clamp01 pLo ≤ 1 := clamp01_le_one pLo
+  by_cases h : (2 : Rat)⁻¹ < clamp01 pLo
+  · have hbound :
+        (2 : Rat) * clamp01 pLo * (1 - clamp01 pLo) ≤ (2 : Rat)⁻¹ := by
+      nlinarith [hp0, hp1]
+    simpa [softmaxJacobianNormInfBoundFromMaxProb, softmaxJacobianNormInfWorst_def, h]
+      using hbound
+  · simp [softmaxJacobianNormInfBoundFromMaxProb, softmaxJacobianNormInfWorst_def, h]
+
 /-- Upper bound on the row-sum softmax Jacobian norm from a logit margin. -/
 def softmaxJacobianNormInfBoundFromMargin (seqLen : Nat) (margin : Rat) (expEffort : Nat) : Rat :=
   softmaxJacobianNormInfBoundFromMaxProb (softmaxMaxProbLowerBound seqLen margin expEffort)
@@ -152,5 +180,14 @@ theorem softmaxJacobianNormInfBoundFromMargin_def (seqLen : Nat) (margin : Rat)
     softmaxJacobianNormInfBoundFromMargin seqLen margin expEffort =
       softmaxJacobianNormInfBoundFromMaxProb
         (softmaxMaxProbLowerBound seqLen margin expEffort) := rfl
+
+/-- Margin-derived Jacobian bound never exceeds the worst-case `1/2`. -/
+theorem softmaxJacobianNormInfBoundFromMargin_le_worst (seqLen : Nat) (margin : Rat)
+    (expEffort : Nat) :
+    softmaxJacobianNormInfBoundFromMargin seqLen margin expEffort ≤
+      softmaxJacobianNormInfWorst := by
+  simpa [softmaxJacobianNormInfBoundFromMargin_def] using
+    softmaxJacobianNormInfBoundFromMaxProb_le_worst
+      (pLo := softmaxMaxProbLowerBound seqLen margin expEffort)
 
 end Nfp.Sound
