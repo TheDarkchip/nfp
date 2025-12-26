@@ -331,6 +331,8 @@ but you **must** update this list in the same commit.
 - `IO.lean`
   - Parsing/loading/tokenization/report formatting glue.
   - **IO-only principle:** no heavy proofs; keep it as a bridge to filesystem/CLI.
+- `IO/Pure.lean`
+  - Pure parsing, construction, and tokenization helpers used by `IO.lean`.
 - `Main.lean`
   - CLI entrypoint and subcommand wiring. Keep it thin:
     - argument parsing + calling into `Nfp.IO` / `Discovery` / `Nfp.Sound.*` reporting helpers,
