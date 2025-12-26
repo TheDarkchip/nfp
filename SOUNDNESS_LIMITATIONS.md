@@ -10,14 +10,13 @@ soundness upgrade. It is intentionally brief and human-readable.
   discharge those assumptions from model weights.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
-- Softmax Jacobian bounds are enforced to use the worst-case probability interval `[0,1]` in
-  trusted IO. Margin-derived tightening is computed by the untrusted path, but trusted IO
-  currently **rejects nonzero** `softmaxMarginLowerBound` because margin evidence is unverified.
-- Local per-head contribution bounds can now be tightened using a best-match pattern certificate,
-  but this tightening does **not** propagate to layer-level ModelCert bounds.
-- Layer-level best-match margin certificates can be computed (binary only) and applied via
-  `tightenModelCertBestMatchMargins`, but this is not yet wired into the CLI and may not tighten
-  unless the best-match sweep covers all heads and query positions.
+- Softmax Jacobian bounds in the standard `certify` path still use the worst-case probability
+  interval `[0,1]`; direct `--softmaxMargin` is rejected because margin evidence is unverified.
+- Best-match margin tightening is now available via `nfp certify --bestMatchMargins` (binary + local
+  inputs with EMBEDDINGS). It runs a full best-match sweep across heads and query positions, which
+  can be expensive and will fail if coverage is incomplete.
+- Per-head best-match tightening (used by head-pattern/induction certs) is still separate from
+  model-level certification unless `--bestMatchMargins` is used.
 - Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.
@@ -31,7 +30,8 @@ soundness upgrade. It is intentionally brief and human-readable.
 - Implement input-space partitioning in the SOUND local path and plumb it through the certify pipeline.
 - Replace or augment interval propagation with affine forms to preserve correlations.
 - Add sound probability interval extraction for softmax (requires sound exp/log-sum-exp bounds).
-- Verify or compute margin evidence in the trusted path so margin-derived softmax tightening can be enabled.
+- Verify or compute margin evidence in the trusted path so margin-derived softmax tightening can be
+  enabled without a best-match sweep and without rejecting `--softmaxMargin`.
 - Tighten GeLU derivative envelopes to the exact interval supremum if desired.
 - Discharge the bridge theorem’s component-norm assumptions from certificates/model weights, and
   connect the resulting statement to the `Linearization` Jacobian theorems.
