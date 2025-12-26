@@ -33,25 +33,8 @@ structure AttnWeightBounds where
 
 /-- Verify that attention-weight bounds match the certificate layer fields. -/
 def checkAttnWeightBounds (cert : ModelCert) (expected : AttnWeightBounds) : Except String Unit :=
-  Id.run do
-    if expected.attnValueCoeff.size ≠ cert.layers.size then
-      return .error "attnValueCoeff layer count mismatch"
-    if expected.wqOpBoundMax.size ≠ cert.layers.size then
-      return .error "wqOpBoundMax layer count mismatch"
-    if expected.wkOpBoundMax.size ≠ cert.layers.size then
-      return .error "wkOpBoundMax layer count mismatch"
-    for idx in [:cert.layers.size] do
-      let expValue := expected.attnValueCoeff[idx]!
-      let expWq := expected.wqOpBoundMax[idx]!
-      let expWk := expected.wkOpBoundMax[idx]!
-      let layer := cert.layers[idx]!
-      if expValue ≠ layer.attnValueCoeff then
-        return .error s!"attnValueCoeff mismatch at layer {idx}"
-      if expWq ≠ layer.wqOpBoundMax then
-        return .error s!"wqOpBoundMax mismatch at layer {idx}"
-      if expWk ≠ layer.wkOpBoundMax then
-        return .error s!"wkOpBoundMax mismatch at layer {idx}"
-    return .ok ()
+  checkAttnWeightBoundsArrays cert expected.attnValueCoeff expected.wqOpBoundMax
+    expected.wkOpBoundMax
 
 def parseTextHeaderDims (lines : Array String) : Except String TextModelDims :=
   Id.run do

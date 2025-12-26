@@ -400,6 +400,32 @@ end ModelCert
 
 /-! ### Certificate verification helpers -/
 
+/-- Verify attention-weight bounds from per-layer arrays. -/
+def checkAttnWeightBoundsArrays (cert : ModelCert)
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat) : Except String Unit :=
+  Id.run do
+    if attnValueCoeff.size ≠ cert.layers.size then
+      return .error "attnValueCoeff layer count mismatch"
+    if wqOpBoundMax.size ≠ cert.layers.size then
+      return .error "wqOpBoundMax layer count mismatch"
+    if wkOpBoundMax.size ≠ cert.layers.size then
+      return .error "wkOpBoundMax layer count mismatch"
+    for idx in [:cert.layers.size] do
+      let expValue := attnValueCoeff[idx]!
+      let expWq := wqOpBoundMax[idx]!
+      let expWk := wkOpBoundMax[idx]!
+      let layer := cert.layers[idx]!
+      if expValue ≠ layer.attnValueCoeff then
+        return .error s!"attnValueCoeff mismatch at layer {idx}"
+      if expWq ≠ layer.wqOpBoundMax then
+        return .error s!"wqOpBoundMax mismatch at layer {idx}"
+      if expWk ≠ layer.wkOpBoundMax then
+        return .error s!"wkOpBoundMax mismatch at layer {idx}"
+    return .ok ()
+
+theorem checkAttnWeightBoundsArrays_spec :
+    checkAttnWeightBoundsArrays = checkAttnWeightBoundsArrays := rfl
+
 /-- Ensure all layers have zero softmax margin evidence. -/
 def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
   Id.run do
@@ -468,6 +494,35 @@ def tightenModelCertBestMatchMargins
 
 theorem tightenModelCertBestMatchMargins_spec :
     tightenModelCertBestMatchMargins = tightenModelCertBestMatchMargins := rfl
+
+/-- Verify a model certificate against header metadata and expected attention bounds. -/
+def verifyModelCert
+    (cert : ModelCert)
+    (eps : Rat)
+    (soundnessBits : Nat)
+    (geluDerivTarget : GeluDerivTarget)
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat) : Except String ModelCert :=
+  Id.run do
+    if cert.eps ≠ eps then
+      return .error "model header eps mismatch"
+    if cert.soundnessBits ≠ soundnessBits then
+      return .error "soundness bits mismatch"
+    if cert.geluDerivTarget ≠ geluDerivTarget then
+      return .error "model header gelu_kind mismatch"
+    if cert.check then
+      match checkSoftmaxProbIntervalWorst cert with
+      | .error e => return .error e
+      | .ok _ =>
+          match checkSoftmaxMarginZero cert with
+          | .error e => return .error e
+          | .ok _ =>
+              match checkAttnWeightBoundsArrays cert attnValueCoeff wqOpBoundMax wkOpBoundMax with
+              | .error e => return .error e
+              | .ok _ => return .ok cert
+    return .error "sound certificate failed internal consistency checks"
+
+theorem verifyModelCert_spec :
+    verifyModelCert = verifyModelCert := rfl
 
 /-! ### Specs -/
 

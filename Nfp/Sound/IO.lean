@@ -204,10 +204,7 @@ def certifyHeadBoundsBinary
   match ← Nfp.Untrusted.SoundCompute.certifyHeadBoundsBinary path scalePow10 with
   | .error e => return .error e
   | .ok certs =>
-      let ok := certs.foldl (fun acc c => acc && c.check) true
-      if ok then
-        return .ok certs
-      return .error "head contribution certificate failed internal checks"
+      return verifyHeadContributionCerts certs
 
 /-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal
@@ -227,27 +224,12 @@ def certifyModelFileGlobal
             softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.eps ≠ eps then
-            return .error "model header eps mismatch"
-          if cert.soundnessBits ≠ soundnessBits then
-            return .error "soundness bits mismatch"
-          if cert.geluDerivTarget ≠ geluTarget then
-            return .error "model header gelu_kind mismatch"
-          if cert.check then
-            match checkSoftmaxProbIntervalWorst cert with
-            | .error e => return .error e
-            | .ok _ =>
-                match checkSoftmaxMarginZero cert with
-                | .error e => return .error e
-                | .ok _ =>
-                    match ← recomputeAttnWeightBounds path with
-                    | .error e =>
-                        return .error s!"attnWeightBounds verification failed: {e}"
-                    | .ok bounds =>
-                        match checkAttnWeightBounds cert bounds with
-                        | .error e => return .error e
-                        | .ok _ => return .ok cert
-          return .error "sound certificate failed internal consistency checks"
+          match ← recomputeAttnWeightBounds path with
+          | .error e =>
+              return .error s!"attnWeightBounds verification failed: {e}"
+          | .ok bounds =>
+              return verifyModelCert cert eps soundnessBits geluTarget
+                bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax
 
 /-- Entry point for sound certification (global or local). -/
 def certifyModelFile
@@ -267,27 +249,12 @@ def certifyModelFile
             softmaxMarginLowerBound softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.eps ≠ eps then
-            return .error "model header eps mismatch"
-          if cert.soundnessBits ≠ soundnessBits then
-            return .error "soundness bits mismatch"
-          if cert.geluDerivTarget ≠ geluTarget then
-            return .error "model header gelu_kind mismatch"
-          if cert.check then
-            match checkSoftmaxProbIntervalWorst cert with
-            | .error e => return .error e
-            | .ok _ =>
-                match checkSoftmaxMarginZero cert with
-                | .error e => return .error e
-                | .ok _ =>
-                    match ← recomputeAttnWeightBounds path with
-                    | .error e =>
-                        return .error s!"attnWeightBounds verification failed: {e}"
-                    | .ok bounds =>
-                        match checkAttnWeightBounds cert bounds with
-                        | .error e => return .error e
-                        | .ok _ => return .ok cert
-          return .error "sound certificate failed internal consistency checks"
+          match ← recomputeAttnWeightBounds path with
+          | .error e =>
+              return .error s!"attnWeightBounds verification failed: {e}"
+          | .ok bounds =>
+              return verifyModelCert cert eps soundnessBits geluTarget
+                bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax
 
 /-- Compute per-head contribution bounds (global). -/
 def certifyHeadBounds
@@ -297,10 +264,7 @@ def certifyHeadBounds
   match ← Nfp.Untrusted.SoundCompute.certifyHeadBounds path scalePow10 with
   | .error e => return .error e
   | .ok certs =>
-      let ok := certs.foldl (fun acc c => acc && c.check) true
-      if ok then
-        return .ok certs
-      return .error "head contribution certificate failed internal checks"
+      return verifyHeadContributionCerts certs
 
 /-- Compute local per-head attention contribution bounds. -/
 def certifyHeadBoundsLocal
@@ -318,12 +282,7 @@ def certifyHeadBoundsLocal
             path eps inputPath? inputDelta soundnessBits scalePow10 with
       | .error e => return .error e
       | .ok certs =>
-          let ok :=
-            certs.foldl (fun acc c =>
-              acc && c.soundnessBits = soundnessBits && c.check eps) true
-          if ok then
-            return .ok certs
-          return .error "local head contribution certificate failed internal checks"
+          return verifyHeadLocalContributionCerts eps soundnessBits certs
 
 /-- Compute local attention pattern bounds for a specific head. -/
 def certifyHeadPatternLocal
@@ -349,9 +308,7 @@ def certifyHeadPatternLocal
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "head pattern certificate failed internal checks"
+          return verifyHeadPatternCert cert
 
 /-- Compute local best-match pattern bounds for a specific head. -/
 def certifyHeadPatternBestMatchLocal
@@ -379,9 +336,7 @@ def certifyHeadPatternBestMatchLocal
               softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "head best-match pattern certificate failed internal checks"
+          return verifyHeadBestMatchPatternCert cert
 
 /-- Compute local best-match pattern bounds for a sweep of heads. -/
 def certifyHeadPatternBestMatchLocalSweep
@@ -407,10 +362,7 @@ def certifyHeadPatternBestMatchLocalSweep
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
       | .error e => return .error e
       | .ok certs =>
-          let ok := certs.foldl (fun acc c => acc && c.check) true
-          if ok then
-            return .ok certs
-          return .error "head best-match sweep certificate failed internal checks"
+          return verifyHeadBestMatchPatternCerts certs
 
 /-- Compute layer-level best-match margin evidence (binary only). -/
 def certifyLayerBestMatchMarginLocal
@@ -436,9 +388,7 @@ def certifyLayerBestMatchMarginLocal
             tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "layer best-match margin certificate failed internal checks"
+          return verifyLayerBestMatchMarginCert cert
 
 /-- Compute local per-head attention contribution bounds tightened by
     best-match pattern evidence. -/
@@ -466,12 +416,9 @@ def certifyHeadBoundsLocalBestMatch
             (soundnessBits := soundnessBits) (scalePow10 := scalePow10) with
       | .error e => return .error e
       | .ok certs =>
-          let base? :=
-            certs.find? (fun c => c.layerIdx == layerIdx && c.headIdx == headIdx)
-          match base? with
-          | none =>
-              return .error s!"no local head contribution cert for layer {layerIdx} head {headIdx}"
-          | some base =>
+          match findHeadLocalContribution certs layerIdx headIdx with
+          | .error e => return .error e
+          | .ok base =>
               match ←
                   certifyHeadPatternBestMatchLocal path layerIdx headIdx
                     (queryPos? := queryPos?) (inputPath? := inputPath?)
@@ -482,22 +429,8 @@ def certifyHeadBoundsLocalBestMatch
                     (softmaxExpEffort := softmaxExpEffort) with
               | .error e => return .error e
               | .ok pattern =>
-                  if pattern.layerIdx ≠ layerIdx || pattern.headIdx ≠ headIdx then
-                    return .error "best-match pattern cert layer/head mismatch"
-                  if pattern.softmaxExpEffort ≠ softmaxExpEffort then
-                    return .error "best-match pattern cert softmax effort mismatch"
-                  let softmaxBound := pattern.softmaxJacobianNormInfUpperBound
-                  if softmaxBound > base.softmaxJacobianNormInfUpperBound then
-                    return .error "best-match softmax bound is worse than baseline"
-                  let attnJacBound :=
-                    base.ln1Bound * softmaxBound * base.wvOpBound * base.woOpBound
-                  let tightened :=
-                    { base with
-                      softmaxJacobianNormInfUpperBound := softmaxBound
-                      attnJacBound := attnJacBound }
-                  if tightened.check eps then
-                    return .ok tightened
-                  return .error "tightened head contribution certificate failed internal checks"
+                  return tightenHeadLocalContributionBestMatch
+                    eps soundnessBits base pattern softmaxExpEffort
 
 /-- Compute local head output lower bounds. -/
 def certifyHeadValueLowerBoundLocal
@@ -523,9 +456,7 @@ def certifyHeadValueLowerBoundLocal
             maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "head value lower bound certificate failed internal checks"
+          return verifyHeadValueLowerBoundCert cert
 
 /-- Compute local head logit-difference lower bounds. -/
 def certifyHeadLogitDiffLowerBoundLocal
@@ -552,9 +483,7 @@ def certifyHeadLogitDiffLowerBoundLocal
             perRowPatternLayers scalePow10 with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-      return .error "head logit-diff lower bound certificate failed internal checks"
+          return verifyHeadLogitDiffLowerBoundCert cert
 
 /-- Sound induction-head certification (local path). -/
 def certifyInductionSound
@@ -585,9 +514,7 @@ def certifyInductionSound
             perRowPatternLayers targetToken? negativeToken? softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "induction head certificate failed internal checks"
+          return verifyInductionHeadSoundCert cert
 
 /-- Sound best-match induction-head certification (local path). -/
 def certifyInductionSoundBestMatch
@@ -619,8 +546,6 @@ def certifyInductionSoundBestMatch
             tightPatternLayers perRowPatternLayers targetToken? negativeToken? softmaxExpEffort with
       | .error e => return .error e
       | .ok cert =>
-          if cert.check then
-            return .ok cert
-          return .error "best-match induction head certificate failed internal checks"
+          return verifyInductionHeadBestMatchSoundCert cert
 
 end Nfp.Sound

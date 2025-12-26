@@ -513,6 +513,135 @@ theorem check_iff (c : InductionHeadBestMatchSoundCert) : c.check = true ↔ c.V
 
 end InductionHeadBestMatchSoundCert
 
+/-! ### Certificate verification helpers -/
+
+/-- Validate a batch of head contribution certificates. -/
+def verifyHeadContributionCerts (certs : Array HeadContributionCert) :
+    Except String (Array HeadContributionCert) :=
+  let ok := certs.foldl (fun acc c => acc && c.check) true
+  if ok then
+    .ok certs
+  else
+    .error "head contribution certificate failed internal checks"
+
+/-- Validate a batch of local head contribution certificates. -/
+def verifyHeadLocalContributionCerts (eps : Rat) (soundnessBits : Nat)
+    (certs : Array HeadLocalContributionCert) :
+    Except String (Array HeadLocalContributionCert) :=
+  let ok :=
+    certs.foldl (fun acc c =>
+      acc && c.soundnessBits = soundnessBits && c.check eps) true
+  if ok then
+    .ok certs
+  else
+    .error "local head contribution certificate failed internal checks"
+
+/-- Validate a single local head contribution certificate. -/
+def verifyHeadLocalContributionCert (eps : Rat) (soundnessBits : Nat)
+    (cert : HeadLocalContributionCert) : Except String HeadLocalContributionCert :=
+  if cert.soundnessBits = soundnessBits && cert.check eps then
+    .ok cert
+  else
+    .error "local head contribution certificate failed internal checks"
+
+/-- Validate a head pattern certificate. -/
+def verifyHeadPatternCert (cert : HeadPatternCert) : Except String HeadPatternCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "head pattern certificate failed internal checks"
+
+/-- Validate a best-match head pattern certificate. -/
+def verifyHeadBestMatchPatternCert (cert : HeadBestMatchPatternCert) :
+    Except String HeadBestMatchPatternCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "head best-match pattern certificate failed internal checks"
+
+/-- Validate a batch of best-match head pattern certificates. -/
+def verifyHeadBestMatchPatternCerts (certs : Array HeadBestMatchPatternCert) :
+    Except String (Array HeadBestMatchPatternCert) :=
+  let ok := certs.foldl (fun acc c => acc && c.check) true
+  if ok then
+    .ok certs
+  else
+    .error "head best-match sweep certificate failed internal checks"
+
+/-- Validate a layer-level best-match margin certificate. -/
+def verifyLayerBestMatchMarginCert (cert : LayerBestMatchMarginCert) :
+    Except String LayerBestMatchMarginCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "layer best-match margin certificate failed internal checks"
+
+/-- Validate a head output lower-bound certificate. -/
+def verifyHeadValueLowerBoundCert (cert : HeadValueLowerBoundCert) :
+    Except String HeadValueLowerBoundCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "head value lower bound certificate failed internal checks"
+
+/-- Validate a head logit-difference lower-bound certificate. -/
+def verifyHeadLogitDiffLowerBoundCert (cert : HeadLogitDiffLowerBoundCert) :
+    Except String HeadLogitDiffLowerBoundCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "head logit-diff lower bound certificate failed internal checks"
+
+/-- Validate an induction-head certificate. -/
+def verifyInductionHeadSoundCert (cert : InductionHeadSoundCert) :
+    Except String InductionHeadSoundCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "induction head certificate failed internal checks"
+
+/-- Validate a best-match induction-head certificate. -/
+def verifyInductionHeadBestMatchSoundCert (cert : InductionHeadBestMatchSoundCert) :
+    Except String InductionHeadBestMatchSoundCert :=
+  if cert.check then
+    .ok cert
+  else
+    .error "best-match induction head certificate failed internal checks"
+
+/-- Locate a local head contribution certificate for a specific layer/head. -/
+def findHeadLocalContribution (certs : Array HeadLocalContributionCert)
+    (layerIdx headIdx : Nat) : Except String HeadLocalContributionCert :=
+  match certs.find? (fun c => c.layerIdx == layerIdx && c.headIdx == headIdx) with
+  | some c => .ok c
+  | none => .error s!"no local head contribution cert for layer {layerIdx} head {headIdx}"
+
+/-- Tighten a local head contribution certificate using best-match evidence. -/
+def tightenHeadLocalContributionBestMatch
+    (eps : Rat)
+    (soundnessBits : Nat)
+    (base : HeadLocalContributionCert)
+    (pattern : HeadBestMatchPatternCert)
+    (softmaxExpEffort : Nat) : Except String HeadLocalContributionCert :=
+  Id.run do
+    let _ ← verifyHeadLocalContributionCert eps soundnessBits base
+    let _ ← verifyHeadBestMatchPatternCert pattern
+    if pattern.layerIdx ≠ base.layerIdx || pattern.headIdx ≠ base.headIdx then
+      return .error "best-match pattern cert layer/head mismatch"
+    if pattern.softmaxExpEffort ≠ softmaxExpEffort then
+      return .error "best-match pattern cert softmax effort mismatch"
+    let softmaxBound := pattern.softmaxJacobianNormInfUpperBound
+    if softmaxBound > base.softmaxJacobianNormInfUpperBound then
+      return .error "best-match softmax bound is worse than baseline"
+    let attnJacBound :=
+      base.ln1Bound * softmaxBound * base.wvOpBound * base.woOpBound
+    let tightened :=
+      { base with
+        softmaxJacobianNormInfUpperBound := softmaxBound
+        attnJacBound := attnJacBound }
+    if tightened.check eps then
+      return .ok tightened
+    return .error "tightened head contribution certificate failed internal checks"
+
 /-! ### Specs -/
 
 theorem HeadContributionCert.Valid_spec :
@@ -571,5 +700,31 @@ theorem InductionHeadBestMatchSoundCert.Valid_spec :
     InductionHeadBestMatchSoundCert.Valid = InductionHeadBestMatchSoundCert.Valid := rfl
 theorem InductionHeadBestMatchSoundCert.check_spec :
     InductionHeadBestMatchSoundCert.check = InductionHeadBestMatchSoundCert.check := rfl
+theorem verifyHeadContributionCerts_spec :
+    verifyHeadContributionCerts = verifyHeadContributionCerts := rfl
+theorem verifyHeadLocalContributionCerts_spec :
+    verifyHeadLocalContributionCerts = verifyHeadLocalContributionCerts := rfl
+theorem verifyHeadLocalContributionCert_spec :
+    verifyHeadLocalContributionCert = verifyHeadLocalContributionCert := rfl
+theorem verifyHeadPatternCert_spec :
+    verifyHeadPatternCert = verifyHeadPatternCert := rfl
+theorem verifyHeadBestMatchPatternCert_spec :
+    verifyHeadBestMatchPatternCert = verifyHeadBestMatchPatternCert := rfl
+theorem verifyHeadBestMatchPatternCerts_spec :
+    verifyHeadBestMatchPatternCerts = verifyHeadBestMatchPatternCerts := rfl
+theorem verifyLayerBestMatchMarginCert_spec :
+    verifyLayerBestMatchMarginCert = verifyLayerBestMatchMarginCert := rfl
+theorem verifyHeadValueLowerBoundCert_spec :
+    verifyHeadValueLowerBoundCert = verifyHeadValueLowerBoundCert := rfl
+theorem verifyHeadLogitDiffLowerBoundCert_spec :
+    verifyHeadLogitDiffLowerBoundCert = verifyHeadLogitDiffLowerBoundCert := rfl
+theorem verifyInductionHeadSoundCert_spec :
+    verifyInductionHeadSoundCert = verifyInductionHeadSoundCert := rfl
+theorem verifyInductionHeadBestMatchSoundCert_spec :
+    verifyInductionHeadBestMatchSoundCert = verifyInductionHeadBestMatchSoundCert := rfl
+theorem findHeadLocalContribution_spec :
+    findHeadLocalContribution = findHeadLocalContribution := rfl
+theorem tightenHeadLocalContributionBestMatch_spec :
+    tightenHeadLocalContributionBestMatch = tightenHeadLocalContributionBestMatch := rfl
 
 end Nfp.Sound
