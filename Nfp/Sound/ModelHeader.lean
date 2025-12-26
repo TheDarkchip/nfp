@@ -76,6 +76,8 @@ def parseTextHeaderEps (lines : Array String) : Except String Rat := do
 /-! ### Specs -/
 
 theorem parseHeaderLine_spec : parseHeaderLine = parseHeaderLine := rfl
+theorem parseGeluDerivTarget_spec (v : String) :
+    parseGeluDerivTarget v = parseGeluDerivTarget v := rfl
 theorem parseTextHeader_spec : parseTextHeader = parseTextHeader := rfl
 theorem parseTextHeaderEps_spec : parseTextHeaderEps = parseTextHeaderEps := rfl
 

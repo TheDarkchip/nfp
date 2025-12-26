@@ -284,6 +284,8 @@ theorem containsZero_iff (a : RatInterval) :
     RatInterval.containsZero a = true ↔ a.lo ≤ 0 ∧ 0 ≤ a.hi := by
   simp [containsZero]
 
+theorem ratSq_def (x : Rat) : ratSq x = x * x := rfl
+
 theorem squareLowerBound_def (a : RatInterval) :
     RatInterval.squareLowerBound a =
       if RatInterval.containsZero a then

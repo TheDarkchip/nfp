@@ -45,6 +45,11 @@ private def SqrtLowerDyadicCert.rat {x : Rat} {precBits : Nat}
     (c : SqrtLowerDyadicCert x precBits) : Rat :=
   Rat.normalize (Int.ofNat c.k) (pow2 precBits) (den_nz := by simp [pow2])
 
+theorem SqrtLowerDyadicCert.rat_def {x : Rat} {precBits : Nat}
+    (c : SqrtLowerDyadicCert x precBits) :
+    SqrtLowerDyadicCert.rat c =
+      Rat.normalize (Int.ofNat c.k) (pow2 precBits) (den_nz := by simp [pow2]) := rfl
+
 /-- Compute a dyadic floor certificate for `sqrt (max x 0)` using `Nat.sqrt` on the floor. -/
 private def sqrtLowerDyadic (x : Rat) (precBits : Nat) : SqrtLowerDyadicCert x precBits := by
   let scale : Nat := pow2 precBits
@@ -74,9 +79,15 @@ private def sqrtLowerDyadic (x : Rat) (precBits : Nat) : SqrtLowerDyadicCert x p
       exact_mod_cast hm_succ_le_nat
     exact lt_of_lt_of_le hy_lt hm_succ_le_rat
 
+theorem sqrtLowerDyadic_spec (x : Rat) (precBits : Nat) :
+    sqrtLowerDyadic x precBits = sqrtLowerDyadic x precBits := rfl
+
 /-- Dyadic lower bound on `sqrt (max x 0)` as a `Rat`. -/
 private def sqrtLowerDyadicRat (x : Rat) (precBits : Nat) : Rat :=
   (sqrtLowerDyadic x precBits).rat
+
+theorem sqrtLowerDyadicRat_def (x : Rat) (precBits : Nat) :
+    sqrtLowerDyadicRat x precBits = (sqrtLowerDyadic x precBits).rat := rfl
 
 /-- Conservative bound for the operator norm of a row-wise LayerNorm Jacobian.
 
