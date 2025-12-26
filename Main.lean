@@ -873,6 +873,13 @@ private structure CertifyArgs where
   deltaStr : String
   softmaxMarginStr : String
   softmaxExpEffort : Nat
+  bestMatchMargins : Bool
+  targetOffset : Int
+  maxSeqLen : Nat
+  tightPattern : Bool
+  tightPatternLayers : Nat
+  perRowPatternLayers : Nat
+  scalePow10 : Nat
   outputPath? : Option System.FilePath
 
 private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
@@ -885,6 +892,13 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
   let softmaxMarginStr := p.flag? "softmaxMargin" |>.map (·.as! String) |>.getD "0"
   let softmaxExpEffort :=
     p.flag? "softmaxExpEffort" |>.map (·.as! Nat) |>.getD Nfp.Sound.defaultSoftmaxExpEffort
+  let bestMatchMargins := p.flag? "bestMatchMargins" |>.isSome
+  let targetOffset := p.flag? "targetOffset" |>.map (·.as! Int) |>.getD (-1)
+  let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 0
+  let tightPattern := p.flag? "tightPattern" |>.isSome
+  let tightPatternLayers := p.flag? "tightPatternLayers" |>.map (·.as! Nat) |>.getD 1
+  let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
+  let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   { modelPath := ⟨modelPathStr⟩
     modelPathStr := modelPathStr
@@ -895,6 +909,13 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
     deltaStr := deltaStr
     softmaxMarginStr := softmaxMarginStr
     softmaxExpEffort := softmaxExpEffort
+    bestMatchMargins := bestMatchMargins
+    targetOffset := targetOffset
+    maxSeqLen := maxSeqLen
+    tightPattern := tightPattern
+    tightPatternLayers := tightPatternLayers
+    perRowPatternLayers := perRowPatternLayers
+    scalePow10 := scalePow10
     outputPath? := outputPath? }
 
 private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.ModelCert := do
@@ -925,12 +946,35 @@ private def runCertifyAction (args : CertifyArgs) : ExceptT String IO Nfp.Sound.
                 "local certification requested via --delta, but the model file has no \
 EMBEDDINGS section before the first LAYER (legacy text format). Pass --input <input.nfpt> \
 containing EMBEDDINGS or omit --delta for global certification."
-  let cert ← ExceptT.mk <|
-    Nfp.Sound.certifyModelFile args.modelPath args.soundnessBits
-      (inputPath? := inputPath?) (inputDelta := delta) (partitionDepth := args.partitionDepth)
-      (softmaxMarginLowerBound := softmaxMarginLowerBound)
-      (softmaxExpEffort := args.softmaxExpEffort)
-  return cert
+  let inputPath? ←
+    if args.bestMatchMargins && inputPath?.isNone then
+      let hasEmbeddings ← hasEmbeddingsBeforeLayers args.modelPath
+      if hasEmbeddings then
+        pure (some args.modelPath)
+      else
+        throw <|
+          "best-match margin tightening requires local input with EMBEDDINGS. \
+Pass --input <input.nfpt> or use a model file that embeds EMBEDDINGS."
+    else
+      pure inputPath?
+  if args.bestMatchMargins && softmaxMarginLowerBound != 0 then
+    throw "best-match margin tightening is incompatible with --softmaxMargin"
+  if args.bestMatchMargins then
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyModelFileBestMatchMargins args.modelPath args.soundnessBits
+        (inputPath? := inputPath?) (inputDelta := delta) (partitionDepth := args.partitionDepth)
+        (targetOffset := args.targetOffset) (maxSeqLen := args.maxSeqLen)
+        (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
+        (perRowPatternLayers := args.perRowPatternLayers) (scalePow10 := args.scalePow10)
+        (softmaxExpEffort := args.softmaxExpEffort)
+    return cert
+  else
+    let cert ← ExceptT.mk <|
+      Nfp.Sound.certifyModelFile args.modelPath args.soundnessBits
+        (inputPath? := inputPath?) (inputDelta := delta) (partitionDepth := args.partitionDepth)
+        (softmaxMarginLowerBound := softmaxMarginLowerBound)
+        (softmaxExpEffort := args.softmaxExpEffort)
+    return cert
 
 private structure HeadBoundsArgs where
   modelPath : System.FilePath
@@ -1610,6 +1654,13 @@ for legacy text)"
 if --input is omitted, uses EMBEDDINGS in the model file when present)"
     softmaxMargin : String; "Lower bound on softmax logit margin (default: 0)"
     softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
+    bestMatchMargins; "Apply best-match margin tightening (binary + local only)"
+    targetOffset : Int; "Token-match offset for best-match margins (default: -1)"
+    maxSeqLen : Nat; "Max sequence length for best-match margins (default: 0 uses full seq_len)"
+    tightPattern; "Use tighter (slower) pattern bounds for best-match margins"
+    tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
+    perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
+    scalePow10 : Nat; "Fixed-point scale exponent for best-match margins (default: 9)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     partitionDepth : Nat; "Partition depth for input splitting (default: 0; >0 scaffold only)"
     o, output : String; "Write report to file instead of stdout"

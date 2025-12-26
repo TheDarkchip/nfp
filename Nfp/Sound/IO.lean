@@ -389,6 +389,53 @@ def certifyLayerBestMatchMarginLocal
       | .ok cert =>
           return verifyLayerBestMatchMarginCert cert
 
+/-- Soundly compute conservative bounds and tighten them using best-match margin evidence. -/
+def certifyModelFileBestMatchMargins
+    (path : System.FilePath)
+    (soundnessBits : Nat)
+    (inputPath? : Option System.FilePath := none)
+    (inputDelta : Rat := 0)
+    (partitionDepth : Nat := 0)
+    (targetOffset : Int := -1)
+    (maxSeqLen : Nat := 0)
+    (tightPattern : Bool := false)
+    (tightPatternLayers : Nat := 1)
+    (perRowPatternLayers : Nat := 0)
+    (scalePow10 : Nat := 9)
+    (softmaxExpEffort : Nat := defaultSoftmaxExpEffort) : IO (Except String ModelCert) := do
+  match ← readBinaryModelHeader path with
+  | .error e => return .error e
+  | .ok hdr =>
+      if inputPath?.isNone then
+        return .error "best-match margin tightening requires local input"
+      let maxSeqLen' := if maxSeqLen = 0 then hdr.seqLen else maxSeqLen
+      match ←
+          Nfp.Untrusted.SoundCompute.certifyModelFile
+            path hdr.eps hdr.geluDerivTarget soundnessBits inputPath? inputDelta partitionDepth
+            (softmaxMarginLowerBound := 0) (softmaxExpEffort := softmaxExpEffort) with
+      | .error e => return .error e
+      | .ok cert =>
+          match ← recomputeAttnWeightBounds path with
+          | .error e =>
+              return .error s!"attnWeightBounds verification failed: {e}"
+          | .ok bounds =>
+              let mut marginCerts : Array LayerBestMatchMarginCert := Array.mkEmpty hdr.numLayers
+              for layerIdx in [:hdr.numLayers] do
+                match ←
+                    certifyLayerBestMatchMarginLocal path layerIdx
+                      (inputPath? := inputPath?) (inputDelta := inputDelta)
+                      (soundnessBits := soundnessBits)
+                      (targetOffset := targetOffset) (maxSeqLen := maxSeqLen')
+                      (tightPattern := tightPattern)
+                      (tightPatternLayers := tightPatternLayers)
+                      (perRowPatternLayers := perRowPatternLayers)
+                      (scalePow10 := scalePow10)
+                      (softmaxExpEffort := softmaxExpEffort) with
+                | .error e => return .error e
+                | .ok cert => marginCerts := marginCerts.push cert
+              return verifyModelCertBestMatchMargins cert hdr.eps soundnessBits hdr.geluDerivTarget
+                bounds.attnValueCoeff bounds.wqOpBoundMax bounds.wkOpBoundMax marginCerts
+
 /-- Compute local per-head attention contribution bounds tightened by
     best-match pattern evidence. -/
 def certifyHeadBoundsLocalBestMatch

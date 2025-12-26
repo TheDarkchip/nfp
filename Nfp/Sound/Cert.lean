@@ -524,6 +524,30 @@ def verifyModelCert
 theorem verifyModelCert_spec :
     verifyModelCert = verifyModelCert := rfl
 
+/-- Verify a model certificate and apply best-match margin tightening. -/
+def verifyModelCertBestMatchMargins
+    (cert : ModelCert)
+    (eps : Rat)
+    (soundnessBits : Nat)
+    (geluDerivTarget : GeluDerivTarget)
+    (attnValueCoeff wqOpBoundMax wkOpBoundMax : Array Rat)
+    (marginCerts : Array LayerBestMatchMarginCert) : Except String ModelCert :=
+  Id.run do
+    match verifyModelCert cert eps soundnessBits geluDerivTarget
+        attnValueCoeff wqOpBoundMax wkOpBoundMax with
+    | .error e => return .error e
+    | .ok base =>
+        match tightenModelCertBestMatchMargins base marginCerts with
+        | .error e => return .error e
+        | .ok tightened =>
+            if tightened.check then
+              return .ok tightened
+            else
+              return .error "best-match margin tightening produced invalid cert"
+
+theorem verifyModelCertBestMatchMargins_spec :
+    verifyModelCertBestMatchMargins = verifyModelCertBestMatchMargins := rfl
+
 /-! ### Specs -/
 
 end Nfp.Sound
