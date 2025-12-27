@@ -109,19 +109,25 @@ theorem softmaxJacobianNormInfPortfolioBound_def (seqLen : Nat) (l : LayerAmplif
           l.softmaxExpEffort] := rfl
 
 /-- Update margin evidence and recompute dependent softmax + residual bounds. -/
-def withSoftmaxMargin (seqLen : Nat) (marginLowerBound : Rat) (softmaxExpEffort : Nat)
-    (l : LayerAmplificationCert) : LayerAmplificationCert :=
+def withSoftmaxMargin (seqLen modelDim headDim : Nat)
+    (marginLowerBound : Rat) (softmaxExpEffort : Nat) (l : LayerAmplificationCert) :
+    LayerAmplificationCert :=
   let l' :=
     { l with
       softmaxMarginLowerBound := marginLowerBound
       softmaxExpEffort := softmaxExpEffort }
-  let softmaxBound := softmaxJacobianNormInfPortfolioBound seqLen l'
+  let scoreAbsBound :=
+    attnScoreAbsBound modelDim headDim l'.ln1OutMaxAbsBound l'.wqOpBoundMax l'.wkOpBoundMax
+  let (softmaxProbLo, softmaxProbHi) :=
+    softmaxProbIntervalFromScoreAbsBound seqLen scoreAbsBound l'.softmaxExpEffort
+  let l'' := { l' with softmaxProbLo := softmaxProbLo, softmaxProbHi := softmaxProbHi }
+  let softmaxBound := softmaxJacobianNormInfPortfolioBound seqLen l''
   let attnJacBound :=
-    l'.ln1Bound *
-      ((seqLen : Rat) * l'.attnValueCoeff + softmaxBound * l'.attnPatternCoeff)
-  let mlpJacBound := l'.mlpJacBound
+    l''.ln1Bound *
+      ((seqLen : Rat) * l''.attnValueCoeff + softmaxBound * l''.attnPatternCoeff)
+  let mlpJacBound := l''.mlpJacBound
   let C := attnJacBound + mlpJacBound + attnJacBound * mlpJacBound
-  { l' with
+  { l'' with
     softmaxJacobianNormInfUpperBound := softmaxBound
     attnJacBound := attnJacBound
     C := C }
@@ -129,6 +135,10 @@ def withSoftmaxMargin (seqLen : Nat) (marginLowerBound : Rat) (softmaxExpEffort 
 /-- Internal consistency checks for per-layer bounds. -/
 def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
     (l : LayerAmplificationCert) : Prop :=
+  let scoreAbsBound :=
+    attnScoreAbsBound modelDim headDim l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax
+  let probInterval :=
+    softmaxProbIntervalFromScoreAbsBound seqLen scoreAbsBound l.softmaxExpEffort
   l.ln1Bound =
       (match l.ln1VarianceLowerBound? with
        | some v => layerNormOpBoundLocal l.ln1MaxAbsGamma v eps sqrtPrecBits
@@ -139,6 +149,8 @@ def Valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim : Nat)
        | none => layerNormOpBoundConservative l.ln2MaxAbsGamma eps sqrtPrecBits) ∧
     l.ln1OutMaxAbsBound =
       layerNormOutputMaxAbsBound modelDim l.ln1MaxAbsGamma l.ln1MaxAbsBeta ∧
+    l.softmaxProbLo = probInterval.1 ∧
+    l.softmaxProbHi = probInterval.2 ∧
     l.softmaxJacobianNormInfUpperBound =
       softmaxJacobianNormInfPortfolioBound seqLen l ∧
     l.attnPatternCoeff =
@@ -178,7 +190,8 @@ theorem c_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim headDim 
     l.C = l.attnJacBound + l.mlpJacBound +
       l.attnJacBound * l.mlpJacBound := by
   rcases h with
-    ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, _hattn, _hmlpCoeff, _hmlp, hC⟩
+    ⟨_hln1, _hln2, _hln1Out, _hProbLo, _hProbHi,
+      _hsoftmax, _hpat, _hattn, _hmlpCoeff, _hmlp, hC⟩
   exact hC
 
 /-- Extract the attention contribution identity from `Valid`. -/
@@ -190,7 +203,8 @@ theorem attnJacBound_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
         ((seqLen : Rat) * l.attnValueCoeff +
           l.softmaxJacobianNormInfUpperBound * l.attnPatternCoeff) := by
   rcases h with
-    ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, hattn, _hmlpCoeff, _hmlp, _hC⟩
+    ⟨_hln1, _hln2, _hln1Out, _hProbLo, _hProbHi,
+      _hsoftmax, _hpat, hattn, _hmlpCoeff, _hmlp, _hC⟩
   exact hattn
 
 /-- Extract the MLP coefficient identity from `Valid`. -/
@@ -198,7 +212,8 @@ theorem mlpCoeff_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat) (seqLen modelDim h
     (l : LayerAmplificationCert) (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
     l.mlpCoeff = l.mlpWinBound * l.mlpWoutBound := by
   rcases h with
-    ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, _hattn, hCoeff, _hmlp, _hC⟩
+    ⟨_hln1, _hln2, _hln1Out, _hProbLo, _hProbHi,
+      _hsoftmax, _hpat, _hattn, hCoeff, _hmlp, _hC⟩
   exact hCoeff
 
 /-- Extract the MLP contribution identity from `Valid`. -/
@@ -207,7 +222,8 @@ theorem mlpJacBound_eq_of_valid (eps : Rat) (sqrtPrecBits : Nat)
     (h : l.Valid eps sqrtPrecBits seqLen modelDim headDim) :
     l.mlpJacBound = l.ln2Bound * (l.mlpCoeff * l.mlpActDerivBound) := by
   rcases h with
-    ⟨_hln1, _hln2, _hln1Out, _hsoftmax, _hpat, _hattn, _hmlpCoeff, hmlp, _hC⟩
+    ⟨_hln1, _hln2, _hln1Out, _hProbLo, _hProbHi,
+      _hsoftmax, _hpat, _hattn, _hmlpCoeff, hmlp, _hC⟩
   exact hmlp
 
 /-- Cast the `C` identity to `ℝ` using `Valid`. -/
@@ -464,23 +480,32 @@ def checkSoftmaxMarginZero (cert : ModelCert) : Except String Unit :=
 theorem checkSoftmaxMarginZero_spec :
     checkSoftmaxMarginZero = checkSoftmaxMarginZero := rfl
 
-/-- Ensure the softmax probability interval is the worst-case `[0,1]`. -/
-def checkSoftmaxProbIntervalWorst (cert : ModelCert) : Except String Unit :=
+/-! ### Softmax probability interval checks -/
+
+/-- Ensure the softmax probability interval matches the derived score bound. -/
+def checkSoftmaxProbIntervalDerived (cert : ModelCert) : Except String Unit :=
   Id.run do
     for idx in [:cert.layers.size] do
       let layer := cert.layers[idx]!
-      if layer.softmaxProbLo ≠ 0 then
-        return .error s!"softmaxProbLo is unverified (layer {idx})"
-      if layer.softmaxProbHi ≠ 1 then
-        return .error s!"softmaxProbHi is unverified (layer {idx})"
+      let scoreAbsBound :=
+        attnScoreAbsBound cert.modelDim cert.headDim layer.ln1OutMaxAbsBound
+          layer.wqOpBoundMax layer.wkOpBoundMax
+      let (probLo, probHi) :=
+        softmaxProbIntervalFromScoreAbsBound cert.seqLen scoreAbsBound
+          layer.softmaxExpEffort
+      if layer.softmaxProbLo ≠ probLo then
+        return .error s!"softmaxProbLo mismatch at layer {idx}"
+      if layer.softmaxProbHi ≠ probHi then
+        return .error s!"softmaxProbHi mismatch at layer {idx}"
     return .ok ()
 
-theorem checkSoftmaxProbIntervalWorst_spec :
-    checkSoftmaxProbIntervalWorst = checkSoftmaxProbIntervalWorst := rfl
+theorem checkSoftmaxProbIntervalDerived_spec :
+    checkSoftmaxProbIntervalDerived = checkSoftmaxProbIntervalDerived := rfl
 
 /-- Update a layer certificate with best-match softmax evidence if it is valid and tighter. -/
 def tightenLayerSoftmaxFromBestMatch
-    (seqLen : Nat) (layer : LayerAmplificationCert) (cert : LayerBestMatchMarginCert) :
+    (seqLen modelDim headDim : Nat) (layer : LayerAmplificationCert)
+    (cert : LayerBestMatchMarginCert) :
     Except String LayerAmplificationCert :=
   Id.run do
     if !cert.check then
@@ -490,8 +515,8 @@ def tightenLayerSoftmaxFromBestMatch
     if cert.seqLen ≠ seqLen then
       return .error "layer margin cert seq_len mismatch"
     let updated :=
-      LayerAmplificationCert.withSoftmaxMargin seqLen cert.marginLowerBound
-        cert.softmaxExpEffort layer
+      LayerAmplificationCert.withSoftmaxMargin seqLen modelDim headDim
+        cert.marginLowerBound cert.softmaxExpEffort layer
     if updated.softmaxJacobianNormInfUpperBound > layer.softmaxJacobianNormInfUpperBound then
       return .error "best-match softmax bound is worse than baseline"
     return .ok updated
@@ -509,7 +534,8 @@ def tightenModelCertBestMatchMargins
     | .ok cur =>
         if cert.layerIdx < cur.layers.size then
           let layer := cur.layers[cert.layerIdx]!
-          match tightenLayerSoftmaxFromBestMatch cur.seqLen layer cert with
+          match tightenLayerSoftmaxFromBestMatch cur.seqLen cur.modelDim cur.headDim
+            layer cert with
           | .error e => .error e
           | .ok updatedLayer =>
               match ModelCert.withUpdatedLayer cur cert.layerIdx updatedLayer with
@@ -538,7 +564,7 @@ def verifyModelCert
     if cert.geluDerivTarget ≠ geluDerivTarget then
       return .error "model header gelu_kind mismatch"
     if cert.check then
-      match checkSoftmaxProbIntervalWorst cert with
+      match checkSoftmaxProbIntervalDerived cert with
       | .error e => return .error e
       | .ok _ =>
           match checkSoftmaxMarginZero cert with

@@ -98,6 +98,68 @@ theorem expLB_ge_base (x : Rat) (effort : Nat) :
   dsimp [expLB]
   exact lbBest_ge_base (base := max 0 ((1 : Rat) + x)) (cands := expLBCandidates x effort)
 
+/-- Scaling exponent so `x / 2^s ≤ 1/2` for `x ≥ 0`. -/
+private def expUBScalePow (x : Rat) : Nat :=
+  let half : Rat := (1 : Rat) / 2
+  if x ≤ half then
+    0
+  else
+    Id.run do
+      let mut s : Nat := 0
+      let mut y : Rat := x
+      while y > half do
+        s := s + 1
+        y := y / (2 : Rat)
+      return s
+
+theorem expUBScalePow_def (x : Rat) :
+    expUBScalePow x =
+      let half : Rat := (1 : Rat) / 2
+      if x ≤ half then
+        0
+      else
+        Id.run do
+          let mut s : Nat := 0
+          let mut y : Rat := x
+          while y > half do
+            s := s + 1
+            y := y / (2 : Rat)
+          return s := rfl
+
+/-!
+### Exp upper bounds (geometric series + squaring)
+-/
+
+/-- Upper bound on `exp(x)` for `x ≥ 0` using `exp(z) ≤ 1/(1-z)` with scaling. -/
+def expUBScaledGeom (x : Rat) : Rat :=
+  if x ≤ 0 then
+    1
+  else
+    let scalePow := expUBScalePow x
+    let scale : Rat := (Nat.pow 2 scalePow : Nat)
+    let z := x / scale
+    let denom := (1 : Rat) - z
+    if denom ≤ 0 then
+      0
+    else
+      let base := (1 : Rat) / denom
+      ratPow base (Nat.pow 2 scalePow)
+
+theorem expUBScaledGeom_def (x : Rat) :
+    expUBScaledGeom x =
+      if x ≤ 0 then
+        1
+      else
+        let scalePow := expUBScalePow x
+        let scale : Rat := (Nat.pow 2 scalePow : Nat)
+        let z := x / scale
+        let denom := (1 : Rat) - z
+        if denom ≤ 0 then
+          0
+        else
+          let base := (1 : Rat) / denom
+          ratPow base (Nat.pow 2 scalePow) := rfl
+
 /-- Default effort used for margin-derived softmax bounds. -/
 def defaultSoftmaxExpEffort : Nat := 1
 

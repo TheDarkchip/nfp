@@ -64,4 +64,20 @@ theorem attnPatternCoeffBound_def (seqLen modelDim headDim : Nat)
         attnScoreGradBound seqLen modelDim headDim ln1OutMaxAbs wqBound wkBound *
           (inputL1 * valueCoeff) := rfl
 
+/-- Conservative bound on `|q·k|/sqrt(d_head)` using max-abs LN1 output and W_Q/W_K norms. -/
+def attnScoreAbsBound (modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound : Rat) : Rat :=
+  let dRat : Rat := (modelDim : Nat)
+  let qMax := dRat * ln1OutMaxAbs * wqBound
+  let kMax := dRat * ln1OutMaxAbs * wkBound
+  sqrtUpperRat headDim * qMax * kMax
+
+theorem attnScoreAbsBound_def (modelDim headDim : Nat)
+    (ln1OutMaxAbs wqBound wkBound : Rat) :
+    attnScoreAbsBound modelDim headDim ln1OutMaxAbs wqBound wkBound =
+      let dRat : Rat := (modelDim : Nat)
+      let qMax := dRat * ln1OutMaxAbs * wqBound
+      let kMax := dRat * ln1OutMaxAbs * wkBound
+      sqrtUpperRat headDim * qMax * kMax := rfl
+
 end Nfp.Sound

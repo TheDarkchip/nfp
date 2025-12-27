@@ -270,7 +270,8 @@ theorem attn_pattern_bound_of_cert
       (l.attnPatternCoeff : ℝ) =
         (attnPatternCoeffBound seqLenNat modelDimNat headDimNat
           l.ln1OutMaxAbsBound l.wqOpBoundMax l.wkOpBoundMax l.attnValueCoeff : ℝ) := by
-    rcases hValid with ⟨_hln1, _hln2, _hln1Out, _hsoftmax, hpat, _hattn, _hmlpCoeff, _hmlp, _hC⟩
+    rcases hValid with ⟨_hln1, _hln2, _hln1Out, _hProbLo, _hProbHi,
+      _hsoftmax, hpat, _hattn, _hmlpCoeff, _hmlp, _hC⟩
     exact congrArg (fun x : Rat => (x : ℝ)) hpat
   have hCoeff_eq :
       (seqLenNat : ℝ) * S_bound * V =

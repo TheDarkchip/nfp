@@ -12,8 +12,10 @@ soundness upgrade. It is intentionally brief and human-readable.
   bounds from logits.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
 - Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
-- Softmax Jacobian bounds in the standard `certify` path still use the worst-case probability
-  interval `[0,1]`; direct `--softmaxMargin` is rejected because margin evidence is unverified.
+- Softmax Jacobian bounds in the standard `certify` path now derive a probability interval from a
+  global attention-score magnitude bound (LN1 max-abs + W_Q/W_K norms), but it is typically very
+  loose and often collapses to `[0,1]`. Direct `--softmaxMargin` is still rejected because margin
+  evidence is unverified.
 - Best-match margin tightening is now available via `nfp certify --bestMatchMargins` (binary + local
   inputs with EMBEDDINGS). It runs a full best-match sweep across heads and query positions, which
   can be expensive and will fail if coverage is incomplete.

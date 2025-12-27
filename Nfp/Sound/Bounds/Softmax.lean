@@ -78,6 +78,44 @@ theorem softmaxJacobianNormInfBound_def (pLo pHi : Rat) :
 
 /-! ### Margin-derived softmax bounds -/
 
+/-- Probability interval from a uniform score bound `|s| ≤ B`. -/
+def softmaxProbIntervalFromScoreAbsBound (seqLen : Nat) (scoreAbsBound : Rat)
+    (expEffort : Nat) : Rat × Rat :=
+  if seqLen = 0 then
+    (0, 1)
+  else if seqLen = 1 then
+    (1, 1)
+  else
+    let b := max 0 scoreAbsBound
+    let nRat : Rat := (seqLen : Nat)
+    let ePosUb := expUBScaledGeom b
+    let eNegLb := expLB (-b) expEffort
+    if eNegLb = 0 then
+      (0, 1)
+    else
+      let denomLo := eNegLb + (nRat - 1) * ePosUb
+      let denomHi := ePosUb + (nRat - 1) * eNegLb
+      (eNegLb / denomLo, ePosUb / denomHi)
+
+theorem softmaxProbIntervalFromScoreAbsBound_def (seqLen : Nat) (scoreAbsBound : Rat)
+    (expEffort : Nat) :
+    softmaxProbIntervalFromScoreAbsBound seqLen scoreAbsBound expEffort =
+      if seqLen = 0 then
+        (0, 1)
+      else if seqLen = 1 then
+        (1, 1)
+      else
+        let b := max 0 scoreAbsBound
+        let nRat : Rat := (seqLen : Nat)
+        let ePosUb := expUBScaledGeom b
+        let eNegLb := expLB (-b) expEffort
+        if eNegLb = 0 then
+          (0, 1)
+        else
+          let denomLo := eNegLb + (nRat - 1) * ePosUb
+          let denomHi := ePosUb + (nRat - 1) * eNegLb
+          (eNegLb / denomLo, ePosUb / denomHi) := rfl
+
 /-- Lower bound on the maximum softmax probability from a logit margin.
 
 Uses a portfolio `expLB` to lower bound `exp(m)` and maps it to

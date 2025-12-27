@@ -346,8 +346,10 @@ private def certifyModelFileGlobalBinary
             wqMax wkMax attnValueCoeff
         let mlpCoeff := nWin * nWout
         let mlpActDerivBound := actDerivBound
-        let softmaxProbLo : Rat := 0
-        let softmaxProbHi : Rat := 1
+        let scoreAbsBound :=
+          attnScoreAbsBound hdr.modelDim hdr.headDim ln1OutMaxAbsBound wqMax wkMax
+        let (softmaxProbLo, softmaxProbHi) :=
+          softmaxProbIntervalFromScoreAbsBound hdr.seqLen scoreAbsBound softmaxExpEffort
         let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
         let softmaxMarginBound :=
           softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
@@ -813,8 +815,10 @@ def certifyModelFileGlobal
         attnValueCoeffLayer
     let mlpCoeff := mlpWin[l]! * mlpWout[l]!
     let mlpActDerivBound := actDerivBound
-    let softmaxProbLo : Rat := 0
-    let softmaxProbHi : Rat := 1
+    let scoreAbsBound :=
+      attnScoreAbsBound d dh ln1OutMaxAbsBound (wqMax[l]!) (wkMax[l]!)
+    let (softmaxProbLo, softmaxProbHi) :=
+      softmaxProbIntervalFromScoreAbsBound n scoreAbsBound softmaxExpEffort
     let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
     let softmaxMarginBound :=
       softmaxJacobianNormInfBoundFromMargin n softmaxMarginLowerBound softmaxExpEffort
@@ -2320,8 +2324,10 @@ private def certifyModelFileLocalText
                         pos := nextBout
                         let mlpOut := addConstVec mlpOut0 bout
                         residualUnion := addVecIntervals residualUnion mlpOut
-                        let softmaxProbLo : Rat := 0
-                        let softmaxProbHi : Rat := 1
+                        let scoreAbsBound :=
+                          attnScoreAbsBound d dh ln1OutMaxAbsBound wqMax wkMax
+                        let (softmaxProbLo, softmaxProbHi) :=
+                          softmaxProbIntervalFromScoreAbsBound n scoreAbsBound softmaxExpEffort
                         let softmaxIntervalBound :=
                           softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
                         let softmaxMarginBound :=
@@ -2503,8 +2509,11 @@ private def certifyModelFileLocal
             rr := rrBout
             let mlpOut := addVecFixed mlpOut0 bOut
             residualUnion := addVecFixed residualUnion mlpOut
-            let softmaxProbLo : Rat := 0
-            let softmaxProbHi : Rat := 1
+            let scoreAbsBound :=
+              attnScoreAbsBound modelDim headDim ln1OutMaxAbsBound (wqMaxArr[l]!)
+                (wkMaxArr[l]!)
+            let (softmaxProbLo, softmaxProbHi) :=
+              softmaxProbIntervalFromScoreAbsBound inputSeqLen scoreAbsBound softmaxExpEffort
             let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
             let softmaxMarginBound :=
               softmaxJacobianNormInfBoundFromMargin inputSeqLen softmaxMarginLowerBound
@@ -2671,8 +2680,10 @@ private def certifyModelFileLocalBinary
       let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
       let mlpOut := addVecFixed mlpOut0 bOut
       residualUnion := addVecFixed residualUnion mlpOut
-      let softmaxProbLo : Rat := 0
-      let softmaxProbHi : Rat := 1
+      let scoreAbsBound :=
+        attnScoreAbsBound hdr.modelDim hdr.headDim ln1OutMaxAbsBound wqMax wkMax
+      let (softmaxProbLo, softmaxProbHi) :=
+        softmaxProbIntervalFromScoreAbsBound hdr.seqLen scoreAbsBound softmaxExpEffort
       let softmaxIntervalBound := softmaxJacobianNormInfBound softmaxProbLo softmaxProbHi
       let softmaxMarginBound :=
         softmaxJacobianNormInfBoundFromMargin hdr.seqLen softmaxMarginLowerBound softmaxExpEffort
