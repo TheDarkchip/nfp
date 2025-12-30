@@ -70,7 +70,7 @@ def attnScoreAbsBound (modelDim headDim : Nat)
   let dRat : Rat := (modelDim : Nat)
   let qMax := dRat * ln1OutMaxAbs * wqBound
   let kMax := dRat * ln1OutMaxAbs * wkBound
-  sqrtUpperRat headDim * qMax * kMax
+  invSqrtUpperBound headDim * qMax * kMax
 
 theorem attnScoreAbsBound_def (modelDim headDim : Nat)
     (ln1OutMaxAbs wqBound wkBound : Rat) :
@@ -78,6 +78,6 @@ theorem attnScoreAbsBound_def (modelDim headDim : Nat)
       let dRat : Rat := (modelDim : Nat)
       let qMax := dRat * ln1OutMaxAbs * wqBound
       let kMax := dRat * ln1OutMaxAbs * wkBound
-      sqrtUpperRat headDim * qMax * kMax := rfl
+      invSqrtUpperBound headDim * qMax * kMax := rfl
 
 end Nfp.Sound
