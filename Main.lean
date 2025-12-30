@@ -879,6 +879,7 @@ private structure CertifyArgs where
   tightPattern : Bool
   tightPatternLayers : Nat
   perRowPatternLayers : Nat
+  causalPattern : Bool
   scalePow10 : Nat
   outputPath? : Option System.FilePath
 
@@ -898,6 +899,7 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
   let tightPattern := p.flag? "tightPattern" |>.isSome
   let tightPatternLayers := p.flag? "tightPatternLayers" |>.map (·.as! Nat) |>.getD 1
   let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
+  let causalPattern := !p.hasFlag "noncausalPattern"
   let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let outputPath? := p.flag? "output" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
   { modelPath := ⟨modelPathStr⟩
@@ -915,6 +917,7 @@ private def parseCertifyArgs (p : Parsed) : CertifyArgs :=
     tightPattern := tightPattern
     tightPatternLayers := tightPatternLayers
     perRowPatternLayers := perRowPatternLayers
+    causalPattern := causalPattern
     scalePow10 := scalePow10
     outputPath? := outputPath? }
 
@@ -966,7 +969,7 @@ Pass --input <input.nfpt> or use a model file that embeds EMBEDDINGS."
         (targetOffset := args.targetOffset) (maxSeqLen := args.maxSeqLen)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers) (scalePow10 := args.scalePow10)
-        (softmaxExpEffort := args.softmaxExpEffort)
+        (softmaxExpEffort := args.softmaxExpEffort) (causalPattern := args.causalPattern)
     return cert
   else
     let cert ← ExceptT.mk <|
@@ -1077,6 +1080,7 @@ private structure HeadPatternArgs where
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
+  causalPattern : Bool
   bestMatch : Bool
   sweep : Bool
   queryPos? : Option Nat
@@ -1098,6 +1102,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
   let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
+  let causalPattern := !p.hasFlag "noncausalPattern"
   let bestMatch := p.hasFlag "bestMatch"
   let sweep := p.hasFlag "sweep"
   let queryPos? := p.flag? "queryPos" |>.map (·.as! Nat)
@@ -1114,6 +1119,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
+    causalPattern := causalPattern
     bestMatch := bestMatch
     sweep := sweep
     queryPos? := queryPos?
@@ -1188,6 +1194,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
           (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
           (softmaxExpEffort := args.softmaxExpEffort)
+          (causalPattern := args.causalPattern)
       return formatHeadPatternBestMatchSweep args.layerIdx args.headIdx args.offset certs
     else
       let cert ← ExceptT.mk <|
@@ -1198,6 +1205,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
           (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
           (softmaxExpEffort := args.softmaxExpEffort)
+          (causalPattern := args.causalPattern)
       return formatHeadPatternBestMatch cert
   else
     if args.sweep then
@@ -1210,6 +1218,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
         (softmaxExpEffort := args.softmaxExpEffort)
+        (causalPattern := args.causalPattern)
     return formatHeadPatternLocal cert
 
 /-- Run the certify command - compute conservative, exact bounds in sound mode. -/
@@ -1263,6 +1272,8 @@ private structure InductionCertArgs where
   tightPatternLayers : Nat
   tightPattern : Bool
   perRowPatternLayers : Nat
+  iterTighten : Bool
+  causalPattern : Bool
   bestMatch : Bool
   queryPos? : Option Nat
   inputPath? : Option System.FilePath
@@ -1291,6 +1302,8 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let tightPatternLayers := tightPatternLayers?.getD 1
   let tightPattern := p.hasFlag "tightPattern" || tightPatternLayers?.isSome
   let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
+  let iterTighten := p.hasFlag "iterTighten"
+  let causalPattern := !p.hasFlag "noncausalPattern"
   let bestMatch := p.hasFlag "bestMatch"
   let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
@@ -1330,6 +1343,8 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     tightPatternLayers := tightPatternLayers
     tightPattern := tightPattern
     perRowPatternLayers := perRowPatternLayers
+    iterTighten := iterTighten
+    causalPattern := causalPattern
     bestMatch := bestMatch
     queryPos? := queryPos
     inputPath? := inputPath?
@@ -1416,8 +1431,10 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (tightPattern := args.tightPattern)
         (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
+        (iterTighten := args.iterTighten)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
         (softmaxExpEffort := args.softmaxExpEffort)
+        (causalPattern := args.causalPattern)
     return formatInductionBestMatch cert
   else
     let cert ← ExceptT.mk <|
@@ -1430,6 +1447,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (perRowPatternLayers := args.perRowPatternLayers)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
         (softmaxExpEffort := args.softmaxExpEffort)
+        (causalPattern := args.causalPattern)
     return formatInductionLocal cert
 
 /-- Run the induction-cert command - compute a sound induction head certificate. -/
@@ -1607,6 +1625,147 @@ def runDump (p : Parsed) : IO UInt32 := do
   let args := parseDumpArgs p
   runDumpWithArgs args
 
+/-! ## Logit-difference helpers -/
+
+private def logitAt (residual : ConcreteMatrix) (pos : Nat)
+    (W_U : ConcreteMatrix) (token : Nat) : Except String Float :=
+  if residual.numCols ≠ W_U.numRows then
+    .error "dimension mismatch: residual.numCols != W_U.numRows"
+  else if pos ≥ residual.numRows then
+    .error "position out of range"
+  else if token ≥ W_U.numCols then
+    .error "token out of range"
+  else
+    .ok <| Id.run do
+      let d := residual.numCols
+      let vocab := W_U.numCols
+      let rowBase := pos * d
+      let mut acc : Float := 0.0
+      for k in [:d] do
+        acc := acc + residual.data[rowBase + k]! * W_U.data[k * vocab + token]!
+      return acc
+
+private def topNonTargetToken (residual : ConcreteMatrix) (pos : Nat)
+    (W_U : ConcreteMatrix) (targetToken : Nat) : Except String (Nat × Float) :=
+  if residual.numCols ≠ W_U.numRows then
+    .error "dimension mismatch: residual.numCols != W_U.numRows"
+  else if pos ≥ residual.numRows then
+    .error "position out of range"
+  else if targetToken ≥ W_U.numCols then
+    .error "target token out of range"
+  else if W_U.numCols < 2 then
+    .error "vocab size too small to select non-target token"
+  else
+    .ok <| Id.run do
+      let d := residual.numCols
+      let vocab := W_U.numCols
+      let rowBase := pos * d
+      let mut bestTok : Nat := 0
+      let mut bestLogit : Float := (-Float.inf)
+      let mut found : Bool := false
+      for tok in [:vocab] do
+        if tok ≠ targetToken then
+          found := true
+          let mut acc : Float := 0.0
+          for k in [:d] do
+            acc := acc + residual.data[rowBase + k]! * W_U.data[k * vocab + tok]!
+          if acc > bestLogit then
+            bestTok := tok
+            bestLogit := acc
+      if found then
+        return (bestTok, bestLogit)
+      else
+        return (0, bestLogit)
+
+private structure LogitDiffArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  target : Nat
+  negative : Nat
+  pos? : Option Nat
+  inputPath? : Option System.FilePath
+  autoNegative : Bool
+
+private def parseLogitDiffArgs (p : Parsed) : LogitDiffArgs :=
+  let modelPathStr := p.positionalArg! "model" |>.as! String
+  let target := p.positionalArg! "target" |>.as! Nat
+  let negative := p.positionalArg! "negative" |>.as! Nat
+  let pos? := p.flag? "pos" |>.map (·.as! Nat)
+  let inputPath? := p.flag? "input" |>.map (System.FilePath.mk ∘ (·.as! String))
+  let autoNegative := p.hasFlag "autoNegative"
+  { modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    target := target
+    negative := negative
+    pos? := pos?
+    inputPath? := inputPath?
+    autoNegative := autoNegative }
+
+private def runLogitDiff (p : Parsed) : IO UInt32 := do
+  let args := parseLogitDiffArgs p
+  setStdoutLogNameFromModelPath args.modelPathStr
+  let loadResult ← loadModel args.modelPath
+  match loadResult with
+  | .error msg =>
+      IO.eprintln s!"Error loading model: {msg}"
+      return 1
+  | .ok model0 =>
+      let model ←
+        match args.inputPath? with
+        | none => pure model0
+        | some inputPath =>
+            match ← loadInputBinary inputPath with
+            | .error msg =>
+                IO.eprintln s!"Error loading input: {msg}"
+                return 1
+            | .ok input =>
+                if input.modelDim ≠ model0.modelDim then
+                  IO.eprintln s!"Input model_dim mismatch ({input.modelDim} != {model0.modelDim})"
+                  return 1
+                pure {
+                  model0 with
+                  seqLen := input.seqLen
+                  inputTokens := some input.tokens
+                  inputEmbeddings := input.embeddings
+                }
+      match model.unembedding with
+      | none =>
+          IO.eprintln "Error: Model is missing unembedding matrix (needed for logits)."
+          return 1
+      | some W_U =>
+          if model.seqLen = 0 then
+            IO.eprintln "Error: seq_len = 0; cannot compute logits."
+            return 1
+          let pos := args.pos?.getD (model.seqLen - 1)
+          if pos ≥ model.seqLen then
+            IO.eprintln s!"Error: pos={pos} out of bounds (seq_len={model.seqLen})"
+            return 1
+          let fwd := model.runForward true
+          let residual := fwd.finalOutput
+          let negResult :=
+            if args.autoNegative then
+              topNonTargetToken residual pos W_U args.target
+            else
+              match logitAt residual pos W_U args.negative with
+              | .ok logit => .ok (args.negative, logit)
+              | .error msg => .error msg
+          match logitAt residual pos W_U args.target, negResult with
+          | .ok targetLogit, .ok (negTok, negLogit) =>
+              let diff := targetLogit - negLogit
+              IO.println s!"pos={pos} target={args.target} negative={negTok}"
+              if args.autoNegative then
+                IO.println "negativeSource=topNonTarget"
+              IO.println s!"logit(target)={targetLogit}"
+              IO.println s!"logit(negative)={negLogit}"
+              IO.println s!"logitDiff={diff}"
+              return 0
+          | .error msg, _ =>
+              IO.eprintln s!"Error computing target logit: {msg}"
+              return 1
+          | _, .error msg =>
+              IO.eprintln s!"Error computing negative logit: {msg}"
+              return 1
+
 /-- The analyze subcommand. -/
 def analyzeCmd : Cmd := `[Cli|
   analyze VIA runAnalyze;
@@ -1660,6 +1819,7 @@ if --input is omitted, uses EMBEDDINGS in the model file when present)"
     tightPattern; "Use tighter (slower) pattern bounds for best-match margins"
     tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
     perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
+    noncausalPattern; "Disable causal-prefix restriction for pattern/value bounds"
     scalePow10 : Nat; "Fixed-point scale exponent for best-match margins (default: 9)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     partitionDepth : Nat; "Partition depth for input splitting (default: 0; >0 scaffold only)"
@@ -1697,6 +1857,7 @@ LayerNorm epsilon is read from the model header."
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
     tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
     perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
+    noncausalPattern; "Disable causal-prefix restriction for pattern/value bounds"
     bestMatch; "Use best-match (single-query) pattern bounds"
     sweep; "Sweep best-match bounds across all valid query positions"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
@@ -1729,6 +1890,8 @@ LayerNorm epsilon is read from the model header."
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
     tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
     perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
+    iterTighten; "Iteratively tighten best-match bounds (escalates tight/per-row layers to full)"
+    noncausalPattern; "Disable causal-prefix restriction for pattern/value bounds"
     bestMatch; "Use best-match (single-query) pattern bounds"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
@@ -1775,6 +1938,20 @@ def dumpCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The logit-diff subcommand. -/
+def logitDiffCmd : Cmd := `[Cli|
+  logit_diff VIA runLogitDiff;
+  "Compute empirical logit-difference for target vs. negative token."
+  FLAGS:
+    pos : Nat; "Token position (default: last position)"
+    input : String; "Optional input .nfpt file with TOKENS + EMBEDDINGS"
+    autoNegative; "Use top non-target logit as negative token (ignores provided negative)"
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+    target : Nat; "Target token ID"
+    negative : Nat; "Negative token ID"
+]
+
 /-- The main CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
@@ -1788,7 +1965,8 @@ def nfpCmd : Cmd := `[Cli|
     inductionCertCmd;
     soundCacheCheckCmd;
     ropeCmd;
-    dumpCmd
+    dumpCmd;
+    logitDiffCmd
 ]
 
 /-- Main entry point. -/

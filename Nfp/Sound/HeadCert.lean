@@ -290,6 +290,7 @@ structure LayerBestMatchMarginCert where
   layerIdx : Nat
   seqLen : Nat
   numHeads : Nat
+  /-- Max softmax exp effort allowed for per-head best-match certificates. -/
   softmaxExpEffort : Nat
   marginLowerBound : Rat
   margins : Array Rat
@@ -300,14 +301,14 @@ namespace LayerBestMatchMarginCert
 
 /-- Internal consistency checks for aggregated margins. -/
 def Valid (c : LayerBestMatchMarginCert) : Prop :=
-  c.seqLen > 0 ∧
+    c.seqLen > 0 ∧
     c.numHeads > 0 ∧
     c.margins.size = c.numHeads * c.seqLen ∧
     c.headCerts.all (fun cert =>
       cert.check &&
         cert.layerIdx == c.layerIdx &&
         cert.seqLen == c.seqLen &&
-        cert.softmaxExpEffort == c.softmaxExpEffort &&
+        decide (cert.softmaxExpEffort ≤ c.softmaxExpEffort) &&
         cert.headIdx < c.numHeads &&
         cert.queryPos < c.seqLen) = true ∧
     marginsFromBestMatchCerts c.numHeads c.seqLen c.headCerts = some c.margins ∧

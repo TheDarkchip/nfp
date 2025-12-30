@@ -259,6 +259,56 @@ def loadBinary (h : IO.FS.Handle) : IO LoadResult := do
     return .ok model
   catch e =>
     return .error s!"Binary load failed: {e}"
+
+/-- Input tokens + embeddings loaded from a binary `.nfpt` file. -/
+structure InputBinary where
+  /-- Sequence length parsed from the input header. -/
+  seqLen : Nat
+  /-- Model dimension parsed from the input header. -/
+  modelDim : Nat
+  /-- Token IDs parsed from the input file. -/
+  tokens : Array Nat
+  /-- Input embeddings (seqLen × modelDim). -/
+  embeddings : ConcreteMatrix
+
+/-- Load input tokens + embeddings from a binary `.nfpt` file. -/
+def loadInputBinary (path : System.FilePath) : IO (Except String InputBinary) := do
+  try
+    let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+    let some magicLine ← readLine? h
+      | return .error "Empty input file"
+    let magic := magicLine.trim
+    if magic != "NFP_BINARY_V1" then
+      return .error "Invalid input magic: expected NFP_BINARY_V1"
+    let mut seqLen? : Option Nat := none
+    let mut modelDim? : Option Nat := none
+    let mut line? ← readLine? h
+    while true do
+      match line? with
+      | none => return .error "Unexpected EOF while reading input header"
+      | some line =>
+          let t := line.trim
+          if t = "BINARY_START" then
+            break
+          if t.startsWith "seq_len=" then
+            match (t.drop 8).toNat? with
+            | some n => seqLen? := some n
+            | none => return .error "Invalid seq_len in input header"
+          else if t.startsWith "model_dim=" then
+            match (t.drop 10).toNat? with
+            | some n => modelDim? := some n
+            | none => return .error "Invalid model_dim in input header"
+          line? ← readLine? h
+    let some seqLen := seqLen?
+      | return .error "Missing seq_len in input header"
+    let some modelDim := modelDim?
+      | return .error "Missing model_dim in input header"
+    let tokens ← readI32Array h seqLen
+    let embFloats ← readFloatArray h (seqLen * modelDim)
+    let embeddings := buildMatrix seqLen modelDim embFloats.data
+    return .ok { seqLen := seqLen, modelDim := modelDim, tokens := tokens, embeddings := embeddings }
+  catch e =>
+    return .error s!"Binary input load failed: {e}"
 /-! ## File IO Operations -/
 
 /-- Load a model from a file path. Supports .nfpt (binary) format. -/

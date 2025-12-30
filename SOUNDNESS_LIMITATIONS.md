@@ -19,9 +19,13 @@ soundness upgrade. It is intentionally brief and human-readable.
 - Best-match margin tightening is now available via `nfp certify --bestMatchMargins` (binary + local
   inputs with EMBEDDINGS). It runs a full best-match sweep across heads and query positions, which
   can be expensive and will fail if coverage is incomplete.
-- Per-head best-match tightening (used by head-pattern/induction certs) is still separate from
-  model-level certification unless `--bestMatchMargins` is used.
-- Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
+- Local pattern/value/logit bounds now assume **causal attention** by default (prefix-only keys).
+  Use `--noncausalPattern` for non-causal models; otherwise these bounds are not sound.
+- Per-head best-match tightening (used by head-pattern/induction certs) now records the **actual**
+  `softmaxExpEffort` chosen by iterative exp-portfolio tightening (early stop on low relative
+  improvement). The verifier accepts any per-head effort ≤ the requested cap, but model-level
+  certification still requires `--bestMatchMargins`.
+- Best-match pattern certificates use a margin-derived softmax Jacobian bound with an
   effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
   is not yet formalized in Lean.
 - GeLU derivative bounds are conservative envelopes; the exact interval supremum is not computed yet.
