@@ -343,7 +343,7 @@ lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
 - `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).
 - `--bestMatch` switches to single-query best-match bounds (default query: last position).
 - `--queryPos` chooses the query position for best-match bounds (default: last position).
-- `--iterTighten` iteratively tightens best-match bounds, escalating to full tight/per-row layers.
+- `--iterTighten` iteratively tightens best-match bounds (tight/per-row layers and scale precision).
 
 ### `rope`
 

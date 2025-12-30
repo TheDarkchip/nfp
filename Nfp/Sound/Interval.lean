@@ -36,6 +36,14 @@ def add (a b : RatInterval) : RatInterval :=
 def sub (a b : RatInterval) : RatInterval :=
   { lo := a.lo - b.hi, hi := a.hi - b.lo }
 
+/-- Interval multiplication via endpoint products. -/
+def mul (a b : RatInterval) : RatInterval :=
+  let p1 := a.lo * b.lo
+  let p2 := a.lo * b.hi
+  let p3 := a.hi * b.lo
+  let p4 := a.hi * b.hi
+  { lo := min (min p1 p2) (min p3 p4), hi := max (max p1 p2) (max p3 p4) }
+
 /-- Scale an interval by a rational `c`, handling sign. -/
 def scale (c : Rat) (a : RatInterval) : RatInterval :=
   if c ≥ 0 then
@@ -208,13 +216,72 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
       let exactLB := bestG / nRat
       return exactLB
 
-/-- Over-approximate GeLU on an interval without any transcendental facts.
+/-- Over-approximate GeLU on an interval without transcendental evaluation.
 
-For all real `x`, `GeLU(x) = x·Φ(x)` lies between `x` and `0`.
-Therefore `GeLU([lo,hi]) ⊆ [min(lo,0), max(hi,0)]`.
+For both exact and tanh GeLU, `GeLU(x) = x * g(x)` with `g(x) ∈ [0, 1]` and
+`g(x) ≥ 1/2` when `x ≥ 0`, so `GeLU(x) ≥ x/2` for all `x`.
+We keep the standard upper bound `GeLU(x) ≤ max(x, 0)`.
 -/
 def geluOverapprox (a : RatInterval) : RatInterval :=
-  { lo := min a.lo 0, hi := max a.hi 0 }
+  { lo := a.lo / (2 : Rat), hi := max a.hi 0 }
+
+/-- Exp lower bound for all signs, using reciprocal of `expUB` for `x < 0`. -/
+private def expLBAll (x : Rat) (effort : Nat) : Rat :=
+  if x ≥ 0 then
+    expLB x effort
+  else
+    let ub := expUBScaledGeom (-x)
+    if ub = 0 then 0 else (1 : Rat) / ub
+
+/-- Exp upper bound for all signs, using reciprocal of `expLB` for `x < 0`. -/
+private def expUBAll (x : Rat) (effort : Nat) : Rat :=
+  if x ≥ 0 then
+    expUBScaledGeom x
+  else
+    let lb := expLB (-x) effort
+    if lb = 0 then 1 else (1 : Rat) / lb
+
+/-- Tanh over-approximation using exp bounds on the endpoints. -/
+def tanhOverapprox (a : RatInterval) (expEffort : Nat) : RatInterval :=
+  let lo := min a.lo a.hi
+  let hi := max a.lo a.hi
+  let eLo := expLBAll ((2 : Rat) * lo) expEffort
+  let eHi := expUBAll ((2 : Rat) * hi) expEffort
+  let f : Rat → Rat := fun e => (e - 1) / (e + 1)
+  { lo := f eLo, hi := f eHi }
+
+/-- Tanh-based GeLU over-approximation using exp bounds. -/
+def geluOverapproxTanh (a : RatInterval) (expEffort : Nat := defaultSoftmaxExpEffort) :
+    RatInterval :=
+  let x := { lo := min a.lo a.hi, hi := max a.lo a.hi }
+  let c : Rat := (44715 : Rat) / 1000000
+  let kLo : Rat := (7978845608 : Rat) / 10000000000
+  let kHi : Rat := (7978845609 : Rat) / 10000000000
+  let kI : RatInterval := { lo := kLo, hi := kHi }
+  let x2 := mul x x
+  let x3 := mul x2 x
+  let sPoly := add x (scale c x3)
+  let s := mul kI sPoly
+  let t := tanhOverapprox s expEffort
+  let half : Rat := (1 : Rat) / 2
+  let onePlus := add (const 1) t
+  let g := scale half onePlus
+  mul x g
+
+/-- Split-based tightening for tanh GeLU over-approximation. -/
+def geluOverapproxTanhSplit (a : RatInterval) (expEffort : Nat := defaultSoftmaxExpEffort)
+    (splitDepth : Nat := 0) : RatInterval :=
+  if splitDepth = 0 then
+    geluOverapproxTanh a expEffort
+  else
+    let lo := min a.lo a.hi
+    let hi := max a.lo a.hi
+    let mid := (lo + hi) / (2 : Rat)
+    let left : RatInterval := { lo := lo, hi := mid }
+    let right : RatInterval := { lo := mid, hi := hi }
+    RatInterval.union
+      (geluOverapproxTanhSplit left expEffort (splitDepth - 1))
+      (geluOverapproxTanhSplit right expEffort (splitDepth - 1))
 
 /-- Upper bound on `max |gelu'(x)|` over a rational interval. -/
 def geluDerivBound (target : GeluDerivTarget) (a : RatInterval) : Rat :=
@@ -248,6 +315,14 @@ theorem add_def (a b : RatInterval) :
 
 theorem sub_def (a b : RatInterval) :
     RatInterval.sub a b = { lo := a.lo - b.hi, hi := a.hi - b.lo } := rfl
+
+theorem mul_def (a b : RatInterval) :
+    RatInterval.mul a b =
+      let p1 := a.lo * b.lo
+      let p2 := a.lo * b.hi
+      let p3 := a.hi * b.lo
+      let p4 := a.hi * b.hi
+      { lo := min (min p1 p2) (min p3 p4), hi := max (max p1 p2) (max p3 p4) } := rfl
 
 theorem scale_def (c : Rat) (a : RatInterval) :
     RatInterval.scale c a =
@@ -311,7 +386,49 @@ theorem varianceLowerBound_spec (xs : Array RatInterval) :
     RatInterval.varianceLowerBound xs = RatInterval.varianceLowerBound xs := rfl
 
 theorem geluOverapprox_def (a : RatInterval) :
-    RatInterval.geluOverapprox a = { lo := min a.lo 0, hi := max a.hi 0 } := rfl
+    RatInterval.geluOverapprox a = { lo := a.lo / (2 : Rat), hi := max a.hi 0 } := rfl
+
+theorem tanhOverapprox_def (a : RatInterval) (expEffort : Nat) :
+    RatInterval.tanhOverapprox a expEffort =
+      let lo := min a.lo a.hi
+      let hi := max a.lo a.hi
+      let eLo :=
+        (fun x =>
+          if x ≥ 0 then
+            expLB x expEffort
+          else
+            let ub := expUBScaledGeom (-x)
+            if ub = 0 then 0 else (1 : Rat) / ub) ((2 : Rat) * lo)
+      let eHi :=
+        (fun x =>
+          if x ≥ 0 then
+            expUBScaledGeom x
+          else
+            let lb := expLB (-x) expEffort
+            if lb = 0 then 1 else (1 : Rat) / lb) ((2 : Rat) * hi)
+      let f : Rat → Rat := fun e => (e - 1) / (e + 1)
+      { lo := f eLo, hi := f eHi } := rfl
+
+theorem geluOverapproxTanh_def (a : RatInterval) (expEffort : Nat) :
+    RatInterval.geluOverapproxTanh a expEffort =
+      let x := { lo := min a.lo a.hi, hi := max a.lo a.hi }
+      let c : Rat := (44715 : Rat) / 1000000
+      let kLo : Rat := (7978845608 : Rat) / 10000000000
+      let kHi : Rat := (7978845609 : Rat) / 10000000000
+      let kI : RatInterval := { lo := kLo, hi := kHi }
+      let x2 := RatInterval.mul x x
+      let x3 := RatInterval.mul x2 x
+      let sPoly := RatInterval.add x (RatInterval.scale c x3)
+      let s := RatInterval.mul kI sPoly
+      let t := RatInterval.tanhOverapprox s expEffort
+      let half : Rat := (1 : Rat) / 2
+      let onePlus := RatInterval.add (RatInterval.const 1) t
+      let g := RatInterval.scale half onePlus
+      RatInterval.mul x g := rfl
+
+theorem geluOverapproxTanhSplit_spec (a : RatInterval) (expEffort : Nat) (splitDepth : Nat) :
+    RatInterval.geluOverapproxTanhSplit a expEffort splitDepth =
+      RatInterval.geluOverapproxTanhSplit a expEffort splitDepth := rfl
 
 end RatInterval
 

@@ -1279,6 +1279,7 @@ private structure InductionCertArgs where
   inputPath? : Option System.FilePath
   delta : Rat
   maxSeqLen : Nat
+  scalePow10 : Nat
   outputPath? : Option System.FilePath
 
 /-- Parse and validate `induction-cert` arguments. -/
@@ -1309,6 +1310,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
   let maxSeqLen := p.flag? "maxSeqLen" |>.map (·.as! Nat) |>.getD 256
+  let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
   let outputPath := p.flag? "output" |>.map (·.as! String)
   let delta ←
     match Nfp.Sound.parseRat deltaStr with
@@ -1350,6 +1352,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     inputPath? := inputPath?
     delta := delta
     maxSeqLen := maxSeqLen
+    scalePow10 := scalePow10
     outputPath? := outputPath?
   }
 
@@ -1428,6 +1431,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (queryPos? := args.queryPos?) (inputPath? := args.inputPath?)
         (inputDelta := args.delta) (soundnessBits := args.soundnessBits)
         (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (scalePow10 := args.scalePow10)
         (tightPattern := args.tightPattern)
         (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
@@ -1443,6 +1447,7 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         (inputPath? := args.inputPath?) (inputDelta := args.delta)
         (soundnessBits := args.soundnessBits)
         (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (scalePow10 := args.scalePow10)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
@@ -1867,6 +1872,7 @@ for legacy text)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
+    scalePow10 : Nat; "Fixed-point scale exponent for best-match bounds (default: 9)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
@@ -1900,6 +1906,7 @@ for legacy text)"
     soundnessBits : Nat; "Dyadic sqrt precision bits for LayerNorm bounds (default: 20)"
     softmaxExpEffort : Nat; "Effort level for margin-based exp lower bounds (default: 1)"
     maxSeqLen : Nat; "Maximum sequence length to analyze (default: 256)"
+    scalePow10 : Nat; "Fixed-point scale exponent for best-match bounds (default: 9)"
     o, output : String; "Write report to file instead of stdout"
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"

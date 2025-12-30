@@ -1089,6 +1089,12 @@ private def ratCeilMulNat (x : Rat) (k : Nat) : Int :=
     let r := numK.emod (Int.ofNat den)
     if r = 0 then q else q + 1
 
+private def ratFloorMulNat (x : Rat) (k : Nat) : Int :=
+  let num : Int := x.num
+  let den : Nat := x.den
+  let numK : Int := num * (Int.ofNat k)
+  numK.ediv (Int.ofNat den)
+
 private def fixedMeanInterval (xs : Array Fixed10Interval) : Fixed10Interval :=
   if xs.isEmpty then
     { lo := 0, hi := 0 }
@@ -1129,6 +1135,55 @@ private def fixedVarianceLowerBoundRange (cfg : Fixed10Cfg) (xs : Array Fixed10I
       let δSq : Rat := δRat * δRat
       return δSq / ((2 : Rat) * nRat)
 
+private def absInt (x : Int) : Int := if x < 0 then -x else x
+
+/-- Lower bound on variance using midpoint + radius deviation. -/
+private def fixedVarianceLowerBoundMidpoint (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) :
+    Rat :=
+  if xs.size < 2 then
+    0
+  else
+    Id.run do
+      let n : Nat := xs.size
+      let nInt : Int := Int.ofNat n
+      let d : Nat := 2 * cfg.scaleNat
+      let mut sumM : Int := 0
+      let mut sumR : Int := 0
+      for x in xs do
+        sumM := sumM + (x.lo + x.hi)
+        sumR := sumR + (x.hi - x.lo)
+      let mut varNum : Int := 0
+      let mut errNum : Int := 0
+      for x in xs do
+        let mInt := x.lo + x.hi
+        let rInt := x.hi - x.lo
+        let aNum := nInt * mInt - sumM
+        let rNum := nInt * rInt + sumR
+        varNum := varNum + aNum * aNum
+        errNum := errNum + (absInt aNum) * rNum
+      let num := varNum - 2 * errNum
+      if num <= 0 then
+        return 0
+      let denNat : Nat := d * d * n * n * n
+      return (num : Rat) / (denNat : Rat)
+
+/-- Exact variance lower bound by converting to `RatInterval` and using the exact routine. -/
+private def fixedVarianceLowerBoundExact (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) : Rat :=
+  if xs.size < 2 then
+    0
+  else
+    let ratXs :=
+      xs.map (fun x => { lo := ratOfScaledInt cfg.scalePow10 x.lo,
+                         hi := ratOfScaledInt cfg.scalePow10 x.hi })
+    RatInterval.varianceLowerBound ratXs
+
+/-- Best available variance lower bound from range + midpoint deviation. -/
+private def fixedVarianceLowerBound (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) : Rat :=
+  let rangeLB := fixedVarianceLowerBoundRange cfg xs
+  let midLB := fixedVarianceLowerBoundMidpoint cfg xs
+  let exactLB := fixedVarianceLowerBoundExact cfg xs
+  max rangeLB (max midLB exactLB)
+
 private def fixedLayerNormRowApprox
     (cfg : Fixed10Cfg)
     (row : Array Fixed10Interval)
@@ -1141,7 +1196,7 @@ private def fixedLayerNormRowApprox
   else
     Id.run do
       let μ := fixedMeanInterval row
-      let varLB := fixedVarianceLowerBoundRange cfg row
+      let varLB := fixedVarianceLowerBound cfg row
       let invσUpper : Rat :=
         if varLB ≤ 0 then
           layerNormOpBoundConservative 1 eps soundnessBits
@@ -1156,6 +1211,21 @@ private def fixedLayerNormRowApprox
         let scaled := Fixed10Interval.mul cfg coeff centered
         out := out.push (Fixed10Interval.add scaled beta[i]!)
       return (out, varLB)
+
+private def fixedLayerNormRowsApprox
+    (cfg : Fixed10Cfg)
+    (rows : Array (Array Fixed10Interval))
+    (p : LayerNormParamsFixed)
+    (eps : Rat)
+    (soundnessBits : Nat) :
+    Array (Array Fixed10Interval) :=
+  let useTasks := rows.size > 32
+  if useTasks then
+    let tasks := rows.map (fun row =>
+      Task.spawn (fun _ => fixedLayerNormRowApprox cfg row p.gamma p.beta eps soundnessBits))
+    tasks.map (fun t => (t.get).1)
+  else
+    rows.map (fun row => (fixedLayerNormRowApprox cfg row p.gamma p.beta eps soundnessBits).1)
 
 private def readVecIntervals
     (r : SoundCache.I32Reader) (n : Nat) (slack : Int) :
@@ -1218,6 +1288,34 @@ private def centeredAbsSumFixed (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) 
     have h10pos : (0 : Nat) < 10 := by decide
     exact Nat.ne_of_gt (Nat.pow_pos (n := cfg.scalePow10) h10pos))
 
+private def ratIntervalOfFixed (cfg : Fixed10Cfg) (a : Fixed10Interval) : RatInterval :=
+  { lo := ratOfScaledInt cfg.scalePow10 a.lo, hi := ratOfScaledInt cfg.scalePow10 a.hi }
+
+private def fixedIntervalOfRat (cfg : Fixed10Cfg) (a : RatInterval) : Fixed10Interval :=
+  { lo := ratFloorMulNat a.lo cfg.scaleNat, hi := ratCeilMulNat a.hi cfg.scaleNat }
+
+private def defaultGeluExpEffort : Nat := 2
+private def defaultGeluSplitDepth : Nat := 1
+
+private def geluOverapproxRat (target : GeluDerivTarget) (a : RatInterval) : RatInterval :=
+  match target with
+  | .tanh => RatInterval.geluOverapproxTanhSplit a defaultGeluExpEffort defaultGeluSplitDepth
+  | .exact => RatInterval.geluOverapprox a
+
+private def geluOverapproxFixed (cfg : Fixed10Cfg) (target : GeluDerivTarget)
+    (a : Fixed10Interval) : Fixed10Interval :=
+  match target with
+  | .tanh =>
+      let r := ratIntervalOfFixed cfg a
+      fixedIntervalOfRat cfg
+        (RatInterval.geluOverapproxTanhSplit r defaultGeluExpEffort defaultGeluSplitDepth)
+  | .exact =>
+      Fixed10Interval.geluOverapprox a
+
+private def geluOverapproxFixedVec (cfg : Fixed10Cfg) (target : GeluDerivTarget)
+    (xs : Array Fixed10Interval) : Array Fixed10Interval :=
+  xs.map (geluOverapproxFixed cfg target)
+
 private def addVecFixed (a b : Array Fixed10Interval) : Array Fixed10Interval :=
   Id.run do
     if a.size ≠ b.size then
@@ -1248,6 +1346,7 @@ private def takePrefix {α : Type} (xs : Array α) (n : Nat) : Array α :=
 
 private def mlpRowFromScaled
     (cfg : Fixed10Cfg)
+    (geluDerivTarget : GeluDerivTarget)
     (slack : Int)
     (modelDim hiddenDim : Nat)
     (wIn wOut : Array Int)
@@ -1255,12 +1354,13 @@ private def mlpRowFromScaled
     (row : Array Fixed10Interval) : Array Fixed10Interval :=
   let hidden0 := matMulIntervalsFromScaled cfg slack modelDim hiddenDim wIn row
   let hiddenB := addVecFixed hidden0 bIn
-  let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+  let actHidden := geluOverapproxFixedVec cfg geluDerivTarget hiddenB
   let mlpOut0 := matMulIntervalsFromScaled cfg slack hiddenDim modelDim wOut actHidden
   addVecFixed mlpOut0 bOut
 
 private def mlpRowsFromScaled
     (cfg : Fixed10Cfg)
+    (geluDerivTarget : GeluDerivTarget)
     (slack : Int)
     (modelDim hiddenDim : Nat)
     (wIn wOut : Array Int)
@@ -1269,10 +1369,11 @@ private def mlpRowsFromScaled
   let useTasks := rows.size > 32
   if useTasks then
     let tasks := rows.map (fun row =>
-      Task.spawn (fun _ => mlpRowFromScaled cfg slack modelDim hiddenDim wIn wOut bIn bOut row))
+      Task.spawn (fun _ =>
+        mlpRowFromScaled cfg geluDerivTarget slack modelDim hiddenDim wIn wOut bIn bOut row))
     tasks.map (fun t => t.get)
   else
-    rows.map (mlpRowFromScaled cfg slack modelDim hiddenDim wIn wOut bIn bOut)
+    rows.map (mlpRowFromScaled cfg geluDerivTarget slack modelDim hiddenDim wIn wOut bIn bOut)
 
 private def groupUnionRowsByToken
     (rows : Array (Array Fixed10Interval))
@@ -1710,11 +1811,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
     let mut residuals := residuals0
     for l in [:hdr.numLayers] do
       let p1 := ln1Params.getD l defP
-      let mut ln1Rows : Array (Array Fixed10Interval) := Array.mkEmpty hdr.seqLen
-      for row in residuals do
-        let (ln1Out, _ln1VarLB) :=
-          fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
-        ln1Rows := ln1Rows.push ln1Out
+      let ln1Rows := fixedLayerNormRowsApprox cfg residuals p1 eps soundnessBits
       if l = layerIdx then
         let mut wv? : Option (Array Int) := none
         let mut bv? : Option (Array Int) := none
@@ -1891,11 +1988,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
           attnUnion := addVecFixed attnUnion attnBias
           residuals := addVecFixedRows residuals attnUnion
         let p2 := ln2Params.getD l defP
-        let mut ln2Rows : Array (Array Fixed10Interval) := Array.mkEmpty seqLenEff
-        for row in residuals do
-          let (ln2Out, _ln2VarLB) :=
-            fixedLayerNormRowApprox cfg row p2.gamma p2.beta eps soundnessBits
-          ln2Rows := ln2Rows.push ln2Out
+        let ln2Rows := fixedLayerNormRowsApprox cfg residuals p2 eps soundnessBits
         let perRowLayers : Nat := perRowPatternLayers
         if perRowLayers > 0 && layerIdx ≤ l + perRowLayers then
           let wIn ←
@@ -1905,7 +1998,8 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -1914,7 +2008,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -2258,7 +2352,8 @@ private def certifyHeadValueLogitLowerBoundLocalBinaryAt
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -2267,7 +2362,7 @@ private def certifyHeadValueLogitLowerBoundLocalBinaryAt
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -2622,7 +2717,8 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -2631,7 +2727,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinaryAt
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -2952,7 +3048,7 @@ private def certifyModelFileLocalText
                 pos := nextBin
                 let hiddenB := addConstVec hidden bin
                 let mlpActDerivBound := maxGeluDerivBound geluDerivTarget hiddenB
-                let actHidden := hiddenB.map RatInterval.geluOverapprox
+                let actHidden := hiddenB.map (geluOverapproxRat geluDerivTarget)
                 pos := skipBlankLines lines pos
                 if !(pos < lines.size && lines[pos]!.trim = "W_out") then
                   return .error "missing W_out"
@@ -3146,7 +3242,7 @@ private def certifyModelFileLocal
             rr := rrBin
             let hiddenB := addVecFixed hidden0 bIn
             let mlpActDerivBound := maxGeluDerivBoundFixed cfg geluDerivTarget hiddenB
-            let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+            let actHidden := geluOverapproxFixedVec cfg geluDerivTarget hiddenB
             let (mlpOut0, nWout, rrWout) ←
               consumeMatrixMulAndNormInfFixed cfg slack rr hiddenDim modelDim actHidden
             rr := rrWout
@@ -3318,7 +3414,7 @@ private def certifyModelFileLocalBinary
       let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
       let hiddenB := addVecFixed hidden0 bIn
       let mlpActDerivBound := maxGeluDerivBoundFixed cfg geluDerivTarget hiddenB
-      let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+      let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
       let (mlpOut0, nWout) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -3488,7 +3584,7 @@ private def certifyHeadBoundsLocalBinary
           hdr.modelDim hdr.hiddenDim ln2Out scalePow10)
       let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
       let hiddenB := addVecFixed hidden0 bIn
-      let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+      let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
       let (mlpOut0, _nWout) ←
         ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
           hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -3780,7 +3876,8 @@ private def certifyHeadPatternLocalBinary
               ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
             let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
             let mlpRows :=
-              mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+              mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+                hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
             residuals := addRowsFixed residuals mlpRows
           else
             let ln2Union := unionRowsFixed ln2Rows
@@ -3789,7 +3886,7 @@ private def certifyHeadPatternLocalBinary
                 hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
             let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
             let hiddenB := addVecFixed hidden0 bIn
-            let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+            let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
             let (mlpOut0, _nWout) ←
               ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
                 hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -3833,7 +3930,7 @@ private def certifyHeadPatternLocalBinary
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -4168,7 +4265,8 @@ private def certifyHeadPatternBestMatchLocalBinary
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -4177,7 +4275,7 @@ private def certifyHeadPatternBestMatchLocalBinary
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -4486,7 +4584,8 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -4495,7 +4594,7 @@ private def certifyHeadPatternBestMatchLocalBinarySweep
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -4771,7 +4870,8 @@ private def certifyHeadValueLowerBoundLocalBinary
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -4780,7 +4880,7 @@ private def certifyHeadValueLowerBoundLocalBinary
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -5063,7 +5163,8 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
             ExceptT.mk <| readScaledFloatArray h (hdr.hiddenDim * hdr.modelDim) scalePow10
           let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
           let mlpRows :=
-            mlpRowsFromScaled cfg slack hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
+            mlpRowsFromScaled cfg hdr.geluDerivTarget slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
           residuals := addRowsFixed residuals mlpRows
         else
           let ln2Union := unionRowsFixed ln2Rows
@@ -5072,7 +5173,7 @@ private def certifyHeadLogitDiffLowerBoundLocalBinary
               hdr.modelDim hdr.hiddenDim ln2Union scalePow10)
           let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
           let hiddenB := addVecFixed hidden0 bIn
-          let actHidden := hiddenB.map Fixed10Interval.geluOverapprox
+          let actHidden := geluOverapproxFixedVec cfg hdr.geluDerivTarget hiddenB
           let (mlpOut0, _nWout) ←
             ExceptT.mk (consumeMatrixMulAndNormInfFixedBinary cfg slack h
               hdr.hiddenDim hdr.modelDim actHidden scalePow10)
@@ -5535,13 +5636,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (rows : Array (Array Fixed10Interval))
         (p : LayerNormParamsFixed) :
         Array (Array Fixed10Interval) :=
-      Id.run do
-        let mut out : Array (Array Fixed10Interval) := Array.mkEmpty rows.size
-        for row in rows do
-          let (lnOut, _varLB) :=
-            fixedLayerNormRowApprox cfg row p.gamma p.beta eps soundnessBits
-          out := out.push lnOut
-        return out
+      fixedLayerNormRowsApprox cfg rows p eps soundnessBits
     let calcVOutRows
         (rows : Array (Array Fixed10Interval))
         (wv wo : Array Int)
@@ -5746,6 +5841,61 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           | _, _, _ =>
               throw "use both target and negative tokens (or neither)"
       return { value := value, logit? := logit? }
+    let tightenQueryRowLower
+        (baseRow : Array Fixed10Interval)
+        (vOutRows : Array (Array Fixed10Interval))
+        (matchWeightLowerBound : Rat)
+        (targetOffset : Int) :
+        ExceptT String IO (Array Fixed10Interval) := do
+      let ti : Int := (Int.ofNat queryPos) + targetOffset
+      if ti < 0 || ti ≥ (Int.ofNat seqLenEff) then
+        throw "query position has no valid target offset"
+      let tIdx : Nat := Int.toNat ti
+      let targetTok := tokens[tIdx]!
+      let mut matchLo? : Option (Array Int) := none
+      let mut nonmatchLo? : Option (Array Int) := none
+      for j in [:seqLenEff] do
+        if !causalPattern || j ≤ queryPos then
+          let row := vOutRows[j]!
+          let rowLo : Array Int := row.map (fun x => x.lo)
+          if tokens[j]! = targetTok then
+            matchLo? :=
+              match matchLo? with
+              | none => some rowLo
+              | some cur =>
+                  some <| Id.run do
+                    let mut out : Array Int := Array.mkEmpty hdr.modelDim
+                    for i in [:hdr.modelDim] do
+                      out := out.push (min cur[i]! rowLo[i]!)
+                    out
+          else
+            nonmatchLo? :=
+              match nonmatchLo? with
+              | none => some rowLo
+              | some cur =>
+                  some <| Id.run do
+                    let mut out : Array Int := Array.mkEmpty hdr.modelDim
+                    for i in [:hdr.modelDim] do
+                      out := out.push (min cur[i]! rowLo[i]!)
+                    out
+      let matchLo ←
+        match matchLo? with
+        | none => throw "no matching keys for the requested offset"
+        | some v => pure v
+      let nonmatchLo :=
+        match nonmatchLo? with
+        | none => matchLo
+        | some v => v
+      let mut tightened : Array Fixed10Interval := Array.mkEmpty hdr.modelDim
+      for i in [:hdr.modelDim] do
+        let matchLoRat := ratOfScaledInt scalePow10 matchLo[i]!
+        let nonmatchLoRat := ratOfScaledInt scalePow10 nonmatchLo[i]!
+        let outLB := mixLowerBound matchWeightLowerBound matchLoRat nonmatchLoRat
+        let outLBInt := ratFloorMulNat outLB cfg.scaleNat
+        let base := baseRow[i]!
+        let newLo := max base.lo outLBInt
+        tightened := tightened.push { lo := newLo, hi := base.hi }
+      return tightened
     let addAttn
         (useTight : Bool)
         (ln1Rows : Array (Array Fixed10Interval))
@@ -5811,12 +5961,12 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         Array (Array Fixed10Interval) :=
       let ln2Rows := calcLnRows rows p
       if usePerRow then
-        let mlpRows := mlpRowsFromScaled cfg slack
+        let mlpRows := mlpRowsFromScaled cfg hdr.geluDerivTarget slack
           hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Rows
         addRowsFixed rows mlpRows
       else
         let ln2Union := unionRowsFixed ln2Rows
-        let mlpOut := mlpRowFromScaled cfg slack
+        let mlpOut := mlpRowFromScaled cfg hdr.geluDerivTarget slack
           hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Union
         addVecFixedRows rows mlpOut
     let h ← IO.FS.Handle.mk path IO.FS.Mode.read
@@ -5987,11 +6137,26 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
                 attnRows1? := attnRows'
                 attnUnion1? := attnUnion'
               if needUpdate2 then
-                let (attnRows', attnUnion') ←
-                  addAttn useTight2 ln1Rows2 ln1Union2? groupRows2?
-                    attnRows2? attnUnion2? wv wo bVIntervals
-                attnRows2? := attnRows'
-                attnUnion2? := attnUnion'
+                if l == layer1 && hIdx == head1 && useTight2 && causalPattern then
+                  let p1 ←
+                    match p1? with
+                    | some cert => pure cert
+                    | none => throw "missing best-match pattern cert for tightening"
+                  let vOutRows := calcVOutRows ln1Rows2 wv wo bVIntervals
+                  let mut headRows := prefixUnionRowsFixed vOutRows
+                  let baseRow := headRows[queryPos]!
+                  let tightRow ←
+                    tightenQueryRowLower baseRow vOutRows p1.bestMatchWeightLowerBound offset1
+                  headRows := headRows.set! queryPos tightRow
+                  match attnRows2? with
+                  | some rows => attnRows2? := some (addRowsFixed rows headRows)
+                  | none => throw "missing attnRows"
+                else
+                  let (attnRows', attnUnion') ←
+                    addAttn useTight2 ln1Rows2 ln1Union2? groupRows2?
+                      attnRows2? attnUnion2? wv wo bVIntervals
+                  attnRows2? := attnRows'
+                  attnUnion2? := attnUnion'
             if needUpdateV && !shareUpdateV && !skipAttnV then
               let (attnRows', attnUnion') ←
                 addAttn useTightV ln1RowsV ln1UnionV? groupRowsV?
@@ -6130,56 +6295,45 @@ def certifyInductionSoundBestMatch
           let dtMs := dtNs / 1000000
           ExceptT.lift <| IO.eprintln s!"timing:{label} {dtMs}ms"
           return r
-      let shared ← ExceptT.mk (loadSharedBinaryInputs path inputPath inputDelta scalePow10)
-      let queryPos : Nat :=
-        match queryPos? with
-        | some q => q
-        | none =>
-            if shared.hdr.seqLen = 0 then 0 else shared.hdr.seqLen - 1
-      if queryPos ≥ shared.hdr.seqLen then
-        throw s!"queryPos {queryPos} out of range"
-      let prefixCache := mkSharedBinaryPrefix shared queryPos causalPattern
-      let direction? : Option (Thunk (Array Fixed10Interval)) ←
-        match targetToken?, negativeToken? with
-        | none, none => pure none
-        | some targetToken, some negativeToken =>
-            let (hdrDir, dir) ←
-              ExceptT.mk (readLogitDiffDirectionBinary
-                path targetToken negativeToken scalePow10 fixedUlpSlack)
-            if hdrDir.modelDim ≠ shared.hdr.modelDim then
-              throw "unembedding model_dim mismatch"
-            pure (some (Thunk.mk (fun () => dir)))
-        | _, _ =>
-            throw "use both target and negative tokens (or neither)"
-      let computeCert (useTight : Bool) (tightLayers perRowLayers : Nat) :
-          ExceptT String IO InductionHeadBestMatchSoundCert := do
-        let label :=
-          s!"tight={useTight} tl={tightLayers} pr={perRowLayers}"
-        let cert ←
-          timeIt (s!"{label}:pair") <|
-            ExceptT.mk <|
-              certifyInductionSoundBestMatchLocalBinaryPair
-                path layer1 head1 layer2 head2 coord queryPos eps soundnessBits inputPath
-                inputDelta offset1 offset2 maxSeqLen scalePow10 useTight tightLayers
-                perRowLayers softmaxExpEffort causalPattern
-                (shared? := some shared) (prefix? := some prefixCache)
-                (targetToken? := targetToken?) (negativeToken? := negativeToken?)
-                (direction? := direction?)
-        return cert
-      if !iterTighten then
-        let cert ← computeCert tightPattern tightPatternLayers perRowPatternLayers
-        return cert
-      else
-        let maxLayer := Nat.max layer1 layer2
-        let tightFull := Nat.max 1 maxLayer
-        let perRowFull := maxLayer
-        let mut configs : Array (Bool × Nat × Nat) :=
-          #[(tightPattern, tightPatternLayers, perRowPatternLayers)]
-        let needTightFull := (!tightPattern) || tightPatternLayers < tightFull
-        if needTightFull then
-          configs := configs.push (true, tightFull, perRowPatternLayers)
-        if perRowPatternLayers < perRowFull then
-          configs := configs.push (true, tightFull, perRowFull)
+      let computeBestAtScale (scalePow10 : Nat)
+          (configs : Array (Bool × Nat × Nat)) :
+          ExceptT String IO (Rat × InductionHeadBestMatchSoundCert) := do
+        let shared ← ExceptT.mk (loadSharedBinaryInputs path inputPath inputDelta scalePow10)
+        let queryPos : Nat :=
+          match queryPos? with
+          | some q => q
+          | none =>
+              if shared.hdr.seqLen = 0 then 0 else shared.hdr.seqLen - 1
+        if queryPos ≥ shared.hdr.seqLen then
+          throw s!"queryPos {queryPos} out of range"
+        let prefixCache := mkSharedBinaryPrefix shared queryPos causalPattern
+        let direction? : Option (Thunk (Array Fixed10Interval)) ←
+          match targetToken?, negativeToken? with
+          | none, none => pure none
+          | some targetToken, some negativeToken =>
+              let (hdrDir, dir) ←
+                ExceptT.mk (readLogitDiffDirectionBinary
+                  path targetToken negativeToken scalePow10 fixedUlpSlack)
+              if hdrDir.modelDim ≠ shared.hdr.modelDim then
+                throw "unembedding model_dim mismatch"
+              pure (some (Thunk.mk (fun () => dir)))
+          | _, _ =>
+              throw "use both target and negative tokens (or neither)"
+        let computeCert (useTight : Bool) (tightLayers perRowLayers : Nat) :
+            ExceptT String IO InductionHeadBestMatchSoundCert := do
+          let label :=
+            s!"scale={scalePow10} tight={useTight} tl={tightLayers} pr={perRowLayers}"
+          let cert ←
+            timeIt (s!"{label}:pair") <|
+              ExceptT.mk <|
+                certifyInductionSoundBestMatchLocalBinaryPair
+                  path layer1 head1 layer2 head2 coord queryPos eps soundnessBits inputPath
+                  inputDelta offset1 offset2 maxSeqLen scalePow10 useTight tightLayers
+                  perRowLayers softmaxExpEffort causalPattern
+                  (shared? := some shared) (prefix? := some prefixCache)
+                  (targetToken? := targetToken?) (negativeToken? := negativeToken?)
+                  (direction? := direction?)
+          return cert
         let tasks ←
           ExceptT.lift <|
             configs.mapM fun (useTight, tightLayers, perRowLayers) =>
@@ -6205,6 +6359,40 @@ def certifyInductionSoundBestMatch
                     else
                       some (bestMetric, bestCert)
         match best with
+        | none => throw "no induction certs computed"
+        | some bestPair => return bestPair
+      let maxLayer := Nat.max layer1 layer2
+      let tightFull := Nat.max 1 maxLayer
+      let perRowFull := maxLayer
+      let mut configs : Array (Bool × Nat × Nat) :=
+        #[(tightPattern, tightPatternLayers, perRowPatternLayers)]
+      let needTightFull := (!tightPattern) || tightPatternLayers < tightFull
+      if needTightFull then
+        configs := configs.push (true, tightFull, perRowPatternLayers)
+      if perRowPatternLayers < perRowFull then
+        configs := configs.push (true, tightFull, perRowFull)
+      if !iterTighten then
+        let (_, cert) ← computeBestAtScale scalePow10 configs
+        return cert
+      else
+        let mut bestOverall : Option (Rat × InductionHeadBestMatchSoundCert) := none
+        let mut scale := scalePow10
+        let maxScale := scalePow10 + 2
+        while scale ≤ maxScale do
+          let (metric, cert) ← computeBestAtScale scale configs
+          bestOverall :=
+            match bestOverall with
+            | none => some (metric, cert)
+            | some (bestMetric, bestCert) =>
+                if metric > bestMetric then
+                  some (metric, cert)
+                else
+                  some (bestMetric, bestCert)
+          if metric > 0 then
+            scale := maxScale + 1
+          else
+            scale := scale + 1
+        match bestOverall with
         | none => throw "no induction certs computed"
         | some (_, cert) => return cert
     else

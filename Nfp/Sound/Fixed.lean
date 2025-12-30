@@ -58,9 +58,13 @@ def sub (a b : Fixed10Interval) : Fixed10Interval :=
 def relu (a : Fixed10Interval) : Fixed10Interval :=
   { lo := max 0 a.lo, hi := max 0 a.hi }
 
-/-- Conservative GeLU hull: `GeLU(x) ∈ [min(x,0), max(x,0)]`. -/
+/-- Conservative GeLU hull using a linear lower bound `GeLU(x) ≥ x/2`.
+
+For both exact and tanh GeLU, `GeLU(x) = x * g(x)` with `g(x) ∈ [0, 1]` and
+`g(x) ≥ 1/2` when `x ≥ 0`, so `x/2` is a global lower bound.
+-/
 def geluOverapprox (a : Fixed10Interval) : Fixed10Interval :=
-  { lo := min a.lo 0, hi := max a.hi 0 }
+  { lo := a.lo.ediv (Int.ofNat 2), hi := max a.hi 0 }
 
 private def absInt (x : Int) : Int := if x < 0 then -x else x
 
@@ -161,7 +165,8 @@ theorem relu_def (a : Fixed10Interval) :
     Fixed10Interval.relu a = { lo := max 0 a.lo, hi := max 0 a.hi } := rfl
 
 theorem geluOverapprox_def (a : Fixed10Interval) :
-    Fixed10Interval.geluOverapprox a = { lo := min a.lo 0, hi := max a.hi 0 } := rfl
+    Fixed10Interval.geluOverapprox a =
+      { lo := a.lo.ediv (Int.ofNat 2), hi := max a.hi 0 } := rfl
 
 theorem absInt_spec (x : Int) : absInt x = absInt x := rfl
 
