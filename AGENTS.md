@@ -37,6 +37,9 @@ Before you finish any change:
 - `lake build -q --wfail`
 - `lake build nfp -q --wfail`
 
+Note: `models/` is gitignored, so `rg` will skip it unless you pass `--no-ignore`
+or `-uuu` (or equivalent) when searching.
+
 ---
 
 ## 1. Non-Negotiables (Hard Rules)
