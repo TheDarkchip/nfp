@@ -4,6 +4,7 @@ import Std
 import Nfp.Sound.Cert
 import Nfp.Sound.HeadCert
 import Nfp.Sound.ModelHeader
+import Nfp.Sound.TextPure
 import Nfp.Untrusted.SoundBinary
 import Nfp.Sound.Interval
 import Nfp.Sound.Affine
@@ -38,95 +39,7 @@ Trusted base:
 No `Float` arithmetic is used as an input to certification.
 -/
 
-/-- Parse `key=value` header lines. -/
-def parseHeaderLine (line : String) : Option (String × String) :=
-  let line := line.trim
-  if line.isEmpty then none
-  else
-    match line.splitOn "=" with
-    | [k, v] => some (k.trim, v.trim)
-    | _ => none
-
 private def defaultBinaryScalePow10 : Nat := 9
-
-/-- Read `count` rationals from lines starting at `start`, folding into `state`.
-
-Returns `(state, nextLineIndex)`.
--/
-def foldRatTokens {α : Type}
-    (lines : Array String)
-    (start : Nat)
-    (count : Nat)
-    (state : α)
-    (step : α → Rat → α) : Except String (α × Nat) :=
-  Id.run do
-    let isWs (c : Char) : Bool :=
-      c = ' ' || c = '\t' || c = '\n' || c = '\r'
-    let mut i := start
-    let mut remaining := count
-    let mut st := state
-    while remaining > 0 do
-      if i < lines.size then
-        let line := lines[i]!
-        i := i + 1
-        let mut p : String.Pos.Raw := 0
-        let stop := line.rawEndPos
-        while p < stop && remaining > 0 do
-          while p < stop && isWs (p.get line) do
-            p := p.next line
-          let tokStart := p
-          while p < stop && !isWs (p.get line) do
-            p := p.next line
-          if tokStart < p then
-            match parseRatRange line tokStart p with
-            | .error e => return .error e
-            | .ok r =>
-              st := step st r
-              remaining := remaining - 1
-      else
-        return .error "unexpected end of file while reading numbers"
-    return .ok (st, i)
-
-/-- Consume a vector of length `n` into an array. Returns `(xs, nextLineIndex)`. -/
-def consumeVector
-    (lines : Array String)
-    (start : Nat)
-    (n : Nat) : Except String (Array Rat × Nat) :=
-  let step := fun (acc : Array Rat) (x : Rat) => acc.push x
-  foldRatTokens lines start n (Array.mkEmpty n) step
-
-/-- Consume a matrix in row-major order and return its exact row-sum norm
-(`‖·‖∞` in column-vector convention, `‖·‖₁` in row-vector convention).
-
-Returns `(normInf, nextLineIndex)`.
--/
-def consumeMatrixNormInf
-    (lines : Array String)
-    (start : Nat)
-    (rows cols : Nat) : Except String (Rat × Nat) :=
-  let count := rows * cols
-  match consumeVector lines start count with
-  | .error e => .error e
-  | .ok (xs, next) => .ok (matrixNormInfOfRowMajor rows cols xs, next)
-
-/-- Parsed matrix norm is definitionally the spec-level bound on the parsed data. -/
-theorem consumeMatrixNormInf_spec
-    (lines : Array String) (start rows cols : Nat) (xs : Array Rat) (next : Nat)
-    (h : consumeVector lines start (rows * cols) = .ok (xs, next)) :
-    consumeMatrixNormInf lines start rows cols =
-      .ok (matrixNormInfOfRowMajor rows cols xs, next) := by
-  simp [consumeMatrixNormInf, h]
-
-/-- Consume a vector of length `n` and return `max |xᵢ|`.
-
-Returns `(maxAbs, nextLineIndex)`.
--/
-def consumeMaxAbs
-    (lines : Array String)
-    (start : Nat)
-    (n : Nat) : Except String (Rat × Nat) :=
-  let step := fun (m : Rat) (x : Rat) => max m (ratAbs x)
-  foldRatTokens lines start n 0 step
 
 private def maxAbsOfVector (xs : Array Rat) : Rat :=
   xs.foldl (fun acc x => max acc (ratAbs x)) 0
@@ -777,21 +690,21 @@ def certifyModelFileGlobal
           mlpWout := mlpWout.set! curLayer n
         i := next
     else if line = "LN1_GAMMA" then
-      match consumeMaxAbs lines (i + 1) d with
+      match consumeVectorMaxAbs lines (i + 1) d with
       | .error e => return .error e
       | .ok (m, next) =>
         if curLayer < ln1GammaMax.size then
           ln1GammaMax := ln1GammaMax.set! curLayer m
         i := next
     else if line = "LN1_BETA" then
-      match consumeMaxAbs lines (i + 1) d with
+      match consumeVectorMaxAbs lines (i + 1) d with
       | .error e => return .error e
       | .ok (m, next) =>
         if curLayer < ln1BetaMax.size then
           ln1BetaMax := ln1BetaMax.set! curLayer m
         i := next
     else if line = "LN2_GAMMA" then
-      match consumeMaxAbs lines (i + 1) d with
+      match consumeVectorMaxAbs lines (i + 1) d with
       | .error e => return .error e
       | .ok (m, next) =>
         if curLayer < ln2GammaMax.size then
@@ -8060,23 +7973,8 @@ def certifyInductionSoundBestMatch
 
 /-! ### Specs -/
 
-theorem parseHeaderLine_spec_io :
-    parseHeaderLine = parseHeaderLine := rfl
-
 theorem defaultBinaryScalePow10_spec_io :
     defaultBinaryScalePow10 = defaultBinaryScalePow10 := rfl
-
-theorem foldRatTokens_spec_io {α : Type} :
-    foldRatTokens (α := α) = foldRatTokens (α := α) := rfl
-
-theorem consumeVector_spec_io :
-    consumeVector = consumeVector := rfl
-
-theorem consumeMatrixNormInf_spec_io :
-    consumeMatrixNormInf = consumeMatrixNormInf := rfl
-
-theorem consumeMaxAbs_spec_io :
-    consumeMaxAbs = consumeMaxAbs := rfl
 
 theorem maxAbsOfVector_spec_io :
     maxAbsOfVector = maxAbsOfVector := rfl
