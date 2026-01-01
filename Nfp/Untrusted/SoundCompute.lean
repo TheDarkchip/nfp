@@ -18,25 +18,26 @@ open Nfp.Sound
 open Nfp.Untrusted.SoundBinary
 
 /-!
-# Untrusted SOUND `.nfpt` loader (exact Rat parsing, legacy text format)
+# Untrusted SOUND computation helpers
 
-This is a minimal, *sound* loader intended for certification on the legacy text format.
+This module performs **IO-heavy witness generation** for SOUND certification. It parses `.nfpt`
+models (binary, plus legacy text for some paths) and computes candidate certificates for:
+- model-level residual amplification bounds,
+- per-head contribution bounds,
+- local head-pattern / best-match / induction certificates.
 
 It does **not** construct the full `ConcreteModel` (Float-based). Instead it parses only the
 weights needed for conservative residual amplification constants `Cᵢ` (bounds ‖layerJacobian - I‖),
-using exact `Rat` arithmetic.
+using exact `Rat` arithmetic or fixed-point interval arithmetic.
 
-It can optionally consume an input `.nfpt` file (for `EMBEDDINGS`) to enable **local**
-LayerNorm certification on a bounded region around that input.
-
-Global certification supports `NFP_BINARY_V1` via a sound fixed-point rounding bridge.
-Local (input-dependent) certification supports `NFP_BINARY_V1` using a union-box fixed-point path.
+All certificates produced here are **untrusted** and must be validated by the trusted checker
+in `Nfp.Sound.IO`.
 
 Trusted base:
 - Parsing from text to `Rat` via `Nfp.Sound.parseRat`.
 - Exact accumulation of row-sum norms and max-abs values.
 
-No `Float` arithmetic is used as an input to certification.
+No `Float` arithmetic is *trusted* as an input to certification.
 -/
 
 private def defaultBinaryScalePow10 : Nat := 9
@@ -1078,12 +1079,17 @@ private def fixedVarianceLowerBoundExact (cfg : Fixed10Cfg) (xs : Array Fixed10I
 private def fixedVarianceLowerBound (cfg : Fixed10Cfg) (xs : Array Fixed10Interval) : Rat :=
   let rangeLB := fixedVarianceLowerBoundRange cfg xs
   let midLB := fixedVarianceLowerBoundMidpoint cfg xs
-  -- Avoid the exact Rat-based bound on large rows (expensive and stack-heavy).
-  if xs.size > 256 then
-    max rangeLB midLB
-  else
+  let approxLB := max rangeLB midLB
+  -- Avoid the exact Rat-based bound on large rows (expensive and stack-heavy),
+  -- but recover it when the fast bounds collapse to zero for medium sizes.
+  if xs.size ≤ 256 then
     let exactLB := fixedVarianceLowerBoundExact cfg xs
-    max rangeLB (max midLB exactLB)
+    max approxLB exactLB
+  else if approxLB = 0 && xs.size ≤ 1024 then
+    let exactLB := fixedVarianceLowerBoundExact cfg xs
+    max approxLB exactLB
+  else
+    approxLB
 
 private def fixedLayerNormRowApprox
     (cfg : Fixed10Cfg)
@@ -2669,7 +2675,7 @@ private def certifyHeadValueLowerBoundLocalBinaryAt
     let keyOffsetNat? : Option Nat :=
       if keyOffset ≥ 0 then some (Int.toNat keyOffset) else none
     let keyOffsetNeg : Nat := Int.toNat (-keyOffset)
-    let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+    let h ← ExceptT.lift <| IO.FS.Handle.mk path IO.FS.Mode.read
     let _ ← ExceptT.mk (readBinaryHeader h)
     let _ ← ExceptT.mk (skipI32Array h hdr.seqLen)
     let _ ← ExceptT.mk (skipF64Array h (hdr.seqLen * hdr.modelDim))
@@ -4923,21 +4929,37 @@ private def certifyHeadPatternBestMatchLocalBinary
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
   let action : ExceptT String IO HeadBestMatchPatternCert := do
+    let timingEnabled ← ExceptT.lift <| IO.getEnv "NFP_TIMING"
+    let timing : Bool := timingEnabled.isSome
+    let timeIt {α : Type} (label : String) (work : ExceptT String IO α) :
+        ExceptT String IO α := do
+      if !timing then
+        work
+      else
+        let t0 ← ExceptT.lift IO.monoNanosNow
+        let r ← work
+        let t1 ← ExceptT.lift IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        ExceptT.lift <| IO.eprintln s!"timing:{label} {dtMs}ms"
+        return r
     let (hdr, ln1Params, ln2Params, residualsBase, tokensBase) ←
-      match shared? with
-      | some shared =>
+      timeIt "load_shared" <| match shared? with
+      | some shared => do
           if shared.scalePow10 ≠ scalePow10 then
             throw "shared scalePow10 mismatch"
           if shared.inputDelta ≠ inputDelta then
             throw "shared inputDelta mismatch"
           pure (shared.hdr, shared.ln1Params, shared.ln2Params, shared.residuals0, shared.tokens)
-      | none =>
+      | none => do
           let (hdr, ln1Params, ln2Params) ←
-            ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
+            timeIt "load_ln_params" <|
+              ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
           let residuals0 ←
-            ExceptT.mk
-              (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
-          let (hdrTok, tokens) ← ExceptT.mk (loadTokensBinary inputPath)
+            timeIt "load_embeddings" <|
+              ExceptT.mk
+                (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
+          let (hdrTok, tokens) ←
+            timeIt "load_tokens" <| ExceptT.mk (loadTokensBinary inputPath)
           if hdrTok.seqLen ≠ hdr.seqLen then
             throw "token/embedding seq_len mismatch"
           pure (hdr, ln1Params, ln2Params, residuals0, tokens)
@@ -4986,6 +5008,12 @@ private def certifyHeadPatternBestMatchLocalBinary
           fixedLayerNormRowApprox cfg row p1.gamma p1.beta eps soundnessBits
         ln1Rows := ln1Rows.push ln1Out
       if l = layerIdx then
+        let tPattern0? ←
+          if timing then
+            let t0 ← ExceptT.lift IO.monoNanosNow
+            pure (some t0)
+          else
+            pure none
         let mut wq? : Option (Array Int) := none
         let mut bq? : Option (Array Int) := none
         let mut wk? : Option (Array Int) := none
@@ -5215,6 +5243,10 @@ private def certifyHeadPatternBestMatchLocalBinary
           softmaxJacobianNormInfUpperBound := softmaxJacobianUB
         }
         if cert.check then
+          if let some t0 := tPattern0? then
+            let t1 ← ExceptT.lift IO.monoNanosNow
+            let dtMs := (t1 - t0) / 1000000
+            ExceptT.lift <| IO.eprintln s!"timing:layer{l}:pattern {dtMs}ms"
           return cert
         throw "best-match head pattern certificate failed internal consistency checks"
       else
@@ -6692,21 +6724,37 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
   let cfg : Fixed10Cfg := scaleCfgOfPow10 scalePow10
   let slack : Int := fixedUlpSlack
   let action : ExceptT String IO InductionHeadBestMatchSoundCert := do
+    let timingEnabled ← ExceptT.lift <| IO.getEnv "NFP_TIMING"
+    let timing : Bool := timingEnabled.isSome
+    let timeIt {α : Type} (label : String) (work : ExceptT String IO α) :
+        ExceptT String IO α := do
+      if !timing then
+        work
+      else
+        let t0 ← ExceptT.lift IO.monoNanosNow
+        let r ← work
+        let t1 ← ExceptT.lift IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        ExceptT.lift <| IO.eprintln s!"timing:{label} {dtMs}ms"
+        return r
     let (hdr, ln1Params, ln2Params, residualsBase, tokensBase) ←
-      match shared? with
-      | some shared =>
+      timeIt "load_shared" <| match shared? with
+      | some shared => do
           if shared.scalePow10 ≠ scalePow10 then
             throw "shared scalePow10 mismatch"
           if shared.inputDelta ≠ inputDelta then
             throw "shared inputDelta mismatch"
           pure (shared.hdr, shared.ln1Params, shared.ln2Params, shared.residuals0, shared.tokens)
-      | none =>
+      | none => do
           let (hdr, ln1Params, ln2Params) ←
-            ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
+            timeIt "load_ln_params" <|
+              ExceptT.mk (collectLayerNormParamsBinary path scalePow10 slack)
           let residuals0 ←
-            ExceptT.mk
-              (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
-          let (hdrTok, tokens) ← ExceptT.mk (loadTokensBinary inputPath)
+            timeIt "load_embeddings" <|
+              ExceptT.mk
+                (loadEmbeddingsIntervalsBinary inputPath hdr.modelDim inputDelta scalePow10)
+          let (hdrTok, tokens) ←
+            timeIt "load_tokens" <| ExceptT.mk (loadTokensBinary inputPath)
           if hdrTok.seqLen ≠ hdr.seqLen then
             throw "token/embedding seq_len mismatch"
           pure (hdr, ln1Params, ln2Params, residuals0, tokens)
@@ -6798,13 +6846,11 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (p : LayerNormParamsFixed) :
         Array (Array Fixed10Interval) :=
       fixedLayerNormRowsApproxExact cfg rows p eps soundnessBits
-    let calcVOutRows
+    let calcVOutRowsIntervals
         (rows : Array (Array Fixed10Interval))
-        (wv wo : Array Int)
+        (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval) :
         Array (Array Fixed10Interval) :=
-      let wvIntervals := intervalsFromScaled wv slack
-      let woIntervals := intervalsFromScaled wo slack
       let useTasks := rows.size > 32
       if useTasks then
         Id.run do
@@ -6846,15 +6892,15 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
               hdr.headDim hdr.modelDim woIntervals vHidden
             out := out.push vOut
           return out
-    let calcVOut
+    let calcVOutIntervals
         (row : Array Fixed10Interval)
-        (wv wo : Array Int)
+        (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval) :
         Array Fixed10Interval :=
-      let vHidden0 := matMulIntervalsFromScaled cfg slack
-        hdr.modelDim hdr.headDim wv row
+      let vHidden0 := matMulIntervalsFromIntervalsNoTask cfg
+        hdr.modelDim hdr.headDim wvIntervals row
       let vHidden := addVecFixed vHidden0 bV
-      matMulIntervalsFromScaled cfg slack hdr.headDim hdr.modelDim wo vHidden
+      matMulIntervalsFromIntervalsNoTask cfg hdr.headDim hdr.modelDim woIntervals vHidden
     let bestMatchPattern
         (layerIdx headIdx : Nat)
         (ln1Rows : Array (Array Fixed10Interval))
@@ -7065,12 +7111,12 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
     let valueLogit
         (ln1Rows : Array (Array Fixed10Interval))
         (matchWeightLowerBound : Rat)
-        (wv wo : Array Int)
+        (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval)
         (targetOffset : Int)
         (keyOffset : Int) :
         ExceptT String IO HeadValueLogitCert := do
-      let vOutRows := calcVOutRows ln1Rows wv wo bV
+      let vOutRows := calcVOutRowsIntervals ln1Rows wvIntervals woIntervals bV
       let ti : Int := (Int.ofNat queryPos) + targetOffset
       if ti < 0 || ti ≥ (Int.ofNat seqLenEff) then
         throw "query position has no valid target offset"
@@ -7274,23 +7320,35 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (groupRows? : Option (Array (Array Fixed10Interval)))
         (attnRows? : Option (Array (Array Fixed10Interval)))
         (attnUnion? : Option (Array Fixed10Interval))
-        (wv wo : Array Int)
+        (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval) :
         ExceptT String IO
           (Option (Array (Array Fixed10Interval)) × Option (Array Fixed10Interval)) := do
       if useTight then
         if causalPattern then
-          let vOutRows := calcVOutRows ln1Rows wv wo bV
-          let headRows := prefixUnionRowsFixed vOutRows
+          let vOutRows := calcVOutRowsIntervals ln1Rows wvIntervals woIntervals bV
           match attnRows? with
-          | some rows => return (some (addRowsFixed rows headRows), attnUnion?)
+          | some rows =>
+              if rows.size ≠ vOutRows.size then
+                return (some rows, attnUnion?)
+              if vOutRows.isEmpty then
+                return (some rows, attnUnion?)
+              let mut outRows := rows
+              let mut acc := vOutRows[0]!
+              outRows := outRows.set! 0 (addVecFixed rows[0]! acc)
+              let mut i : Nat := 1
+              while i < vOutRows.size do
+                acc := Fixed10Interval.unionVec acc vOutRows[i]!
+                outRows := outRows.set! i (addVecFixed rows[i]! acc)
+                i := i + 1
+              return (some outRows, attnUnion?)
           | none => throw "missing attnRows"
         else
           let groupRows ←
             match groupRows? with
             | some rows => pure rows
             | none => throw "missing group rows"
-          let vOutRows := calcVOutRows groupRows wv wo bV
+          let vOutRows := calcVOutRowsIntervals groupRows wvIntervals woIntervals bV
           let vUnion := unionRowsFixed vOutRows
           match attnUnion? with
           | some u => return (attnRows?, some (addVecFixed u vUnion))
@@ -7300,7 +7358,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           match ln1Union? with
           | some row => pure row
           | none => throw "missing ln1Union"
-        let vOut := calcVOut ln1Union wv wo bV
+        let vOut := calcVOutIntervals ln1Union wvIntervals woIntervals bV
         match attnUnion? with
         | some u => return (attnRows?, some (addVecFixed u vOut))
         | none => throw "missing attnUnion"
@@ -7403,6 +7461,12 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
       let needRows2 := at2 || needUpdate2
       let needRowsV := needRows2
       let ln1P := ln1Params.getD l defP
+      let tLn10? ←
+        if timing then
+          let t0 ← ExceptT.lift IO.monoNanosNow
+          pure (some t0)
+        else
+          pure none
       let mut ln1RowsShared? : Option (Array (Array Fixed10Interval)) := none
       if residualsSame && (needRows1 || needRows2) then
         ln1RowsShared? := some (calcLnRows residuals1 ln1P)
@@ -7426,6 +7490,10 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           ln1RowsV? := ln1Rows2?
         else
           ln1RowsV? := some (calcLnRows residualsV ln1P)
+      if let some t0 := tLn10? then
+        let t1 ← ExceptT.lift IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:ln1 {dtMs}ms"
       let tightLayers : Nat :=
         if tightPattern then Nat.max 1 tightPatternLayers else 0
       let useTight1 := needUpdate1 && tightLayers > 0 && layer1 ≤ l + tightLayers
@@ -7436,6 +7504,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         needUpdate2 && perRowPatternLayers > 0 && layer2 ≤ l + perRowPatternLayers
       let useTightV := useTight2
       let usePerRowV := usePerRow2
+      let needTightenNow : Bool := l == layer1 && useTight2 && causalPattern
       let skipAttnV := useTightV && causalPattern && seqLenEff < hdr.seqLen
       let shareUpdateV := residualsSameV && needUpdateV && !skipAttnV
       let shareUpdate :=
@@ -7505,33 +7574,60 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           ln1UnionV? := some (unionRowsFixed ln1RowsV)
           attnUnionV? := some (Array.replicate hdr.modelDim { lo := 0, hi := 0 })
       let needUpdate := needUpdate1 || needUpdate2
+      let tHeads0? ←
+        if timing then
+          let t0 ← ExceptT.lift IO.monoNanosNow
+          pure (some t0)
+        else
+          pure none
+      let mut qkReadMs : Nat := 0
+      let mut vReadMs : Nat := 0
+      let mut addAttnMs : Nat := 0
+      let mut tightenMs : Nat := 0
+      let mut tightenVOutMs : Nat := 0
+      let mut tightenPrefixMs : Nat := 0
+      let mut tightenRowMs : Nat := 0
+      let mut tightenWaitMs : Nat := 0
       for hIdx in [:hdr.numHeads] do
         let needValue := at2 && hIdx = head2
         let needV := needUpdate || needValue
         let needQK := (at1 && hIdx = head1) || (at2 && hIdx = head2)
         if needQK then
+          let tQK0? ←
+            if timing then
+              let t0 ← ExceptT.lift IO.monoNanosNow
+              pure (some t0)
+            else
+              pure none
           let wq ←
             ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
           let bQ ← ExceptT.mk <| readScaledFloatArray h hdr.headDim scalePow10
           let wk ←
             ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
           let bK ← ExceptT.mk <| readScaledFloatArray h hdr.headDim scalePow10
+          if let some t0 := tQK0? then
+            let t1 ← ExceptT.lift IO.monoNanosNow
+            let dtMs := (t1 - t0) / 1000000
+            qkReadMs := qkReadMs + dtMs
           let bQIntervals := intervalsFromScaled bQ slack
           let bKIntervals := intervalsFromScaled bK slack
           if at1 && hIdx = head1 then
             let ln1Rows1Exact := ln1Rows1Exact?.getD ln1Rows1
-            if needV then
+            if needV && !needTightenNow then
               let task ←
                 ExceptT.lift <|
                   IO.asTask
-                    (bestMatchPattern
-                      layer1 head1 ln1Rows1Exact wq wk bQIntervals bKIntervals offset1 keyOffset1
-                      (useTasks := false)).run
+                    (timeIt s!"layer{layer1}:pattern" <|
+                      bestMatchPattern
+                        layer1 head1 ln1Rows1Exact wq wk bQIntervals bKIntervals offset1
+                        keyOffset1
+                        (useTasks := false)).run
               p1Task? := some task
             else
               let p1 ←
-                bestMatchPattern
-                  layer1 head1 ln1Rows1Exact wq wk bQIntervals bKIntervals offset1 keyOffset1
+                timeIt s!"layer{layer1}:pattern" <|
+                  bestMatchPattern
+                    layer1 head1 ln1Rows1Exact wq wk bQIntervals bKIntervals offset1 keyOffset1
               p1? := some p1
           if at2 && hIdx = head2 then
             let ln1Rows2Exact := ln1Rows2Exact?.getD ln1Rows2
@@ -7539,14 +7635,17 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
               let task ←
                 ExceptT.lift <|
                   IO.asTask
-                    (bestMatchPattern
-                      layer2 head2 ln1Rows2Exact wq wk bQIntervals bKIntervals offset2 keyOffset2
-                      (useTasks := false)).run
+                    (timeIt s!"layer{layer2}:pattern" <|
+                      bestMatchPattern
+                        layer2 head2 ln1Rows2Exact wq wk bQIntervals bKIntervals offset2
+                        keyOffset2
+                        (useTasks := false)).run
               p2Task? := some task
             else
               let p2 ←
-                bestMatchPattern
-                  layer2 head2 ln1Rows2Exact wq wk bQIntervals bKIntervals offset2 keyOffset2
+                timeIt s!"layer{layer2}:pattern" <|
+                  bestMatchPattern
+                    layer2 head2 ln1Rows2Exact wq wk bQIntervals bKIntervals offset2 keyOffset2
               p2? := some p2
         else
           let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
@@ -7554,51 +7653,153 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
           let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
         if needV then
+          let tV0? ←
+            if timing then
+              let t0 ← ExceptT.lift IO.monoNanosNow
+              pure (some t0)
+            else
+              pure none
           let wv ←
             ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.headDim) scalePow10
           let bV ← ExceptT.mk <| readScaledFloatArray h hdr.headDim scalePow10
           let wo ←
             ExceptT.mk <| readScaledFloatArray h (hdr.headDim * hdr.modelDim) scalePow10
+          if let some t0 := tV0? then
+            let t1 ← ExceptT.lift IO.monoNanosNow
+            let dtMs := (t1 - t0) / 1000000
+            vReadMs := vReadMs + dtMs
           let bVIntervals := intervalsFromScaled bV slack
+          let wvIntervals := intervalsFromScaled wv slack
+          let woIntervals := intervalsFromScaled wo slack
           if needUpdate then
             if shareUpdate then
+              let tAdd0? ←
+                if timing then
+                  let t0 ← ExceptT.lift IO.monoNanosNow
+                  pure (some t0)
+                else
+                  pure none
               let (attnRows', attnUnion') ←
                 addAttn useTight1 ln1RowsShared ln1UnionShared? groupRowsShared?
-                  attnRowsShared? attnUnionShared? wv wo bVIntervals
+                  attnRowsShared? attnUnionShared? wvIntervals woIntervals bVIntervals
+              if let some t0 := tAdd0? then
+                let t1 ← ExceptT.lift IO.monoNanosNow
+                let dtMs := (t1 - t0) / 1000000
+                addAttnMs := addAttnMs + dtMs
               attnRowsShared? := attnRows'
               attnUnionShared? := attnUnion'
             else
               if needUpdate1 then
+                let tAdd0? ←
+                  if timing then
+                    let t0 ← ExceptT.lift IO.monoNanosNow
+                    pure (some t0)
+                  else
+                    pure none
                 let (attnRows', attnUnion') ←
                   addAttn useTight1 ln1Rows1 ln1Union1? groupRows1?
-                    attnRows1? attnUnion1? wv wo bVIntervals
+                    attnRows1? attnUnion1? wvIntervals woIntervals bVIntervals
+                if let some t0 := tAdd0? then
+                  let t1 ← ExceptT.lift IO.monoNanosNow
+                  let dtMs := (t1 - t0) / 1000000
+                  addAttnMs := addAttnMs + dtMs
                 attnRows1? := attnRows'
                 attnUnion1? := attnUnion'
               if needUpdate2 then
                 if l == layer1 && hIdx == head1 && useTight2 && causalPattern then
+                  let tTight0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
+                  let tWait0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
                   let p1 ←
                     awaitPattern p1? p1Task? "missing best-match pattern cert for tightening"
+                  if let some t0 := tWait0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    tightenWaitMs := tightenWaitMs + dtMs
                   p1? := some p1
-                  let vOutRows := calcVOutRows ln1Rows2 wv wo bVIntervals
+                  let tVOut0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
+                  let vOutRows := calcVOutRowsIntervals ln1Rows2 wvIntervals woIntervals bVIntervals
+                  if let some t0 := tVOut0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    tightenVOutMs := tightenVOutMs + dtMs
+                  let tPrefix0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
                   let mut headRows := prefixUnionRowsFixed vOutRows
+                  if let some t0 := tPrefix0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    tightenPrefixMs := tightenPrefixMs + dtMs
                   let baseRow := headRows[queryPos]!
+                  let tRow0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
                   let tightRow ←
                     tightenQueryRowLower baseRow vOutRows p1.bestMatchWeightLowerBound offset1
                       keyOffset1
+                  if let some t0 := tRow0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    tightenRowMs := tightenRowMs + dtMs
                   headRows := headRows.set! queryPos tightRow
+                  if let some t0 := tTight0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    tightenMs := tightenMs + dtMs
                   match attnRows2? with
                   | some rows => attnRows2? := some (addRowsFixed rows headRows)
                   | none => throw "missing attnRows"
                 else
+                  let tAdd0? ←
+                    if timing then
+                      let t0 ← ExceptT.lift IO.monoNanosNow
+                      pure (some t0)
+                    else
+                      pure none
                   let (attnRows', attnUnion') ←
                     addAttn useTight2 ln1Rows2 ln1Union2? groupRows2?
-                      attnRows2? attnUnion2? wv wo bVIntervals
+                      attnRows2? attnUnion2? wvIntervals woIntervals bVIntervals
+                  if let some t0 := tAdd0? then
+                    let t1 ← ExceptT.lift IO.monoNanosNow
+                    let dtMs := (t1 - t0) / 1000000
+                    addAttnMs := addAttnMs + dtMs
                   attnRows2? := attnRows'
                   attnUnion2? := attnUnion'
             if needUpdateV && !shareUpdateV && !skipAttnV then
+              let tAdd0? ←
+                if timing then
+                  let t0 ← ExceptT.lift IO.monoNanosNow
+                  pure (some t0)
+                else
+                  pure none
               let (attnRows', attnUnion') ←
                 addAttn useTightV ln1RowsV ln1UnionV? groupRowsV?
-                  attnRowsV? attnUnionV? wv wo bVIntervals
+                  attnRowsV? attnUnionV? wvIntervals woIntervals bVIntervals
+              if let some t0 := tAdd0? then
+                let t1 ← ExceptT.lift IO.monoNanosNow
+                let dtMs := (t1 - t0) / 1000000
+                addAttnMs := addAttnMs + dtMs
               attnRowsV? := attnRows'
               attnUnionV? := attnUnion'
           if needValue then
@@ -7606,13 +7807,27 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
               awaitPattern p2? p2Task? "missing best-match pattern cert for value bound"
             p2? := some p2
             let vlogit ←
-              valueLogit ln1RowsV p2.bestMatchWeightLowerBound wv wo bVIntervals offset2
-                keyOffset2
+              timeIt s!"layer{layer2}:value_logit" <|
+                valueLogit ln1RowsV p2.bestMatchWeightLowerBound wvIntervals woIntervals
+                  bVIntervals offset2 keyOffset2
             vlogit? := some vlogit
         else
           let _ ← ExceptT.mk (skipF64Array h (hdr.modelDim * hdr.headDim))
           let _ ← ExceptT.mk (skipF64Array h hdr.headDim)
           let _ ← ExceptT.mk (skipF64Array h (hdr.headDim * hdr.modelDim))
+      if let some t0 := tHeads0? then
+        let t1 ← ExceptT.lift IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:heads {dtMs}ms"
+      if timing then
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:qk_read {qkReadMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:v_read {vReadMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:add_attn {addAttnMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:tighten {tightenMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:tighten_vout {tightenVOutMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:tighten_prefix {tightenPrefixMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:tighten_row {tightenRowMs}ms"
+        ExceptT.lift <| IO.eprintln s!"timing:layer{l}:tighten_wait {tightenWaitMs}ms"
       if p1?.isSome && p2?.isSome && vlogit?.isSome && !(needUpdate1 || needUpdate2) then
         match p1?, p2?, vlogit? with
         | some p1, some p2, some vlogit =>
@@ -7628,6 +7843,12 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             throw "induction head certificate failed internal consistency checks"
         | _, _, _ => throw "induction head certificate failed internal consistency checks"
       if needUpdate1 || needUpdate2 then
+        let tAttn0? ←
+          if timing then
+            let t0 ← ExceptT.lift IO.monoNanosNow
+            pure (some t0)
+          else
+            pure none
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         if shareUpdate then
           residuals1 ← applyAttn residuals1 useTight1 attnRowsShared? attnUnionShared? attnBias
@@ -7639,6 +7860,16 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             residuals2 ← applyAttn residuals2 useTight2 attnRows2? attnUnion2? attnBias
         if needUpdateV && !shareUpdateV && !skipAttnV then
           residualsV ← applyAttn residualsV useTightV attnRowsV? attnUnionV? attnBias
+        if let some t0 := tAttn0? then
+          let t1 ← ExceptT.lift IO.monoNanosNow
+          let dtMs := (t1 - t0) / 1000000
+          ExceptT.lift <| IO.eprintln s!"timing:layer{l}:attn_update {dtMs}ms"
+        let tMlp0? ←
+          if timing then
+            let t0 ← ExceptT.lift IO.monoNanosNow
+            pure (some t0)
+          else
+            pure none
         let wIn ←
           ExceptT.mk <| readScaledFloatArray h (hdr.modelDim * hdr.hiddenDim) scalePow10
         let bIn ← ExceptT.mk (readVecIntervalsBinary h hdr.hiddenDim slack scalePow10)
@@ -7668,6 +7899,10 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             residualsSameV := true
           else
             residualsSameV := false
+        if let some t0 := tMlp0? then
+          let t1 ← ExceptT.lift IO.monoNanosNow
+          let dtMs := (t1 - t0) / 1000000
+          ExceptT.lift <| IO.eprintln s!"timing:layer{l}:mlp_update {dtMs}ms"
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
         let _ ← ExceptT.mk (skipF64Array h hdr.modelDim)
