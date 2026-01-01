@@ -34,7 +34,8 @@ def readBinaryHeader (h : IO.FS.Handle) : IO (Except String Nfp.Sound.BinaryHead
         line? ← readLine? h
   return Nfp.Sound.parseBinaryHeaderLines magicLine lines
 
-private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
+/-- Read exactly `n` bytes or throw on EOF. -/
+def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
   if n = 0 then
     return ByteArray.empty
   let mut remaining := n
@@ -47,6 +48,13 @@ private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
       out := out.push b
     remaining := remaining - chunk.size
   return ByteArray.mk out
+
+@[inline] private def readExactlyExcept (h : IO.FS.Handle) (n : Nat) :
+    IO (Except String ByteArray) := do
+  try
+    return .ok (← readExactly h n)
+  catch
+    | _ => return .error "unexpected EOF"
 
 def skipBytes (h : IO.FS.Handle) (n : Nat) : IO (Except String Unit) := do
   let mut remaining := n
@@ -68,11 +76,7 @@ def readVectorMaxAbsScaled (h : IO.FS.Handle) (n scalePow10 : Nat) :
     IO (Except String Int) := do
   if n = 0 then
     return .ok 0
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h (n * 8)))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h (n * 8)
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>
@@ -83,11 +87,7 @@ def readMatrixNormInfScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :
   if rows = 0 || cols = 0 then
     return .ok 0
   let count := rows * cols
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h (count * 8)))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h (count * 8)
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>
@@ -97,22 +97,14 @@ def readScaledFloatArray (h : IO.FS.Handle) (count scalePow10 : Nat) :
     IO (Except String (Array Int)) := do
   if count = 0 then
     return .ok #[]
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h (count * 8)))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h (count * 8)
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>
       return Nfp.Sound.scaledFloatArrayFromBytes bytes count scalePow10
 
 def readScaledFloat (h : IO.FS.Handle) (scalePow10 : Nat) : IO (Except String Int) := do
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h 8))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h 8
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>
@@ -122,11 +114,7 @@ def readI32Array (h : IO.FS.Handle) (count : Nat) :
     IO (Except String (Array Int)) := do
   if count = 0 then
     return .ok #[]
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h (count * 4)))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h (count * 4)
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>
@@ -137,11 +125,7 @@ def readMatrixNormOneInfScaled (h : IO.FS.Handle) (rows cols scalePow10 : Nat) :
   if rows = 0 || cols = 0 then
     return .ok (0, 0)
   let count := rows * cols
-  let bytesE : Except String ByteArray ←
-    try
-      pure (Except.ok (← readExactly h (count * 8)))
-    catch
-      | _ => pure (Except.error "unexpected EOF")
+  let bytesE ← readExactlyExcept h (count * 8)
   match bytesE with
   | .error e => return .error e
   | .ok bytes =>

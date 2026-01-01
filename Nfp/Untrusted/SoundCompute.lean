@@ -539,19 +539,19 @@ instead of calling `parseRat`.
 
 private def countWsTokens (s : String) : Nat :=
   Id.run do
-    let bytes := s.toUTF8
-    let mut i : Nat := 0
+    let mut p : String.Pos.Raw := 0
+    let stop := s.rawEndPos
     let mut inTok : Bool := false
     let mut cnt : Nat := 0
-    while i < bytes.size do
-      let b := bytes[i]!
-      let isWs : Bool := b = 32 || b = 9  -- ' ' or '\t'
+    while p < stop do
+      let c := p.get s
+      let isWs : Bool := c = ' ' || c = '\t' || c = '\n' || c = '\r'
       if isWs then
         inTok := false
       else if !inTok then
         inTok := true
         cnt := cnt + 1
-      i := i + 1
+      p := p.next s
     return cnt
 
 private def consumeTokensSkipFast
@@ -562,16 +562,15 @@ private def consumeTokensSkipFast
     while remaining > 0 do
       if iLine ≥ lines.size then
         return .error "unexpected end of file while skipping tokens"
-      let line := lines[iLine]!.trim
+      let line := lines[iLine]!
       iLine := iLine + 1
-      if line.isEmpty then
+      let c := countWsTokens line
+      if c = 0 then
         pure ()
+      else if c ≥ remaining then
+        remaining := 0
       else
-        let c := countWsTokens line
-        if c ≥ remaining then
-          remaining := 0
-        else
-          remaining := remaining - c
+        remaining := remaining - c
     return .ok iLine
 
 private def consumeMatrixSkip

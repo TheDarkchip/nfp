@@ -12,20 +12,6 @@ namespace Nfp.Untrusted.SoundCacheIO
 
 IO wrappers for the SOUND cache format. Pure parsing/encoding lives in `Nfp.Sound.CachePure`.
 -/
-private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
-  if n = 0 then
-    return ByteArray.empty
-  let mut remaining := n
-  let mut out : Array UInt8 := Array.mkEmpty n
-  while remaining > 0 do
-    let chunk ← h.read (USize.ofNat remaining)
-    if chunk.isEmpty then
-      throw (IO.userError "unexpected EOF")
-    for b in chunk.data do
-      out := out.push b
-    remaining := remaining - chunk.size
-  return ByteArray.mk out
-
 private def appendI32LE (buf : Array UInt8) (x : Int) : Array UInt8 :=
   Id.run do
     let ux : UInt32 := UInt32.ofInt x
@@ -62,7 +48,7 @@ def writeHeader (h : IO.FS.Handle) (hdr : Nfp.Sound.SoundCache.Header) : IO Unit
   h.write (Nfp.Sound.SoundCache.encodeHeader hdr)
 
 def readHeader (h : IO.FS.Handle) : IO Nfp.Sound.SoundCache.Header := do
-  let bytes ← readExactly h Nfp.Sound.SoundCache.headerBytes
+  let bytes ← Nfp.Untrusted.SoundBinary.readExactly h Nfp.Sound.SoundCache.headerBytes
   match Nfp.Sound.SoundCache.decodeHeader bytes with
   | .ok hdr => return hdr
   | .error e => throw (IO.userError e)

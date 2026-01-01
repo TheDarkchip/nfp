@@ -198,15 +198,15 @@ def loadBinary (h : IO.FS.Handle) : IO LoadResult := do
 
     IO.println s!"[3/5] Loading {numLayers} layers with {numHeads} heads each..."
 
-    let mut layers : Array (Array ConcreteAttentionLayer) := #[]
-    let mut attnProjBias : Array ConcreteMatrix := #[]
-    let mut mlps : Array ConcreteMLPLayer := #[]
-    let mut ln1 : Array ConcreteLayerNormParams := #[]
-    let mut ln2 : Array ConcreteLayerNormParams := #[]
+    let mut layers : Array (Array ConcreteAttentionLayer) := Array.mkEmpty numLayers
+    let mut attnProjBias : Array ConcreteMatrix := Array.mkEmpty numLayers
+    let mut mlps : Array ConcreteMLPLayer := Array.mkEmpty numLayers
+    let mut ln1 : Array ConcreteLayerNormParams := Array.mkEmpty numLayers
+    let mut ln2 : Array ConcreteLayerNormParams := Array.mkEmpty numLayers
 
     for l in [:numLayers] do
       IO.println s!"  Loading layer {l}/{numLayers}..."
-      let mut layerHeads : Array ConcreteAttentionLayer := #[]
+      let mut layerHeads : Array ConcreteAttentionLayer := Array.mkEmpty numHeads
       for _h in [:numHeads] do
         let wq ← readFloatArray h (modelDim * headDim)
         let bq ← readFloatArray h headDim

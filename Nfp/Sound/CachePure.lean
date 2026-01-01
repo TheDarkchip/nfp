@@ -193,19 +193,19 @@ private def skipBlankLines (lines : Array String) (start : Nat) : Nat :=
 
 private def countWsTokens (s : String) : Nat :=
   Id.run do
-    let bytes := s.toUTF8
-    let mut i : Nat := 0
+    let mut p : String.Pos.Raw := 0
+    let stop := s.rawEndPos
     let mut inTok : Bool := false
     let mut cnt : Nat := 0
-    while i < bytes.size do
-      let b := bytes[i]!
-      let isWs : Bool := b = 32 || b = 9 || b = 10 || b = 13
+    while p < stop do
+      let c := p.get s
+      let isWs : Bool := c = ' ' || c = '\t' || c = '\n' || c = '\r'
       if isWs then
         inTok := false
       else if !inTok then
         inTok := true
         cnt := cnt + 1
-      i := i + 1
+      p := p.next s
     return cnt
 
 private def skipTokensFast (lines : Array String) (start : Nat) (numTokens : Nat) :
