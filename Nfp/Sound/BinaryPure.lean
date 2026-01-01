@@ -27,11 +27,10 @@ structure BinaryHeader where
   deriving Repr
 
 private def readHeaderNat (k v : String) : Option Nat :=
-  if k = "num_layers" || k = "num_heads" || k = "model_dim" ||
-      k = "head_dim" || k = "hidden_dim" || k = "vocab_size" || k = "seq_len" then
-    v.toNat?
-  else
-    none
+  match k with
+  | "num_layers" | "num_heads" | "model_dim"
+  | "head_dim" | "hidden_dim" | "vocab_size" | "seq_len" => v.toNat?
+  | _ => none
 
 def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
     Except String BinaryHeader := do
@@ -126,14 +125,16 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
   let b3 := (b.get! (off + 3)).toUInt32
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
 
+private def twoPow32 : Int := Int.ofNat (Nat.pow 2 32)
+
 @[inline] private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
   let u := u32FromLE b off
   if u ≤ 0x7fffffff then
     Int.ofNat u.toNat
   else
-    Int.ofNat u.toNat - (Int.ofNat (Nat.pow 2 32))
+    Int.ofNat u.toNat - twoPow32
 
-private def pow2Nat (k : Nat) : Nat := Nat.pow 2 k
+@[inline] private def pow2Nat (k : Nat) : Nat := Nat.pow 2 k
 
 private def ceilDivNat (a : Int) (d : Nat) : Int :=
   let di : Int := Int.ofNat d
@@ -452,6 +453,7 @@ theorem parseBinaryHeaderLines_spec_binary_pure :
 theorem u64FromLE_spec_binary_pure : u64FromLE = u64FromLE := rfl
 theorem u32FromLE_spec_binary_pure : u32FromLE = u32FromLE := rfl
 theorem i32FromLE_spec_binary_pure : i32FromLE = i32FromLE := rfl
+theorem twoPow32_spec_binary_pure : twoPow32 = twoPow32 := rfl
 theorem pow2Nat_spec_binary_pure : pow2Nat = pow2Nat := rfl
 theorem ceilDivNat_spec_binary_pure : ceilDivNat = ceilDivNat := rfl
 theorem scaleIntOfPow10_spec_binary_pure : scaleIntOfPow10 = scaleIntOfPow10 := rfl

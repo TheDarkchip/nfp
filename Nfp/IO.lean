@@ -71,15 +71,15 @@ private def readLine? (h : IO.FS.Handle) : IO (Option String) := do
 private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
   if n = 0 then
     return ByteArray.empty
-  let mut remaining := n
-  let mut out : Array UInt8 := Array.mkEmpty n
-  while remaining > 0 do
-    let chunk ← h.read (USize.ofNat remaining)
+  let mut out : Array UInt8 := Array.replicate n 0
+  let mut off : Nat := 0
+  while off < n do
+    let chunk ← h.read (USize.ofNat (n - off))
     if chunk.isEmpty then
       throw (IO.userError "unexpected EOF")
     for b in chunk.data do
-      out := out.push b
-    remaining := remaining - chunk.size
+      out := out.set! off b
+      off := off + 1
   return ByteArray.mk out
 
 @[inline] private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
@@ -101,14 +101,15 @@ private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24) |||
     (b4 <<< 32) ||| (b5 <<< 40) ||| (b6 <<< 48) ||| (b7 <<< 56)
 
-private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
+private def twoPow32 : Int := Int.ofNat (Nat.pow 2 32)
+
+@[inline] private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
   let u := u32FromLE b off
   let half : UInt32 := 0x80000000
   if u < half then
     Int.ofNat u.toNat
   else
-    let two32 : Int := Int.ofNat (Nat.pow 2 32)
-    (Int.ofNat u.toNat) - two32
+    (Int.ofNat u.toNat) - twoPow32
 
 @[inline] private def floatFromLE (b : ByteArray) (off : Nat) : Float :=
   Float.ofBits (u64FromLE b off)

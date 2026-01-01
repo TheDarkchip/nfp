@@ -13,13 +13,28 @@ Pure parsing utilities for extracting trusted metadata from `NFP_TEXT` model hea
 -/
 
 /-- Parse `key=value` header lines. -/
-def parseHeaderLine (line : String) : Option (String × String) :=
+def parseHeaderLine (line : String) : Option (String × String) := Id.run do
   let line := line.trim
-  if line.isEmpty then none
-  else
-    match line.splitOn "=" with
-    | [k, v] => some (k.trim, v.trim)
-    | _ => none
+  if line.isEmpty then
+    return none
+  -- Scan once to avoid `splitOn` allocations; require exactly one '='.
+  let s := line
+  let stop := s.rawEndPos
+  let mut eqPos : Option String.Pos.Raw := none
+  let mut eqCount : Nat := 0
+  let mut p : String.Pos.Raw := 0
+  while p < stop do
+    if p.get s = '=' then
+      eqCount := eqCount + 1
+      if eqCount = 1 then
+        eqPos := some p
+    p := p.next s
+  if eqCount ≠ 1 then
+    return none
+  let some eq := eqPos | return none
+  let k := String.Pos.Raw.extract s 0 eq
+  let v := String.Pos.Raw.extract s (eq.next s) stop
+  return some (k.trim, v.trim)
 
 /-- Split a string on `\n`, preserving empty lines. -/
 def splitLines (s : String) : Array String :=

@@ -64,14 +64,14 @@ private def appendI32LE (buf : Array UInt8) (x : Int) : Array UInt8 :=
     out := out.push ((ux >>> 24) &&& 0xFF).toUInt8
     return out
 
-private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
+@[inline] private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
   let b0 := (b.get! off).toUInt32
   let b1 := (b.get! (off + 1)).toUInt32
   let b2 := (b.get! (off + 2)).toUInt32
   let b3 := (b.get! (off + 3)).toUInt32
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
 
-private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
+@[inline] private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   let b0 := (b.get! off).toUInt64
   let b1 := (b.get! (off + 1)).toUInt64
   let b2 := (b.get! (off + 2)).toUInt64
@@ -83,14 +83,15 @@ private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24) |||
     (b4 <<< 32) ||| (b5 <<< 40) ||| (b6 <<< 48) ||| (b7 <<< 56)
 
-def i32FromLE (b : ByteArray) (off : Nat) : Int :=
+private def twoPow32 : Int := Int.ofNat (Nat.pow 2 32)
+
+@[inline] def i32FromLE (b : ByteArray) (off : Nat) : Int :=
   let u := u32FromLE b off
   let half : UInt32 := 0x80000000
   if u < half then
     Int.ofNat u.toNat
   else
-    let two32 : Int := Int.ofNat (Nat.pow 2 32)
-    (Int.ofNat u.toNat) - two32
+    (Int.ofNat u.toNat) - twoPow32
 
 def encodeHeader (hdr : Header) : ByteArray :=
   magic
@@ -961,6 +962,7 @@ theorem appendI32LE_spec_cache_pure : appendI32LE = appendI32LE := rfl
 theorem u32FromLE_spec_cache_pure : u32FromLE = u32FromLE := rfl
 theorem u64FromLE_spec_cache_pure : u64FromLE = u64FromLE := rfl
 theorem i32FromLE_spec_cache_pure : i32FromLE = i32FromLE := rfl
+theorem twoPow32_spec_cache_pure : twoPow32 = twoPow32 := rfl
 theorem encodeHeader_spec_cache_pure : encodeHeader = encodeHeader := rfl
 theorem headerBytes_spec_cache_pure : headerBytes = headerBytes := rfl
 theorem decodeHeader_spec_cache_pure : decodeHeader = decodeHeader := rfl

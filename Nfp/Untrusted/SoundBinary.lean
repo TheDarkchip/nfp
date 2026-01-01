@@ -38,15 +38,15 @@ def readBinaryHeader (h : IO.FS.Handle) : IO (Except String Nfp.Sound.BinaryHead
 def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
   if n = 0 then
     return ByteArray.empty
-  let mut remaining := n
-  let mut out : Array UInt8 := Array.mkEmpty n
-  while remaining > 0 do
-    let chunk ← h.read (USize.ofNat remaining)
+  let mut out : Array UInt8 := Array.replicate n 0
+  let mut off : Nat := 0
+  while off < n do
+    let chunk ← h.read (USize.ofNat (n - off))
     if chunk.isEmpty then
       throw (IO.userError "unexpected EOF")
     for b in chunk.data do
-      out := out.push b
-    remaining := remaining - chunk.size
+      out := out.set! off b
+      off := off + 1
   return ByteArray.mk out
 
 @[inline] private def readExactlyExcept (h : IO.FS.Handle) (n : Nat) :
