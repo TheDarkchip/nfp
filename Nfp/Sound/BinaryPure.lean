@@ -107,7 +107,7 @@ def parseBinaryHeaderLines (magicLine : String) (lines : Array String) :
     geluDerivTarget := geluVal
   }
 
-private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
+@[inline] private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   let b0 := (b.get! off).toUInt64
   let b1 := (b.get! (off + 1)).toUInt64
   let b2 := (b.get! (off + 2)).toUInt64
@@ -119,14 +119,14 @@ private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24) |||
     (b4 <<< 32) ||| (b5 <<< 40) ||| (b6 <<< 48) ||| (b7 <<< 56)
 
-private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
+@[inline] private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
   let b0 := (b.get! off).toUInt32
   let b1 := (b.get! (off + 1)).toUInt32
   let b2 := (b.get! (off + 2)).toUInt32
   let b3 := (b.get! (off + 3)).toUInt32
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
 
-private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
+@[inline] private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
   let u := u32FromLE b off
   if u ≤ 0x7fffffff then
     Int.ofNat u.toNat
@@ -139,7 +139,7 @@ private def ceilDivNat (a : Int) (d : Nat) : Int :=
   let di : Int := Int.ofNat d
   let q := a.ediv di
   let r := a.emod di
-    if r = 0 then q else q + 1
+  if r = 0 then q else q + 1
 
 private def scaleIntOfPow10 (scalePow10 : Nat) : Int :=
   Int.ofNat (Nat.pow 10 scalePow10)
@@ -197,13 +197,15 @@ def vectorMaxAbsScaledFromBytes (bytes : ByteArray) (n scalePow10 : Nat) :
   let scaleInt := scaleIntOfPow10 scalePow10
   let mut maxAbs : Int := 0
   let mut i : Nat := 0
+  let mut off : Nat := 0
   while i < n do
-    let bits := u64FromLE bytes (i * 8)
+    let bits := u64FromLE bytes off
     match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
         if absScaled > maxAbs then
           maxAbs := absScaled
+    off := off + 8
     i := i + 1
   return maxAbs
 
@@ -219,8 +221,9 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
   let mut curRowSum : Int := 0
   let mut colIdx : Nat := 0
   let mut i : Nat := 0
+  let mut off : Nat := 0
   while i < count do
-    let bits := u64FromLE bytes (i * 8)
+    let bits := u64FromLE bytes off
     match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
@@ -232,6 +235,7 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
           colIdx := 0
         else
           colIdx := colIdx + 1
+    off := off + 8
     i := i + 1
   return maxRowSum
 
@@ -254,32 +258,40 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
       tasks := tasks.push <|
         Task.spawn (fun _ =>
           Id.run do
-            let mut outChunk : Array Int := Array.mkEmpty (stop - start)
+            let mut outChunk : Array Int := Array.replicate (stop - start) 0
             let mut i := start
+            let mut off := start * 8
+            let mut outIdx : Nat := 0
             while i < stop do
-              let bits := u64FromLE bytes (i * 8)
+              let bits := u64FromLE bytes off
               match floatScaledCeilSignedCore scaleInt bits with
               | .error e => return .error e
-              | .ok v => outChunk := outChunk.push v
+              | .ok v => outChunk := outChunk.set! outIdx v
+              off := off + 8
               i := i + 1
+              outIdx := outIdx + 1
             return .ok outChunk)
       chunkIdx := chunkIdx + 1
-    let mut out : Array Int := Array.mkEmpty count
+    let mut out : Array Int := Array.replicate count 0
+    let mut outIdx : Nat := 0
     for t in tasks do
       match t.get with
       | .error e => throw e
       | .ok chunk =>
           for v in chunk do
-            out := out.push v
+            out := out.set! outIdx v
+            outIdx := outIdx + 1
     return out
   else
-    let mut out : Array Int := Array.mkEmpty count
+    let mut out : Array Int := Array.replicate count 0
     let mut i : Nat := 0
+    let mut off : Nat := 0
     while i < count do
-      let bits := u64FromLE bytes (i * 8)
+      let bits := u64FromLE bytes off
       match floatScaledCeilSignedCore scaleInt bits with
       | .error e => throw e
-      | .ok v => out := out.push v
+      | .ok v => out := out.set! i v
+      off := off + 8
       i := i + 1
     return out
 
@@ -298,11 +310,13 @@ def i32ArrayFromBytes (bytes : ByteArray) (count : Nat) :
     return #[]
   if bytes.size < count * 4 then
     throw "unexpected EOF"
-  let mut out : Array Int := Array.mkEmpty count
+  let mut out : Array Int := Array.replicate count 0
   let mut i : Nat := 0
+  let mut off : Nat := 0
   while i < count do
-    let v := i32FromLE bytes (i * 4)
-    out := out.push v
+    let v := i32FromLE bytes off
+    out := out.set! i v
+    off := off + 4
     i := i + 1
   return out
 
@@ -319,8 +333,9 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
   let mut colSums : Array Nat := Array.replicate cols 0
   let mut colIdx : Nat := 0
   let mut i : Nat := 0
+  let mut off : Nat := 0
   while i < count do
-    let bits := u64FromLE bytes (i * 8)
+    let bits := u64FromLE bytes off
     match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
@@ -334,6 +349,7 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
           colIdx := 0
         else
           colIdx := colIdx + 1
+    off := off + 8
     i := i + 1
   let mut maxColSum : Nat := 0
   for c in colSums do

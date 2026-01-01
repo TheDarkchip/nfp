@@ -82,14 +82,14 @@ private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
     remaining := remaining - chunk.size
   return ByteArray.mk out
 
-private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
+@[inline] private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
   let b0 := (b[off]!).toUInt32
   let b1 := (b[off + 1]!).toUInt32
   let b2 := (b[off + 2]!).toUInt32
   let b3 := (b[off + 3]!).toUInt32
   b0 ||| (b1 <<< 8) ||| (b2 <<< 16) ||| (b3 <<< 24)
 
-private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
+@[inline] private def u64FromLE (b : ByteArray) (off : Nat) : UInt64 :=
   let b0 := (b[off]!).toUInt64
   let b1 := (b[off + 1]!).toUInt64
   let b2 := (b[off + 2]!).toUInt64
@@ -110,27 +110,36 @@ private def i32FromLE (b : ByteArray) (off : Nat) : Int :=
     let two32 : Int := Int.ofNat (Nat.pow 2 32)
     (Int.ofNat u.toNat) - two32
 
-private def floatFromLE (b : ByteArray) (off : Nat) : Float :=
+@[inline] private def floatFromLE (b : ByteArray) (off : Nat) : Float :=
   Float.ofBits (u64FromLE b off)
 
 private def readFloatArray (h : IO.FS.Handle) (count : Nat) : IO FloatArray := do
   if count = 0 then
     return FloatArray.empty
   let bytes ← readExactly h (count * 8)
-  let data := Array.ofFn (fun i : Fin count =>
-    floatFromLE bytes (i.val * 8))
+  let mut data : Array Float := Array.replicate count 0.0
+  let mut i : Nat := 0
+  let mut off : Nat := 0
+  while i < count do
+    data := data.set! i (floatFromLE bytes off)
+    off := off + 8
+    i := i + 1
   return .mk data
 
 private def readI32Array (h : IO.FS.Handle) (count : Nat) : IO (Array Nat) := do
   if count = 0 then
     return #[]
   let bytes ← readExactly h (count * 4)
-  let mut out : Array Nat := Array.mkEmpty count
-  for i in [:count] do
-    let v := i32FromLE bytes (i * 4)
+  let mut out : Array Nat := Array.replicate count 0
+  let mut i : Nat := 0
+  let mut off : Nat := 0
+  while i < count do
+    let v := i32FromLE bytes off
     if v < 0 then
       throw (IO.userError s!"Negative token id at index {i}")
-    out := out.push v.toNat
+    out := out.set! i v.toNat
+    off := off + 4
+    i := i + 1
   return out
 
 /-- Load a model from the `.nfpt` binary format (NFP_BINARY_V1). -/
