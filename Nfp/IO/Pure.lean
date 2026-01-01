@@ -348,20 +348,10 @@ def findToken (t : Tokenizer) (word : String) : Nat :=
   t.tokMap.getD word t.unkId
 
 /-- Tokenize a string using simple whitespace splitting. -/
-def tokenize (t : Tokenizer) (text : String) : Array Nat := Id.run do
-  let mut ids : Array Nat := #[]
-  let mut p : String.Pos.Raw := 0
-  let stop := text.rawEndPos
-  while p < stop do
-    while p < stop && p.get text = ' ' do
-      p := p.next text
-    let start := p
-    while p < stop && p.get text ≠ ' ' do
-      p := p.next text
-    if start < p then
-      let word := String.Pos.Raw.extract text start p
-      ids := ids.push (t.findToken word)
-  ids
+def tokenize (t : Tokenizer) (text : String) : Array Nat :=
+  foldTokensFromLine text #[] fun out start stop =>
+    let word := String.Pos.Raw.extract text start stop
+    out.push (t.findToken word)
 
 /-- Decode token IDs back to text. -/
 def decode (t : Tokenizer) (ids : Array Nat) : String :=

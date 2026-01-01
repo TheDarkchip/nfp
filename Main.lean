@@ -75,9 +75,8 @@ private structure StdoutLogCtx where
 initialize stdoutLogCtxRef : IO.Ref (Option StdoutLogCtx) ← IO.mkRef none
 
 private def sanitizeFileComponent (s : String) : String :=
-  String.ofList <|
-    s.toList.map fun c =>
-      if c.isAlphanum || c = '_' || c = '-' || c = '.' then c else '_'
+  s.map fun c =>
+    if c.isAlphanum || c = '_' || c = '-' || c = '.' then c else '_'
 
 private def timestampNowForLog : IO String := do
   let dt ← Std.Time.ZonedDateTime.now
