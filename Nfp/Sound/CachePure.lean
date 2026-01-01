@@ -5,6 +5,7 @@ import Init.System.IO
 import Init.Data.ByteArray.Lemmas
 import Nfp.Sound.Decimal
 import Nfp.Sound.Fixed
+import Nfp.Sound.ModelHeader
 
 namespace Nfp.Sound
 
@@ -167,14 +168,6 @@ def fnv1a64Update (hash : UInt64) (chunk : ByteArray) : UInt64 :=
 
 def fnv1a64 (bytes : ByteArray) : UInt64 :=
   fnv1a64Update fnv1a64Init bytes
-
-private def parseHeaderLine (line : String) : Option (String × String) :=
-  let line := line.trim
-  if line.isEmpty then none
-  else
-    match line.splitOn "=" with
-    | [k, v] => some (k.trim, v.trim)
-    | _ => none
 
 private def findLineIdxFrom (lines : Array String) (start : Nat) (p : String → Bool) :
     Option Nat :=

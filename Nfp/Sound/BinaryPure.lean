@@ -3,6 +3,7 @@
 import Std
 import Nfp.Sound.Activation
 import Nfp.Sound.Decimal
+import Nfp.Sound.ModelHeader
 
 namespace Nfp.Sound
 
@@ -24,14 +25,6 @@ structure BinaryHeader where
   eps : Rat
   geluDerivTarget : GeluDerivTarget
   deriving Repr
-
-private def parseHeaderLine (line : String) : Option (String × String) :=
-  let line := line.trim
-  if line.isEmpty then none
-  else
-    match line.splitOn "=" with
-    | [k, v] => some (k.trim, v.trim)
-    | _ => none
 
 private def readHeaderNat (k v : String) : Option Nat :=
   if k = "num_layers" || k = "num_heads" || k = "model_dim" ||

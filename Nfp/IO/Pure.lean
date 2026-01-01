@@ -13,12 +13,9 @@ namespace Nfp
 
 /-! ## Float Parsing Utilities -/
 
-private def pow10PowTable : Array Float := Id.run do
+private def pow10PowTable : Array Float :=
   -- Precompute `Float.pow 10.0 k` for k=0..308 so we avoid calling `Float.pow` per token.
-  let mut out : Array Float := Array.mkEmpty 309
-  for k in [:309] do
-    out := out.push (Float.pow 10.0 k.toFloat)
-  out
+  Array.ofFn fun k : Fin 309 => Float.pow 10.0 k.val.toFloat
 
 private def pow10Pow (n : Nat) : Float :=
   if n < pow10PowTable.size then
@@ -26,25 +23,25 @@ private def pow10Pow (n : Nat) : Float :=
   else
     Float.pow 10.0 n.toFloat
 
+private def parseNatRange (s : String) (start stop : String.Pos.Raw) : Option Nat := Id.run do
+  let mut p := start
+  if p >= stop then
+    return none
+  let mut acc : Nat := 0
+  let mut saw : Bool := false
+  while p < stop do
+    let c := p.get s
+    if ('0' <= c) && (c <= '9') then
+      acc := acc * 10 + (c.toNat - '0'.toNat)
+      saw := true
+      p := p.next s
+    else
+      return none
+  if saw then some acc else none
+
 private def parseFloatRange (s : String) (start stop : String.Pos.Raw) : Option Float := Id.run do
   -- This is a faster, allocation-free version of the previous `parseFloat`, but it preserves
   -- the exact Float computation structure (Nat parsing + `Float.pow`) to keep results stable.
-
-  let parseNatRange (s : String) (start stop : String.Pos.Raw) : Option Nat := Id.run do
-    let mut p := start
-    if p >= stop then
-      return none
-    let mut acc : Nat := 0
-    let mut saw : Bool := false
-    while p < stop do
-      let c := p.get s
-      if ('0' <= c) && (c <= '9') then
-        acc := acc * 10 + (c.toNat - '0'.toNat)
-        saw := true
-        p := p.next s
-      else
-        return none
-    if saw then some acc else none
 
   let mut p := start
   if p >= stop then
@@ -160,24 +157,31 @@ def parseFloat (s : String) : Option Float := Id.run do
   else
     parseFloatRange s 0 s.rawEndPos
 
-private def appendFloatsFromLine (line : String) (acc : Array Float) : Array Float := Id.run do
-  let mut out := acc
-  let s := line
-  let mut p : String.Pos.Raw := 0
-  let endPos := s.rawEndPos
-  let isWs (c : Char) : Bool :=
-    c = ' ' || c = '\t' || c = '\n' || c = '\r'
-  while p < endPos do
-    while p < endPos && isWs (p.get s) do
-      p := p.next s
-    let start := p
-    while p < endPos && !isWs (p.get s) do
-      p := p.next s
-    if start < p then
-      match parseFloatRange s start p with
-      | some x => out := out.push x
-      | none => pure ()
-  out
+@[inline] private def isWs (c : Char) : Bool :=
+  c = ' ' || c = '\t' || c = '\n' || c = '\r'
+
+@[inline] private def foldTokensFromLine {α : Type}
+    (line : String) (init : α)
+    (step : α → String.Pos.Raw → String.Pos.Raw → α) : α :=
+  Id.run do
+    let mut out := init
+    let mut p : String.Pos.Raw := 0
+    let stop := line.rawEndPos
+    while p < stop do
+      while p < stop && isWs (p.get line) do
+        p := p.next line
+      let start := p
+      while p < stop && !isWs (p.get line) do
+        p := p.next line
+      if start < p then
+        out := step out start p
+    out
+
+private def appendFloatsFromLine (line : String) (acc : Array Float) : Array Float :=
+  foldTokensFromLine line acc fun out start stop =>
+    match parseFloatRange line start stop with
+    | some x => out.push x
+    | none => out
 
 private def parseFloatsFromLines (lines : Array String) (cap : Nat := 0) : Array Float :=
   Id.run do
@@ -195,41 +199,11 @@ def parseFloatLine (line : String) : Array Float :=
 
 /-! ## Nat Parsing Utilities -/
 
-/-- Parse a line of space-separated natural numbers. -/
-private def parseNatRange (s : String) (start stop : String.Pos.Raw) : Option Nat := Id.run do
-  let mut p := start
-  if p >= stop then
-    return none
-  let mut acc : Nat := 0
-  let mut saw : Bool := false
-  while p < stop do
-    let c := p.get s
-    if ('0' <= c) && (c <= '9') then
-      acc := acc * 10 + (c.toNat - '0'.toNat)
-      saw := true
-      p := p.next s
-    else
-      return none
-  if saw then some acc else none
-
-private def appendNatsFromLine (line : String) (acc : Array Nat) : Array Nat := Id.run do
-  let mut out := acc
-  let s := line
-  let mut p : String.Pos.Raw := 0
-  let endPos := s.rawEndPos
-  let isWs (c : Char) : Bool :=
-    c = ' ' || c = '\t' || c = '\n' || c = '\r'
-  while p < endPos do
-    while p < endPos && isWs (p.get s) do
-      p := p.next s
-    let start := p
-    while p < endPos && !isWs (p.get s) do
-      p := p.next s
-    if start < p then
-      match parseNatRange s start p with
-      | some n => out := out.push n
-      | none => pure ()
-  out
+private def appendNatsFromLine (line : String) (acc : Array Nat) : Array Nat :=
+  foldTokensFromLine line acc fun out start stop =>
+    match parseNatRange line start stop with
+    | some n => out.push n
+    | none => out
 
 def parseNatLine (line : String) : Array Nat :=
   appendNatsFromLine line #[]
