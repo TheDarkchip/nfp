@@ -224,6 +224,7 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
   let scaleInt := scaleIntOfPow10 scalePow10
   let mut maxRowSum : Int := 0
   let mut curRowSum : Int := 0
+  let mut colIdx : Nat := 0
   let mut i : Nat := 0
   while i < count do
     let bits := u64FromLE bytes (i * 8)
@@ -231,10 +232,13 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
     | .error e => throw e
     | .ok absScaled =>
         curRowSum := curRowSum + absScaled
-        if (i + 1) % cols = 0 then
+        if colIdx + 1 = cols then
           if curRowSum > maxRowSum then
             maxRowSum := curRowSum
           curRowSum := 0
+          colIdx := 0
+        else
+          colIdx := colIdx + 1
     i := i + 1
   return maxRowSum
 
@@ -320,6 +324,7 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
   let mut maxRowSum : Nat := 0
   let mut curRowSum : Nat := 0
   let mut colSums : Array Nat := Array.replicate cols 0
+  let mut colIdx : Nat := 0
   let mut i : Nat := 0
   while i < count do
     let bits := u64FromLE bytes (i * 8)
@@ -328,12 +333,14 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
     | .ok absScaled =>
         let absNat := Int.toNat absScaled
         curRowSum := curRowSum + absNat
-        let colIdx := i % cols
         colSums := colSums.set! colIdx (colSums[colIdx]! + absNat)
-        if (i + 1) % cols = 0 then
+        if colIdx + 1 = cols then
           if curRowSum > maxRowSum then
             maxRowSum := curRowSum
           curRowSum := 0
+          colIdx := 0
+        else
+          colIdx := colIdx + 1
     i := i + 1
   let mut maxColSum : Nat := 0
   for c in colSums do

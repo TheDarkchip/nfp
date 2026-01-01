@@ -151,9 +151,20 @@ def consumeMatrixNormInf
     (start : Nat)
     (rows cols : Nat) : Except String (Rat × Nat) :=
   let count := rows * cols
-  match consumeVector lines start count with
-  | .error e => .error e
-  | .ok (xs, next) => .ok (matrixNormInfOfRowMajor rows cols xs, next)
+  if count = 0 then
+    .ok (0, start)
+  else
+    let step := fun (acc : Rat × Rat × Nat) (x : Rat) =>
+      let (curRowSum, maxRowSum, colIdx) := acc
+      let curRowSum := curRowSum + ratAbs x
+      let colIdx := colIdx + 1
+      if colIdx = cols then
+        (0, max maxRowSum curRowSum, 0)
+      else
+        (curRowSum, maxRowSum, colIdx)
+    match foldRatTokens lines start count (0, 0, 0) step with
+    | .error e => .error e
+    | .ok ((_, maxRowSum, _), next) => .ok (maxRowSum, next)
 
 /-- Compute per-layer weight bounds from text model lines. -/
 def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelWeightBounds :=

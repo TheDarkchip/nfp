@@ -240,16 +240,9 @@ def parseNatLine (line : String) : Array Nat :=
    This is safe because we ensure the data has exactly the right size. -/
 def buildMatrix (rows cols : Nat) (data : Array Float) : ConcreteMatrix :=
   let expectedSize := rows * cols
-  let normalizedData : Array Float :=
-    if data.size < expectedSize then
-      data ++ (Array.replicate (expectedSize - data.size) 0.0)
-    else if data.size > expectedSize then
-      data.toSubarray 0 expectedSize |>.toArray
-    else
-      data
-  -- Use Array.ofFn to get the exact size we need with a proof.
+  -- Use Array.ofFn to get the exact size we need while padding/truncating via getD.
   let finalData := Array.ofFn fun (i : Fin expectedSize) =>
-    normalizedData.getD i.val 0.0
+    data.getD i.val 0.0
   {
     numRows := rows
     numCols := cols
