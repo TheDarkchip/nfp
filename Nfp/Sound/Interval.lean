@@ -271,17 +271,29 @@ def geluOverapproxTanh (a : RatInterval) (expEffort : Nat := defaultSoftmaxExpEf
 /-- Split-based tightening for tanh GeLU over-approximation. -/
 def geluOverapproxTanhSplit (a : RatInterval) (expEffort : Nat := defaultSoftmaxExpEffort)
     (splitDepth : Nat := 0) : RatInterval :=
-  if splitDepth = 0 then
-    geluOverapproxTanh a expEffort
-  else
-    let lo := min a.lo a.hi
-    let hi := max a.lo a.hi
-    let mid := (lo + hi) / (2 : Rat)
-    let left : RatInterval := { lo := lo, hi := mid }
-    let right : RatInterval := { lo := mid, hi := hi }
-    RatInterval.union
-      (geluOverapproxTanhSplit left expEffort (splitDepth - 1))
-      (geluOverapproxTanhSplit right expEffort (splitDepth - 1))
+  Id.run do
+    let mut stack : Array (RatInterval × Nat) := #[(a, splitDepth)]
+    let mut acc? : Option RatInterval := none
+    while stack.size > 0 do
+      let idx := stack.size - 1
+      let (cur, depth) := stack[idx]!
+      stack := stack.pop
+      if depth = 0 then
+        let leaf := geluOverapproxTanh cur expEffort
+        acc? :=
+          match acc? with
+          | none => some leaf
+          | some acc => some (union acc leaf)
+      else
+        let lo := min cur.lo cur.hi
+        let hi := max cur.lo cur.hi
+        let mid := (lo + hi) / (2 : Rat)
+        let left : RatInterval := { lo := lo, hi := mid }
+        let right : RatInterval := { lo := mid, hi := hi }
+        let depth' := depth - 1
+        stack := stack.push (left, depth')
+        stack := stack.push (right, depth')
+    return acc?.getD (geluOverapproxTanh a expEffort)
 
 /-- Upper bound on `max |gelu'(x)|` over a rational interval. -/
 def geluDerivBound (target : GeluDerivTarget) (a : RatInterval) : Rat :=

@@ -132,7 +132,9 @@ def main() -> int:
     parser.add_argument("--delta", default="0.01")
     parser.add_argument("--coord", type=int, default=0)
     parser.add_argument("--offset1", type=int, default=-1)
-    parser.add_argument("--offset2", type=int, default=-1)
+    parser.add_argument("--offset2", type=int, default=0)
+    parser.add_argument("--keyOffset1", type=int, default=0)
+    parser.add_argument("--keyOffset2", type=int, default=-1)
     parser.add_argument("--maxSeqLen", type=int, default=256)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--fast", action="store_true")
@@ -202,6 +204,10 @@ def main() -> int:
             str(args.offset1),
             "--offset2",
             str(args.offset2),
+            "--keyOffset1",
+            str(args.keyOffset1),
+            "--keyOffset2",
+            str(args.keyOffset2),
             "--delta",
             args.delta,
             "--maxSeqLen",

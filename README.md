@@ -305,14 +305,16 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01
 
 Computes a sound local attention pattern bound for a single head (binary only),
 propagating per-position intervals up to the target layer (bounded by `maxSeqLen`).
-The pattern compares logits for keys whose token matches the query’s offset token
-(e.g., `--offset -1` matches the previous token).
+The pattern compares logits for keys whose **shifted-key token** matches the
+query’s **offset token** (e.g., `--offset -1` matches the previous token, and
+`--offset 0 --keyOffset -1` matches the copy-next pattern).
 
 ```bash
 lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 0.01 --offset -1
 ```
 
 - `--offset` selects the target key position relative to the query (default: `-1` for previous token).
+- `--keyOffset` selects which key-position token is matched (default: `0` for the key token itself).
 - `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
 - `--delta` sets the local input radius; LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `--tightPattern` enables a slower but tighter pattern bound near the target layer.
@@ -337,6 +339,8 @@ lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
   token-match head.
 - `--coord` chooses the output coordinate used for the value lower bound.
 - `--offset1/--offset2` adjust the token-match offsets (default: `-1`).
+- `--keyOffset1/--keyOffset2` adjust the key-token offsets (default: `0`;
+  use `--offset2 0 --keyOffset2 -1` for copy-next induction).
 - `--target/--negative` optionally add a logit-diff lower bound using unembedding columns.
 - `--tightPattern` enables a slower but tighter pattern bound near the target layer.
 - `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).

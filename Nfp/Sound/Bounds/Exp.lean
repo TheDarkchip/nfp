@@ -14,14 +14,31 @@ open scoped BigOperators
 # Exp lower bounds (scaled Taylor + squaring)
 -/
 
-/-- Power function on `Rat` for natural exponents. -/
-private def ratPow (x : Rat) : Nat → Rat
-  | 0 => 1
-  | n + 1 => ratPow x n * x
+/-- Power function on `Rat` for natural exponents (iterative to avoid deep recursion). -/
+private def ratPow (x : Rat) (n : Nat) : Rat :=
+  Id.run do
+    let mut acc : Rat := 1
+    let mut base : Rat := x
+    let mut exp : Nat := n
+    while exp > 0 do
+      if exp % 2 = 1 then
+        acc := acc * base
+      base := base * base
+      exp := exp / 2
+    return acc
 
 theorem ratPow_def (x : Rat) (n : Nat) :
-    ratPow x n = match n with | 0 => 1 | n + 1 => ratPow x n * x := by
-  cases n <;> rfl
+    ratPow x n =
+      Id.run do
+        let mut acc : Rat := 1
+        let mut base : Rat := x
+        let mut exp : Nat := n
+        while exp > 0 do
+          if exp % 2 = 1 then
+            acc := acc * base
+          base := base * base
+          exp := exp / 2
+        return acc := rfl
 
 /-- Factorial as a rational. -/
 private def ratFactorial (n : Nat) : Rat := (Nat.factorial n : Nat)
@@ -30,11 +47,29 @@ theorem ratFactorial_def (n : Nat) : ratFactorial n = (Nat.factorial n : Nat) :=
 
 /-- Taylor partial sum for `exp` (all terms are nonnegative when `x ≥ 0`). -/
 private def expTaylorLowerBound (x : Rat) (deg : Nat) : Rat :=
-  Finset.sum (Finset.range (deg + 1)) fun k => ratPow x k / ratFactorial k
+  Id.run do
+    let mut term : Rat := 1
+    let mut sum : Rat := 1
+    let mut k : Nat := 1
+    while k ≤ deg do
+      let kRat : Rat := (k : Nat)
+      term := term * x / kRat
+      sum := sum + term
+      k := k + 1
+    return sum
 
 theorem expTaylorLowerBound_def (x : Rat) (deg : Nat) :
     expTaylorLowerBound x deg =
-      Finset.sum (Finset.range (deg + 1)) fun k => ratPow x k / ratFactorial k := rfl
+      Id.run do
+        let mut term : Rat := 1
+        let mut sum : Rat := 1
+        let mut k : Nat := 1
+        while k ≤ deg do
+          let kRat : Rat := (k : Nat)
+          term := term * x / kRat
+          sum := sum + term
+          k := k + 1
+        return sum := rfl
 
 /-- Lower bound on `exp` via scaled Taylor partial sums and repeated squaring. -/
 def expLBScaledTaylor (x : Rat) (deg scalePow : Nat) : Rat :=

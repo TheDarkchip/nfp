@@ -100,6 +100,8 @@ structure HeadPatternCert where
   headIdx : Nat
   seqLen : Nat
   targetOffset : Int
+  /-- Key-position offset used for token matching. -/
+  keyOffset : Int
   targetCountLowerBound : Nat
   targetLogitLowerBound : Rat
   otherLogitUpperBound : Rat
@@ -217,6 +219,8 @@ structure HeadBestMatchPatternCert where
   seqLen : Nat
   queryPos : Nat
   targetOffset : Int
+  /-- Key-position offset used for token matching. -/
+  keyOffset : Int
   targetToken : Int
   bestMatchLogitLowerBound : Rat
   bestNonmatchLogitUpperBound : Rat
@@ -404,6 +408,7 @@ namespace HeadPatternCert
 def toTokenMatchPattern (c : HeadPatternCert) : Nfp.TokenMatchPattern := {
   seqLen := c.seqLen
   targetOffset := c.targetOffset
+  keyOffset := c.keyOffset
   targetCountLowerBound := c.targetCountLowerBound
   softmaxExpEffort := c.softmaxExpEffort
   targetWeightLowerBound := c.targetWeightLowerBound
@@ -417,10 +422,20 @@ theorem toTokenMatchPattern_valid (c : HeadPatternCert) (h : c.Valid) :
 
 def toInductionPatternWitness
     (c : HeadPatternCert) (h : c.Valid) (hm : c.marginLowerBound > 0)
-    (hcount : 0 < c.targetCountLowerBound) (hoff : c.targetOffset = -1) :
+    (hcount : 0 < c.targetCountLowerBound) (hoff : c.targetOffset = -1)
+    (hkey : c.keyOffset = 0) :
     Nfp.InductionPatternWitness :=
   Nfp.TokenMatchPattern.toInductionPatternWitness
-    (toTokenMatchPattern c) (toTokenMatchPattern_valid c h) hm hcount hoff
+    (toTokenMatchPattern c) (toTokenMatchPattern_valid c h) hm hcount hoff hkey
+
+/-- Build a copy-next witness from a head pattern certificate. -/
+def toCopyNextPatternWitness
+    (c : HeadPatternCert) (h : c.Valid) (hm : c.marginLowerBound > 0)
+    (hcount : 0 < c.targetCountLowerBound) (hoff : c.targetOffset = 0)
+    (hkey : c.keyOffset = -1) :
+    Nfp.CopyNextPatternWitness :=
+  Nfp.TokenMatchPattern.toCopyNextPatternWitness
+    (toTokenMatchPattern c) (toTokenMatchPattern_valid c h) hm hcount hoff hkey
 
 end HeadPatternCert
 
@@ -669,6 +684,8 @@ theorem HeadPatternCert.toTokenMatchPattern_spec :
     HeadPatternCert.toTokenMatchPattern = HeadPatternCert.toTokenMatchPattern := rfl
 theorem HeadPatternCert.toInductionPatternWitness_spec :
     HeadPatternCert.toInductionPatternWitness = HeadPatternCert.toInductionPatternWitness := rfl
+theorem HeadPatternCert.toCopyNextPatternWitness_spec :
+    HeadPatternCert.toCopyNextPatternWitness = HeadPatternCert.toCopyNextPatternWitness := rfl
 theorem HeadValueLowerBoundCert.Valid_spec :
     HeadValueLowerBoundCert.Valid = HeadValueLowerBoundCert.Valid := rfl
 theorem HeadValueLowerBoundCert.check_spec :

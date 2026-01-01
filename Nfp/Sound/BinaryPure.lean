@@ -194,13 +194,15 @@ def vectorMaxAbsScaledFromBytes (bytes : ByteArray) (n scalePow10 : Nat) :
   if bytes.size < n * 8 then
     throw "unexpected EOF"
   let mut maxAbs : Int := 0
-  for i in [:n] do
+  let mut i : Nat := 0
+  while i < n do
     let bits := u64FromLE bytes (i * 8)
     match floatAbsCeilScaled scalePow10 bits with
     | .error e => throw e
     | .ok absScaled =>
         if absScaled > maxAbs then
           maxAbs := absScaled
+    i := i + 1
   return maxAbs
 
 def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat) :
@@ -212,7 +214,8 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
     throw "unexpected EOF"
   let mut maxRowSum : Int := 0
   let mut curRowSum : Int := 0
-  for i in [:count] do
+  let mut i : Nat := 0
+  while i < count do
     let bits := u64FromLE bytes (i * 8)
     match floatAbsCeilScaled scalePow10 bits with
     | .error e => throw e
@@ -222,6 +225,7 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
           if curRowSum > maxRowSum then
             maxRowSum := curRowSum
           curRowSum := 0
+    i := i + 1
   return maxRowSum
 
 def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
@@ -230,13 +234,46 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
     return #[]
   if bytes.size < count * 8 then
     throw "unexpected EOF"
-  let mut out : Array Int := Array.mkEmpty count
-  for i in [:count] do
-    let bits := u64FromLE bytes (i * 8)
-    match floatScaledCeilSigned scalePow10 bits with
-    | .error e => throw e
-    | .ok v => out := out.push v
-  return out
+  let useTasks := count > 16384
+  if useTasks then
+    let chunkSize : Nat := 8192
+    let numChunks : Nat := (count + chunkSize - 1) / chunkSize
+    let mut tasks : Array (Task (Except String (Array Int))) := Array.mkEmpty numChunks
+    let mut chunkIdx : Nat := 0
+    while chunkIdx < numChunks do
+      let start := chunkIdx * chunkSize
+      let stop := min count (start + chunkSize)
+      tasks := tasks.push <|
+        Task.spawn (fun _ =>
+          Id.run do
+            let mut outChunk : Array Int := Array.mkEmpty (stop - start)
+            let mut i := start
+            while i < stop do
+              let bits := u64FromLE bytes (i * 8)
+              match floatScaledCeilSigned scalePow10 bits with
+              | .error e => return .error e
+              | .ok v => outChunk := outChunk.push v
+              i := i + 1
+            return .ok outChunk)
+      chunkIdx := chunkIdx + 1
+    let mut out : Array Int := Array.mkEmpty count
+    for t in tasks do
+      match t.get with
+      | .error e => throw e
+      | .ok chunk =>
+          for v in chunk do
+            out := out.push v
+    return out
+  else
+    let mut out : Array Int := Array.mkEmpty count
+    let mut i : Nat := 0
+    while i < count do
+      let bits := u64FromLE bytes (i * 8)
+      match floatScaledCeilSigned scalePow10 bits with
+      | .error e => throw e
+      | .ok v => out := out.push v
+      i := i + 1
+    return out
 
 def scaledFloatFromBytes (bytes : ByteArray) (scalePow10 : Nat) :
     Except String Int := do
@@ -254,9 +291,11 @@ def i32ArrayFromBytes (bytes : ByteArray) (count : Nat) :
   if bytes.size < count * 4 then
     throw "unexpected EOF"
   let mut out : Array Int := Array.mkEmpty count
-  for i in [:count] do
+  let mut i : Nat := 0
+  while i < count do
     let v := i32FromLE bytes (i * 4)
     out := out.push v
+    i := i + 1
   return out
 
 def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat) :
@@ -269,7 +308,8 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
   let mut maxRowSum : Nat := 0
   let mut curRowSum : Nat := 0
   let mut colSums : Array Nat := Array.replicate cols 0
-  for i in [:count] do
+  let mut i : Nat := 0
+  while i < count do
     let bits := u64FromLE bytes (i * 8)
     match floatAbsCeilScaled scalePow10 bits with
     | .error e => throw e
@@ -282,6 +322,7 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
           if curRowSum > maxRowSum then
             maxRowSum := curRowSum
           curRowSum := 0
+    i := i + 1
   let mut maxColSum : Nat := 0
   for c in colSums do
     if c > maxColSum then

@@ -48,7 +48,8 @@ lake exe nfp head_pattern model.nfpt --layer 0 --head 0 --delta 1/100 --offset -
 
 # Sound induction head certificate (binary only)
 lake exe nfp induction_cert model.nfpt --layer1 0 --head1 0 --layer2 1 --head2 0 \
-  --coord 0 --delta 1/100 --offset1 -1 --offset2 -1 --target 42 --negative 17
+  --coord 0 --delta 1/100 --offset1 -1 --offset2 0 --keyOffset2 -1 \
+  --target 42 --negative 17
 
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
@@ -1075,6 +1076,7 @@ private structure HeadPatternArgs where
   layerIdx : Nat
   headIdx : Nat
   offset : Int
+  keyOffset : Int
   soundnessBits : Nat
   softmaxExpEffort : Nat
   tightPatternLayers : Nat
@@ -1082,6 +1084,7 @@ private structure HeadPatternArgs where
   perRowPatternLayers : Nat
   causalPattern : Bool
   bestMatch : Bool
+  useAffine : Bool
   sweep : Bool
   queryPos? : Option Nat
   inputPath? : Option System.FilePath
@@ -1094,6 +1097,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
   let layerIdx := p.flag? "layer" |>.map (·.as! Nat) |>.getD 0
   let headIdx := p.flag? "head" |>.map (·.as! Nat) |>.getD 0
   let offset := p.flag? "offset" |>.map (·.as! Int) |>.getD (-1)
+  let keyOffset := p.flag? "keyOffset" |>.map (·.as! Int) |>.getD 0
   let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
   let softmaxExpEffort :=
     p.flag? "softmaxExpEffort" |>.map (·.as! Nat)
@@ -1104,6 +1108,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
   let perRowPatternLayers := p.flag? "perRowPatternLayers" |>.map (·.as! Nat) |>.getD 0
   let causalPattern := !p.hasFlag "noncausalPattern"
   let bestMatch := p.hasFlag "bestMatch"
+  let useAffine := p.hasFlag "affine"
   let sweep := p.hasFlag "sweep"
   let queryPos? := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath? := p.flag? "input" |>.map (·.as! String) |>.map (fun s => ⟨s⟩)
@@ -1114,6 +1119,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
     layerIdx := layerIdx
     headIdx := headIdx
     offset := offset
+    keyOffset := keyOffset
     soundnessBits := soundnessBits
     softmaxExpEffort := softmaxExpEffort
     tightPatternLayers := tightPatternLayers
@@ -1121,6 +1127,7 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
     perRowPatternLayers := perRowPatternLayers
     causalPattern := causalPattern
     bestMatch := bestMatch
+    useAffine := useAffine
     sweep := sweep
     queryPos? := queryPos?
     inputPath? := inputPath?
@@ -1131,10 +1138,11 @@ private def parseHeadPatternArgs (p : Parsed) : HeadPatternArgs :=
 private def formatHeadPatternBestMatchSweep
     (layerIdx headIdx : Nat)
     (offset : Int)
+    (keyOffset : Int)
     (certs : Array Nfp.Sound.HeadBestMatchPatternCert) : String :=
   let header :=
     "SOUND head pattern sweep (best-match): " ++
-      s!"layer={layerIdx}, head={headIdx}, offset={offset}\n"
+      s!"layer={layerIdx}, head={headIdx}, offset={offset}, keyOffset={keyOffset}\n"
   let body :=
     certs.foldl (fun acc cert =>
       acc ++
@@ -1147,7 +1155,8 @@ private def formatHeadPatternBestMatch
     (cert : Nfp.Sound.HeadBestMatchPatternCert) : String :=
   "SOUND head pattern (best-match): " ++
     s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
-      s!"offset={cert.targetOffset}, queryPos={cert.queryPos}\n" ++
+      s!"offset={cert.targetOffset}, keyOffset={cert.keyOffset}, " ++
+      s!"queryPos={cert.queryPos}\n" ++
     s!"seqLen={cert.seqLen}, targetTok={cert.targetToken}, " ++
       s!"bestMatchLogitLB={cert.bestMatchLogitLowerBound}, " ++
       s!"bestNonmatchLogitUB={cert.bestNonmatchLogitUpperBound}\n" ++
@@ -1158,7 +1167,8 @@ private def formatHeadPatternBestMatch
 private def formatHeadPatternLocal
     (cert : Nfp.Sound.HeadPatternCert) : String :=
   "SOUND head pattern (local): " ++
-    s!"layer={cert.layerIdx}, head={cert.headIdx}, offset={cert.targetOffset}\n" ++
+    s!"layer={cert.layerIdx}, head={cert.headIdx}, " ++
+      s!"offset={cert.targetOffset}, keyOffset={cert.keyOffset}\n" ++
     s!"seqLen={cert.seqLen}, " ++
     s!"targetCountLB={cert.targetCountLowerBound}, " ++
     s!"targetLogitLB={cert.targetLogitLowerBound}, " ++
@@ -1183,27 +1193,36 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
         else
           throw <|
             "head pattern bounds require EMBEDDINGS; pass --input for legacy text models."
+  if args.useAffine && !args.bestMatch then
+    throw "affine bounds are only supported with --bestMatch"
+  if args.useAffine && args.sweep then
+    throw "affine sweep is unsupported; use --bestMatch without --sweep"
   if args.bestMatch then
     if args.sweep then
       let certs ← ExceptT.mk <|
         Nfp.Sound.certifyHeadPatternBestMatchLocalSweep args.modelPath args.layerIdx args.headIdx
           (inputPath? := inputPath?) (inputDelta := delta)
           (soundnessBits := args.soundnessBits) (targetOffset := args.offset)
+          (keyOffset := args.keyOffset)
           (maxSeqLen := args.maxSeqLen)
           (tightPattern := args.tightPattern)
           (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
+          (useAffine := args.useAffine)
           (softmaxExpEffort := args.softmaxExpEffort)
           (causalPattern := args.causalPattern)
-      return formatHeadPatternBestMatchSweep args.layerIdx args.headIdx args.offset certs
+      return formatHeadPatternBestMatchSweep args.layerIdx args.headIdx args.offset
+        args.keyOffset certs
     else
       let cert ← ExceptT.mk <|
         Nfp.Sound.certifyHeadPatternBestMatchLocal args.modelPath args.layerIdx args.headIdx
           (queryPos? := args.queryPos?) (inputPath? := inputPath?)
           (inputDelta := delta) (soundnessBits := args.soundnessBits)
-          (targetOffset := args.offset) (maxSeqLen := args.maxSeqLen)
+          (targetOffset := args.offset) (keyOffset := args.keyOffset)
+          (maxSeqLen := args.maxSeqLen)
           (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
           (perRowPatternLayers := args.perRowPatternLayers)
+          (useAffine := args.useAffine)
           (softmaxExpEffort := args.softmaxExpEffort)
           (causalPattern := args.causalPattern)
       return formatHeadPatternBestMatch cert
@@ -1214,6 +1233,7 @@ private def runHeadPatternAction (args : HeadPatternArgs) : ExceptT String IO St
       Nfp.Sound.certifyHeadPatternLocal args.modelPath args.layerIdx args.headIdx
         (inputPath? := inputPath?) (inputDelta := delta)
         (soundnessBits := args.soundnessBits) (targetOffset := args.offset)
+        (keyOffset := args.keyOffset)
         (maxSeqLen := args.maxSeqLen)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
@@ -1265,6 +1285,8 @@ private structure InductionCertArgs where
   coord : Nat
   offset1 : Int
   offset2 : Int
+  keyOffset1 : Int
+  keyOffset2 : Int
   targetToken? : Option Nat
   negativeToken? : Option Nat
   soundnessBits : Nat
@@ -1275,6 +1297,7 @@ private structure InductionCertArgs where
   iterTighten : Bool
   causalPattern : Bool
   bestMatch : Bool
+  useAffine : Bool
   queryPos? : Option Nat
   inputPath? : Option System.FilePath
   delta : Rat
@@ -1293,6 +1316,8 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let coord := p.flag? "coord" |>.map (·.as! Nat) |>.getD 0
   let offset1 := p.flag? "offset1" |>.map (·.as! Int) |>.getD (-1)
   let offset2 := p.flag? "offset2" |>.map (·.as! Int) |>.getD (-1)
+  let keyOffset1 := p.flag? "keyOffset1" |>.map (·.as! Int) |>.getD 0
+  let keyOffset2 := p.flag? "keyOffset2" |>.map (·.as! Int) |>.getD 0
   let targetToken := p.flag? "target" |>.map (·.as! Nat)
   let negativeToken := p.flag? "negative" |>.map (·.as! Nat)
   let soundnessBits := p.flag? "soundnessBits" |>.map (·.as! Nat) |>.getD 20
@@ -1306,6 +1331,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
   let iterTighten := p.hasFlag "iterTighten"
   let causalPattern := !p.hasFlag "noncausalPattern"
   let bestMatch := p.hasFlag "bestMatch"
+  let useAffine := p.hasFlag "affine"
   let queryPos := p.flag? "queryPos" |>.map (·.as! Nat)
   let inputPath := p.flag? "input" |>.map (·.as! String)
   let deltaStr := p.flag? "delta" |>.map (·.as! String) |>.getD "0"
@@ -1338,6 +1364,8 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     coord := coord
     offset1 := offset1
     offset2 := offset2
+    keyOffset1 := keyOffset1
+    keyOffset2 := keyOffset2
     targetToken? := targetToken
     negativeToken? := negativeToken
     soundnessBits := soundnessBits
@@ -1348,6 +1376,7 @@ private def parseInductionCertArgs (p : Parsed) : ExceptT String IO InductionCer
     iterTighten := iterTighten
     causalPattern := causalPattern
     bestMatch := bestMatch
+    useAffine := useAffine
     queryPos? := queryPos
     inputPath? := inputPath?
     delta := delta
@@ -1388,11 +1417,13 @@ private def formatInductionBestMatch
   "SOUND induction cert (best-match):\n" ++
     s!"queryPos={p2.queryPos}\n" ++
     s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+      s!"keyOffset={p1.keyOffset} " ++
       s!"targetTok={p1.targetToken} " ++
       s!"marginLB={p1.marginLowerBound} " ++
       s!"weightLB={p1.bestMatchWeightLowerBound} " ++
       s!"softmaxExpEffort={p1.softmaxExpEffort}\n" ++
     s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+      s!"keyOffset={p2.keyOffset} " ++
       s!"targetTok={p2.targetToken} " ++
       s!"marginLB={p2.marginLowerBound} " ++
       s!"weightLB={p2.bestMatchWeightLowerBound} " ++
@@ -1411,9 +1442,11 @@ private def formatInductionLocal
   let logitLine := formatInductionLogitLine cert.layer2Logit?
   "SOUND induction cert:\n" ++
     s!"layer1=L{p1.layerIdx} H{p1.headIdx} offset={p1.targetOffset} " ++
+      s!"keyOffset={p1.keyOffset} " ++
       s!"marginLB={p1.marginLowerBound} weightLB={p1.targetWeightLowerBound} " ++
       s!"softmaxExpEffort={p1.softmaxExpEffort}\n" ++
     s!"layer2=L{p2.layerIdx} H{p2.headIdx} offset={p2.targetOffset} " ++
+      s!"keyOffset={p2.keyOffset} " ++
       s!"marginLB={p2.marginLowerBound} weightLB={p2.targetWeightLowerBound} " ++
       s!"softmaxExpEffort={p2.softmaxExpEffort}\n" ++
     s!"coord={v.coord} matchCountLB={p2.targetCountLowerBound} " ++
@@ -1424,17 +1457,22 @@ private def formatInductionLocal
 
 /-- Run the induction-cert action and return the report string. -/
 private def runInductionCertAction (args : InductionCertArgs) : ExceptT String IO String := do
+  if args.useAffine && !args.bestMatch then
+    throw "affine bounds are only supported with --bestMatch"
   if args.bestMatch then
     let cert ← ExceptT.mk <|
       Nfp.Sound.certifyInductionSoundBestMatch args.modelPath
         args.layer1 args.head1 args.layer2 args.head2 args.coord
         (queryPos? := args.queryPos?) (inputPath? := args.inputPath?)
         (inputDelta := args.delta) (soundnessBits := args.soundnessBits)
-        (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (offset1 := args.offset1) (offset2 := args.offset2)
+        (keyOffset1 := args.keyOffset1) (keyOffset2 := args.keyOffset2)
+        (maxSeqLen := args.maxSeqLen)
         (scalePow10 := args.scalePow10)
         (tightPattern := args.tightPattern)
         (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
+        (useAffine := args.useAffine)
         (iterTighten := args.iterTighten)
         (targetToken? := args.targetToken?) (negativeToken? := args.negativeToken?)
         (softmaxExpEffort := args.softmaxExpEffort)
@@ -1446,7 +1484,9 @@ private def runInductionCertAction (args : InductionCertArgs) : ExceptT String I
         args.layer1 args.head1 args.layer2 args.head2 args.coord
         (inputPath? := args.inputPath?) (inputDelta := args.delta)
         (soundnessBits := args.soundnessBits)
-        (offset1 := args.offset1) (offset2 := args.offset2) (maxSeqLen := args.maxSeqLen)
+        (offset1 := args.offset1) (offset2 := args.offset2)
+        (keyOffset1 := args.keyOffset1) (keyOffset2 := args.keyOffset2)
+        (maxSeqLen := args.maxSeqLen)
         (scalePow10 := args.scalePow10)
         (tightPattern := args.tightPattern) (tightPatternLayers := args.tightPatternLayers)
         (perRowPatternLayers := args.perRowPatternLayers)
@@ -1928,11 +1968,13 @@ LayerNorm epsilon is read from the model header."
     layer : Nat; "Layer index (default: 0)"
     head : Nat; "Head index (default: 0)"
     offset : Int; "Token-match offset (default: -1 for previous token, 0 for self)"
+    keyOffset : Int; "Key-position token offset (default: 0; use -1 with offset=0 for copy-next)"
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
     tightPatternLayers : Nat; "Number of layers using tight pattern bounds (default: 1)"
     perRowPatternLayers : Nat; "Number of layers using per-row MLP propagation (default: 0)"
     noncausalPattern; "Disable causal-prefix restriction for pattern/value bounds"
     bestMatch; "Use best-match (single-query) pattern bounds"
+    affine; "Use affine Q/K dot bounds for best-match (single-query only)"
     sweep; "Sweep best-match bounds across all valid query positions"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
@@ -1960,6 +2002,9 @@ LayerNorm epsilon is read from the model header."
     coord : Nat; "Output coordinate for the value bound (default: 0)"
     offset1 : Int; "Token-match offset for layer1 (default: -1)"
     offset2 : Int; "Token-match offset for layer2 (default: -1)"
+    keyOffset1 : Int; "Key-position token offset for layer1 (default: 0)"
+    keyOffset2 : Int; "Key-position token offset for layer2 (default: 0; use -1 with \
+offset2=0 for copy-next)"
     target : Nat; "Target token ID for logit-diff bound (optional; requires --negative)"
     negative : Nat; "Negative token ID for logit-diff bound (optional; requires --target)"
     tightPattern; "Use tighter (slower) pattern bounds near the target layer"
@@ -1968,6 +2013,7 @@ LayerNorm epsilon is read from the model header."
     iterTighten; "Iteratively tighten best-match bounds (escalates tight/per-row layers to full)"
     noncausalPattern; "Disable causal-prefix restriction for pattern/value bounds"
     bestMatch; "Use best-match (single-query) pattern bounds"
+    affine; "Use affine Q/K dot bounds for best-match"
     queryPos : Nat; "Query position for best-match bounds (default: last position)"
     input : String; "Optional input .nfpt file for local bounds (must contain EMBEDDINGS \
 for legacy text)"

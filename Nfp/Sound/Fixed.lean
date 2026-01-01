@@ -141,9 +141,11 @@ def unionVec (a b : Array Fixed10Interval) : Array Fixed10Interval :=
   Id.run do
     if a.size ≠ b.size then
       return a
-    let mut out := Array.mkEmpty a.size
-    for i in [:a.size] do
+    let mut out : Array Fixed10Interval := Array.mkEmpty a.size
+    let mut i : Nat := 0
+    while i < a.size do
       out := out.push (union a[i]! b[i]!)
+      i := i + 1
     return out
 
 /-! ### Specs -/

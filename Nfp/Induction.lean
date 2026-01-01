@@ -97,6 +97,8 @@ structure TokenMatchPattern where
   seqLen : Nat
   /-- Target offset (e.g. `-1` for previous token). -/
   targetOffset : Int
+  /-- Key-position offset used when matching tokens against the query's target token. -/
+  keyOffset : Int
   /-- Lower bound on the number of matching-token keys. -/
   targetCountLowerBound : Nat
   /-- Effort level for the `expLB` portfolio used in margin-to-weight bounds. -/
@@ -205,6 +207,20 @@ structure InductionPatternWitness where
   tokenMatch : TokenMatchPattern
   /-- The pattern targets the previous-token offset. -/
   prevOffset : tokenMatch.targetOffset = -1
+  /-- The key-token comparison uses no key offset. -/
+  keyOffsetZero : tokenMatch.keyOffset = 0
+  /-- Certified nontrivial attention mass on matching tokens. -/
+  positiveMass : 0 < tokenMatch.targetWeightLowerBound
+  deriving Repr
+
+/-- A minimal sound witness for a copy-next induction-style attention pattern. -/
+structure CopyNextPatternWitness where
+  /-- Token-match pattern data (sound certificate output). -/
+  tokenMatch : TokenMatchPattern
+  /-- The pattern uses the current query token as the target. -/
+  targetOffsetZero : tokenMatch.targetOffset = 0
+  /-- Keys are matched against the previous-token stream (copy-next). -/
+  keyOffsetPrev : tokenMatch.keyOffset = -1
   /-- Certified nontrivial attention mass on matching tokens. -/
   positiveMass : 0 < tokenMatch.targetWeightLowerBound
   deriving Repr
@@ -214,11 +230,26 @@ namespace TokenMatchPattern
 /-- Build an induction-style witness from a valid token-match pattern plus explicit assumptions. -/
 def toInductionPatternWitness
     (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
-    (hcount : 0 < p.targetCountLowerBound) (hoff : p.targetOffset = -1) :
+    (hcount : 0 < p.targetCountLowerBound) (hoff : p.targetOffset = -1)
+    (hkey : p.keyOffset = 0) :
     InductionPatternWitness :=
   {
     tokenMatch := p
     prevOffset := hoff
+    keyOffsetZero := hkey
+    positiveMass := weight_lower_bound_pos_of_margin_pos p h hm hcount
+  }
+
+/-- Build a copy-next witness from a valid token-match pattern plus explicit assumptions. -/
+def toCopyNextPatternWitness
+    (p : TokenMatchPattern) (h : p.Valid) (hm : p.marginLowerBound > 0)
+    (hcount : 0 < p.targetCountLowerBound) (hoff : p.targetOffset = 0)
+    (hkey : p.keyOffset = -1) :
+    CopyNextPatternWitness :=
+  {
+    tokenMatch := p
+    targetOffsetZero := hoff
+    keyOffsetPrev := hkey
     positiveMass := weight_lower_bound_pos_of_margin_pos p h hm hcount
   }
 

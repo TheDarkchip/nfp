@@ -310,6 +310,7 @@ def certifyHeadPatternLocal
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
@@ -323,9 +324,9 @@ def certifyHeadPatternLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternLocal
-            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort
-            causalPattern with
+            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset keyOffset
+            maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+            softmaxExpEffort causalPattern with
       | .error e => return .error e
       | .ok cert =>
           return verifyHeadPatternCert cert
@@ -339,10 +340,12 @@ def certifyHeadPatternBestMatchLocal
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
+    (useAffine : Bool := false)
     (scalePow10 : Nat := 9)
     (softmaxExpEffort : Nat := defaultSoftmaxExpEffort)
     (causalPattern : Bool := true) :
@@ -353,8 +356,8 @@ def certifyHeadPatternBestMatchLocal
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocal
             path layerIdx headIdx queryPos? eps soundnessBits inputPath? inputDelta targetOffset
-              maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
-              softmaxExpEffort causalPattern with
+              keyOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers useAffine
+              scalePow10 softmaxExpEffort causalPattern with
       | .error e => return .error e
       | .ok cert =>
           return verifyHeadBestMatchPatternCert cert
@@ -367,10 +370,12 @@ def certifyHeadPatternBestMatchLocalSweep
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
+    (useAffine : Bool := false)
     (scalePow10 : Nat := 9)
     (softmaxExpEffort : Nat := defaultSoftmaxExpEffort)
     (causalPattern : Bool := true) :
@@ -380,9 +385,9 @@ def certifyHeadPatternBestMatchLocalSweep
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadPatternBestMatchLocalSweep
-            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort
-            causalPattern with
+            path layerIdx headIdx eps soundnessBits inputPath? inputDelta targetOffset keyOffset
+            maxSeqLen tightPattern tightPatternLayers perRowPatternLayers useAffine scalePow10
+            softmaxExpEffort causalPattern with
       | .error e => return .error e
       | .ok certs =>
           return verifyHeadBestMatchPatternCerts certs
@@ -395,6 +400,7 @@ def certifyLayerBestMatchMarginLocal
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
@@ -408,9 +414,9 @@ def certifyLayerBestMatchMarginLocal
   | .ok eps =>
       match ←
           Nfp.Untrusted.SoundCompute.certifyLayerBestMatchMarginLocal
-            path layerIdx eps soundnessBits inputPath? inputDelta targetOffset maxSeqLen
-            tightPattern tightPatternLayers perRowPatternLayers scalePow10 softmaxExpEffort
-            causalPattern with
+            path layerIdx eps soundnessBits inputPath? inputDelta targetOffset keyOffset
+            maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+            softmaxExpEffort causalPattern with
       | .error e => return .error e
       | .ok cert =>
           return verifyLayerBestMatchMarginCert cert
@@ -477,6 +483,7 @@ def certifyHeadBoundsLocalBestMatch
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
@@ -501,7 +508,8 @@ def certifyHeadBoundsLocalBestMatch
                   certifyHeadPatternBestMatchLocal path layerIdx headIdx
                     (queryPos? := queryPos?) (inputPath? := inputPath?)
                     (inputDelta := inputDelta) (soundnessBits := soundnessBits)
-                    (targetOffset := targetOffset) (maxSeqLen := maxSeqLen)
+                    (targetOffset := targetOffset) (keyOffset := keyOffset)
+                    (maxSeqLen := maxSeqLen)
                     (tightPattern := tightPattern) (tightPatternLayers := tightPatternLayers)
                     (perRowPatternLayers := perRowPatternLayers)
                     (softmaxExpEffort := softmaxExpEffort)
@@ -520,6 +528,7 @@ def certifyHeadValueLowerBoundLocal
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
@@ -533,7 +542,7 @@ def certifyHeadValueLowerBoundLocal
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadValueLowerBoundLocal
             path layerIdx headIdx coord eps soundnessBits inputPath? inputDelta targetOffset
-            maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
+            keyOffset maxSeqLen tightPattern tightPatternLayers perRowPatternLayers scalePow10
             causalPattern with
       | .error e => return .error e
       | .ok cert =>
@@ -548,6 +557,7 @@ def certifyHeadLogitDiffLowerBoundLocal
     (inputDelta : Rat := 0)
     (soundnessBits : Nat)
     (targetOffset : Int := -1)
+    (keyOffset : Int := 0)
     (maxSeqLen : Nat := 256)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
@@ -561,7 +571,7 @@ def certifyHeadLogitDiffLowerBoundLocal
       match ←
           Nfp.Untrusted.SoundCompute.certifyHeadLogitDiffLowerBoundLocal
             path layerIdx headIdx targetToken negativeToken eps soundnessBits inputPath? inputDelta
-            targetOffset maxSeqLen tightPattern tightPatternLayers
+            targetOffset keyOffset maxSeqLen tightPattern tightPatternLayers
             perRowPatternLayers scalePow10 causalPattern with
       | .error e => return .error e
       | .ok cert =>
@@ -577,6 +587,8 @@ def certifyInductionSound
     (soundnessBits : Nat)
     (offset1 : Int := -1)
     (offset2 : Int := -1)
+    (keyOffset1 : Int := 0)
+    (keyOffset2 : Int := 0)
     (maxSeqLen : Nat := 256)
     (scalePow10 : Nat := 9)
     (tightPattern : Bool := false)
@@ -593,7 +605,8 @@ def certifyInductionSound
       match ←
           Nfp.Untrusted.SoundCompute.certifyInductionSound
             path layer1 head1 layer2 head2 coord eps soundnessBits inputPath? inputDelta
-            offset1 offset2 maxSeqLen scalePow10 tightPattern tightPatternLayers
+            offset1 offset2 keyOffset1 keyOffset2 maxSeqLen scalePow10 tightPattern
+            tightPatternLayers
             perRowPatternLayers targetToken? negativeToken? softmaxExpEffort causalPattern with
       | .error e => return .error e
       | .ok cert =>
@@ -610,11 +623,14 @@ def certifyInductionSoundBestMatch
     (soundnessBits : Nat)
     (offset1 : Int := -1)
     (offset2 : Int := -1)
+    (keyOffset1 : Int := 0)
+    (keyOffset2 : Int := 0)
     (maxSeqLen : Nat := 256)
     (scalePow10 : Nat := 9)
     (tightPattern : Bool := false)
     (tightPatternLayers : Nat := 1)
     (perRowPatternLayers : Nat := 0)
+    (useAffine : Bool := false)
     (iterTighten : Bool := false)
     (targetToken? : Option Nat := none)
     (negativeToken? : Option Nat := none)
@@ -627,8 +643,8 @@ def certifyInductionSoundBestMatch
       match ←
           Nfp.Untrusted.SoundCompute.certifyInductionSoundBestMatch
             path layer1 head1 layer2 head2 coord queryPos? eps soundnessBits inputPath? inputDelta
-            offset1 offset2 maxSeqLen scalePow10 tightPattern
-            tightPatternLayers perRowPatternLayers iterTighten targetToken? negativeToken?
+            offset1 offset2 keyOffset1 keyOffset2 maxSeqLen scalePow10 tightPattern
+            tightPatternLayers perRowPatternLayers useAffine iterTighten targetToken? negativeToken?
             softmaxExpEffort
             causalPattern with
       | .error e => return .error e
