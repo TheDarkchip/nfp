@@ -840,11 +840,12 @@ def runInduction (p : Parsed) : IO UInt32 := do
       IO.println s!"Target: {target.description}"
       printInductionSearchIntro args.minEffect
       let buildLayerNormBounds := args.diagnostics && (!args.adaptive)
-      let (heads, cache) :=
-        findHeuristicInductionHeadsWithCache model target args.minEffect
-          (minInductionScore := 0.01)
-          (buildLayerNormBounds := buildLayerNormBounds)
-          (storeDiagnostics := args.diagnostics)
+      let (heads, cache) ← Nfp.timeIt "induction:search" (fun () =>
+        pure <|
+          findHeuristicInductionHeadsWithCache model target args.minEffect
+            (minInductionScore := 0.01)
+            (buildLayerNormBounds := buildLayerNormBounds)
+            (storeDiagnostics := args.diagnostics))
       let top ← printInductionCandidates heads args.verbose
       let sched? := buildAdaptiveScheduler cache args
       if args.adaptive && args.verbose then
@@ -856,7 +857,8 @@ def runInduction (p : Parsed) : IO UInt32 := do
         if let some code := err? then
           return code
       if args.verify then
-        let err? ← runInductionVerification model heads args.correctOpt
+        let err? ← Nfp.timeIt "induction:verify" (fun () =>
+          runInductionVerification model heads args.correctOpt)
         if let some code := err? then
           return code
       return 0

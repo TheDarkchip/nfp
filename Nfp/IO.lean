@@ -55,6 +55,19 @@ namespace Nfp
 
 open IO
 
+/-- Run an IO action and emit timing when `NFP_TIMING` is set. -/
+def timeIt {α : Type} (label : String) (action : Unit → IO α) : IO α := do
+  let timingEnabled ← IO.getEnv "NFP_TIMING"
+  if timingEnabled.isNone then
+    action ()
+  else
+    let t0 ← IO.monoNanosNow
+    let result ← action ()
+    let t1 ← IO.monoNanosNow
+    let dtMs := (t1 - t0) / 1000000
+    IO.eprintln s!"timing:{label} {dtMs}ms"
+    return result
+
 /-- Load a model from NFP text format content. -/
 def loadFromText (_content : String) : IO LoadResult := do
   return .error "NFP_TEXT format is deprecated; use NFP_BINARY_V1"
@@ -329,8 +342,9 @@ def loadInputBinary (path : System.FilePath) : IO (Except String InputBinary) :=
 /-- Load a model from a file path. Supports .nfpt (binary) format. -/
 def loadModel (path : System.FilePath) : IO LoadResult := do
   if path.extension = some "nfpt" then
-    IO.FS.withFile path .read fun h =>
-      loadBinary h
+    timeIt "io:load-model" (fun () =>
+      IO.FS.withFile path .read fun h =>
+        loadBinary h)
   else
     return .error s!"Unsupported file format: {path.extension.getD "unknown"}"
 
@@ -419,20 +433,23 @@ def analyzeModel (model : ConcreteModel) (modelName : String)
   IO.println "═══════════════════════════════════════════════════════════\n"
 
   IO.println "[1/2] Building precomputed cache..."
-  let cache := PrecomputedCache.build model
+  let cache ← timeIt "analysis:precompute-cache" (fun () =>
+    pure <| PrecomputedCache.build model)
 
   IO.println "[2/2] Searching for deep circuit candidates (shared scan)..."
   -- Find deep circuit candidates (reuse cache)
-  let deepCircuits := findDeepCircuitCandidatesFromCache cache
+  let deepCircuits ← timeIt "analysis:deep-circuit-scan" (fun () =>
+    pure <| findDeepCircuitCandidatesFromCache cache)
   let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
   IO.println s!"  Found {verifiedDeep.size} verified deep circuits \
     (of {deepCircuits.size} candidates)"
 
   -- Derive induction-head candidates from the same scan to avoid repeating
   -- the expensive `checkInductionPattern` computation.
-  let inductionHeads :=
-    (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
-      (·.combinedError < ·.combinedError)
+  let inductionHeads ← timeIt "analysis:induction-candidates" (fun () =>
+    pure <|
+      (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
+        (·.combinedError < ·.combinedError))
   let verifiedHeads := inductionHeads.filter (·.combinedError ≤ threshold)
   IO.println s!"  Found {verifiedHeads.size} verified induction heads \
     (of {inductionHeads.size} candidates)\n"
@@ -464,7 +481,8 @@ def analyzeAndVerify (model : ConcreteModel) (modelName : String)
 
   IO.println "Running circuit discovery and ablation experiments..."
   -- Run circuit discovery and verification
-  let (_, verification) := discoverAndVerify model threshold
+  let (_, verification) ← timeIt "analysis:discover-and-verify" (fun () =>
+    pure <| discoverAndVerify model threshold)
   IO.println "Verification complete!\n"
 
   return { baseReport with verification := some verification }
