@@ -178,9 +178,6 @@ private def topNonTargetToken (residual : ConcreteMatrix) (pos : Nat)
   else
     return none
 
-private def containsHead (hs : Array HeadRef) (h : HeadRef) : Bool :=
-  hs.contains h
-
 private def fullCircuit (model : ConcreteModel) : ConcreteCircuit := Id.run do
   let headsPerLayer :=
     Array.ofFn (fun l : Fin model.numLayers => (model.layers.getD l.1 #[]).size)
@@ -220,7 +217,7 @@ private def selectEnergyMatchedControl (fwd : ForwardPassResult)
         let mut best : Option (HeadRef × Float × Float) := none
         for hIdx in [:layerOut.size] do
           let h : HeadRef := { layerIdx := cand.layerIdx, headIdx := hIdx }
-          if !containsHead exclude h then
+          if !exclude.contains h then
             if hh : hIdx < layerOut.size then
               let norm := (layerOut[hIdx]'hh).frobeniusNorm
               let diff := Float.abs (candNorm - norm)
@@ -345,7 +342,7 @@ def verifyCircuit (ctx : VerificationContext) (candidateHeads : Array HeadRef) :
 
   let controlsComplete := selections.size = candidateHeads.size
   let controlHeads : Array HeadRef := selections.map (·.control)
-  let independence := !(controlHeads.any (fun h => containsHead candidateHeads h))
+  let independence := !(controlHeads.any candidateHeads.contains)
   if !independence then
     failures := failures.push "Axiom2(control independence) failed: control overlaps candidate."
 
