@@ -287,11 +287,11 @@ noncomputable def virtual_head_score {h : TrueInductionHead (n := n) (d := d)} :
   inner_product (virtual_head_output (h := h)) h.target_logit_diff
 
 /-- The approximation error bound. -/
-def approx_error {h : TrueInductionHead (n := n) (d := d)} : ℝ :=
+abbrev approx_error {h : TrueInductionHead (n := n) (d := d)} : ℝ :=
   h.epsilon
 
 /-- The functional guarantee on the virtual head. -/
-def min_logit_shift {h : TrueInductionHead (n := n) (d := d)} : ℝ :=
+abbrev min_logit_shift {h : TrueInductionHead (n := n) (d := d)} : ℝ :=
   h.delta
 
 omit [DecidableEq n] [DecidableEq d] in
