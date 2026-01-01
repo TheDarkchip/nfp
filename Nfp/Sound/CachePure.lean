@@ -206,7 +206,7 @@ private def countWsTokens (s : String) : Nat :=
     let mut cnt : Nat := 0
     while i < bytes.size do
       let b := bytes[i]!
-      let isWs : Bool := b = 32 || b = 9
+      let isWs : Bool := b = 32 || b = 9 || b = 10 || b = 13
       if isWs then
         inTok := false
       else if !inTok then
@@ -223,16 +223,15 @@ private def skipTokensFast (lines : Array String) (start : Nat) (numTokens : Nat
     while remaining > 0 do
       if iLine ≥ lines.size then
         return .error "unexpected end of file while skipping tokens"
-      let line := lines[iLine]!.trim
+      let line := lines[iLine]!
       iLine := iLine + 1
-      if line.isEmpty then
+      let c := countWsTokens line
+      if c = 0 then
         pure ()
+      else if c ≥ remaining then
+        remaining := 0
       else
-        let c := countWsTokens line
-        if c ≥ remaining then
-          remaining := 0
-        else
-          remaining := remaining - c
+        remaining := remaining - c
     return .ok iLine
 
 private def consumeFixedBytes

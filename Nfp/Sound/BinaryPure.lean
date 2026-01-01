@@ -148,7 +148,10 @@ private def ceilDivNat (a : Int) (d : Nat) : Int :=
   let r := a.emod di
     if r = 0 then q else q + 1
 
-private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
+private def scaleIntOfPow10 (scalePow10 : Nat) : Int :=
+  Int.ofNat (Nat.pow 10 scalePow10)
+
+private def floatAbsCeilScaledCore (scaleInt : Int) (bits : UInt64) : Except String Int :=
   let expBits : UInt64 := (bits >>> 52) &&& 0x7ff
   let mantBits : UInt64 := bits &&& 0x000f_ffff_ffff_ffff
   if expBits = 0x7ff then
@@ -156,7 +159,6 @@ private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except Strin
   else if expBits = 0 && mantBits = 0 then
     .ok 0
   else
-    let scale : Nat := Nat.pow 10 scalePow10
     let mant : Nat :=
       if expBits = 0 then
         mantBits.toNat
@@ -170,15 +172,18 @@ private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except Strin
     let mInt : Int := Int.ofNat mant
     if expVal ≥ 0 then
       let pow2 := pow2Nat expVal.toNat
-      let num := mInt * Int.ofNat scale
+      let num := mInt * scaleInt
       .ok (num * Int.ofNat pow2)
     else
       let denPow := pow2Nat (-expVal).toNat
-      let num := mInt * Int.ofNat scale
+      let num := mInt * scaleInt
       .ok (ceilDivNat num denPow)
 
-private def floatScaledCeilSigned (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
-  match floatAbsCeilScaled scalePow10 bits with
+private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
+  floatAbsCeilScaledCore (scaleIntOfPow10 scalePow10) bits
+
+private def floatScaledCeilSignedCore (scaleInt : Int) (bits : UInt64) : Except String Int :=
+  match floatAbsCeilScaledCore scaleInt bits with
   | .error e => .error e
   | .ok absScaled =>
       let signNeg : Bool := (bits >>> 63) = (1 : UInt64)
@@ -187,17 +192,21 @@ private def floatScaledCeilSigned (scalePow10 : Nat) (bits : UInt64) : Except St
       else
         .ok absScaled
 
+private def floatScaledCeilSigned (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
+  floatScaledCeilSignedCore (scaleIntOfPow10 scalePow10) bits
+
 def vectorMaxAbsScaledFromBytes (bytes : ByteArray) (n scalePow10 : Nat) :
     Except String Int := do
   if n = 0 then
     return 0
   if bytes.size < n * 8 then
     throw "unexpected EOF"
+  let scaleInt := scaleIntOfPow10 scalePow10
   let mut maxAbs : Int := 0
   let mut i : Nat := 0
   while i < n do
     let bits := u64FromLE bytes (i * 8)
-    match floatAbsCeilScaled scalePow10 bits with
+    match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
         if absScaled > maxAbs then
@@ -212,12 +221,13 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
   let count := rows * cols
   if bytes.size < count * 8 then
     throw "unexpected EOF"
+  let scaleInt := scaleIntOfPow10 scalePow10
   let mut maxRowSum : Int := 0
   let mut curRowSum : Int := 0
   let mut i : Nat := 0
   while i < count do
     let bits := u64FromLE bytes (i * 8)
-    match floatAbsCeilScaled scalePow10 bits with
+    match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
         curRowSum := curRowSum + absScaled
@@ -235,6 +245,7 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
   if bytes.size < count * 8 then
     throw "unexpected EOF"
   let useTasks := count > 16384
+  let scaleInt := scaleIntOfPow10 scalePow10
   if useTasks then
     let chunkSize : Nat := 8192
     let numChunks : Nat := (count + chunkSize - 1) / chunkSize
@@ -250,7 +261,7 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
             let mut i := start
             while i < stop do
               let bits := u64FromLE bytes (i * 8)
-              match floatScaledCeilSigned scalePow10 bits with
+              match floatScaledCeilSignedCore scaleInt bits with
               | .error e => return .error e
               | .ok v => outChunk := outChunk.push v
               i := i + 1
@@ -269,7 +280,7 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
     let mut i : Nat := 0
     while i < count do
       let bits := u64FromLE bytes (i * 8)
-      match floatScaledCeilSigned scalePow10 bits with
+      match floatScaledCeilSignedCore scaleInt bits with
       | .error e => throw e
       | .ok v => out := out.push v
       i := i + 1
@@ -280,7 +291,7 @@ def scaledFloatFromBytes (bytes : ByteArray) (scalePow10 : Nat) :
   if bytes.size < 8 then
     throw "unexpected EOF"
   let bits := u64FromLE bytes 0
-  match floatScaledCeilSigned scalePow10 bits with
+  match floatScaledCeilSignedCore (scaleIntOfPow10 scalePow10) bits with
   | .error e => throw e
   | .ok v => return v
 
@@ -305,13 +316,14 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
   let count := rows * cols
   if bytes.size < count * 8 then
     throw "unexpected EOF"
+  let scaleInt := scaleIntOfPow10 scalePow10
   let mut maxRowSum : Nat := 0
   let mut curRowSum : Nat := 0
   let mut colSums : Array Nat := Array.replicate cols 0
   let mut i : Nat := 0
   while i < count do
     let bits := u64FromLE bytes (i * 8)
-    match floatAbsCeilScaled scalePow10 bits with
+    match floatAbsCeilScaledCore scaleInt bits with
     | .error e => throw e
     | .ok absScaled =>
         let absNat := Int.toNat absScaled
@@ -346,16 +358,26 @@ def defaultBinaryScalePow10 : Nat := 9
 
 /-- Sum of per-head value-output norm products in scaled-int form. -/
 def attnValueCoeffFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)) : Rat :=
+  let den : Nat := Nat.pow 10 scalePow10
+  have den_nz : den ≠ 0 := by
+    have h10pos : (0 : Nat) < 10 := by decide
+    exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos)
+  let ratOfScaledIntLocal := fun (x : Int) => Rat.normalize x den (den_nz := den_nz)
   pairs.foldl
     (fun acc p =>
-      acc + ratOfScaledInt scalePow10 p.1 * ratOfScaledInt scalePow10 p.2) 0
+      acc + ratOfScaledIntLocal p.1 * ratOfScaledIntLocal p.2) 0
 
 /-- Max per-head W_Q/W_K bounds in scaled-int form. -/
 def attnQKMaxFromScaledPairs (scalePow10 : Nat) (pairs : Array (Int × Int)) : Rat × Rat :=
+  let den : Nat := Nat.pow 10 scalePow10
+  have den_nz : den ≠ 0 := by
+    have h10pos : (0 : Nat) < 10 := by decide
+    exact Nat.ne_of_gt (Nat.pow_pos (n := scalePow10) h10pos)
+  let ratOfScaledIntLocal := fun (x : Int) => Rat.normalize x den (den_nz := den_nz)
   pairs.foldl
     (fun acc p =>
-      (max acc.1 (ratOfScaledInt scalePow10 p.1),
-       max acc.2 (ratOfScaledInt scalePow10 p.2)))
+      (max acc.1 (ratOfScaledIntLocal p.1),
+       max acc.2 (ratOfScaledIntLocal p.2)))
     (0, 0)
 
 /-- Compute per-layer attention-weight bound arrays from scaled-int pairs. -/
@@ -416,7 +438,12 @@ theorem u32FromLE_spec_binary_pure : u32FromLE = u32FromLE := rfl
 theorem i32FromLE_spec_binary_pure : i32FromLE = i32FromLE := rfl
 theorem pow2Nat_spec_binary_pure : pow2Nat = pow2Nat := rfl
 theorem ceilDivNat_spec_binary_pure : ceilDivNat = ceilDivNat := rfl
+theorem scaleIntOfPow10_spec_binary_pure : scaleIntOfPow10 = scaleIntOfPow10 := rfl
+theorem floatAbsCeilScaledCore_spec_binary_pure :
+    floatAbsCeilScaledCore = floatAbsCeilScaledCore := rfl
 theorem floatAbsCeilScaled_spec_binary_pure : floatAbsCeilScaled = floatAbsCeilScaled := rfl
+theorem floatScaledCeilSignedCore_spec_binary_pure :
+    floatScaledCeilSignedCore = floatScaledCeilSignedCore := rfl
 theorem floatScaledCeilSigned_spec_binary_pure :
     floatScaledCeilSigned = floatScaledCeilSigned := rfl
 theorem vectorMaxAbsScaledFromBytes_spec_binary_pure :

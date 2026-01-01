@@ -314,7 +314,7 @@ We approximate it using power iteration on M^T M.
 This is a fast **heuristic estimate** of how much `M` can stretch a vector.
 
 PERFORMANCE: Power iteration is O(iterations × n²) but heavily optimized:
-- Pre-allocated vectors with `Array.ofFn` (no array copying)
+- Pre-allocated vectors reused across iterations (`Array.replicate` + `set!`)
 - Direct loops instead of `List.range.foldl` (10× faster)
 - Bounds-checked access `v[j]!` and `Mv[i]!` (compiler optimizes in loops)
 -/
@@ -323,49 +323,49 @@ def operatorNormHeuristicPI (M : ConcreteMatrix) (numIterations : Nat := 20) : F
   let numCols := M.numCols
   if numRows = 0 || numCols = 0 then return 0.0
 
-  -- Initialize with a vector of ones
-  let mut v : Array Float := .ofFn fun _ : Fin numCols => 1.0
-
-  -- Normalize initial vector
-  let initNorm := Float.sqrt (v.foldl (fun acc x => acc + x * x) 0.0)
-  if initNorm > 0.0 then
-    v := v.map (· / initNorm)
+  -- Initialize with a normalized vector of ones (avoids a fold + map).
+  let initScale := 1.0 / Float.sqrt numCols.toFloat
+  let mut v : Array Float := Array.replicate numCols initScale
+  let mut Mv : Array Float := Array.replicate numRows 0.0
+  let mut MTMv : Array Float := Array.replicate numCols 0.0
 
   -- Power iteration: v ← (M^T M) v / ‖(M^T M) v‖
   let mut sigma : Float := 0.0
   for _ in [:numIterations] do
     -- Compute M v
-    let mut Mv : Array Float := .ofFn fun i : Fin numRows => Id.run do
+    let mut mvNormSq : Float := 0.0
+    for i in [:numRows] do
       let mut acc : Float := 0.0
-      let rowBase := i.val * numCols
+      let rowBase := i * numCols
       for j in [:numCols] do
-        -- SAFETY: v has size M.numCols, guaranteed by Array.ofFn
+        -- SAFETY: v has size M.numCols, guaranteed by Array.replicate.
         acc := acc + M.data[rowBase + j]! * v[j]!
-      return acc
+      Mv := Mv.set! i acc
+      mvNormSq := mvNormSq + acc * acc
 
     -- Compute M^T (M v) = (M^T M) v
-    let mut MTMv : Array Float := .ofFn fun j : Fin numCols => Id.run do
+    let mut mtmvNormSq : Float := 0.0
+    for j in [:numCols] do
       let mut acc : Float := 0.0
-      let col := j.val
       for i in [:numRows] do
-        -- SAFETY: Mv has size M.numRows, guaranteed by Array.ofFn above
-        acc := acc + M.data[i * numCols + col]! * Mv[i]!
-      return acc
+        -- SAFETY: Mv has size M.numRows, guaranteed by Array.replicate.
+        acc := acc + M.data[i * numCols + j]! * Mv[i]!
+      MTMv := MTMv.set! j acc
+      mtmvNormSq := mtmvNormSq + acc * acc
 
     -- Compute norm of MTMv (this is σ² times ‖v‖, and ‖v‖ ≈ 1)
-    let normSq := MTMv.foldl (fun acc x => acc + x * x) 0.0
-    let norm := Float.sqrt normSq
+    let norm := Float.sqrt mtmvNormSq
 
     if norm < 1e-15 then
       return 0.0
 
     -- σ² ≈ ‖MTMv‖ / ‖v‖ ≈ ‖MTMv‖
     -- So σ ≈ ‖Mv‖
-    let MvNorm := Float.sqrt (Mv.foldl (fun acc x => acc + x * x) 0.0)
-    sigma := MvNorm
+    sigma := Float.sqrt mvNormSq
 
     -- Normalize for next iteration
-    v := MTMv.map (· / norm)
+    for j in [:numCols] do
+      v := v.set! j (MTMv[j]! / norm)
 
   -- Heuristic safety margin for numerical errors
   sigma * 1.01
