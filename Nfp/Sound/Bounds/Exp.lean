@@ -99,23 +99,17 @@ theorem expLBPortfolio_def : expLBPortfolio = #[(2, 4), (3, 6), (4, 8)] := rfl
 
 /-- Portfolio of `expLBScaledTaylor` candidates, truncated by effort. -/
 def expLBCandidates (x : Rat) (effort : Nat) : Array Rat :=
-  Id.run do
-    let limit := min effort expLBPortfolio.size
-    let mut out : Array Rat := Array.mkEmpty limit
-    for i in [:limit] do
-      let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
-      out := out.push cand
-    return out
+  let limit := min effort expLBPortfolio.size
+  Array.ofFn fun (i : Fin limit) =>
+    let pair := expLBPortfolio[i.val]!
+    expLBScaledTaylor x pair.2 pair.1
 
 theorem expLBCandidates_def (x : Rat) (effort : Nat) :
     expLBCandidates x effort =
-      Id.run do
-        let limit := min effort expLBPortfolio.size
-        let mut out : Array Rat := Array.mkEmpty limit
-        for i in [:limit] do
-          let cand := expLBScaledTaylor x (expLBPortfolio[i]!).2 (expLBPortfolio[i]!).1
-          out := out.push cand
-        return out := rfl
+      let limit := min effort expLBPortfolio.size
+      Array.ofFn fun (i : Fin limit) =>
+        let pair := expLBPortfolio[i.val]!
+        expLBScaledTaylor x pair.2 pair.1 := rfl
 
 /-- Portfolio lower bound on `exp`, with a baseline `1 + x` candidate. -/
 def expLB (x : Rat) (effort : Nat) : Rat :=

@@ -117,36 +117,31 @@ If `a,b` are in units of `1/S`, then their product is in units of `1/S^2`; we re
 with outward rounding to remain conservative.
 -/
 def mul (cfg : Fixed10Cfg) (a b : Fixed10Interval) : Fixed10Interval :=
-  Id.run do
-    let p1 := a.lo * b.lo
-    let p2 := a.lo * b.hi
-    let p3 := a.hi * b.lo
-    let p4 := a.hi * b.hi
-    let loSq := min (min p1 p2) (min p3 p4)
-    let hiSq := max (max p1 p2) (max p3 p4)
-    return rescaleFromSq cfg loSq hiSq
+  let p1 := a.lo * b.lo
+  let p2 := a.lo * b.hi
+  let p3 := a.hi * b.lo
+  let p4 := a.hi * b.hi
+  let loSq := min (min p1 p2) (min p3 p4)
+  let hiSq := max (max p1 p2) (max p3 p4)
+  rescaleFromSq cfg loSq hiSq
 
 /-- Add a constant vector to a vector of intervals. -/
 def addConstVec (xs : Array Fixed10Interval) (c : Array Fixed10Interval) : Array Fixed10Interval :=
-  Id.run do
-    if xs.size ≠ c.size then
-      return xs
-    let mut out := Array.mkEmpty xs.size
-    for i in [:xs.size] do
-      out := out.push (add xs[i]! c[i]!)
-    return out
+  if xs.size = c.size then
+    let n := xs.size
+    Array.ofFn fun (i : Fin n) =>
+      add xs[i] (c.getD i.val default)
+  else
+    xs
 
 /-- Elementwise union of two interval vectors. -/
 def unionVec (a b : Array Fixed10Interval) : Array Fixed10Interval :=
-  Id.run do
-    if a.size ≠ b.size then
-      return a
-    let mut out : Array Fixed10Interval := Array.mkEmpty a.size
-    let mut i : Nat := 0
-    while i < a.size do
-      out := out.push (union a[i]! b[i]!)
-      i := i + 1
-    return out
+  if a.size = b.size then
+    let n := a.size
+    Array.ofFn fun (i : Fin n) =>
+      union a[i] (b.getD i.val default)
+  else
+    a
 
 /-! ### Specs -/
 

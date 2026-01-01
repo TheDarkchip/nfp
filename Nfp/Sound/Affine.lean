@@ -24,14 +24,9 @@ namespace AffineForm
 def const (x : Rat) : AffineForm := { center := x, coeffs := #[] }
 
 private def combineCoeffs (a b : Array Rat) (f : Rat → Rat → Rat) : Array Rat :=
-  Id.run do
-    let n := max a.size b.size
-    let mut out := Array.mkEmpty n
-    for i in [:n] do
-      let ai := a.getD i 0
-      let bi := b.getD i 0
-      out := out.push (f ai bi)
-    return out
+  let n := max a.size b.size
+  Array.ofFn fun (i : Fin n) =>
+    f (a.getD i.val 0) (b.getD i.val 0)
 
 /-- Add two affine forms, aligning noise terms by index. -/
 def add (a b : AffineForm) : AffineForm :=
