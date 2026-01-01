@@ -53,6 +53,16 @@ private def i32le (x : Int) : ByteArray :=
   let ux : UInt32 := UInt32.ofInt x
   u32le ux
 
+private def appendI32LE (buf : Array UInt8) (x : Int) : Array UInt8 :=
+  Id.run do
+    let ux : UInt32 := UInt32.ofInt x
+    let mut out := buf
+    out := out.push (ux &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 8) &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 16) &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 24) &&& 0xFF).toUInt8
+    return out
+
 private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
   let b0 := (b.get! off).toUInt32
   let b1 := (b.get! (off + 1)).toUInt32
@@ -233,7 +243,7 @@ private def consumeFixedBytes
   Id.run do
     let mut iLine := start
     let mut remaining := count
-    let mut buf : ByteArray := ByteArray.empty
+    let mut buf : Array UInt8 := Array.mkEmpty (count * 4)
     while remaining > 0 do
       if iLine ≥ lines.size then
         return .error "unexpected end of file while reading fixed tokens"
@@ -256,9 +266,9 @@ private def consumeFixedBytes
           match parseFixed10Rounded scalePow10 bytes tokStart tokStop with
           | .error e => return .error e
           | .ok x =>
-              buf := buf ++ i32le x
+              buf := appendI32LE buf x
               remaining := remaining - 1
-    return .ok (buf, iLine)
+    return .ok (ByteArray.mk buf, iLine)
 
 private def readHeaderFromLines (lines : Array String) : Except String (Header × Nat) :=
   Id.run do
@@ -371,14 +381,21 @@ private def collectLayerNormParamsFixed
     return .ok (ln1, ln2)
 
 private def encodeIntArray (xs : Array Int) : ByteArray :=
-  xs.foldl (fun acc x => acc ++ i32le x) ByteArray.empty
+  Id.run do
+    let mut out : Array UInt8 := Array.mkEmpty (xs.size * 4)
+    for x in xs do
+      out := appendI32LE out x
+    return ByteArray.mk out
 
 private def repeatBytes (b : ByteArray) (n : Nat) : ByteArray :=
   Id.run do
-    let mut out := ByteArray.empty
+    if n = 0 || b.size = 0 then
+      return ByteArray.empty
+    let mut out : Array UInt8 := Array.mkEmpty (n * b.size)
     for _ in [:n] do
-      out := out ++ b
-    return out
+      for byte in b.data do
+        out := out.push byte
+    return ByteArray.mk out
 
 def buildCacheBytes
     (lines : Array String)
@@ -408,17 +425,25 @@ def buildCacheBytes
         modelSize := modelSize
         scalePow10 := UInt32.ofNat scalePow10 }
 
-    let mut out : ByteArray := encodeHeader hdr
+    let totalBytes : Nat := headerBytes + expectedI32Count hdr * 4
+    let appendBytes := fun (out : Array UInt8) (bytes : ByteArray) => Id.run do
+      let mut out := out
+      for b in bytes.data do
+        out := out.push b
+      return out
+
+    let mut out : Array UInt8 := Array.mkEmpty totalBytes
+    out := appendBytes out (encodeHeader hdr)
     let mut pos : Nat := skipUntil lines 0 (fun s => s.startsWith "LAYER")
     let zeroBytes := i32le 0
 
     for l in [:L] do
       let p1 := ln1.getD l { gamma := Array.replicate d (0 : Int), beta := Array.replicate d 0 }
       let p2 := ln2.getD l { gamma := Array.replicate d (0 : Int), beta := Array.replicate d 0 }
-      out := out ++ encodeIntArray p1.gamma
-      out := out ++ encodeIntArray p1.beta
-      out := out ++ encodeIntArray p2.gamma
-      out := out ++ encodeIntArray p2.beta
+      out := appendBytes out (encodeIntArray p1.gamma)
+      out := appendBytes out (encodeIntArray p1.beta)
+      out := appendBytes out (encodeIntArray p2.gamma)
+      out := appendBytes out (encodeIntArray p2.beta)
 
       pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
       if pos ≥ lines.size then
@@ -463,7 +488,7 @@ def buildCacheBytes
         match consumeFixedBytes scalePow10 lines (pos + 1) (d * dh) with
         | .error e => return .error e
         | .ok (bytes, next) =>
-            out := out ++ bytes
+            out := appendBytes out bytes
             pos := next
 
         pos := skipBlankLines lines pos
@@ -471,10 +496,10 @@ def buildCacheBytes
           match consumeFixedBytes scalePow10 lines (pos + 1) dh with
           | .error e => return .error e
           | .ok (bytes, next) =>
-              out := out ++ bytes
+              out := appendBytes out bytes
               pos := next
         else
-          out := out ++ repeatBytes zeroBytes dh
+          out := appendBytes out (repeatBytes zeroBytes dh)
 
         pos := skipBlankLines lines pos
         if !(pos < lines.size && lines[pos]!.trim = "W_O") then
@@ -482,7 +507,7 @@ def buildCacheBytes
         match consumeFixedBytes scalePow10 lines (pos + 1) (dh * d) with
         | .error e => return .error e
         | .ok (bytes, next) =>
-            out := out ++ bytes
+            out := appendBytes out bytes
             pos := next
 
       pos := skipBlankLines lines pos
@@ -491,7 +516,7 @@ def buildCacheBytes
       match consumeFixedBytes scalePow10 lines (pos + 1) d with
       | .error e => return .error e
       | .ok (bytes, next) =>
-          out := out ++ bytes
+          out := appendBytes out bytes
           pos := next
 
       pos := skipBlankLines lines pos
@@ -505,7 +530,7 @@ def buildCacheBytes
       match consumeFixedBytes scalePow10 lines (pos + 1) (d * dhid) with
       | .error e => return .error e
       | .ok (bytes, next) =>
-          out := out ++ bytes
+          out := appendBytes out bytes
           pos := next
 
       pos := skipBlankLines lines pos
@@ -514,7 +539,7 @@ def buildCacheBytes
       match consumeFixedBytes scalePow10 lines (pos + 1) dhid with
       | .error e => return .error e
       | .ok (bytes, next) =>
-          out := out ++ bytes
+          out := appendBytes out bytes
           pos := next
 
       pos := skipBlankLines lines pos
@@ -523,7 +548,7 @@ def buildCacheBytes
       match consumeFixedBytes scalePow10 lines (pos + 1) (dhid * d) with
       | .error e => return .error e
       | .ok (bytes, next) =>
-          out := out ++ bytes
+          out := appendBytes out bytes
           pos := next
 
       pos := skipBlankLines lines pos
@@ -532,12 +557,12 @@ def buildCacheBytes
       match consumeFixedBytes scalePow10 lines (pos + 1) d with
       | .error e => return .error e
       | .ok (bytes, next) =>
-          out := out ++ bytes
+          out := appendBytes out bytes
           pos := next
 
       pos := skipUntil lines pos (fun s => s.startsWith "LAYER")
 
-    return .ok out
+    return .ok (ByteArray.mk out)
 
 private def isMaybeNumberStart (b : UInt8) : Bool :=
   b = 45 || b = 43 || b = 46 || (48 ≤ b && b ≤ 57)
@@ -966,6 +991,7 @@ theorem Header_spec_cache_pure : Header = Header := rfl
 theorem u32le_spec_cache_pure : u32le = u32le := rfl
 theorem u64le_spec_cache_pure : u64le = u64le := rfl
 theorem i32le_spec_cache_pure : i32le = i32le := rfl
+theorem appendI32LE_spec_cache_pure : appendI32LE = appendI32LE := rfl
 theorem u32FromLE_spec_cache_pure : u32FromLE = u32FromLE := rfl
 theorem u64FromLE_spec_cache_pure : u64FromLE = u64FromLE := rfl
 theorem i32FromLE_spec_cache_pure : i32FromLE = i32FromLE := rfl

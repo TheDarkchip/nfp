@@ -3,6 +3,7 @@
 import Std
 import Init.System.IO
 import Nfp.Sound.CachePure
+import Nfp.Untrusted.SoundBinary
 
 namespace Nfp.Untrusted.SoundCacheIO
 
@@ -12,13 +13,50 @@ namespace Nfp.Untrusted.SoundCacheIO
 IO wrappers for the SOUND cache format. Pure parsing/encoding lives in `Nfp.Sound.CachePure`.
 -/
 private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
-  let mut out := ByteArray.empty
-  while out.size < n do
-    let chunk ← h.read (USize.ofNat (n - out.size))
+  if n = 0 then
+    return ByteArray.empty
+  let mut remaining := n
+  let mut out : Array UInt8 := Array.mkEmpty n
+  while remaining > 0 do
+    let chunk ← h.read (USize.ofNat remaining)
     if chunk.isEmpty then
       throw (IO.userError "unexpected EOF")
-    out := out ++ chunk
-  return out
+    for b in chunk.data do
+      out := out.push b
+    remaining := remaining - chunk.size
+  return ByteArray.mk out
+
+private def appendI32LE (buf : Array UInt8) (x : Int) : Array UInt8 :=
+  Id.run do
+    let ux : UInt32 := UInt32.ofInt x
+    let mut out := buf
+    out := out.push (ux &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 8) &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 16) &&& 0xFF).toUInt8
+    out := out.push ((ux >>> 24) &&& 0xFF).toUInt8
+    return out
+
+private def appendI32Array (buf : Array UInt8) (xs : Array Int) : Array UInt8 :=
+  Id.run do
+    let mut out := buf
+    for x in xs do
+      out := appendI32LE out x
+    return out
+
+private def appendBytes (buf : Array UInt8) (bytes : ByteArray) : Array UInt8 :=
+  Id.run do
+    let mut out := buf
+    for b in bytes.data do
+      out := out.push b
+    return out
+
+def isBinaryModelFile (path : System.FilePath) : IO (Except String Bool) := do
+  let h ← IO.FS.Handle.mk path IO.FS.Mode.read
+  let line ← h.getLine
+  if line.isEmpty then
+    return .error "empty model file"
+  let magic := line.trim
+  return .ok (magic = "NFP_BINARY_V1")
 
 def writeHeader (h : IO.FS.Handle) (hdr : Nfp.Sound.SoundCache.Header) : IO Unit := do
   h.write (Nfp.Sound.SoundCache.encodeHeader hdr)
@@ -46,17 +84,132 @@ def fnv1a64File (path : System.FilePath) : IO UInt64 := do
 def ensureCacheDir : IO Unit := do
   IO.FS.createDirAll Nfp.Sound.SoundCache.cacheDir
 
+def buildCacheBytesText
+    (modelPath : System.FilePath)
+    (scalePow10 : Nat)
+    (modelHash modelSize : UInt64) : IO (Except String ByteArray) := do
+  let contents ← IO.FS.readFile modelPath
+  let lines : Array String := (contents.splitOn "\n").toArray
+  return Nfp.Sound.SoundCache.buildCacheBytes lines scalePow10 modelHash modelSize
+
+def buildCacheBytesBinary
+    (modelPath : System.FilePath)
+    (scalePow10 : Nat)
+    (modelHash modelSize : UInt64) : IO (Except String ByteArray) := do
+  let action : ExceptT String IO ByteArray := do
+    let liftExcept {α : Type} (act : IO (Except String α)) : ExceptT String IO α :=
+      ExceptT.mk act
+
+    let h1 ← ExceptT.lift <| IO.FS.Handle.mk modelPath IO.FS.Mode.read
+    let hdr1 ← liftExcept <| Nfp.Untrusted.SoundBinary.readBinaryHeader h1
+    let d := hdr1.modelDim
+    let dh := hdr1.headDim
+    let dhid := hdr1.hiddenDim
+    let L := hdr1.numLayers
+    let H := hdr1.numHeads
+
+    let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipI32Array h1 hdr1.seqLen
+    let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (hdr1.seqLen * d)
+
+    let mut ln1Gamma : Array (Array Int) := Array.mkEmpty L
+    let mut ln1Beta : Array (Array Int) := Array.mkEmpty L
+    let mut ln2Gamma : Array (Array Int) := Array.mkEmpty L
+    let mut ln2Beta : Array (Array Int) := Array.mkEmpty L
+
+    for _l in [:L] do
+      for _h in [:H] do
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (d * dh)
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 dh
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (d * dh)
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 dh
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (d * dh)
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 dh
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (dh * d)
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 d
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (d * dhid)
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 dhid
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 (dhid * d)
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h1 d
+      let ln1G ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h1 d scalePow10
+      let ln1B ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h1 d scalePow10
+      let ln2G ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h1 d scalePow10
+      let ln2B ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h1 d scalePow10
+      ln1Gamma := ln1Gamma.push ln1G
+      ln1Beta := ln1Beta.push ln1B
+      ln2Gamma := ln2Gamma.push ln2G
+      ln2Beta := ln2Beta.push ln2B
+
+    let hdrCache : Nfp.Sound.SoundCache.Header := {
+      modelHash := modelHash
+      modelSize := modelSize
+      scalePow10 := UInt32.ofNat scalePow10
+      numLayers := UInt32.ofNat L
+      numHeads := UInt32.ofNat H
+      modelDim := UInt32.ofNat d
+      headDim := UInt32.ofNat dh
+      hiddenDim := UInt32.ofNat dhid
+    }
+
+    let totalBytes : Nat :=
+      Nfp.Sound.SoundCache.headerBytes +
+        Nfp.Sound.SoundCache.expectedI32Count hdrCache * 4
+    let mut out : Array UInt8 := Array.mkEmpty totalBytes
+    out := appendBytes out (Nfp.Sound.SoundCache.encodeHeader hdrCache)
+
+    let h2 ← ExceptT.lift <| IO.FS.Handle.mk modelPath IO.FS.Mode.read
+    let hdr2 ← liftExcept <| Nfp.Untrusted.SoundBinary.readBinaryHeader h2
+    if hdr2.numLayers ≠ L || hdr2.numHeads ≠ H || hdr2.modelDim ≠ d ||
+        hdr2.headDim ≠ dh || hdr2.hiddenDim ≠ dhid then
+      throw "binary header mismatch between passes"
+
+    let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipI32Array h2 hdr2.seqLen
+    let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 (hdr2.seqLen * d)
+
+    for l in [:L] do
+      out := appendI32Array out (ln1Gamma[l]!)
+      out := appendI32Array out (ln1Beta[l]!)
+      out := appendI32Array out (ln2Gamma[l]!)
+      out := appendI32Array out (ln2Beta[l]!)
+      for _h in [:H] do
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 (d * dh)
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 dh
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 (d * dh)
+        let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 dh
+        let wV ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 (d * dh) scalePow10
+        let bV ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 dh scalePow10
+        let wO ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 (dh * d) scalePow10
+        out := appendI32Array out wV
+        out := appendI32Array out bV
+        out := appendI32Array out wO
+      let attnBias ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 d scalePow10
+      let wIn ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 (d * dhid) scalePow10
+      let bIn ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 dhid scalePow10
+      let wOut ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 (dhid * d) scalePow10
+      let bOut ← liftExcept <| Nfp.Untrusted.SoundBinary.readScaledFloatArray h2 d scalePow10
+      out := appendI32Array out attnBias
+      out := appendI32Array out wIn
+      out := appendI32Array out bIn
+      out := appendI32Array out wOut
+      out := appendI32Array out bOut
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 d
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 d
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 d
+      let _ ← liftExcept <| Nfp.Untrusted.SoundBinary.skipF64Array h2 d
+
+    if out.size ≠ totalBytes then
+      throw s!"cache size mismatch: expected {totalBytes}, got {out.size}"
+    return ByteArray.mk out
+  action.run
+
 /-- Build (or overwrite) a SOUND fixed-point cache file. -/
 def buildCacheFile
     (modelPath cachePath : System.FilePath)
     (scalePow10 : Nat := 9) : IO (Except String Unit) := do
   ensureCacheDir
-  let contents ← IO.FS.readFile modelPath
-  let lines : Array String := (contents.splitOn "\n").toArray
   let modelHash ← fnv1a64File modelPath
   let mdata ← modelPath.metadata
   let modelSize : UInt64 := mdata.byteSize
-  match Nfp.Sound.SoundCache.buildCacheBytes lines scalePow10 modelHash modelSize with
+  match ← buildCacheBytesText modelPath scalePow10 modelHash modelSize with
   | .error e => return .error e
   | .ok bytes =>
       let tmpPath := cachePath.withExtension "tmp"

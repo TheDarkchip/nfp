@@ -69,13 +69,18 @@ private def readLine? (h : IO.FS.Handle) : IO (Option String) := do
     return some s
 
 private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
-  let mut out := ByteArray.empty
-  while out.size < n do
-    let chunk ← h.read (USize.ofNat (n - out.size))
+  if n = 0 then
+    return ByteArray.empty
+  let mut remaining := n
+  let mut out : Array UInt8 := Array.mkEmpty n
+  while remaining > 0 do
+    let chunk ← h.read (USize.ofNat remaining)
     if chunk.isEmpty then
       throw (IO.userError "unexpected EOF")
-    out := out ++ chunk
-  return out
+    for b in chunk.data do
+      out := out.push b
+    remaining := remaining - chunk.size
+  return ByteArray.mk out
 
 private def u32FromLE (b : ByteArray) (off : Nat) : UInt32 :=
   let b0 := (b[off]!).toUInt32

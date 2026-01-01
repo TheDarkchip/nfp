@@ -35,13 +35,18 @@ def readBinaryHeader (h : IO.FS.Handle) : IO (Except String Nfp.Sound.BinaryHead
   return Nfp.Sound.parseBinaryHeaderLines magicLine lines
 
 private def readExactly (h : IO.FS.Handle) (n : Nat) : IO ByteArray := do
-  let mut out := ByteArray.empty
-  while out.size < n do
-    let chunk ← h.read (USize.ofNat (n - out.size))
+  if n = 0 then
+    return ByteArray.empty
+  let mut remaining := n
+  let mut out : Array UInt8 := Array.mkEmpty n
+  while remaining > 0 do
+    let chunk ← h.read (USize.ofNat remaining)
     if chunk.isEmpty then
       throw (IO.userError "unexpected EOF")
-    out := out ++ chunk
-  return out
+    for b in chunk.data do
+      out := out.push b
+    remaining := remaining - chunk.size
+  return ByteArray.mk out
 
 def skipBytes (h : IO.FS.Handle) (n : Nat) : IO (Except String Unit) := do
   let mut remaining := n

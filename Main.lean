@@ -1528,6 +1528,75 @@ def runSoundCacheCheck (p : Parsed) : IO UInt32 := do
   let args := parseSoundCacheCheckArgs p
   runSoundCacheCheckWithArgs args
 
+/-! ## Sound cache benchmark helpers -/
+
+private structure SoundCacheBenchArgs where
+  modelPath : System.FilePath
+  scalePow10 : Nat
+  runs : Nat
+
+private def parseSoundCacheBenchArgs (p : Parsed) : SoundCacheBenchArgs :=
+  let modelPath := p.positionalArg! "model" |>.as! String
+  let scalePow10 := p.flag? "scalePow10" |>.map (·.as! Nat) |>.getD 9
+  let runs := p.flag? "runs" |>.map (·.as! Nat) |>.getD 1
+  { modelPath := ⟨modelPath⟩, scalePow10 := scalePow10, runs := runs }
+
+private def runSoundCacheBenchWithArgs (args : SoundCacheBenchArgs) : IO UInt32 := do
+  if args.runs = 0 then
+    IO.eprintln "Error: --runs must be > 0"
+    return 1
+  let modelHash ← Nfp.Untrusted.SoundCacheIO.fnv1a64File args.modelPath
+  let mdata ← args.modelPath.metadata
+  let modelSize : UInt64 := mdata.byteSize
+  let isBinaryE ← Nfp.Untrusted.SoundCacheIO.isBinaryModelFile args.modelPath
+  let isBinary ←
+    match isBinaryE with
+    | .error e =>
+        IO.eprintln s!"Error: {e}"
+        return 1
+    | .ok b => pure b
+  let formatStr := if isBinary then "binary" else "text"
+  let mut times : Array Nat := Array.mkEmpty args.runs
+  let mut lastBytes : Nat := 0
+  for i in [:args.runs] do
+    let t0 ← IO.monoNanosNow
+    let bytesE ←
+      if isBinary then
+        Nfp.Untrusted.SoundCacheIO.buildCacheBytesBinary
+          args.modelPath args.scalePow10 modelHash modelSize
+      else
+        Nfp.Untrusted.SoundCacheIO.buildCacheBytesText
+          args.modelPath args.scalePow10 modelHash modelSize
+    let t1 ← IO.monoNanosNow
+    match bytesE with
+    | .error e =>
+        IO.eprintln s!"Error: {e}"
+        return 1
+    | .ok bytes =>
+        let dtMs := (t1 - t0) / 1000000
+        times := times.push dtMs
+        lastBytes := bytes.size
+        if args.runs > 1 then
+          IO.println s!"run {i + 1}: {dtMs}ms"
+  let t0 := times[0]!
+  let mut minT := t0
+  let mut maxT := t0
+  let mut sumT : Nat := 0
+  for t in times do
+    if t < minT then
+      minT := t
+    if t > maxT then
+      maxT := t
+    sumT := sumT + t
+  let avgT := sumT / times.size
+  IO.println s!"cacheBuild format={formatStr} scalePow10={args.scalePow10} bytes={lastBytes}"
+  IO.println s!"cacheBuild runs={args.runs} min={minT}ms avg={avgT}ms max={maxT}ms"
+  return 0
+
+def runSoundCacheBench (p : Parsed) : IO UInt32 := do
+  let args := parseSoundCacheBenchArgs p
+  runSoundCacheBenchWithArgs args
+
 /-- Run the rope command - print a proof-backed RoPE operator norm certificate. -/
 def runRoPE (p : Parsed) : IO UInt32 := do
   let seqLen := p.flag? "seqLen" |>.map (·.as! Nat) |>.getD 4
@@ -1923,6 +1992,17 @@ def soundCacheCheckCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The sound-cache-bench subcommand. -/
+def soundCacheBenchCmd : Cmd := `[Cli|
+  sound_cache_bench VIA runSoundCacheBench;
+  "Benchmark SOUND fixed-point cache build (text or binary)."
+  FLAGS:
+    scalePow10 : Nat; "Fixed-point scale exponent p in S=10^p (default: 9)"
+    runs : Nat; "Number of benchmark runs (default: 1)"
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The rope subcommand. -/
 def ropeCmd : Cmd := `[Cli|
   rope VIA runRoPE;
@@ -1971,6 +2051,7 @@ def nfpCmd : Cmd := `[Cli|
     headPatternCmd;
     inductionCertCmd;
     soundCacheCheckCmd;
+    soundCacheBenchCmd;
     ropeCmd;
     dumpCmd;
     logitDiffCmd
