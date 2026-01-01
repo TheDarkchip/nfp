@@ -23,7 +23,7 @@ This module is intentionally thin: it delegates witness generation to
 private def readTextModelHeader (path : System.FilePath) :
     IO (Except String TextHeader) := do
   let contents ← IO.FS.readFile path
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := splitLines contents
   return Nfp.Sound.parseTextHeader lines
 
 private def readBinaryModelHeader (path : System.FilePath) :
@@ -198,7 +198,7 @@ private def recomputeModelWeightBoundsBinary
 private def recomputeModelWeightBoundsText
     (path : System.FilePath) : IO (Except String ModelWeightBounds) := do
   let contents ← IO.FS.readFile path
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := splitLines contents
   return modelWeightBoundsFromTextLines lines
 
 private def recomputeModelWeightBounds

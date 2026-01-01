@@ -3,6 +3,7 @@
 import Std
 import Nfp.Sound.Cert
 import Nfp.Sound.HeadCert
+import Nfp.Sound.ModelHeader
 import Nfp.Untrusted.SoundBinary
 import Nfp.Sound.Interval
 import Nfp.Sound.Affine
@@ -667,7 +668,7 @@ def certifyModelFileGlobal
     return .error "partitionDepth > 0 not yet implemented"
   let actDerivBound := geluDerivBoundGlobal geluDerivTarget
   let contents ← IO.FS.readFile path
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := Nfp.Sound.splitLines contents
   -- Header
   let mut i : Nat := 0
   while i < lines.size && lines[i]!.trim.isEmpty do
@@ -890,7 +891,7 @@ private def loadEmbeddingsIntervals
     (path : System.FilePath) (seqLen modelDim : Nat) (delta : Rat) :
     IO (Except String (Array (Array RatInterval))) := do
   let contents ← IO.FS.readFile path
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := Nfp.Sound.splitLines contents
   let mut i : Nat := 0
   while i < lines.size && lines[i]!.trim.isEmpty do
     i := i + 1
@@ -3903,7 +3904,7 @@ private def certifyModelFileLocalText
   if partitionDepth ≠ 0 then
     return .error "partitionDepth > 0 not yet implemented"
   let contents ← IO.FS.readFile path
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := Nfp.Sound.splitLines contents
   -- Header
   let mut i : Nat := 0
   while i < lines.size && lines[i]!.trim.isEmpty do

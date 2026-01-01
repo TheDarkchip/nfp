@@ -3,6 +3,7 @@
 import Std
 import Init.System.IO
 import Nfp.Sound.CachePure
+import Nfp.Sound.ModelHeader
 import Nfp.Untrusted.SoundBinary
 
 namespace Nfp.Untrusted.SoundCacheIO
@@ -75,7 +76,7 @@ def buildCacheBytesText
     (scalePow10 : Nat)
     (modelHash modelSize : UInt64) : IO (Except String ByteArray) := do
   let contents ← IO.FS.readFile modelPath
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := Nfp.Sound.splitLines contents
   return Nfp.Sound.SoundCache.buildCacheBytes lines scalePow10 modelHash modelSize
 
 def buildCacheBytesBinary
@@ -218,7 +219,7 @@ def checkTextTokenEnvelope
     (scalePow10 : Nat := 9)
     (maxTokens : Nat := 0) : IO (Except String Unit) := do
   let contents ← IO.FS.readFile modelPath
-  let lines : Array String := (contents.splitOn "\n").toArray
+  let lines : Array String := Nfp.Sound.splitLines contents
   return Nfp.Sound.SoundCache.checkTextTokenEnvelopeLines lines scalePow10 maxTokens
 
 /-- Check that the cache file size matches the expected tensor stream length. -/

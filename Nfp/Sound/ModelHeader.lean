@@ -21,6 +21,23 @@ def parseHeaderLine (line : String) : Option (String × String) :=
     | [k, v] => some (k.trim, v.trim)
     | _ => none
 
+/-- Split a string on `\n`, preserving empty lines. -/
+def splitLines (s : String) : Array String :=
+  Id.run do
+    let mut out : Array String := #[]
+    let mut start : String.Pos.Raw := 0
+    let mut p : String.Pos.Raw := 0
+    let stop := s.rawEndPos
+    while p < stop do
+      if p.get s = '\n' then
+        out := out.push (String.Pos.Raw.extract s start p)
+        p := p.next s
+        start := p
+      else
+        p := p.next s
+    out := out.push (String.Pos.Raw.extract s start stop)
+    return out
+
 /-- Minimal parsed header data for sound certification. -/
 structure TextHeader where
   eps : Rat
@@ -76,6 +93,7 @@ def parseTextHeaderEps (lines : Array String) : Except String Rat := do
 /-! ### Specs -/
 
 theorem parseHeaderLine_spec : parseHeaderLine = parseHeaderLine := rfl
+theorem splitLines_spec : splitLines = splitLines := rfl
 theorem parseGeluDerivTarget_spec (v : String) :
     parseGeluDerivTarget v = parseGeluDerivTarget v := rfl
 theorem parseTextHeader_spec : parseTextHeader = parseTextHeader := rfl
