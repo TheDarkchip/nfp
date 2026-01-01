@@ -210,7 +210,8 @@ private def consumeFixedBytes
   Id.run do
     let mut iLine := start
     let mut remaining := count
-    let mut buf : Array UInt8 := Array.mkEmpty (count * 4)
+    let mut buf : ByteArray := ByteArray.mk (Array.replicate (count * 4) 0)
+    let mut offBytes : Nat := 0
     while remaining > 0 do
       if iLine ≥ lines.size then
         return .error "unexpected end of file while reading fixed tokens"
@@ -233,9 +234,14 @@ private def consumeFixedBytes
           match parseFixed10Rounded scalePow10 bytes tokStart tokStop with
           | .error e => return .error e
           | .ok x =>
-              buf := appendI32LE buf x
+              let ux : UInt32 := UInt32.ofInt x
+              buf := buf.set! offBytes (ux &&& 0xFF).toUInt8
+              buf := buf.set! (offBytes + 1) ((ux >>> 8) &&& 0xFF).toUInt8
+              buf := buf.set! (offBytes + 2) ((ux >>> 16) &&& 0xFF).toUInt8
+              buf := buf.set! (offBytes + 3) ((ux >>> 24) &&& 0xFF).toUInt8
+              offBytes := offBytes + 4
               remaining := remaining - 1
-    return .ok (ByteArray.mk buf, iLine)
+    return .ok (buf, iLine)
 
 private def readHeaderFromLines (lines : Array String) : Except String (Header × Nat) :=
   Id.run do

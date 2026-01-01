@@ -5468,26 +5468,27 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
     if !(γ.numRows = 1 ∧ γ.numCols = cols) then
       return { numRows := rows, numCols := cols, gamma := γ, invStds := #[], v := X }
 
-    let mut means : Array Float := Array.mkEmpty rows
-    let mut invStds : Array Float := Array.mkEmpty rows
+    let mut means : Array Float := Array.replicate rows 0.0
+    let mut invStds : Array Float := Array.replicate rows 0.0
+    let colsF := cols.toFloat
     for r in [:rows] do
       let mut sum : Float := 0.0
       let rowBase := r * cols
       for c in [:cols] do
         sum := sum + X.data[rowBase + c]!
-      let μ := sum / cols.toFloat
+      let μ := sum / colsF
       let mut varSum : Float := 0.0
       for c in [:cols] do
         let d := X.data[rowBase + c]! - μ
         varSum := varSum + d * d
-      let varRaw := varSum / cols.toFloat
+      let varRaw := varSum / colsF
       -- Clamp for numerical stability (avoid NaN from tiny negative float noise).
       let var :=
         if Float.isNaN varRaw || Float.isInf varRaw then 0.0
         else max 0.0 varRaw
       let invσ := 1.0 / Float.sqrt (var + eps)
-      means := means.push μ
-      invStds := invStds.push invσ
+      means := means.set! r μ
+      invStds := invStds.set! r invσ
 
     let v : ConcreteMatrix :=
       { numRows := rows
@@ -5495,8 +5496,8 @@ def mkLayerNormJacobianCtx (X γ : ConcreteMatrix) (eps : Float := 1e-5) : Layer
         data := .ofFn fun idx : Fin (rows * cols) =>
           let r := idx.val / cols
           let c := idx.val % cols
-          let μ := means.getD r 0.0
-          let invσ := invStds.getD r 0.0
+          let μ := means[r]!
+          let invσ := invStds[r]!
           (X.data[r * cols + c]! - μ) * invσ
         size_eq := Array.size_ofFn }
 
@@ -5527,7 +5528,7 @@ def LayerNormJacobianCtx.apply (ctx : LayerNormJacobianCtx) (dX : ConcreteMatrix
         let dx := dX.data[rowBase + c]!
         sumDx := sumDx + dx
         sumVDx := sumVDx + (ctx.v.data[rowBase + c]! * dx)
-      meanDx := meanDx.set! r (sumDx / cols.toFloat)
+      meanDx := meanDx.set! r (sumDx / colsF)
       vDotDx := vDotDx.set! r sumVDx
 
     { numRows := rows
