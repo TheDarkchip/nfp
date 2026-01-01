@@ -83,19 +83,10 @@ lemma rowTotal_scaleRow_self (I : InfluenceSpec Site) (s0 : Site) (c : NNReal) :
     InfluenceSpec.rowTotal (Site := Site) (scaleRow (Site := Site) I s0 c) s0 =
       c * InfluenceSpec.rowTotal (Site := Site) I s0 := by
   classical
-  have hrewrite :
-      InfluenceSpec.rowTotal (Site := Site) (scaleRow (Site := Site) I s0 c) s0 =
-        ∑ t : Site, c * (if h : I.adj s0 t then I.κ h else 0) := by
-    simp [InfluenceSpec.rowTotal, scaleRow]
-  calc
-    InfluenceSpec.rowTotal (Site := Site) (scaleRow (Site := Site) I s0 c) s0 =
-        ∑ t : Site, c * (if h : I.adj s0 t then I.κ h else 0) := hrewrite
-    _ = c * InfluenceSpec.rowTotal (Site := Site) I s0 := by
-          -- pull the scalar outside the sum
-          simpa [InfluenceSpec.rowTotal] using
-            (Finset.mul_sum (s := (Finset.univ : Finset Site))
-              (f := fun t : Site => (if h : I.adj s0 t then I.κ h else 0))
-              (a := c)).symm
+  simpa [InfluenceSpec.rowTotal, scaleRow] using
+    (Finset.mul_sum (s := (Finset.univ : Finset Site))
+      (f := fun t : Site => (if h : I.adj s0 t then I.κ h else 0))
+      (a := c)).symm
 
 lemma rowTotal_scaleRow_other (I : InfluenceSpec Site) {s s0 : Site} (c : NNReal)
     (hs : s ≠ s0) :

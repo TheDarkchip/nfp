@@ -59,25 +59,23 @@ noncomputable def mix (c : NNReal) (hc : c ≤ 1) (p q : ProbVec ι) : ProbVec �
     mass := fun i => c * p.mass i + (1 - c) * q.mass i
     norm_one := by
       classical
+      have hp : (∑ i, c * p.mass i) = c * (∑ i, p.mass i) := by
+        simpa using
+          (Finset.mul_sum (s := (Finset.univ : Finset ι)) (f := fun i : ι => p.mass i)
+            (a := c)).symm
+      have hq :
+          (∑ i, (1 - c) * q.mass i) = (1 - c) * (∑ i, q.mass i) := by
+        simpa using
+          (Finset.mul_sum (s := (Finset.univ : Finset ι)) (f := fun i : ι => q.mass i)
+            (a := (1 - c))).symm
       calc
         (∑ i, (c * p.mass i + (1 - c) * q.mass i))
             = (∑ i, c * p.mass i) + (∑ i, (1 - c) * q.mass i) := by
                 simp [Finset.sum_add_distrib]
         _   = c * (∑ i, p.mass i) + (1 - c) * (∑ i, q.mass i) := by
-                have hp : (∑ i, c * p.mass i) = c * (∑ i, p.mass i) := by
-                  simpa using
-                    (Finset.mul_sum (s := (Finset.univ : Finset ι)) (f := fun i : ι => p.mass i)
-                      (a := c)).symm
-                have hq :
-                    (∑ i, (1 - c) * q.mass i) = (1 - c) * (∑ i, q.mass i) := by
-                  simpa using
-                    (Finset.mul_sum (s := (Finset.univ : Finset ι)) (f := fun i : ι => q.mass i)
-                      (a := (1 - c))).symm
                 simp [hp, hq]
         _   = c * 1 + (1 - c) * 1 := by
                 simp [ProbVec.sum_mass]
-        _   = c + (1 - c) := by
-                simp
         _   = 1 := by
                 simpa using (add_tsub_cancel_of_le hc)
   }

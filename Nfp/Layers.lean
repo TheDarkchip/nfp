@@ -133,9 +133,9 @@ lemma Mixer.attention_supported {Query Key : Type*} [Fintype Query] [Fintype Key
     (hα : ∀ q, (∑ k, α q k) = 1) :
     Mixer.supported (Mixer.attention α hα) (fun q k => α q k ≠ 0) := by
   intro q k hne
-  simp only [Mixer.attention]
-  by_contra h
-  exact hne h
+  by_cases hzero : α q k = 0
+  · simp [Mixer.attention, hzero]
+  · exact (hne hzero).elim
 
 end Attention
 

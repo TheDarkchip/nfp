@@ -5,7 +5,6 @@ import Mathlib.Data.Fintype.Basic
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.Finset.Basic
 import Mathlib.Data.Set.Basic
-import Aesop
 import Nfp.Prob
 
 /-!
@@ -133,8 +132,6 @@ def supported (M : Mixer S T) (R : S → T → Prop) : Prop :=
 @[simp] lemma supported_zero {M : Mixer S T} {R : S → T → Prop}
       (h : supported (S := S) (T := T) M R) {i : S} {j : T} (hij : ¬ R i j) : M.w i j = 0 :=
       h i j hij
-
-attribute [aesop safe] supported_zero
 
 /-- Relational composition of supports: `R ⋆ Q` allows an edge `i → k` iff there
 exists `j` with `i → j` allowed by `R` and `j → k` allowed by `Q`. -/
