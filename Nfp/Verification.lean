@@ -143,6 +143,12 @@ private def logitAt (residual : ConcreteMatrix) (pos : Nat)
       return acc
   else none
 
+private def deltaAt (residual : ConcreteMatrix) (pos : Nat)
+    (W_U : ConcreteMatrix) (targetToken negativeToken : Nat) : Float :=
+  let targetLogit := (logitAt residual pos W_U targetToken).getD 0.0
+  let negLogit := (logitAt residual pos W_U negativeToken).getD 0.0
+  targetLogit - negLogit
+
 private def topNonTargetToken (residual : ConcreteMatrix) (pos : Nat)
     (W_U : ConcreteMatrix) (targetToken : Nat) : Option (Nat × Float) := Id.run do
   if residual.numCols = W_U.numRows ∧ pos < residual.numRows ∧
@@ -312,8 +318,6 @@ def verifyCircuit (ctx : VerificationContext) (candidateHeads : Array HeadRef) :
   if !competence then
     failures := failures.push s!"Axiom1(baseline competence) failed: Δ_base={baseDelta} ≤ \
       ε={ctx.cfg.competenceEpsilon}"
-
-  if !competence then
     let axioms : AxiomStatus := {
       baselineCompetence := false
       controlIndependence := true
@@ -372,20 +376,16 @@ def verifyCircuit (ctx : VerificationContext) (candidateHeads : Array HeadRef) :
   -- Candidate ablation
   let fwdAblated := runForwardAblatingHeads ctx.model candidateHeads ctx.cfg.causal
   let residualAblated := fwdAblated.finalOutput
-  let ablatedTargetLogit :=
-    (logitAt residualAblated ctx.pos ctx.W_U ctx.targetToken).getD 0.0
-  let ablatedNegLogit :=
-    (logitAt residualAblated ctx.pos ctx.W_U ctx.negativeToken).getD 0.0
-  let ablatedDelta := ablatedTargetLogit - ablatedNegLogit
+  let ablatedDelta :=
+    deltaAt residualAblated ctx.pos ctx.W_U ctx.targetToken ctx.negativeToken
   let impact := baseDelta - ablatedDelta
   let relScore := if baseDelta > 0.0 then impact / baseDelta else 0.0
 
   -- Control ablation (energy-matched, layer-matched)
   let fwdCtrl := runForwardAblatingHeads ctx.model controlHeads ctx.cfg.causal
   let residualCtrl := fwdCtrl.finalOutput
-  let ctrlTargetLogit := (logitAt residualCtrl ctx.pos ctx.W_U ctx.targetToken).getD 0.0
-  let ctrlNegLogit := (logitAt residualCtrl ctx.pos ctx.W_U ctx.negativeToken).getD 0.0
-  let ctrlDelta := ctrlTargetLogit - ctrlNegLogit
+  let ctrlDelta :=
+    deltaAt residualCtrl ctx.pos ctx.W_U ctx.targetToken ctx.negativeToken
   let controlImpact := baseDelta - ctrlDelta
 
   return {

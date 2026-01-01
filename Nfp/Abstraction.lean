@@ -219,7 +219,7 @@ noncomputable def ablationDiscrepancy
     (D : DeepLinearization (n := n) (d := d))
     (blocked : Set (n × d)) [DecidablePred blocked]
     (v : (n × d) → ℝ) (j : n × d) : ℝ :=
-  |(D.ablateJacobian blocked).apply v j - (D.ablateValueTerm blocked).apply v j|
+  |(D.ablationError blocked).apply v j|
 
 /-- **Causal Consistency Bound**: The ablation discrepancy is bounded by the
 pattern term's influence on the input.
@@ -238,19 +238,11 @@ theorem causal_consistency_bound
   simp only [ablationDiscrepancy]
   -- The key insight: ablation error = ablated pattern term
   have h := D.ablationError_eq_ablatedPatternTerm blocked
-  -- The difference in applications
-  calc |(D.ablateJacobian blocked).apply v j - (D.ablateValueTerm blocked).apply v j|
-      = |(D.ablationError blocked).apply v j| := by
-        congr 1
-        simp only [DeepLinearization.ablationError, SignedMixer.apply_def, SignedMixer.sub_w]
-        rw [← Finset.sum_sub_distrib]
-        apply Finset.sum_congr rfl
-        intro i _
-        ring
-    _ = |((DeepPatternTerm D).ablate blocked).apply v j| := by
-        rw [h]
+  calc |(D.ablationError blocked).apply v j|
+      = |((DeepPatternTerm D).ablate blocked).apply v j| := by
+          rw [h]
     _ = |∑ i : n × d, if blocked i then 0 else v i * (DeepPatternTerm D).w i j| := by
-        simp only [SignedMixer.apply_ablate]
+          simp only [SignedMixer.apply_ablate]
     _ ≤ ∑ i : n × d, |if blocked i then 0 else v i * (DeepPatternTerm D).w i j| :=
         abs_sum_le_sum_abs _ _
     _ = ∑ i : n × d, if blocked i then 0 else |v i| * |(DeepPatternTerm D).w i j| := by
