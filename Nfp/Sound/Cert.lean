@@ -339,11 +339,10 @@ def Valid (c : ModelCert) : Prop :=
   0 < c.eps ∧
     c.softmaxJacobianNormInfWorst = Nfp.Sound.softmaxJacobianNormInfWorst ∧
     c.actDerivBound = c.layers.foldl (fun acc l => max acc l.mlpActDerivBound) 0 ∧
-    List.Forall₂
-      (fun i l =>
-        l.layerIdx = i ∧
-          LayerAmplificationCert.Valid c.eps c.soundnessBits c.seqLen c.modelDim c.headDim l)
-      (List.range c.layers.size) c.layers.toList ∧
+    (∀ i : Fin c.layers.size,
+      let l := c.layers[i]
+      l.layerIdx = i.val ∧
+        LayerAmplificationCert.Valid c.eps c.soundnessBits c.seqLen c.modelDim c.headDim l) ∧
     c.totalAmplificationFactor =
       c.layers.foldl (fun acc l => acc * (1 + l.C)) 1
 

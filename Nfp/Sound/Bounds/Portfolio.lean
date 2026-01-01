@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.Order.Ring.Unbundled.Rat
+import Init.Data.Array.Lemmas
 
 namespace Nfp.Sound
 
@@ -20,15 +21,12 @@ theorem ubBest_def (base : Rat) (cands : Array Rat) :
 /-- `ubBest` never exceeds its baseline upper bound. -/
 theorem ubBest_le_base (base : Rat) (cands : Array Rat) : ubBest base cands ≤ base := by
   classical
-  have hList : cands.toList.foldl min base ≤ base := by
-    induction cands.toList generalizing base with
-    | nil => simp
-    | cons x xs ih =>
-        simp only [List.foldl]
-        have h := ih (base := min base x)
-        exact le_trans h (min_le_left _ _)
   have hArray : cands.foldl min base ≤ base := by
-    simpa [Array.foldl_toList] using hList
+    refine Array.foldl_induction (as := cands)
+        (motive := fun _ acc => acc ≤ base) (init := base) (f := fun acc x => min acc x) ?h0 ?hf
+    · exact le_rfl
+    · intro i acc hacc
+      exact le_trans (min_le_left _ _) hacc
   simpa [ubBest] using hArray
 
 /-- Best lower bound among candidates (never worse than `base`). -/
@@ -41,15 +39,12 @@ theorem lbBest_def (base : Rat) (cands : Array Rat) :
 /-- `lbBest` never undercuts its baseline lower bound. -/
 theorem lbBest_ge_base (base : Rat) (cands : Array Rat) : base ≤ lbBest base cands := by
   classical
-  have hList : base ≤ cands.toList.foldl max base := by
-    induction cands.toList generalizing base with
-    | nil => simp
-    | cons x xs ih =>
-        simp only [List.foldl]
-        have h := ih (base := max base x)
-        exact le_trans (le_max_left _ _) h
   have hArray : base ≤ cands.foldl max base := by
-    simpa [Array.foldl_toList] using hList
+    refine Array.foldl_induction (as := cands)
+        (motive := fun _ acc => base ≤ acc) (init := base) (f := fun acc x => max acc x) ?h0 ?hf
+    · exact le_rfl
+    · intro i acc hacc
+      exact le_trans hacc (le_max_left _ _)
   simpa [lbBest] using hArray
 
 end Nfp.Sound

@@ -4000,7 +4000,19 @@ namespace DeepCircuitCandidate
 
 def toString (c : DeepCircuitCandidate) : String :=
   let heads := c.layerIndices.zip c.headIndices |>.map fun (l, h) => s!"L{l}H{h}"
-  s!"{c.patternType}: {heads.toList} | " ++
+  let headStr :=
+    Id.run do
+      let mut out := "["
+      let mut first := true
+      for h in heads do
+        if first then
+          first := false
+        else
+          out := out ++ ", "
+        out := out ++ h
+      out := out ++ "]"
+      return out
+  s!"{c.patternType}: {headStr} | " ++
   s!"ε_simple={c.simpleErrorSum}, ε_amplified={c.amplifiedError}, amp={c.amplificationFactor}"
 
 instance : ToString DeepCircuitCandidate := ⟨toString⟩
