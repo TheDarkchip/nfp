@@ -11,8 +11,10 @@ soundness upgrade. It is intentionally brief and human-readable.
   but it still treats softmax probability or margin evidence as external and does not derive those
   bounds from logits.
 - `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
-- Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
-- Softmax Jacobian bounds in the standard `certify` path now derive a probability interval from a
+- Affine arithmetic is available via `--affine` for best-match Q/K dot bounds, but those dot-bound
+  computations are untrusted witness generation; the checker only validates the downstream
+  margin-to-probability derivations.
+- Softmax Jacobian bounds in the standard `certify` path derive a probability interval from a
   global attention-score magnitude bound (LN1 max-abs + W_Q/W_K norms), but it is typically very
   loose and often collapses to `[0,1]`. Direct `--softmaxMargin` is still rejected because margin
   evidence is unverified.
@@ -25,9 +27,9 @@ soundness upgrade. It is intentionally brief and human-readable.
   `softmaxExpEffort` chosen by iterative exp-portfolio tightening (early stop on low relative
   improvement). The verifier accepts any per-head effort ≤ the requested cap, but model-level
   certification still requires `--bestMatchMargins`.
-- Best-match pattern certificates use a margin-derived softmax Jacobian bound with an
-  effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
-  is not yet formalized in Lean.
+- Best-match pattern certificates rely on untrusted interval/affine logit bounds to produce a
+  margin, and then use a margin-derived softmax Jacobian bound with an effort-indexed `expLB`
+  (scaled Taylor + squaring). The lower-bound correctness of `expLB` is not yet formalized in Lean.
 - GeLU derivative bounds are conservative envelopes; the exact interval supremum is not computed yet.
 - Attention Jacobian bounds now include an explicit pattern-term coefficient using max `W_Q/W_K`
   row-sum norms and a conservative LayerNorm output magnitude bound (`max|gamma|*sqrt(d)+max|beta|`),

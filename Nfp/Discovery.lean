@@ -6,9 +6,12 @@ import Init.Data.Array.Extract
 /-!
 # Executable Circuit Discovery for Induction Heads
 
-This module provides executable functions for discovering **certified induction heads**
+This module provides executable functions for discovering **candidate induction heads**
 from concrete model weights. It bridges the theoretical framework (Frobenius norms,
-pattern terms, faithfulness bounds) with practical verification of real neural networks.
+pattern terms, faithfulness bounds) with practical, Float-based analysis of real networks.
+
+Important: these routines are **heuristic** and are not kernel-sound. Sound certification
+lives in `Nfp.Sound.*`.
 
 ## Key Components
 
@@ -19,7 +22,7 @@ pattern terms, faithfulness bounds) with practical verification of real neural n
    bounds without materializing the full (N·D)² Jacobian matrix.
 
 3. **Discovery Functions**: Search algorithms that iterate over layer pairs to find
-   certified virtual heads (e.g., induction heads).
+   candidate virtual heads (e.g., induction heads).
 
 ## Mathematical Background
 
@@ -29,7 +32,8 @@ decomposes as: `fullJacobian = valueTerm + patternTerm` where:
 - `patternTerm` captures how A shifts when input changes (the error term)
 
 The **faithfulness bound** states: if ‖patternTerm‖_F ≤ ε, then the simple
-attention-based interpretation is ε-accurate.
+attention-based interpretation is ε-accurate. In this module those bounds are
+computed with `Float`s for speed and should be treated as diagnostics.
 
 ## Performance Optimizations
 

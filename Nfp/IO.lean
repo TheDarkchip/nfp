@@ -30,8 +30,13 @@ head_dim=64
 hidden_dim=3072
 vocab_size=50257
 seq_len=1024
+layer_norm_eps=1e-5
+gelu_kind=tanh
 BINARY_START
 ```
+
+`layer_norm_eps` (or legacy `eps`) and `gelu_kind` (or legacy `gelu_deriv`) are required by the
+SOUND certification path but are otherwise ignored by this loader.
 
 Binary payload (little-endian, row-major, no markers):
 1. TOKENS: `seq_len` × Int32

@@ -33,6 +33,9 @@ lake exe nfp analyze model.nfpt --threshold 0.1 --output report.txt
 # Search for induction heads with diagnostics enabled
 lake exe nfp induction model.nfpt --diagnostics --diagTop 5 --adaptive
 
+# Microbenchmarks for analysis or induction
+lake exe nfp bench model.nfpt --mode analysis --runs 5
+
 # Generate a sound-mode certificate report
 lake exe nfp certify model.nfpt
 
@@ -53,6 +56,18 @@ lake exe nfp induction_cert model.nfpt --layer1 0 --head1 0 --layer2 1 --head2 0
 
 # Instantiate RoPE bounds for a specific shape
 lake exe nfp rope --seqLen 4 --pairs 8
+
+# Check SOUND cache soundness (CI/fixtures)
+lake exe nfp sound_cache_check model.nfpt
+
+# Benchmark SOUND cache build
+lake exe nfp sound_cache_bench model.nfpt --runs 3
+
+# Dump a small forward-pass slice
+lake exe nfp dump model.nfpt --layer 0 --pos 0 --kind afterLayer
+
+# Empirical logit-diff check
+lake exe nfp logit_diff model.nfpt 42 17 --autoNegative
 
 # Show version
 lake exe nfp --version

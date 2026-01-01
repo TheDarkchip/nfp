@@ -21,6 +21,8 @@ The Lean library defines the core math objects (finite probability, mixers, line
 
 At present, the checker does **not** include a bridge theorem that connects certificate validity to the Lean-defined Jacobian bounds (for example, a theorem of the form `||layerJacobian - I|| <= C`). Treat sound certificates as **internally consistent bound reports**, not as a fully formal end-to-end verification of transformer Jacobians.
 
+Margin-based softmax tightening exists, but only **best-match margin evidence** is accepted today. Direct `--softmaxMargin` is rejected by the checker, and best-match logit bounds are generated in untrusted code and only checked for internal consistency.
+
 For known gaps and ongoing upgrades, see `SOUNDNESS_LIMITATIONS.md`.
 
 ## North Star
@@ -119,6 +121,8 @@ lake exe nfp --help
 ## Models
 
 The CLI expects a model file in **`.nfpt`** format (NFP_BINARY_V1).
+Most commands (analysis/induction/diagnostics) require `NFP_BINARY_V1`; legacy `NFP_TEXT_V1/V2`
+is supported only for local SOUND certification.
 
 - Create a local `models/` directory and place your `.nfpt` files there (the repo does not version model files; the author’s setup may have used local symlinks).
 - You can export GPT-2 weights from Hugging Face using the scripts in `scripts/`.
@@ -134,13 +138,18 @@ head_dim=...
 hidden_dim=...
 vocab_size=...
 seq_len=...
+layer_norm_eps=...
+gelu_kind=...
 BINARY_START
 ```
 
 The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
 
-Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
-supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
+Notes:
+- `layer_norm_eps` (or legacy `eps`) and `gelu_kind` (or legacy `gelu_deriv`) are required for
+  SOUND certification.
+- Global sound certification supports `NFP_BINARY_V1`. Local sound certification supports
+  `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
 
 ### Exporting GPT-2 to `.nfpt`
 
@@ -278,8 +287,21 @@ If you want to override the embedded input, pass a separate input `.nfpt`:
 - LayerNorm ε is read from the model header (`layer_norm_eps`).
 - `gelu_kind` in the model header selects the GeLU derivative target (`tanh` or `exact`).
 - `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
+- `--input` optionally provides an input `.nfpt` file used for local certification; if omitted and the
+  model file embeds `EMBEDDINGS`, `certify` reuses the model file as its input source.
+- `--softmaxMargin` provides a logit-margin lower bound, but it is currently **rejected** by the
+  verifier (use `--bestMatchMargins` instead).
+- `--softmaxExpEffort` controls exp lower-bound effort used for margin-based softmax tightening (default: `1`).
+- `--bestMatchMargins` runs a full best-match sweep (binary + local only) and tightens layer
+  softmax bounds using verified margin evidence. It is incompatible with `--softmaxMargin`.
+- `--targetOffset` selects the target-token offset for best-match margins (default: `-1`).
+- `--maxSeqLen` caps the sequence length used in best-match margin sweeps (default: `0` = full `seq_len`).
+- `--tightPattern`, `--tightPatternLayers`, and `--perRowPatternLayers` control pattern tightening
+  during best-match sweeps.
+- `--scalePow10` sets fixed-point scaling for best-match sweeps (default: `9`).
+- `--noncausalPattern` disables the causal-prefix restriction (required for non-causal models).
+- `--soundnessBits` sets dyadic sqrt precision for LayerNorm bounds (default: `20`).
 - `--partitionDepth` requests input partitioning depth (default: `0`; scaffold only, must remain `0` for now).
-- `--input` optionally provides an input `.nfpt` file used for local certification.
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `head_bounds`
@@ -298,6 +320,7 @@ lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01
 
 - `--delta` enables local head bounds; `--input` can override the embedded input.
 - LayerNorm ε is read from the model header (`layer_norm_eps`).
+- `--soundnessBits` sets dyadic sqrt precision for LayerNorm bounds (default: `20`).
 - `--scalePow10` controls fixed-point scaling for global bounds (default: `9`).
 - `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
@@ -316,13 +339,20 @@ lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 0
 - `--offset` selects the target key position relative to the query (default: `-1` for previous token).
 - `--keyOffset` selects which key-position token is matched (default: `0` for the key token itself).
 - `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
+- `--input` optionally provides an input `.nfpt` file; required for legacy text models.
 - `--delta` sets the local input radius; LayerNorm ε is read from the model header (`layer_norm_eps`).
+- `--soundnessBits` sets dyadic sqrt precision for LayerNorm bounds (default: `20`).
 - `--tightPattern` enables a slower but tighter pattern bound near the target layer.
 - `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).
 - `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).
+- `--softmaxExpEffort` sets the exp lower-bound effort for margin-derived softmax bounds (default: `1`).
+- `--scalePow10` sets fixed-point scaling for best-match bounds (default: `9`).
+- `--noncausalPattern` disables the causal-prefix restriction (required for non-causal models).
 - `--bestMatch` switches to a single-query best-match bound (default query: last position).
+- `--affine` uses affine Q/K dot bounds in best-match mode.
 - `--sweep` prints best-match bounds for all valid query positions (requires `--bestMatch`).
 - `--queryPos` chooses the query position for best-match bounds (default: last position).
+- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `induction_cert`
 
@@ -342,12 +372,21 @@ lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
 - `--keyOffset1/--keyOffset2` adjust the key-token offsets (default: `0`;
   use `--offset2 0 --keyOffset2 -1` for copy-next induction).
 - `--target/--negative` optionally add a logit-diff lower bound using unembedding columns.
+- `--input` optionally provides an input `.nfpt` file; required for legacy text models.
+- `--delta` sets the local input radius (default: `0`).
+- `--soundnessBits` sets dyadic sqrt precision for LayerNorm bounds (default: `20`).
 - `--tightPattern` enables a slower but tighter pattern bound near the target layer.
 - `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).
 - `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).
+- `--softmaxExpEffort` sets the exp lower-bound effort for margin-derived softmax bounds (default: `1`).
+- `--maxSeqLen` caps the sequence length analyzed for best-match bounds (default: `256`).
+- `--scalePow10` sets fixed-point scaling for best-match bounds (default: `9`).
+- `--noncausalPattern` disables the causal-prefix restriction (required for non-causal models).
 - `--bestMatch` switches to single-query best-match bounds (default query: last position).
+- `--affine` uses affine Q/K dot bounds in best-match mode.
 - `--queryPos` chooses the query position for best-match bounds (default: last position).
 - `--iterTighten` iteratively tightens best-match bounds (tight/per-row layers and scale precision).
+- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
 
 ### `rope`
 
@@ -359,6 +398,74 @@ lake exe nfp rope --seqLen 4 --pairs 8
 
 - `--seqLen` instantiates the bound at the given sequence length (default: `4`).
 - `--pairs` sets the number of RoPE pairs; the dimension is `2 * pairs` (default: `8`).
+
+### `bench`
+
+Runs repeatable microbenchmarks for analysis or induction search.
+
+```bash
+lake exe nfp bench models/gpt2_rigorous.nfpt --mode analysis --runs 5 --repeats 1
+```
+
+- `--mode` selects `analysis` or `induction` (default: `analysis`).
+- `--runs` sets the number of timed runs (default: `5`).
+- `--repeats` repeats the inner workload per run (default: `1`).
+- `--threshold` sets the analyze threshold (default: `0.1`).
+- `--minEffect` sets the induction minEffect (default: `0.0`).
+- `--correct/--incorrect` override induction target tokens.
+- `--verbose` prints per-run timing details.
+- `--breakdown` emits per-phase averages (analysis only).
+
+### `sound_cache_check`
+
+Checks SOUND fixed-point cache soundness (CI / small fixtures).
+
+```bash
+lake exe nfp sound_cache_check tests/fixtures/tiny_sound_binary.nfpt
+```
+
+- `--scalePow10` sets the fixed-point scale exponent (default: `9`).
+- `--maxTokens` checks at most this many numeric tokens (default: `0` = all).
+
+### `sound_cache_bench`
+
+Benchmarks SOUND fixed-point cache build (text or binary).
+
+```bash
+lake exe nfp sound_cache_bench models/gpt2_rigorous.nfpt --runs 3
+```
+
+- `--scalePow10` sets the fixed-point scale exponent (default: `9`).
+- `--runs` sets the number of benchmark runs (default: `1`).
+
+### `dump`
+
+Dumps a small forward-pass slice for PyTorch sanity checking.
+
+```bash
+lake exe nfp dump models/gpt2_rigorous.nfpt --layer 0 --pos 0 --kind afterLayer
+```
+
+- `--layer` selects the layer index (default: `0`).
+- `--pos` selects the token position / row index (default: `0`).
+- `--take` limits columns from the start (default: `16`).
+- `--kind` chooses `embeddings | layerInput | postAttn | afterLayer` (default: `afterLayer`).
+
+### `logit_diff`
+
+Computes an empirical logit-difference for a target vs. negative token.
+
+```bash
+lake exe nfp logit_diff models/gpt2_rigorous.nfpt 42 17 --autoNegative
+```
+
+- `--pos` selects the token position (default: last position).
+- `--input` provides an input `.nfpt` with TOKENS + EMBEDDINGS.
+- `--autoNegative` uses the top non-target logit as the negative token.
+
+### `--version`
+
+Prints the CLI version string.
 
 ## What “rigorous” means here
 
