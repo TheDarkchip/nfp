@@ -221,8 +221,7 @@ noncomputable def totalInfluence (M : SignedMixer S T) : ℝ := ∑ i, M.rowAbsS
 
 /-- Row-sum operator norm bound (induced ℓ1 for row-vector convention). -/
 noncomputable def operatorNormBound (M : SignedMixer S T) [Nonempty S] : ℝ :=
-  Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) fun i =>
-    ∑ j, |M.w i j|
+  Finset.sup' Finset.univ (Finset.univ_nonempty (α := S)) (fun i => rowAbsSum M i)
 
 /-! ## Operator norm bound estimates -/
 
@@ -270,7 +269,7 @@ theorem operatorNormBound_add_le (M N : SignedMixer S T) [Nonempty S] :
   dsimp [operatorNormBound]
   refine (Finset.sup'_le_iff (s := Finset.univ)
     (H := Finset.univ_nonempty (α := S))
-    (f := fun i => ∑ j, |(M + N).w i j|)
+    (f := fun i => rowAbsSum (M + N) i)
     (a := operatorNormBound M + operatorNormBound N)).2 ?_
   intro i hi
   have hsum : rowAbsSum (M + N) i ≤ rowAbsSum M i + rowAbsSum N i :=
@@ -281,7 +280,7 @@ theorem operatorNormBound_add_le (M N : SignedMixer S T) [Nonempty S] :
     exact Finset.le_sup' (s := Finset.univ) (f := fun i => rowAbsSum N i) hi
   have hbound : rowAbsSum (M + N) i ≤ operatorNormBound M + operatorNormBound N := by
     exact le_trans hsum (add_le_add hM hN)
-  simpa [rowAbsSum] using hbound
+  simpa using hbound
 
 /-- Row absolute sums of a composition are bounded by row sums and the operator norm bound. -/
 lemma rowAbsSum_comp_le (M : SignedMixer S T) (N : SignedMixer T U) (i : S) [Nonempty T] :
@@ -329,7 +328,7 @@ theorem operatorNormBound_comp_le (M : SignedMixer S T) (N : SignedMixer T U)
   dsimp [operatorNormBound]
   refine (Finset.sup'_le_iff (s := Finset.univ)
     (H := Finset.univ_nonempty (α := S))
-    (f := fun i => ∑ j, |(M.comp N).w i j|)
+    (f := fun i => rowAbsSum (M.comp N) i)
     (a := operatorNormBound M * operatorNormBound N)).2 ?_
   intro i hi
   have hrow : rowAbsSum (M.comp N) i ≤ rowAbsSum M i * operatorNormBound N :=
@@ -341,7 +340,7 @@ theorem operatorNormBound_comp_le (M : SignedMixer S T) (N : SignedMixer T U)
     exact mul_le_mul_of_nonneg_right hM hNnonneg
   have hbound : rowAbsSum (M.comp N) i ≤ operatorNormBound M * operatorNormBound N :=
     le_trans hrow hmul
-  simpa [rowAbsSum] using hbound
+  simpa using hbound
 
 /-- Operator norm bounds for a triple composition. -/
 theorem operatorNormBound_comp3_le {V : Type*} [Fintype V]

@@ -62,7 +62,7 @@ theorem operatorNormBound_cast (M : RatMatrix S T) [Nonempty S] :
         = Finset.sup' Finset.univ (Finset.univ_nonempty (α := S))
             (fun i => ((rowAbsSum M i : Rat) : ℝ)) := hsup_cast
     _ = SignedMixer.operatorNormBound (M.toSignedMixer) := by
-          simp [SignedMixer.operatorNormBound, rowAbsSum, toSignedMixer,
+          simp [SignedMixer.operatorNormBound, SignedMixer.rowAbsSum, rowAbsSum, toSignedMixer,
             ratAbs_eq_abs, Rat.cast_sum, Rat.cast_abs]
 
 /-- Casted row-major bound agrees with the `SignedMixer` operator norm bound. -/

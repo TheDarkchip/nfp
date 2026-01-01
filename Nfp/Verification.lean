@@ -173,14 +173,13 @@ private def topNonTargetToken (residual : ConcreteMatrix) (pos : Nat)
     return none
 
 private def containsHead (hs : Array HeadRef) (h : HeadRef) : Bool :=
-  hs.any (fun x => x == h)
+  hs.contains h
 
 private def fullCircuit (model : ConcreteModel) : ConcreteCircuit := Id.run do
-  let mut headsPerLayer : Array Nat := Array.mkEmpty model.numLayers
-  let mut neuronsPerLayer : Array Nat := Array.mkEmpty model.numLayers
-  for l in [:model.numLayers] do
-    headsPerLayer := headsPerLayer.push (model.layers.getD l #[]).size
-    neuronsPerLayer := neuronsPerLayer.push (model.numNeuronsAtLayer l)
+  let headsPerLayer :=
+    Array.ofFn (fun l : Fin model.numLayers => (model.layers.getD l.1 #[]).size)
+  let neuronsPerLayer :=
+    Array.ofFn (fun l : Fin model.numLayers => model.numNeuronsAtLayer l.1)
   ConcreteCircuit.full model.numLayers headsPerLayer neuronsPerLayer
 
 private def runForwardAblatingHeads (model : ConcreteModel) (heads : Array HeadRef)
