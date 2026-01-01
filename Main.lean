@@ -863,6 +863,163 @@ def runInduction (p : Parsed) : IO UInt32 := do
           return code
       return 0
 
+/-! ## Bench command helpers -/
+
+private inductive BenchMode
+  | analyze
+  | induction
+  deriving Repr
+
+private def parseBenchMode (s : String) : Option BenchMode :=
+  match s.trim.toLower with
+  | "analysis" => some .analyze
+  | "analyze" => some .analyze
+  | "induction" => some .induction
+  | "induce" => some .induction
+  | _ => none
+
+private structure BenchArgs where
+  modelPath : System.FilePath
+  modelPathStr : String
+  mode : BenchMode
+  runs : Nat
+  threshold : Float
+  minEffect : Float
+  correctOpt : Option Nat
+  incorrectOpt : Option Nat
+  verbose : Bool
+
+private def parseBenchArgs (p : Parsed) : IO (Option BenchArgs) := do
+  let modelPathStr := p.positionalArg! "model" |>.as! String
+  let modeStr := p.flag? "mode" |>.map (·.as! String) |>.getD "analysis"
+  let some mode := parseBenchMode modeStr
+    | do
+      IO.eprintln s!"Error: Invalid --mode '{modeStr}' (analysis|induction)"
+      return none
+  let runs := p.flag? "runs" |>.map (·.as! Nat) |>.getD 5
+  let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.1"
+  let minEffectStr := p.flag? "minEffect" |>.map (·.as! String) |>.getD "0.0"
+  let some threshold := Nfp.parseFloat thresholdStr
+    | do
+      IO.eprintln s!"Error: Invalid --threshold '{thresholdStr}'"
+      return none
+  let some minEffect := Nfp.parseFloat minEffectStr
+    | do
+      IO.eprintln s!"Error: Invalid --minEffect '{minEffectStr}'"
+      return none
+  let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
+  let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
+  let verbose := p.hasFlag "verbose"
+  return some {
+    modelPath := ⟨modelPathStr⟩
+    modelPathStr := modelPathStr
+    mode := mode
+    runs := runs
+    threshold := threshold
+    minEffect := minEffect
+    correctOpt := correctOpt
+    incorrectOpt := incorrectOpt
+    verbose := verbose
+  }
+
+/-- Core analysis work for benchmarking (no IO). -/
+private def benchAnalyzeOnce (model : ConcreteModel) (threshold : Float) : Nat × Nat :=
+  let cache := PrecomputedCache.build model
+  let deepCircuits := findDeepCircuitCandidatesFromCache cache
+  let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
+  let inductionHeads :=
+    (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
+      (·.combinedError < ·.combinedError)
+  let verifiedHeads := inductionHeads.filter (·.combinedError ≤ threshold)
+  (verifiedHeads.size, verifiedDeep.size)
+
+/-- Core induction-head search work for benchmarking (no IO). -/
+private def benchInductionOnce (model : ConcreteModel) (target : TargetDirection)
+    (minEffect : Float) : Nat :=
+  let (heads, _) :=
+    findHeuristicInductionHeadsWithCache model target minEffect
+      (minInductionScore := 0.01)
+      (buildLayerNormBounds := false)
+      (storeDiagnostics := false)
+  heads.size
+
+private def summarizeBenchTimes (label : String) (times : Array Nat) : IO Unit := do
+  let t0 := times[0]!
+  let mut minT := t0
+  let mut maxT := t0
+  let mut sumT : Nat := 0
+  for t in times do
+    if t < minT then
+      minT := t
+    if t > maxT then
+      maxT := t
+    sumT := sumT + t
+  let avgT := sumT / times.size
+  IO.println s!"{label} runs={times.size} min={minT}ms avg={avgT}ms max={maxT}ms"
+
+private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
+  if args.runs = 0 then
+    IO.eprintln "Error: --runs must be > 0"
+    return 1
+  setStdoutLogNameFromModelPath args.modelPathStr
+  let loadResult ← loadModel args.modelPath
+  let model ←
+    match loadResult with
+    | .error msg =>
+        IO.eprintln s!"Error loading model: {msg}"
+        return 1
+    | .ok model0 => pure (model0.trimTrailingZeroEmbeddings)
+  match args.mode with
+  | .analyze =>
+      let mut times : Array Nat := Array.mkEmpty args.runs
+      let mut lastHeads : Nat := 0
+      let mut lastCircuits : Nat := 0
+      for i in [:args.runs] do
+        let t0 ← IO.monoNanosNow
+        let (heads, circuits) := benchAnalyzeOnce model args.threshold
+        let t1 ← IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        times := times.push dtMs
+        lastHeads := heads
+        lastCircuits := circuits
+        if args.verbose then
+          IO.println s!"run {i + 1}: {dtMs}ms heads={heads} circuits={circuits}"
+      summarizeBenchTimes "bench:analysis" times
+      IO.println <|
+        s!"bench:analysis threshold={args.threshold} heads={lastHeads} " ++
+          s!"circuits={lastCircuits}"
+      return 0
+  | .induction =>
+      let some W_U := model.unembedding
+        | do
+          IO.eprintln "Error: Model is missing unembedding matrix (needed for target direction)."
+          return 1
+      let target? := deriveInductionTarget model W_U args.correctOpt args.incorrectOpt
+      let some target := target?
+        | do
+          IO.eprintln "Error: Use both --correct and --incorrect (or ensure TOKENS are present)."
+          return 1
+      let mut times : Array Nat := Array.mkEmpty args.runs
+      let mut lastHeads : Nat := 0
+      for i in [:args.runs] do
+        let t0 ← IO.monoNanosNow
+        let heads := benchInductionOnce model target args.minEffect
+        let t1 ← IO.monoNanosNow
+        let dtMs := (t1 - t0) / 1000000
+        times := times.push dtMs
+        lastHeads := heads
+        if args.verbose then
+          IO.println s!"run {i + 1}: {dtMs}ms heads={heads}"
+      summarizeBenchTimes "bench:induction" times
+      IO.println s!"bench:induction minEffect={args.minEffect} heads={lastHeads}"
+      return 0
+
+/-- Run the bench command for repeatable performance measurements. -/
+def runBench (p : Parsed) : IO UInt32 := do
+  let some args ← parseBenchArgs p
+    | return 1
+  runBenchWithArgs args
+
 /-! ## SOUND command helpers -/
 
 private structure CertifyArgs where
@@ -1916,6 +2073,22 @@ def inductionCmd : Cmd := `[Cli|
     model : String; "Path to the model weights file (.nfpt)"
 ]
 
+/-- The bench subcommand. -/
+def benchCmd : Cmd := `[Cli|
+  bench VIA runBench;
+  "Run repeatable microbenchmarks on analysis or induction search."
+  FLAGS:
+    mode : String; "analysis|induction (default: analysis)"
+    runs : Nat; "Number of timed runs (default: 5)"
+    t, threshold : String; "Analyze threshold (default: 0.1)"
+    minEffect : String; "Induction minEffect (default: 0.0)"
+    c, correct : Nat; "Correct token ID (requires --incorrect)"
+    i, incorrect : Nat; "Incorrect token ID (requires --correct)"
+    v, verbose; "Print per-run timing details"
+  ARGS:
+    model : String; "Path to the model weights file (.nfpt)"
+]
+
 /-- The certify subcommand. -/
 def certifyCmd : Cmd := `[Cli|
   certify VIA runCertify;
@@ -2093,6 +2266,7 @@ def nfpCmd : Cmd := `[Cli|
   SUBCOMMANDS:
     analyzeCmd;
     inductionCmd;
+    benchCmd;
     certifyCmd;
     headBoundsCmd;
     headPatternCmd;
