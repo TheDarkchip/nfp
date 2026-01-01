@@ -129,15 +129,16 @@ def varianceLowerBound (xs : Array RatInterval) : Rat :=
       if n < 2 then
         return 0
       -- Build sorted breakpoint lists for `lo` and `hi` with squared endpoints for O(1) evaluation.
-      let mut enters : Array (Rat × Rat) := Array.mkEmpty n
-      let mut leaves : Array (Rat × Rat) := Array.mkEmpty n
+      let mut enters : Array (Rat × Rat) := Array.replicate n (0, 0)
+      let mut leaves : Array (Rat × Rat) := Array.replicate n (0, 0)
       let mut sumLeft : Rat := 0
       let mut sumLeftSq : Rat := 0
-      for x in normed do
+      for i in [:n] do
+        let x := normed[i]!
         let lo := x.lo
         let hi := x.hi
-        enters := enters.push (lo, ratSq lo)
-        leaves := leaves.push (hi, ratSq hi)
+        enters := enters.set! i (lo, ratSq lo)
+        leaves := leaves.set! i (hi, ratSq hi)
         sumLeft := sumLeft + lo
         sumLeftSq := sumLeftSq + ratSq lo
       -- Exact minimization over the breakpoints (O(n log n)).

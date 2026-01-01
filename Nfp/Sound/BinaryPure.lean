@@ -392,15 +392,15 @@ def attnWeightBoundsArraysFromScaledPairs (scalePow10 : Nat)
     if valuePairs.size ≠ qkPairs.size then
       return .error s!"attn weight bounds layer count mismatch: \
 value={valuePairs.size}, qk={qkPairs.size}"
-    let mut coeffs : Array Rat := Array.mkEmpty valuePairs.size
-    let mut wqMaxs : Array Rat := Array.mkEmpty valuePairs.size
-    let mut wkMaxs : Array Rat := Array.mkEmpty valuePairs.size
+    let mut coeffs : Array Rat := Array.replicate valuePairs.size 0
+    let mut wqMaxs : Array Rat := Array.replicate valuePairs.size 0
+    let mut wkMaxs : Array Rat := Array.replicate valuePairs.size 0
     for idx in [:valuePairs.size] do
       let coeff := attnValueCoeffFromScaledPairs scalePow10 valuePairs[idx]!
       let (wqMax, wkMax) := attnQKMaxFromScaledPairs scalePow10 qkPairs[idx]!
-      coeffs := coeffs.push coeff
-      wqMaxs := wqMaxs.push wqMax
-      wkMaxs := wkMaxs.push wkMax
+      coeffs := coeffs.set! idx coeff
+      wqMaxs := wqMaxs.set! idx wqMax
+      wkMaxs := wkMaxs.set! idx wkMax
     return .ok (coeffs, wqMaxs, wkMaxs)
 
 /-! ### Derived properties -/

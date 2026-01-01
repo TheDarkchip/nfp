@@ -5386,12 +5386,8 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
       .ofFn fun i : Fin model.numLayers =>
         computeLayer i.val
 
-  let mut headData : Array (Array PrecomputedHeadData) := Array.mkEmpty model.numLayers
-  let mut ln1Inputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
-  for (layerHeadData, attnInput) in layerResults do
-    headData := headData.push layerHeadData
-    ln1Inputs := ln1Inputs.push attnInput
-
+  let headData := layerResults.map (·.1)
+  let ln1Inputs := layerResults.map (·.2)
   return (headData, ln1Inputs)
 
 /-- Build a complete precomputed cache for a model.

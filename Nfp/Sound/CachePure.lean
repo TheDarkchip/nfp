@@ -355,10 +355,16 @@ private def collectLayerNormParamsFixed
 
 private def encodeIntArray (xs : Array Int) : ByteArray :=
   Id.run do
-    let mut out : Array UInt8 := Array.mkEmpty (xs.size * 4)
+    let mut out : ByteArray := ByteArray.mk (Array.replicate (xs.size * 4) 0)
+    let mut off : Nat := 0
     for x in xs do
-      out := appendI32LE out x
-    return ByteArray.mk out
+      let ux : UInt32 := UInt32.ofInt x
+      out := out.set! off (ux &&& 0xFF).toUInt8
+      out := out.set! (off + 1) ((ux >>> 8) &&& 0xFF).toUInt8
+      out := out.set! (off + 2) ((ux >>> 16) &&& 0xFF).toUInt8
+      out := out.set! (off + 3) ((ux >>> 24) &&& 0xFF).toUInt8
+      off := off + 4
+    return out
 
 private def repeatBytes (b : ByteArray) (n : Nat) : ByteArray :=
   Id.run do
