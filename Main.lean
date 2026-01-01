@@ -883,11 +883,13 @@ private structure BenchArgs where
   modelPathStr : String
   mode : BenchMode
   runs : Nat
+  repeatCount : Nat
   threshold : Float
   minEffect : Float
   correctOpt : Option Nat
   incorrectOpt : Option Nat
   verbose : Bool
+  breakdown : Bool
 
 private def parseBenchArgs (p : Parsed) : IO (Option BenchArgs) := do
   let modelPathStr := p.positionalArg! "model" |>.as! String
@@ -897,6 +899,7 @@ private def parseBenchArgs (p : Parsed) : IO (Option BenchArgs) := do
       IO.eprintln s!"Error: Invalid --mode '{modeStr}' (analysis|induction)"
       return none
   let runs := p.flag? "runs" |>.map (·.as! Nat) |>.getD 5
+  let repeatCount := p.flag? "repeats" |>.map (·.as! Nat) |>.getD 1
   let thresholdStr := p.flag? "threshold" |>.map (·.as! String) |>.getD "0.1"
   let minEffectStr := p.flag? "minEffect" |>.map (·.as! String) |>.getD "0.0"
   let some threshold := Nfp.parseFloat thresholdStr
@@ -910,16 +913,19 @@ private def parseBenchArgs (p : Parsed) : IO (Option BenchArgs) := do
   let correctOpt := p.flag? "correct" |>.map (·.as! Nat)
   let incorrectOpt := p.flag? "incorrect" |>.map (·.as! Nat)
   let verbose := p.hasFlag "verbose"
+  let breakdown := p.hasFlag "breakdown"
   return some {
     modelPath := ⟨modelPathStr⟩
     modelPathStr := modelPathStr
     mode := mode
     runs := runs
+    repeatCount := repeatCount
     threshold := threshold
     minEffect := minEffect
     correctOpt := correctOpt
     incorrectOpt := incorrectOpt
     verbose := verbose
+    breakdown := breakdown
   }
 
 /-- Core analysis work for benchmarking (no IO). -/
@@ -943,7 +949,8 @@ private def benchInductionOnce (model : ConcreteModel) (target : TargetDirection
       (storeDiagnostics := false)
   heads.size
 
-private def summarizeBenchTimes (label : String) (times : Array Nat) : IO Unit := do
+private def summarizeBenchTimes (label : String) (times : Array Nat) (repeatCount : Nat) :
+    IO Unit := do
   let t0 := times[0]!
   let mut minT := t0
   let mut maxT := t0
@@ -955,11 +962,23 @@ private def summarizeBenchTimes (label : String) (times : Array Nat) : IO Unit :
       maxT := t
     sumT := sumT + t
   let avgT := sumT / times.size
-  IO.println s!"{label} runs={times.size} min={minT}ms avg={avgT}ms max={maxT}ms"
+  IO.println <|
+    s!"{label} runs={times.size} repeat={repeatCount} " ++
+      s!"min={minT}ms avg={avgT}ms max={maxT}ms"
+
+private def timeNs {α : Type} (action : Unit → IO α) : IO (α × Nat) := do
+  let t0 ← IO.monoNanosNow
+  let result ← action ()
+  let t1 ← IO.monoNanosNow
+  let dtNs := t1 - t0
+  return (result, dtNs)
 
 private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
   if args.runs = 0 then
     IO.eprintln "Error: --runs must be > 0"
+    return 1
+  if args.repeatCount = 0 then
+    IO.eprintln "Error: --repeats must be > 0"
     return 1
   setStdoutLogNameFromModelPath args.modelPathStr
   let loadResult ← loadModel args.modelPath
@@ -974,17 +993,57 @@ private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
       let mut times : Array Nat := Array.mkEmpty args.runs
       let mut lastHeads : Nat := 0
       let mut lastCircuits : Nat := 0
+      let mut cacheNsTotal : Nat := 0
+      let mut deepNsTotal : Nat := 0
+      let mut candNsTotal : Nat := 0
       for i in [:args.runs] do
         let t0 ← IO.monoNanosNow
-        let (heads, circuits) := benchAnalyzeOnce model args.threshold
+        if args.breakdown then
+          let mut localCacheNs : Nat := 0
+          let mut localDeepNs : Nat := 0
+          let mut localCandNs : Nat := 0
+          for _ in [:args.repeatCount] do
+            let (cache, cacheNs) ← timeNs (fun () =>
+              pure <| PrecomputedCache.build model)
+            let (deepCircuits, deepNs) ← timeNs (fun () =>
+              pure <| findDeepCircuitCandidatesFromCache cache)
+            let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ args.threshold)
+            let (inductionHeads, candNs) ← timeNs (fun () =>
+              pure <|
+                (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
+                  (·.combinedError < ·.combinedError))
+            let verifiedHeads := inductionHeads.filter (·.combinedError ≤ args.threshold)
+            localCacheNs := localCacheNs + cacheNs
+            localDeepNs := localDeepNs + deepNs
+            localCandNs := localCandNs + candNs
+            lastHeads := verifiedHeads.size
+            lastCircuits := verifiedDeep.size
+          cacheNsTotal := cacheNsTotal + localCacheNs
+          deepNsTotal := deepNsTotal + localDeepNs
+          candNsTotal := candNsTotal + localCandNs
+        else
+          for _ in [:args.repeatCount] do
+            let (heads, circuits) := benchAnalyzeOnce model args.threshold
+            lastHeads := heads
+            lastCircuits := circuits
         let t1 ← IO.monoNanosNow
         let dtMs := (t1 - t0) / 1000000
         times := times.push dtMs
-        lastHeads := heads
-        lastCircuits := circuits
         if args.verbose then
-          IO.println s!"run {i + 1}: {dtMs}ms heads={heads} circuits={circuits}"
-      summarizeBenchTimes "bench:analysis" times
+          IO.println s!"run {i + 1}: {dtMs}ms heads={lastHeads} circuits={lastCircuits}"
+      summarizeBenchTimes "bench:analysis" times args.repeatCount
+      if args.breakdown then
+        let runs := args.runs
+        let repeatCount := args.repeatCount
+        let cacheAvgNs := cacheNsTotal / (runs * repeatCount)
+        let deepAvgNs := deepNsTotal / (runs * repeatCount)
+        let candAvgNs := candNsTotal / (runs * repeatCount)
+        let cacheAvgUs := cacheAvgNs / 1000
+        let deepAvgUs := deepAvgNs / 1000
+        let candAvgUs := candAvgNs / 1000
+        IO.println <|
+          s!"bench:analysis cacheAvg={cacheAvgUs}us " ++
+            s!"scanAvg={deepAvgUs}us candAvg={candAvgUs}us"
       IO.println <|
         s!"bench:analysis threshold={args.threshold} heads={lastHeads} " ++
           s!"circuits={lastCircuits}"
@@ -1003,14 +1062,15 @@ private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
       let mut lastHeads : Nat := 0
       for i in [:args.runs] do
         let t0 ← IO.monoNanosNow
-        let heads := benchInductionOnce model target args.minEffect
+        for _ in [:args.repeatCount] do
+          let heads := benchInductionOnce model target args.minEffect
+          lastHeads := heads
         let t1 ← IO.monoNanosNow
         let dtMs := (t1 - t0) / 1000000
         times := times.push dtMs
-        lastHeads := heads
         if args.verbose then
-          IO.println s!"run {i + 1}: {dtMs}ms heads={heads}"
-      summarizeBenchTimes "bench:induction" times
+          IO.println s!"run {i + 1}: {dtMs}ms heads={lastHeads}"
+      summarizeBenchTimes "bench:induction" times args.repeatCount
       IO.println s!"bench:induction minEffect={args.minEffect} heads={lastHeads}"
       return 0
 
@@ -2080,11 +2140,13 @@ def benchCmd : Cmd := `[Cli|
   FLAGS:
     mode : String; "analysis|induction (default: analysis)"
     runs : Nat; "Number of timed runs (default: 5)"
+    repeats : Nat; "Repeat inner workload per run (default: 1)"
     t, threshold : String; "Analyze threshold (default: 0.1)"
     minEffect : String; "Induction minEffect (default: 0.0)"
     c, correct : Nat; "Correct token ID (requires --incorrect)"
     i, incorrect : Nat; "Incorrect token ID (requires --correct)"
     v, verbose; "Print per-run timing details"
+    breakdown; "Emit per-phase averages (analysis only)"
   ARGS:
     model : String; "Path to the model weights file (.nfpt)"
 ]
