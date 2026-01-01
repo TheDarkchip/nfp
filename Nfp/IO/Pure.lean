@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Std
 import Nfp.Discovery
 
 /-!
@@ -351,6 +352,8 @@ def mkMLPLayer
 structure Tokenizer where
   /-- Token strings in order of ID. -/
   tokens : Array String
+  /-- Map from token string to its first ID. -/
+  tokMap : Std.HashMap String Nat
   /-- Unknown token ID. -/
   unkId : Nat
   /-- Padding token ID. -/
@@ -363,28 +366,46 @@ namespace Tokenizer
 /-- Create a tokenizer from vocabulary list. -/
 def fromVocabList (tokens : Array String)
     (unkId padId eosId : Nat := 0) : Tokenizer :=
-  { tokens := tokens, unkId := unkId, padId := padId, eosId := eosId }
+  let tokMap :=
+    Id.run do
+      let mut out : Std.HashMap String Nat := Std.HashMap.emptyWithCapacity tokens.size
+      let mut i := tokens.size
+      while i > 0 do
+        i := i - 1
+        out := out.insert tokens[i]! i
+      return out
+  { tokens := tokens, tokMap := tokMap, unkId := unkId, padId := padId, eosId := eosId }
 
 /-- Find a token's ID in the vocabulary. -/
 def findToken (t : Tokenizer) (word : String) : Nat :=
-  match t.tokens.findIdx? (fun tok => tok == word) with
-  | some idx => idx
-  | none => t.unkId
+  t.tokMap.getD word t.unkId
 
 /-- Tokenize a string using simple whitespace splitting. -/
 def tokenize (t : Tokenizer) (text : String) : Array Nat := Id.run do
-  let words := text.splitOn " " |>.filter (fun w => w != "")
   let mut ids : Array Nat := #[]
-  for word in words do
-    ids := ids.push (t.findToken word)
+  let mut p : String.Pos.Raw := 0
+  let stop := text.rawEndPos
+  while p < stop do
+    while p < stop && p.get text = ' ' do
+      p := p.next text
+    let start := p
+    while p < stop && p.get text ≠ ' ' do
+      p := p.next text
+    if start < p then
+      let word := String.Pos.Raw.extract text start p
+      ids := ids.push (t.findToken word)
   ids
 
 /-- Decode token IDs back to text. -/
 def decode (t : Tokenizer) (ids : Array Nat) : String :=
-  let tokens := ids.filterMap fun id =>
-    if id < t.tokens.size then some t.tokens[id]!
-    else none
-  " ".intercalate tokens.toList
+  let tokens := ids.foldr
+    (fun id acc =>
+      if id < t.tokens.size then
+        t.tokens[id]! :: acc
+      else
+        acc)
+    []
+  " ".intercalate tokens
 
 end Tokenizer
 
@@ -394,14 +415,20 @@ end Tokenizer
 def lookupEmbeddings (embeddings : ConcreteMatrix) (tokenIds : Array Nat)
     (seqLen : Nat) (padId : Nat := 0) : ConcreteMatrix := Id.run do
   let modelDim := embeddings.numCols
-  let mut data : Array Float := #[]
+  let rowCount := embeddings.numRows
+  let tokenIdsSize := tokenIds.size
+  let mut data : Array Float := Array.mkEmpty (seqLen * modelDim)
 
   for pos in [:seqLen] do
-    let tokenId := if pos < tokenIds.size then tokenIds[pos]! else padId
+    let tokenId := if pos < tokenIdsSize then tokenIds[pos]! else padId
     -- Copy embedding row for this token.
-    for dim in [:modelDim] do
-      let val := embeddings.get tokenId dim
-      data := data.push val
+    if tokenId < rowCount then
+      let rowBase := tokenId * modelDim
+      for dim in [:modelDim] do
+        data := data.push embeddings.data[rowBase + dim]!
+    else
+      for _ in [:modelDim] do
+        data := data.push 0.0
 
   buildMatrix seqLen modelDim data
 

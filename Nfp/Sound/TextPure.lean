@@ -176,9 +176,18 @@ def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelW
     while i < lines.size do
       let line := lines[i]!.trim
       if line.startsWith "LAYER" then
-        let parts := line.splitOn " " |>.filter (· ≠ "")
-        if parts.length >= 2 then
-          curLayer := (parts[1]!).toNat? |>.getD 0
+        let mut p : String.Pos.Raw := 0
+        let stop := line.rawEndPos
+        while p < stop && p.get line ≠ ' ' do
+          p := p.next line
+        while p < stop && p.get line = ' ' do
+          p := p.next line
+        if p < stop then
+          let start := p
+          while p < stop && p.get line ≠ ' ' do
+            p := p.next line
+          let tok := String.Pos.Raw.extract line start p
+          curLayer := tok.toNat? |>.getD 0
         i := i + 1
       else if line = "W_Q" then
         let r := curLayer
