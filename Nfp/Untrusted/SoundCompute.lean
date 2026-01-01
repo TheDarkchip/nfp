@@ -594,6 +594,14 @@ private def consumeVectorSkipFast
     (n : Nat) : Except String Nat :=
   consumeTokensSkipFast lines start n
 
+/-- Accumulator for streaming matrix multiplication with row-abs tracking. -/
+private structure MulAndNormAcc where
+  out : Array RatInterval
+  row : Nat
+  col : Nat
+  curRowAbs : Rat
+  maxRowAbs : Rat
+
 /-!
 Streaming multiplication for row-major stored matrices.
 
@@ -612,41 +620,38 @@ private def consumeMatrixMulAndNormInf
   Id.run do
     if input.size ≠ rows then
       return .error "input interval dimension mismatch"
-    let mut out : Array RatInterval := zeroIntervals cols
-    let mut iLine := start
-    let mut remaining := rows * cols
-    let mut idx : Nat := 0
-    let mut curRowAbs : Rat := 0
-    let mut maxRowAbs : Rat := 0
-    while remaining > 0 do
-      if iLine ≥ lines.size then
-        return .error "unexpected end of file while reading matrix"
-      let line := lines[iLine]!.trim
-      iLine := iLine + 1
-      if line.isEmpty then
-        pure ()
+    let init : MulAndNormAcc := {
+      out := zeroIntervals cols
+      row := 0
+      col := 0
+      curRowAbs := 0
+      maxRowAbs := 0
+    }
+    let step := fun (st : MulAndNormAcc) (w : Rat) =>
+      let r := st.row
+      let c := st.col
+      let curRowAbs := st.curRowAbs + ratAbs w
+      -- out[c] += w * input[r]
+      let term := RatInterval.scale w (input[r]!)
+      let out := st.out.set! c (RatInterval.add (st.out[c]!) term)
+      if c + 1 = cols then
+        { out := out
+          row := r + 1
+          col := 0
+          curRowAbs := 0
+          maxRowAbs := max st.maxRowAbs curRowAbs }
       else
-        let toks := line.splitOn " " |>.filter (· ≠ "")
-        for t in toks do
-          if remaining = 0 then
-            break
-          match parseRat t with
-          | .error e => return .error e
-          | .ok w =>
-              let r := idx / cols
-              let c := idx % cols
-              curRowAbs := curRowAbs + ratAbs w
-              -- out[c] += w * input[r]
-              let term := RatInterval.scale w (input[r]!)
-              out := out.set! c (RatInterval.add (out[c]!) term)
-              idx := idx + 1
-              remaining := remaining - 1
-              if c + 1 = cols then
-                maxRowAbs := max maxRowAbs curRowAbs
-                curRowAbs := 0
-    -- Account for a partial last row (should not happen if rows*cols consumed).
-    maxRowAbs := max maxRowAbs curRowAbs
-    return .ok (out, maxRowAbs, iLine)
+        { out := out
+          row := r
+          col := c + 1
+          curRowAbs := curRowAbs
+          maxRowAbs := st.maxRowAbs }
+    match foldRatTokens lines start (rows * cols) init step with
+    | .error e => return .error e
+    | .ok (st, next) =>
+        -- Account for a partial last row (should not happen if rows*cols consumed).
+        let maxRowAbs := max st.maxRowAbs st.curRowAbs
+        return .ok (st.out, maxRowAbs, next)
 
 /-- Soundly compute conservative per-layer residual amplification constants from a `.nfpt` file. -/
 def certifyModelFileGlobal

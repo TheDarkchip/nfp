@@ -2761,6 +2761,7 @@ def toMatrix (A : ConcreteAttentionWeights) : ConcreteMatrix where
     simpa using A.size_eq
 
 /-- Compute softmax for a row of logits. -/
+@[inline]
 def softmaxRow (logits : Array Float) : Array Float :=
   Id.run do
     -- PERFORMANCE: keep arrays linear to enable in-place updates
@@ -2790,9 +2791,12 @@ def compute (queries keys : ConcreteMatrix) (scale : Float)
   let n := seqLen * seqLen
   let mut weights : { w : Array Float // w.size = n } :=
     ⟨Array.replicate n 0.0, by simp [n]⟩
+  -- Reuse a single row buffer to avoid per-row allocations.
+  let mut rowScores : Array Float := Array.replicate seqLen (-1e30)
   for q in [:seqLen] do
     -- Initialize to -∞ and only fill the causal prefix when `causal = true`.
-    let mut rowScores : Array Float := Array.replicate seqLen (-1e30)
+    for i in [:seqLen] do
+      rowScores := rowScores.set! i (-1e30)
     let stop := if causal then min (q + 1) seqLen else seqLen
     let qBase := q * queries.numCols
     for j in [:stop] do
@@ -2804,10 +2808,10 @@ def compute (queries keys : ConcreteMatrix) (scale : Float)
           -- and `d < cols ≤ queries.numCols/keys.numCols`.
           dotProd := dotProd + queries.data[qBase + d]! * keys.data[jBase + d]!
         rowScores := rowScores.set! j (dotProd / scale)
-    let row := softmaxRow rowScores
+    rowScores := softmaxRow rowScores
     let rowBase := q * seqLen
     for k in [:stop] do
-      let weights' := weights.1.set! (rowBase + k) (row[k]!)
+      let weights' := weights.1.set! (rowBase + k) (rowScores[k]!)
       have weights'SizeEq : weights'.size = n := by
         have hsize : weights'.size = weights.1.size := by
           -- `set!` is `setIfInBounds`, which preserves size.
