@@ -38,6 +38,51 @@ def splitLines (s : String) : Array String :=
     out := out.push (String.Pos.Raw.extract s start stop)
     return out
 
+/-- Whitespace predicate used in token scanners. -/
+@[inline] def isWsChar (c : Char) : Bool :=
+  c = ' ' || c = '\t' || c = '\n' || c = '\r'
+
+/-- Count whitespace-separated tokens in a line. -/
+def countWsTokens (s : String) : Nat :=
+  Id.run do
+    let mut p : String.Pos.Raw := 0
+    let stop := s.rawEndPos
+    let mut inTok : Bool := false
+    let mut cnt : Nat := 0
+    while p < stop do
+      let c := p.get s
+      if isWsChar c then
+        inTok := false
+      else if !inTok then
+        inTok := true
+        cnt := cnt + 1
+      p := p.next s
+    return cnt
+
+/-- Find the first line index at or after `start` that satisfies `p`. -/
+def findLineIdxFrom (lines : Array String) (start : Nat) (p : String → Bool) : Option Nat :=
+  Id.run do
+    let mut i := start
+    while i < lines.size do
+      if p (lines[i]!.trim) then
+        return some i
+      i := i + 1
+    return none
+
+/-- Skip to the next line satisfying `p`, or return `lines.size` if none. -/
+def skipUntil (lines : Array String) (start : Nat) (p : String → Bool) : Nat :=
+  match findLineIdxFrom lines start p with
+  | some i => i
+  | none => lines.size
+
+/-- Skip blank (whitespace-only) lines starting at `start`. -/
+def skipBlankLines (lines : Array String) (start : Nat) : Nat :=
+  Id.run do
+    let mut i := start
+    while i < lines.size && lines[i]!.trim.isEmpty do
+      i := i + 1
+    return i
+
 /-- Minimal parsed header data for sound certification. -/
 structure TextHeader where
   eps : Rat
@@ -94,6 +139,11 @@ def parseTextHeaderEps (lines : Array String) : Except String Rat := do
 
 theorem parseHeaderLine_spec : parseHeaderLine = parseHeaderLine := rfl
 theorem splitLines_spec : splitLines = splitLines := rfl
+theorem isWsChar_spec : isWsChar = isWsChar := rfl
+theorem countWsTokens_spec : countWsTokens = countWsTokens := rfl
+theorem findLineIdxFrom_spec : findLineIdxFrom = findLineIdxFrom := rfl
+theorem skipUntil_spec : skipUntil = skipUntil := rfl
+theorem skipBlankLines_spec : skipBlankLines = skipBlankLines := rfl
 theorem parseGeluDerivTarget_spec (v : String) :
     parseGeluDerivTarget v = parseGeluDerivTarget v := rfl
 theorem parseTextHeader_spec : parseTextHeader = parseTextHeader := rfl

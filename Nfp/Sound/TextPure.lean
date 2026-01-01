@@ -102,8 +102,6 @@ def foldRatTokens {α : Type}
     (state : α)
     (step : α → Rat → α) : Except String (α × Nat) :=
   Id.run do
-    let isWs (c : Char) : Bool :=
-      c = ' ' || c = '\t' || c = '\n' || c = '\r'
     let mut i := start
     let mut remaining := count
     let mut st := state
@@ -114,10 +112,10 @@ def foldRatTokens {α : Type}
         let mut p : String.Pos.Raw := 0
         let stop := line.rawEndPos
         while p < stop && remaining > 0 do
-          while p < stop && isWs (p.get line) do
+          while p < stop && isWsChar (p.get line) do
             p := p.next line
           let tokStart := p
-          while p < stop && !isWs (p.get line) do
+          while p < stop && !isWsChar (p.get line) do
             p := p.next line
           if tokStart < p then
             match parseRatRange line tokStart p with

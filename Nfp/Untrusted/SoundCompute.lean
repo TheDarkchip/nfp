@@ -421,25 +421,13 @@ private def minVarAcrossRows (rows : Array (Array RatInterval)) : Rat :=
 
 private def findLineIdxFrom
     (lines : Array String) (start : Nat) (p : String → Bool) : Option Nat :=
-  Id.run do
-    let mut i := start
-    while i < lines.size do
-      if p (lines[i]!.trim) then
-        return some i
-      i := i + 1
-    return none
+  Nfp.Sound.findLineIdxFrom lines start p
 
 private def skipUntil (lines : Array String) (start : Nat) (p : String → Bool) : Nat :=
-  match findLineIdxFrom lines start p with
-  | some i => i
-  | none => lines.size
+  Nfp.Sound.skipUntil lines start p
 
 private def skipBlankLines (lines : Array String) (start : Nat) : Nat :=
-  Id.run do
-    let mut i := start
-    while i < lines.size && lines[i]!.trim.isEmpty do
-      i := i + 1
-    return i
+  Nfp.Sound.skipBlankLines lines start
 
 /-!
 ### Fast skipping without parsing
@@ -451,22 +439,8 @@ Parsing decimals into `Rat` is expensive, so we skip these sections by **countin
 instead of calling `parseRat`.
 -/
 
-private def countWsTokens (s : String) : Nat :=
-  Id.run do
-    let mut p : String.Pos.Raw := 0
-    let stop := s.rawEndPos
-    let mut inTok : Bool := false
-    let mut cnt : Nat := 0
-    while p < stop do
-      let c := p.get s
-      let isWs : Bool := c = ' ' || c = '\t' || c = '\n' || c = '\r'
-      if isWs then
-        inTok := false
-      else if !inTok then
-        inTok := true
-        cnt := cnt + 1
-      p := p.next s
-    return cnt
+@[inline] private def countWsTokens (s : String) : Nat :=
+  Nfp.Sound.countWsTokens s
 
 private def consumeTokensSkipFast
     (lines : Array String) (start : Nat) (numTokens : Nat) : Except String Nat :=
