@@ -6851,7 +6851,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval) :
         Array (Array Fixed10Interval) :=
-      let useTasks := rows.size > 32
+      let useTasks := rows.size > 256
       if useTasks then
         Id.run do
           let chunkSize : Nat := 16
