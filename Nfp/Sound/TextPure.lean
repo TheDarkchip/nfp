@@ -182,6 +182,15 @@ def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelW
     let mut ln1MaxAbsGamma : Array Rat := Array.replicate info.numLayers 0
     let mut ln1MaxAbsBeta : Array Rat := Array.replicate info.numLayers 0
     let mut ln2MaxAbsGamma : Array Rat := Array.replicate info.numLayers 0
+    let updateAt := fun (arr : Array Rat) (idx : Nat) (f : Rat → Rat) =>
+      if idx < arr.size then
+        arr.set! idx (f arr[idx]!)
+      else
+        arr
+    let setAt := fun (arr : Array Rat) (idx : Nat) (val : Rat) =>
+      updateAt arr idx (fun _ => val)
+    let setMaxAt := fun (arr : Array Rat) (idx : Nat) (val : Rat) =>
+      updateAt arr idx (fun cur => max cur val)
     while i < lines.size do
       let line := lines[i]!.trim
       if line.startsWith "LAYER" then
@@ -203,16 +212,14 @@ def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelW
         match consumeMatrixNormInf lines (i + 1) info.modelDim info.headDim with
         | .error e => return .error e
         | .ok (nq, next) =>
-            if r < wqMax.size then
-              wqMax := wqMax.set! r (max wqMax[r]! nq)
+            wqMax := setMaxAt wqMax r nq
             i := next
       else if line = "W_K" then
         let r := curLayer
         match consumeMatrixNormInf lines (i + 1) info.modelDim info.headDim with
         | .error e => return .error e
         | .ok (nk, next) =>
-            if r < wkMax.size then
-              wkMax := wkMax.set! r (max wkMax[r]! nk)
+            wkMax := setMaxAt wkMax r nk
             i := next
       else if line = "W_V" then
         let r := curLayer
@@ -227,49 +234,42 @@ def modelWeightBoundsFromTextLines (lines : Array String) : Except String ModelW
             match consumeMatrixNormInf lines (i + 1) info.headDim info.modelDim with
             | .error e => return .error e
             | .ok (no, next2) =>
-                if r < attnValueCoeff.size then
-                  attnValueCoeff :=
-                    attnValueCoeff.set! r (attnValueCoeff[r]! + (nv * no))
+                attnValueCoeff := updateAt attnValueCoeff r (fun cur => cur + (nv * no))
                 i := next2
       else if line = "W_in" then
         let r := curLayer
         match consumeMatrixNormInf lines (i + 1) info.modelDim info.hiddenDim with
         | .error e => return .error e
         | .ok (nwin, next) =>
-            if r < mlpWinBound.size then
-              mlpWinBound := mlpWinBound.set! r nwin
+            mlpWinBound := setAt mlpWinBound r nwin
             i := next
       else if line = "W_out" then
         let r := curLayer
         match consumeMatrixNormInf lines (i + 1) info.hiddenDim info.modelDim with
         | .error e => return .error e
         | .ok (nwout, next) =>
-            if r < mlpWoutBound.size then
-              mlpWoutBound := mlpWoutBound.set! r nwout
+            mlpWoutBound := setAt mlpWoutBound r nwout
             i := next
       else if line = "LN1_GAMMA" then
         let r := curLayer
         match consumeVectorMaxAbs lines (i + 1) info.modelDim with
         | .error e => return .error e
         | .ok (g, next) =>
-            if r < ln1MaxAbsGamma.size then
-              ln1MaxAbsGamma := ln1MaxAbsGamma.set! r g
+            ln1MaxAbsGamma := setAt ln1MaxAbsGamma r g
             i := next
       else if line = "LN1_BETA" then
         let r := curLayer
         match consumeVectorMaxAbs lines (i + 1) info.modelDim with
         | .error e => return .error e
         | .ok (b, next) =>
-            if r < ln1MaxAbsBeta.size then
-              ln1MaxAbsBeta := ln1MaxAbsBeta.set! r b
+            ln1MaxAbsBeta := setAt ln1MaxAbsBeta r b
             i := next
       else if line = "LN2_GAMMA" then
         let r := curLayer
         match consumeVectorMaxAbs lines (i + 1) info.modelDim with
         | .error e => return .error e
         | .ok (g, next) =>
-            if r < ln2MaxAbsGamma.size then
-              ln2MaxAbsGamma := ln2MaxAbsGamma.set! r g
+            ln2MaxAbsGamma := setAt ln2MaxAbsGamma r g
             i := next
       else if line = "LN2_BETA" then
         match consumeVectorMaxAbs lines (i + 1) info.modelDim with

@@ -1491,8 +1491,8 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
   let betaData := β.data
 
   -- Per-row mean and inverse stddev (compute once for speed).
-  let mut means : Array Float := Array.mkEmpty rows
-  let mut invStds : Array Float := Array.mkEmpty rows
+  let mut means : Array Float := Array.replicate rows 0.0
+  let mut invStds : Array Float := Array.replicate rows 0.0
   for r in [:rows] do
     let mut sum : Float := 0.0
     let rowBase := r * cols
@@ -1506,8 +1506,8 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
     -- In exact arithmetic, `var ≥ 0`. Clamp to avoid NaN from tiny negative float noise.
     let var := max 0.0 (varSum / colsF)
     let invσ := 1.0 / Float.sqrt (var + eps)
-    means := means.push μ
-    invStds := invStds.push invσ
+    means := means.set! r μ
+    invStds := invStds.set! r invσ
 
   return {
     numRows := rows
@@ -1515,8 +1515,8 @@ def layerNormRowwise (X γ β : ConcreteMatrix) (eps : Float := 1e-5) : Concrete
     data := .ofFn fun idx : Fin (rows * cols) =>
       let r := idx.val / cols
       let c := idx.val % cols
-      let μ := means.getD r 0.0
-      let invσ := invStds.getD r 0.0
+      let μ := means[r]!
+      let invσ := invStds[r]!
       let normalized := (X.data[r * cols + c]! - μ) * invσ
       (gammaData[c]!) * normalized + (betaData[c]!)
     size_eq := Array.size_ofFn

@@ -176,15 +176,10 @@ private def floatAbsCeilScaledCore (scaleInt : Int) (bits : UInt64) : Except Str
 private def floatAbsCeilScaled (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
   floatAbsCeilScaledCore (scaleIntOfPow10 scalePow10) bits
 
-private def floatScaledCeilSignedCore (scaleInt : Int) (bits : UInt64) : Except String Int :=
-  match floatAbsCeilScaledCore scaleInt bits with
-  | .error e => .error e
-  | .ok absScaled =>
-      let signNeg : Bool := (bits >>> 63) = (1 : UInt64)
-      if signNeg then
-        .ok (-absScaled)
-      else
-        .ok absScaled
+private def floatScaledCeilSignedCore (scaleInt : Int) (bits : UInt64) : Except String Int := do
+  let absScaled ← floatAbsCeilScaledCore scaleInt bits
+  let signNeg : Bool := (bits >>> 63) = (1 : UInt64)
+  return if signNeg then -absScaled else absScaled
 
 private def floatScaledCeilSigned (scalePow10 : Nat) (bits : UInt64) : Except String Int :=
   floatScaledCeilSignedCore (scaleIntOfPow10 scalePow10) bits
@@ -201,11 +196,9 @@ def vectorMaxAbsScaledFromBytes (bytes : ByteArray) (n scalePow10 : Nat) :
   let mut off : Nat := 0
   while i < n do
     let bits := u64FromLE bytes off
-    match floatAbsCeilScaledCore scaleInt bits with
-    | .error e => throw e
-    | .ok absScaled =>
-        if absScaled > maxAbs then
-          maxAbs := absScaled
+    let absScaled ← floatAbsCeilScaledCore scaleInt bits
+    if absScaled > maxAbs then
+      maxAbs := absScaled
     off := off + 8
     i := i + 1
   return maxAbs
@@ -225,17 +218,15 @@ def matrixNormInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : Nat
   let mut off : Nat := 0
   while i < count do
     let bits := u64FromLE bytes off
-    match floatAbsCeilScaledCore scaleInt bits with
-    | .error e => throw e
-    | .ok absScaled =>
-        curRowSum := curRowSum + absScaled
-        if colIdx + 1 = cols then
-          if curRowSum > maxRowSum then
-            maxRowSum := curRowSum
-          curRowSum := 0
-          colIdx := 0
-        else
-          colIdx := colIdx + 1
+    let absScaled ← floatAbsCeilScaledCore scaleInt bits
+    curRowSum := curRowSum + absScaled
+    if colIdx + 1 = cols then
+      if curRowSum > maxRowSum then
+        maxRowSum := curRowSum
+      curRowSum := 0
+      colIdx := 0
+    else
+      colIdx := colIdx + 1
     off := off + 8
     i := i + 1
   return maxRowSum
@@ -289,9 +280,8 @@ def scaledFloatArrayFromBytes (bytes : ByteArray) (count scalePow10 : Nat) :
     let mut off : Nat := 0
     while i < count do
       let bits := u64FromLE bytes off
-      match floatScaledCeilSignedCore scaleInt bits with
-      | .error e => throw e
-      | .ok v => out := out.set! i v
+      let v ← floatScaledCeilSignedCore scaleInt bits
+      out := out.set! i v
       off := off + 8
       i := i + 1
     return out
@@ -301,9 +291,8 @@ def scaledFloatFromBytes (bytes : ByteArray) (scalePow10 : Nat) :
   if bytes.size < 8 then
     throw "unexpected EOF"
   let bits := u64FromLE bytes 0
-  match floatScaledCeilSignedCore (scaleIntOfPow10 scalePow10) bits with
-  | .error e => throw e
-  | .ok v => return v
+  let v ← floatScaledCeilSignedCore (scaleIntOfPow10 scalePow10) bits
+  return v
 
 def i32ArrayFromBytes (bytes : ByteArray) (count : Nat) :
     Except String (Array Int) := do
@@ -337,19 +326,17 @@ def matrixNormOneInfScaledFromBytes (bytes : ByteArray) (rows cols scalePow10 : 
   let mut off : Nat := 0
   while i < count do
     let bits := u64FromLE bytes off
-    match floatAbsCeilScaledCore scaleInt bits with
-    | .error e => throw e
-    | .ok absScaled =>
-        let absNat := Int.toNat absScaled
-        curRowSum := curRowSum + absNat
-        colSums := colSums.set! colIdx (colSums[colIdx]! + absNat)
-        if colIdx + 1 = cols then
-          if curRowSum > maxRowSum then
-            maxRowSum := curRowSum
-          curRowSum := 0
-          colIdx := 0
-        else
-          colIdx := colIdx + 1
+    let absScaled ← floatAbsCeilScaledCore scaleInt bits
+    let absNat := Int.toNat absScaled
+    curRowSum := curRowSum + absNat
+    colSums := colSums.set! colIdx (colSums[colIdx]! + absNat)
+    if colIdx + 1 = cols then
+      if curRowSum > maxRowSum then
+        maxRowSum := curRowSum
+      curRowSum := 0
+      colIdx := 0
+    else
+      colIdx := colIdx + 1
     off := off + 8
     i := i + 1
   let mut maxColSum : Nat := 0
