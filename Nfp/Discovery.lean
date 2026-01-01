@@ -4976,7 +4976,7 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
     (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
     (storeDiagnostics : Bool := false) :
     Array (Array PrecomputedHeadData) × Array ConcreteMatrix := Id.run do
-  -- Parallelizing both layers and heads can lead to too many tasks; prefer layer-level parallelism.
+  -- Prefer layer-level parallelism, but allow bounded head chunking to use spare cores.
   let useParallelLayers := model.numLayers >= 4
   let computeLayer (l : Nat) : (Array PrecomputedHeadData × ConcreteMatrix) := Id.run do
     let layerInput := fwdResult.getLayerInput l
@@ -5091,10 +5091,6 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
           let keyMean := meanVec keys
           let queryMean := meanVec queries
           let valueMean := meanVec values
-          let nF := seqLen.toFloat
-          let vMeanNormSq : Float := sumSquares valueMean
-          let vFrobBound : Float :=
-            Float.sqrt (max 0.0 (vFrobBoundRaw * vFrobBoundRaw - nF * vMeanNormSq))
           let vActGram := values.transpose.matmul values
           let vActGramCentered := centerGram vActGram valueMean seqLen
           let vActTrace : Float := gramTrace vActGramCentered
@@ -5178,7 +5174,7 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
           let kqActOpDense1 : Float := kqActGram1.opNormUpperBoundDenseBrauer
           let kqActOpDense2 : Float := kqActGram2.opNormUpperBoundDenseBrauer
           let kqActOpBoundDense : Float :=
-            Float.sqrt (max 0.0 (min kqActOpDense1 qkActOpDense2))
+            Float.sqrt (max 0.0 (min kqActOpDense1 kqActOpDense2))
           let kqActF2_1 : Float := ConcreteMatrix.traceMul kqActGram1 kqActGram1
           let kqActF2_2 : Float := ConcreteMatrix.traceMul kqActGram2 kqActGram2
           let kqActMoment1 : Float :=
@@ -5340,19 +5336,38 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
             voFactorGram := bnds.voFactorGram
           }
 
-        let useParallelHeads := (!useParallelLayers) && heads.size >= 4
-        if useParallelHeads then
-          let tasks : Array (Task PrecomputedHeadData) :=
-            .ofFn fun i : Fin heads.size =>
-              Task.spawn (fun _ => computeHead i.val heads[i])
-          tasks.map Task.get
-        else
+        let headTaskCount : Nat :=
+          if heads.size < 4 then
+            1
+          else if useParallelLayers then
+            let maxHeadTasks : Nat := 48
+            let budget := maxHeadTasks / model.numLayers
+            let target := Nat.max 1 budget
+            Nat.min heads.size target
+          else
+            heads.size
+        let computeHeadChunk (start stop : Nat) : Array PrecomputedHeadData := Id.run do
+          let mut out : Array PrecomputedHeadData := Array.mkEmpty (stop - start)
+          for h_idx in [start:stop] do
+            if hh : h_idx < heads.size then
+              out := out.push (computeHead h_idx (heads[h_idx]'hh))
+          return out
+        if headTaskCount > 1 then
           Id.run do
+            let chunkSize := (heads.size + headTaskCount - 1) / headTaskCount
+            let chunkCount := (heads.size + chunkSize - 1) / chunkSize
+            let tasks : Array (Task (Array PrecomputedHeadData)) :=
+              .ofFn fun i : Fin chunkCount =>
+                let start := i.val * chunkSize
+                let stop := min heads.size (start + chunkSize)
+                Task.spawn (fun _ => computeHeadChunk start stop)
             let mut out : Array PrecomputedHeadData := Array.mkEmpty heads.size
-            for h_idx in [:heads.size] do
-              if hh : h_idx < heads.size then
-                out := out.push (computeHead h_idx (heads[h_idx]'hh))
+            for chunk in tasks.map Task.get do
+              for item in chunk do
+                out := out.push item
             return out
+        else
+          computeHeadChunk 0 heads.size
       else
         #[]
 
