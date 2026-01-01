@@ -64,17 +64,17 @@ private def recomputeModelWeightBoundsBinary
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h (hdr.seqLen * hdr.modelDim) with
       | .error e => return .error e
       | .ok _ => pure ()
-      let mut valuePairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
-      let mut qkPairsLayers : Array (Array (Int × Int)) := Array.mkEmpty hdr.numLayers
-      let mut mlpWinBound : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut mlpWoutBound : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut ln1MaxAbsGamma : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut ln1MaxAbsBeta : Array Rat := Array.mkEmpty hdr.numLayers
-      let mut ln2MaxAbsGamma : Array Rat := Array.mkEmpty hdr.numLayers
-      for _l in [:hdr.numLayers] do
-        let mut valuePairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
-        let mut qkPairs : Array (Int × Int) := Array.mkEmpty hdr.numHeads
-        for _h in [:hdr.numHeads] do
+      let mut valuePairsLayers : Array (Array (Int × Int)) := Array.replicate hdr.numLayers #[]
+      let mut qkPairsLayers : Array (Array (Int × Int)) := Array.replicate hdr.numLayers #[]
+      let mut mlpWinBound : Array Rat := Array.replicate hdr.numLayers 0
+      let mut mlpWoutBound : Array Rat := Array.replicate hdr.numLayers 0
+      let mut ln1MaxAbsGamma : Array Rat := Array.replicate hdr.numLayers 0
+      let mut ln1MaxAbsBeta : Array Rat := Array.replicate hdr.numLayers 0
+      let mut ln2MaxAbsGamma : Array Rat := Array.replicate hdr.numLayers 0
+      for l in [:hdr.numLayers] do
+        let mut valuePairs : Array (Int × Int) := Array.replicate hdr.numHeads (0, 0)
+        let mut qkPairs : Array (Int × Int) := Array.replicate hdr.numHeads (0, 0)
+        for hIdx in [:hdr.numHeads] do
           let wqScaledE ←
             Nfp.Untrusted.SoundBinary.readMatrixNormInfScaled
               h hdr.modelDim hdr.headDim scalePow10
@@ -112,8 +112,8 @@ private def recomputeModelWeightBoundsBinary
             match noScaledE with
             | .error e => return .error e
             | .ok v => pure v
-          qkPairs := qkPairs.push (wqScaled, wkScaled)
-          valuePairs := valuePairs.push (nvScaled, noScaled)
+          qkPairs := qkPairs.set! hIdx (wqScaled, wkScaled)
+          valuePairs := valuePairs.set! hIdx (nvScaled, noScaled)
         match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
         | .error e => return .error e
         | .ok _ => pure ()
@@ -165,13 +165,13 @@ private def recomputeModelWeightBoundsBinary
         let ln1Gamma := ratOfScaledInt scalePow10 ln1GammaScaled
         let ln1Beta := ratOfScaledInt scalePow10 ln1BetaScaled
         let ln2Gamma := ratOfScaledInt scalePow10 ln2GammaScaled
-        mlpWinBound := mlpWinBound.push nWin
-        mlpWoutBound := mlpWoutBound.push nWout
-        ln1MaxAbsGamma := ln1MaxAbsGamma.push ln1Gamma
-        ln1MaxAbsBeta := ln1MaxAbsBeta.push ln1Beta
-        ln2MaxAbsGamma := ln2MaxAbsGamma.push ln2Gamma
-        valuePairsLayers := valuePairsLayers.push valuePairs
-        qkPairsLayers := qkPairsLayers.push qkPairs
+        mlpWinBound := mlpWinBound.set! l nWin
+        mlpWoutBound := mlpWoutBound.set! l nWout
+        ln1MaxAbsGamma := ln1MaxAbsGamma.set! l ln1Gamma
+        ln1MaxAbsBeta := ln1MaxAbsBeta.set! l ln1Beta
+        ln2MaxAbsGamma := ln2MaxAbsGamma.set! l ln2Gamma
+        valuePairsLayers := valuePairsLayers.set! l valuePairs
+        qkPairsLayers := qkPairsLayers.set! l qkPairs
       match ← Nfp.Untrusted.SoundBinary.skipF64Array h hdr.modelDim with
       | .error e => return .error e
       | .ok _ => pure ()

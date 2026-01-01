@@ -364,11 +364,12 @@ private def repeatBytes (b : ByteArray) (n : Nat) : ByteArray :=
   Id.run do
     if n = 0 || b.size = 0 then
       return ByteArray.empty
-    let mut out : Array UInt8 := Array.mkEmpty (n * b.size)
+    let mut out : ByteArray := ByteArray.mk (Array.replicate (n * b.size) 0)
+    let mut off : Nat := 0
     for _ in [:n] do
-      for byte in b.data do
-        out := out.push byte
-    return ByteArray.mk out
+      out := b.copySlice 0 out off b.size
+      off := off + b.size
+    return out
 
 def buildCacheBytes
     (lines : Array String)

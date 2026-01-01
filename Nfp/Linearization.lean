@@ -2353,12 +2353,11 @@ This product ignores `lnFJacobian`; if it is nontrivial, multiply by
 `operatorNormBound D.lnFJacobian` to bound end-to-end amplification. -/
 noncomputable def amplificationFactor (D : DeepLinearization (n := n) (d := d)) : ℝ :=
   -- Product of (1 + ‖layerJacobian - I‖) for all layers
-  (List.range D.numLayers).foldl
+  foldRange D.numLayers 1
     (fun acc i =>
       if hi : i < D.numLayers then
         acc * (1 + operatorNormBound (D.layerJacobian ⟨i, hi⟩ - SignedMixer.identity))
       else acc)
-    1
 
 /-- **Two-layer composition theorem**: Explicit bound for 2-layer case.
 
@@ -2414,25 +2413,21 @@ gets amplified by subsequent layers.
 When start = numLayers, this equals 1 (no amplification). -/
 noncomputable def suffixAmplification (D : DeepLinearization (n := n) (d := d))
     (start : ℕ) : ℝ :=
-  (List.range (D.numLayers - start)).foldl
+  foldRange (D.numLayers - start) 1
     (fun acc i =>
       if hi : start + i < D.numLayers then
         acc * (1 + layerNormBounds D ⟨start + i, hi⟩)
       else acc)
-    1
 
 /-- Base case: suffix amplification starting at numLayers is 1. -/
 theorem suffixAmplification_base (D : DeepLinearization (n := n) (d := d)) :
     suffixAmplification D D.numLayers = 1 := by
-  simp only [suffixAmplification, Nat.sub_self, List.range_zero, List.foldl_nil]
+  simp [suffixAmplification, foldRange]
 
 /-- The amplificationFactor equals suffixAmplification starting from 0. -/
 theorem amplificationFactor_eq_suffix (D : DeepLinearization (n := n) (d := d)) :
     amplificationFactor D = suffixAmplification D 0 := by
-  simp only [amplificationFactor, suffixAmplification, layerNormBounds, Nat.sub_zero]
-  congr 1
-  ext acc i
-  simp only [zero_add]
+  simp [amplificationFactor, suffixAmplification, layerNormBounds]
 
 /-- **Recursive total error formula**: Total error with amplification.
 
@@ -2447,24 +2442,27 @@ theorem suffixAmplification_nonneg (D : DeepLinearization (n := n) (d := d))
     (start : ℕ) (hNorm : ∀ i : Fin D.numLayers, 0 ≤ layerNormBounds D i) :
     0 ≤ suffixAmplification D start := by
   unfold suffixAmplification
-  -- We prove a stronger statement: for any init ≥ 0, the foldl result is ≥ 0
-  suffices h : ∀ init : ℝ, 0 ≤ init →
-      0 ≤ (List.range (D.numLayers - start)).foldl
-        (fun acc i => if hi : start + i < D.numLayers then
-          acc * (1 + layerNormBounds D ⟨start + i, hi⟩) else acc)
-        init by
-    exact h 1 (by norm_num : (0 : ℝ) ≤ 1)
-  intro init hinit
-  generalize (List.range (D.numLayers - start)) = xs
-  induction xs generalizing init with
-  | nil => simp [hinit]
-  | cons x xs ih =>
-    simp only [List.foldl_cons]
-    split_ifs with hi
-    · apply ih
-      apply mul_nonneg hinit
-      linarith [hNorm ⟨start + x, hi⟩]
-    · exact ih init hinit
+  -- We prove a stronger statement: for any init ≥ 0, the fold result is ≥ 0
+  let f := fun acc i =>
+    if hi : start + i < D.numLayers then
+      acc * (1 + layerNormBounds D ⟨start + i, hi⟩)
+    else acc
+  suffices h : ∀ count : Nat, ∀ init : ℝ, 0 ≤ init → 0 ≤ foldRange count init f by
+    exact h (D.numLayers - start) 1 (by norm_num : (0 : ℝ) ≤ 1)
+  intro count
+  induction count with
+  | zero =>
+      intro init hinit
+      simpa [foldRange] using hinit
+  | succ count ih =>
+      intro init hinit
+      have hacc : 0 ≤ foldRange count init f := ih init hinit
+      by_cases hi : start + count < D.numLayers
+      · have hbound : 0 ≤ layerNormBounds D ⟨start + count, hi⟩ := hNorm _
+        have hmul : 0 ≤ foldRange count init f * (1 + layerNormBounds D ⟨start + count, hi⟩) :=
+          mul_nonneg hacc (by linarith [hbound])
+        simpa [foldRange, f, hi] using hmul
+      · simpa [foldRange, f, hi] using hacc
 
 /-
 These lemmas don't need the `[Nonempty _]` section variables (they are in scope
@@ -2518,42 +2516,44 @@ theorem n_layer_faithfulness_composition
     ∃ (ε_total : ℝ),
       0 ≤ ε_total ∧
       ε_total ≤ ∑ i : Fin D.numLayers,
-        εs i * (List.range (D.numLayers - (i.val + 1))).foldl
+        εs i * foldRange (D.numLayers - (i.val + 1)) 1
           (fun acc j =>
             if hj : i.val + 1 + j < D.numLayers then
               acc * (1 + Cs ⟨i.val + 1 + j, hj⟩)
-            else acc)
-          1 := by
+            else acc) := by
   -- The witness is exactly the bound formula
   let suffix_bound : Fin D.numLayers → ℝ := fun i =>
-    (List.range (D.numLayers - (i.val + 1))).foldl
+    foldRange (D.numLayers - (i.val + 1)) 1
       (fun acc j =>
         if hj : i.val + 1 + j < D.numLayers then
           acc * (1 + Cs ⟨i.val + 1 + j, hj⟩)
         else acc)
-      1
   -- Helper: suffix_bound is nonnegative
   have hsuffix_nonneg : ∀ i : Fin D.numLayers, 0 ≤ suffix_bound i := by
     intro i
-    simp only [suffix_bound]
-    -- We prove: for any init ≥ 0, foldl result is ≥ 0
-    suffices h : ∀ init : ℝ, 0 ≤ init →
-        0 ≤ (List.range (D.numLayers - (i.val + 1))).foldl
-          (fun acc j => if hj : i.val + 1 + j < D.numLayers then
-            acc * (1 + Cs ⟨i.val + 1 + j, hj⟩) else acc)
-          init by
-      exact h 1 (by norm_num : (0 : ℝ) ≤ 1)
-    intro init hinit
-    generalize (List.range (D.numLayers - (i.val + 1))) = xs
-    induction xs generalizing init with
-    | nil => simp [hinit]
-    | cons x xs ih =>
-      simp only [List.foldl_cons]
-      split_ifs with hj
-      · apply ih
-        apply mul_nonneg hinit
-        linarith [hC_pos ⟨i.val + 1 + x, hj⟩]
-      · exact ih init hinit
+    let f := fun acc j =>
+      if hj : i.val + 1 + j < D.numLayers then
+        acc * (1 + Cs ⟨i.val + 1 + j, hj⟩)
+      else acc
+    -- We prove: for any init ≥ 0, foldRange result is ≥ 0
+    suffices h : ∀ count : Nat, ∀ init : ℝ, 0 ≤ init → 0 ≤ foldRange count init f by
+      have h1 : 0 ≤ foldRange (D.numLayers - (i.val + 1)) 1 f :=
+        h (D.numLayers - (i.val + 1)) 1 (by norm_num : (0 : ℝ) ≤ 1)
+      simpa [suffix_bound, f] using h1
+    intro count
+    induction count with
+    | zero =>
+        intro init hinit
+        simpa [foldRange] using hinit
+    | succ count ih =>
+        intro init hinit
+        have hacc : 0 ≤ foldRange count init f := ih init hinit
+        by_cases hj : i.val + 1 + count < D.numLayers
+        · have hbound : 0 ≤ Cs ⟨i.val + 1 + count, hj⟩ := hC_pos _
+          have hmul : 0 ≤ foldRange count init f * (1 + Cs ⟨i.val + 1 + count, hj⟩) :=
+            mul_nonneg hacc (by linarith [hbound])
+          simpa [foldRange, f, hj] using hmul
+        · simpa [foldRange, f, hj] using hacc
   use ∑ i : Fin D.numLayers, εs i * suffix_bound i
   constructor
   · -- Nonnegativity

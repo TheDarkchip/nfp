@@ -4965,9 +4965,9 @@ def computeLayerNormBounds (cache : PrecomputedCache)
         Task.spawn (fun _ => cache.layerNormBoundAt i.val effort)
     tasks.map Task.get
   else
-    let mut out : Array Float := Array.mkEmpty n
+    let mut out : Array Float := Array.replicate n 0.0
     for l in [:n] do
-      out := out.push (cache.layerNormBoundAt l effort)
+      out := out.set! l (cache.layerNormBoundAt l effort)
     out
 
 /-- Build cached head data and pre-LN attention inputs for all layers. -/
@@ -5062,9 +5062,9 @@ def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
               for c in [:cols] do
                 sums := sums.set! c (sums[c]! + M.data[rowBase + c]!)
             let invN := 1.0 / M.numRows.toFloat
-            let mut out : Array Float := Array.mkEmpty cols
+            let mut out : Array Float := Array.replicate cols 0.0
             for c in [:cols] do
-              out := out.push (sums[c]! * invN)
+              out := out.set! c (sums[c]! * invN)
             return out
           let centerGram := fun (gram : ConcreteMatrix) (mean : Array Float) (n : Nat) =>
             if gram.numRows = 0 || gram.numCols = 0 || n = 0 then
