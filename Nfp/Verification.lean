@@ -55,11 +55,11 @@ def inductionTargetTokenFromHistory (model : ConcreteModel) : Option Nat := do
     let lastIdx := tokens.size - 1
     let tCurr := tokens[lastIdx]!
     let mut foundIdx : Option Nat := none
-    for offset in [:lastIdx] do
-      if foundIdx.isNone then
-        let idx := lastIdx - 1 - offset
-        if tokens[idx]! = tCurr then
-          foundIdx := some idx
+    let mut idx := lastIdx
+    while idx > 0 && foundIdx.isNone do
+      idx := idx - 1
+      if tokens[idx]! = tCurr then
+        foundIdx := some idx
     let k ← foundIdx
     some (tokens[k + 1]!)
 
@@ -311,7 +311,7 @@ def verifyCircuit (ctx : VerificationContext) (candidateHeads : Array HeadRef) :
     CircuitVerificationRow := Id.run do
   let baseDelta := ctx.baseDelta
   let competence := baseDelta > ctx.cfg.competenceEpsilon
-  let mut failures : Array String := #[]
+  let mut failures : Array String := Array.mkEmpty (candidateHeads.size + 3)
   if !competence then
     failures := failures.push s!"Axiom1(baseline competence) failed: Δ_base={baseDelta} ≤ \
       ε={ctx.cfg.competenceEpsilon}"
@@ -333,7 +333,7 @@ def verifyCircuit (ctx : VerificationContext) (candidateHeads : Array HeadRef) :
     }
 
   -- Choose one control head per candidate head (same layer, closest output norm).
-  let mut selections : Array ControlSelection := #[]
+  let mut selections : Array ControlSelection := Array.mkEmpty candidateHeads.size
   for cand in candidateHeads do
     match selectEnergyMatchedControl ctx.baselineForward cand candidateHeads with
     | some sel => selections := selections.push sel

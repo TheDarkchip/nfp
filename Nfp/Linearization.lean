@@ -2102,16 +2102,19 @@ theorem DeepLinearization.layerJacobian_residual_bound
       (A := attnJac) (M := mlpJac) (a := A) (b := M) hA' hM'
   simpa [DeepLinearization.layerJacobian, attnJac, mlpJac] using hres
 
+/-- Left-fold over `[0, count)` without allocating a list. -/
+private def foldRange {α : Type*} (count : Nat) (init : α) (f : α → Nat → α) : α :=
+  Nat.rec (motive := fun _ => α) init (fun i acc => f acc i) count
+
 /-- The composed Jacobian from layer `start` to layer `stop` (exclusive). -/
 noncomputable def DeepLinearization.rangeJacobian (D : DeepLinearization (n := n) (d := d))
     (start stop : ℕ) : SignedMixer (n × d) (n × d) :=
   if _h : start < stop ∧ stop ≤ D.numLayers then
-    (List.range (stop - start)).foldl
+    foldRange (stop - start) SignedMixer.identity
       (fun acc i =>
         if hi : start + i < D.numLayers then
           acc.comp (D.layerJacobian ⟨start + i, hi⟩)
         else acc)
-      SignedMixer.identity
   else SignedMixer.identity
 
 /-! ### Virtual Attention Heads -/
@@ -2170,7 +2173,7 @@ noncomputable def DeepValueTerm (D : DeepLinearization (n := n) (d := d)) :
     SignedMixer (n × d) (n × d) :=
   let core :=
     if _h : 0 < D.numLayers then
-      (List.range D.numLayers).foldl
+      foldRange D.numLayers SignedMixer.identity
         (fun acc i =>
           if hi : i < D.numLayers then
             let L := D.layers ⟨i, hi⟩
@@ -2178,7 +2181,6 @@ noncomputable def DeepValueTerm (D : DeepLinearization (n := n) (d := d)) :
             -- Pre-LN: absorb ln_1 linearization into the value path.
             acc.comp (SignedMixer.identity + ln.comp (valueTerm L))
           else acc)
-        SignedMixer.identity
     else SignedMixer.identity
   -- Final normalization is applied after all blocks.
   core.comp D.lnFJacobian
