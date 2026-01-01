@@ -35,7 +35,6 @@ Together, these provide end-to-end certification of model behavior.
 
 namespace Nfp
 
-open SignedMixer AttentionLinearization
 
 variable {n d : Type*} [Fintype n] [Fintype d] [DecidableEq n] [DecidableEq d]
 

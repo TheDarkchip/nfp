@@ -166,7 +166,7 @@ section Linearity
 variable {Input Output : Type*} [Fintype Input] [Fintype Output]
 
 /-- A method that produces attributions for any function. -/
-def AttributionMethod (Input Output : Type*) [Fintype Input] [Fintype Output] :=
+abbrev AttributionMethod (Input Output : Type*) [Fintype Input] [Fintype Output] :=
   ((Input → ℝ) → Output → ℝ) → (Input → ℝ) → (Input → ℝ) → Attribution Input Output
 
 /-- The linearity axiom: attribution of a sum of functions equals the sum
@@ -190,15 +190,16 @@ section Symmetry
 
 variable {Input Output : Type*} [Fintype Input] [Fintype Output] [DecidableEq Input]
 
+/-- Swap two input coordinates in a feature vector. -/
+def swapInputs (x : Input → ℝ) (i j : Input) : Input → ℝ :=
+  fun k => if k = i then x j else if k = j then x i else x k
+
 /-- Two inputs are symmetric for a function if swapping them preserves the output. -/
 def SymmetricInputs
     (f : (Input → ℝ) → Output → ℝ)
     (i j : Input) : Prop :=
   ∀ (x : Input → ℝ) (o : Output),
-    f x o = f (Function.swap x i j) o
-  where
-    Function.swap (x : Input → ℝ) (i j : Input) : Input → ℝ :=
-      fun k => if k = i then x j else if k = j then x i else x k
+    f x o = f (swapInputs x i j) o
 
 /-- The symmetry axiom: symmetric inputs receive equal attribution. -/
 def Attribution.Symmetric
@@ -215,7 +216,7 @@ section PathAttribution
 variable {Input : Type*}
 
 /-- A path from baseline `x₀` to input `x` parameterized by `t ∈ [0,1]`. -/
-def Path (Input : Type*) := (t : NNReal) → Input → ℝ
+abbrev Path (Input : Type*) := (t : NNReal) → Input → ℝ
 
 /-- A straight-line (linear interpolation) path between two points. -/
 noncomputable def straightPath (x x₀ : Input → ℝ) : Path Input :=

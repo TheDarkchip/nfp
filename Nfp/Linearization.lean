@@ -131,7 +131,7 @@ def reluMask (v : n → ℝ) : n → Prop := fun i => v i > 0
 
 /-- The ReLU mask as a 0/1 indicator. -/
 noncomputable def reluMaskIndicator (v : n → ℝ) : n → ℝ :=
-  fun i => if v i > 0 then 1 else 0
+  fun i => reluGrad (v i)
 
 /-- **ReLU Linearization**: The Jacobian of ReLU is a diagonal matrix
 with entries 0 or 1 based on whether the input is positive.
