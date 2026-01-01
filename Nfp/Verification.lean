@@ -178,7 +178,7 @@ private def topNonTargetToken (residual : ConcreteMatrix) (pos : Nat)
   else
     return none
 
-private def fullCircuit (model : ConcreteModel) : ConcreteCircuit := Id.run do
+private def fullCircuit (model : ConcreteModel) : ConcreteCircuit :=
   let headsPerLayer :=
     Array.ofFn (fun l : Fin model.numLayers => (model.layers.getD l.1 #[]).size)
   let neuronsPerLayer :=
