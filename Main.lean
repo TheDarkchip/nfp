@@ -930,14 +930,21 @@ private def parseBenchArgs (p : Parsed) : IO (Option BenchArgs) := do
 
 /-- Core analysis work for benchmarking (no IO). -/
 private def benchAnalyzeOnce (model : ConcreteModel) (threshold : Float) : Nat × Nat :=
-  let cache := PrecomputedCache.build model
-  let deepCircuits := findDeepCircuitCandidatesFromCache cache
-  let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
-  let inductionHeads :=
-    (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
-      (·.combinedError < ·.combinedError)
-  let verifiedHeads := inductionHeads.filter (·.combinedError ≤ threshold)
-  (verifiedHeads.size, verifiedDeep.size)
+  Id.run do
+    let cache := PrecomputedCache.build model
+    let deepCircuits := findDeepCircuitCandidatesFromCache cache
+    let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ threshold)
+    let mut verifiedHeads : Array CandidateInductionHead := Array.mkEmpty 0
+    for circuit in deepCircuits do
+      match circuit.toInductionCandidateCore? cache with
+      | none => pure ()
+      | some core =>
+          if core.combinedError ≤ threshold then
+            match core.toInductionCandidate? cache with
+            | some cand => verifiedHeads := verifiedHeads.push cand
+            | none => pure ()
+    let verifiedSorted := verifiedHeads.qsort (·.combinedError < ·.combinedError)
+    return (verifiedSorted.size, verifiedDeep.size)
 
 /-- Core induction-head search work for benchmarking (no IO). -/
 private def benchInductionOnce (model : ConcreteModel) (target : TargetDirection)
@@ -993,32 +1000,69 @@ private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
       let mut times : Array Nat := Array.mkEmpty args.runs
       let mut lastHeads : Nat := 0
       let mut lastCircuits : Nat := 0
-      let mut cacheNsTotal : Nat := 0
+      let mut fwdNsTotal : Nat := 0
+      let mut headNsTotal : Nat := 0
+      let mut normNsTotal : Nat := 0
       let mut deepNsTotal : Nat := 0
       let mut candNsTotal : Nat := 0
       for i in [:args.runs] do
         let t0 ← IO.monoNanosNow
         if args.breakdown then
-          let mut localCacheNs : Nat := 0
+          let mut localFwdNs : Nat := 0
+          let mut localHeadNs : Nat := 0
+          let mut localNormNs : Nat := 0
           let mut localDeepNs : Nat := 0
           let mut localCandNs : Nat := 0
           for _ in [:args.repeatCount] do
-            let (cache, cacheNs) ← timeNs (fun () =>
-              pure <| PrecomputedCache.build model)
+            let (fwdResult, fwdNs) ← timeNs (fun () =>
+              pure <| model.runForward true)
+            let ((headData, ln1Inputs), headNs) ← timeNs (fun () =>
+              pure <|
+                PrecomputedCache.buildHeadData model fwdResult true
+                  ConcreteMatrix.BoundEffort.tier1 false)
+            let baseBounds := Array.replicate model.numLayers 0.0
+            let baseCache : PrecomputedCache := {
+              model := model
+              forwardResult := fwdResult
+              ln1Inputs := ln1Inputs
+              headData := headData
+              layerNormBounds := baseBounds
+              layerNormBoundsComputed := false
+            }
+            let (layerNormBounds, normNs) ← timeNs (fun () =>
+              pure <|
+                PrecomputedCache.computeLayerNormBounds baseCache
+                  ConcreteMatrix.BoundEffort.tier1)
+            let cache : PrecomputedCache := {
+              baseCache with
+              layerNormBounds := layerNormBounds
+              layerNormBoundsComputed := true
+            }
             let (deepCircuits, deepNs) ← timeNs (fun () =>
               pure <| findDeepCircuitCandidatesFromCache cache)
             let verifiedDeep := deepCircuits.filter (·.amplifiedError ≤ args.threshold)
-            let (inductionHeads, candNs) ← timeNs (fun () =>
-              pure <|
-                (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
-                  (·.combinedError < ·.combinedError))
-            let verifiedHeads := inductionHeads.filter (·.combinedError ≤ args.threshold)
-            localCacheNs := localCacheNs + cacheNs
+            let (verifiedHeads, candNs) ← timeNs (fun () => do
+              let mut verified : Array CandidateInductionHead := Array.mkEmpty 0
+              for circuit in deepCircuits do
+                match circuit.toInductionCandidateCore? cache with
+                | none => pure ()
+                | some core =>
+                    if core.combinedError ≤ args.threshold then
+                      match core.toInductionCandidate? cache with
+                      | some cand => verified := verified.push cand
+                      | none => pure ()
+              let verifiedSorted := verified.qsort (·.combinedError < ·.combinedError)
+              return verifiedSorted)
+            localFwdNs := localFwdNs + fwdNs
+            localHeadNs := localHeadNs + headNs
+            localNormNs := localNormNs + normNs
             localDeepNs := localDeepNs + deepNs
             localCandNs := localCandNs + candNs
             lastHeads := verifiedHeads.size
             lastCircuits := verifiedDeep.size
-          cacheNsTotal := cacheNsTotal + localCacheNs
+          fwdNsTotal := fwdNsTotal + localFwdNs
+          headNsTotal := headNsTotal + localHeadNs
+          normNsTotal := normNsTotal + localNormNs
           deepNsTotal := deepNsTotal + localDeepNs
           candNsTotal := candNsTotal + localCandNs
         else
@@ -1035,15 +1079,20 @@ private def runBenchWithArgs (args : BenchArgs) : IO UInt32 := do
       if args.breakdown then
         let runs := args.runs
         let repeatCount := args.repeatCount
-        let cacheAvgNs := cacheNsTotal / (runs * repeatCount)
+        let fwdAvgNs := fwdNsTotal / (runs * repeatCount)
+        let headAvgNs := headNsTotal / (runs * repeatCount)
+        let normAvgNs := normNsTotal / (runs * repeatCount)
         let deepAvgNs := deepNsTotal / (runs * repeatCount)
         let candAvgNs := candNsTotal / (runs * repeatCount)
-        let cacheAvgUs := cacheAvgNs / 1000
+        let fwdAvgUs := fwdAvgNs / 1000
+        let headAvgUs := headAvgNs / 1000
+        let normAvgUs := normAvgNs / 1000
         let deepAvgUs := deepAvgNs / 1000
         let candAvgUs := candAvgNs / 1000
         IO.println <|
-          s!"bench:analysis cacheAvg={cacheAvgUs}us " ++
-            s!"scanAvg={deepAvgUs}us candAvg={candAvgUs}us"
+          s!"bench:analysis fwdAvg={fwdAvgUs}us headAvg={headAvgUs}us " ++
+            s!"normAvg={normAvgUs}us scanAvg={deepAvgUs}us " ++
+            s!"candAvg={candAvgUs}us"
       IO.println <|
         s!"bench:analysis threshold={args.threshold} heads={lastHeads} " ++
           s!"circuits={lastCircuits}"

@@ -4932,31 +4932,7 @@ def layerNormBoundAt (cache : PrecomputedCache) (layerIdx : Nat)
     let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
     let attnOpUb : Float := min attnFrob d.attentionOneInfBound
     let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
-    let inputs : PatternTermBoundInputs := {
-      attention := d.attention
-      inputNorm := d.inputNorm
-      inputOpBound := d.inputOpBound
-      qFrobBound := d.qFrobBound
-      kFrobBound := d.kFrobBound
-      vFrobBound := d.vFrobBound
-      qOpBoundAct := d.qOpBoundAct
-      kOpBoundAct := d.kOpBoundAct
-      vOpBoundAct := d.vOpBoundAct
-      qkActFrobBound := d.qkActFrobBound
-      kqActFrobBound := d.kqActFrobBound
-      qkActOpBound := d.qkActOpBound
-      kqActOpBound := d.kqActOpBound
-      scaleFactor := d.scaleFactor
-      wqOpBound := d.wqOpGram
-      wkOpBound := d.wkOpGram
-      wvOpBound := d.wvOpGram
-      woOpBound := d.woOpGram
-      voOpBound := d.valueOutputProjSchurNorm
-      bqFrob := d.bqFrob
-      bkFrob := d.bkFrob
-      bvFrob := d.bvFrob
-    }
-    let patternTermUb : Float := computePatternTermBound inputs
+    let patternTermUb : Float := d.patternTermBound
     attnPart := attnPart + d.ln1OpBound * (valueTermUb + patternTermUb)
 
   if hm : layerIdx < model.mlps.size then
@@ -4994,19 +4970,15 @@ def computeLayerNormBounds (cache : PrecomputedCache)
       out := out.push (cache.layerNormBoundAt l effort)
     out
 
-/-- Build a complete precomputed cache for a model.
-
-This precomputes all attention patterns, projections, and norms once.
--/
-  def build (model : ConcreteModel) (causal : Bool := true)
-      (computeLayerNormBounds : Bool := true)
-      (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
-      (storeDiagnostics : Bool := false) :
-      PrecomputedCache := Id.run do
-  let fwdResult := model.runForward causal
+/-- Build cached head data and pre-LN attention inputs for all layers. -/
+def buildHeadData (model : ConcreteModel) (fwdResult : ForwardPassResult)
+    (causal : Bool := true)
+    (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
+    (storeDiagnostics : Bool := false) :
+    Array (Array PrecomputedHeadData) × Array ConcreteMatrix := Id.run do
   -- Parallelizing both layers and heads can lead to too many tasks; prefer layer-level parallelism.
   let useParallelLayers := model.numLayers >= 4
-  let computeLayer (l : Nat) : (Array PrecomputedHeadData × (Float × ConcreteMatrix)) := Id.run do
+  let computeLayer (l : Nat) : (Array PrecomputedHeadData × ConcreteMatrix) := Id.run do
     let layerInput := fwdResult.getLayerInput l
     let attnInput := model.applyLn1 l layerInput
     let inputNorm := computeInputNorm attnInput
@@ -5206,7 +5178,7 @@ This precomputes all attention patterns, projections, and norms once.
           let kqActOpDense1 : Float := kqActGram1.opNormUpperBoundDenseBrauer
           let kqActOpDense2 : Float := kqActGram2.opNormUpperBoundDenseBrauer
           let kqActOpBoundDense : Float :=
-            Float.sqrt (max 0.0 (min kqActOpDense1 kqActOpDense2))
+            Float.sqrt (max 0.0 (min kqActOpDense1 qkActOpDense2))
           let kqActF2_1 : Float := ConcreteMatrix.traceMul kqActGram1 kqActGram1
           let kqActF2_2 : Float := ConcreteMatrix.traceMul kqActGram2 kqActGram2
           let kqActMoment1 : Float :=
@@ -5384,73 +5356,14 @@ This precomputes all attention patterns, projections, and norms once.
       else
         #[]
 
-    let norm : Float :=
-      if computeLayerNormBounds then
-        -- OPTIMIZATION: compute per-layer residual Jacobian upper bounds from cached head data,
-        -- avoiding recomputation of attention weights / projections.
-        Id.run do
-          let y := fwdResult.getPostAttnResidual l
-          let ln2Bound := model.ln2OpBound l y
-          let mut attnPart : Float := 0.0
-          for d in layerHeadData do
-            let attnFrob : Float := Float.sqrt (max 0.0 d.attentionFrobeniusNormSq)
-            let attnOpUb : Float := min attnFrob d.attentionOneInfBound
-            let valueTermUb : Float := attnOpUb * d.valueOutputProjSchurNorm
-            let inputs : PatternTermBoundInputs := {
-              attention := d.attention
-              inputNorm := d.inputNorm
-              inputOpBound := d.inputOpBound
-              qFrobBound := d.qFrobBound
-              kFrobBound := d.kFrobBound
-              vFrobBound := d.vFrobBound
-              qOpBoundAct := d.qOpBoundAct
-              kOpBoundAct := d.kOpBoundAct
-              vOpBoundAct := d.vOpBoundAct
-              qkActFrobBound := d.qkActFrobBound
-              kqActFrobBound := d.kqActFrobBound
-              qkActOpBound := d.qkActOpBound
-              kqActOpBound := d.kqActOpBound
-              scaleFactor := d.scaleFactor
-              wqOpBound := d.wqOpGram
-              wkOpBound := d.wkOpGram
-              wvOpBound := d.wvOpGram
-              woOpBound := d.woOpGram
-              voOpBound := d.valueOutputProjSchurNorm
-              bqFrob := d.bqFrob
-              bkFrob := d.bkFrob
-              bvFrob := d.bvFrob
-            }
-            let patternTermUb : Float := computePatternTermBound inputs
-            attnPart := attnPart + d.ln1OpBound * (valueTermUb + patternTermUb)
-
-          if hm : l < model.mlps.size then
-            let mlp := model.mlps[l]'hm
-            let winNormUb := mlp.W_in.opNormUpperBoundRectGramEffort layerNormEffort
-            let woutNormUb := mlp.W_out.opNormUpperBoundRectGramEffort layerNormEffort
-            let geluDeriv := fwdResult.getMlpGeluDeriv l
-            let mlpUb :=
-              if geluDeriv.numCols = mlp.hiddenDim ∧ geluDeriv.numRows = y.numRows then
-                computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp geluDeriv winNormUb woutNormUb
-              else
-                let mlpInput := model.applyLn2 l y
-                let hidden := (mlpInput.matmul mlp.W_in).addBias mlp.b_in
-                let dAct := hidden.map geluDerivFloat
-                computeMLPLayerOpNormFromGeluDerivWithOpBounds mlp dAct winNormUb woutNormUb
-            let mlpPart := ln2Bound * mlpUb
-            return attnPart + (1.0 + attnPart) * mlpPart
-          else
-            return attnPart
-      else
-        0.0
-
-    return (layerHeadData, (norm, attnInput))
+    return (layerHeadData, attnInput)
 
   -- Pure parallelism via tasks: layer cache construction is independent once the
   -- forward pass has produced all layer inputs.
   let useParallel := useParallelLayers
-  let layerResults : Array (Array PrecomputedHeadData × (Float × ConcreteMatrix)) :=
+  let layerResults : Array (Array PrecomputedHeadData × ConcreteMatrix) :=
     if useParallel then
-      let tasks : Array (Task (Array PrecomputedHeadData × (Float × ConcreteMatrix))) :=
+      let tasks : Array (Task (Array PrecomputedHeadData × ConcreteMatrix)) :=
         .ofFn fun i : Fin model.numLayers =>
           Task.spawn (fun _ => computeLayer i.val)
       tasks.map Task.get
@@ -5459,19 +5372,41 @@ This precomputes all attention patterns, projections, and norms once.
         computeLayer i.val
 
   let mut headData : Array (Array PrecomputedHeadData) := Array.mkEmpty model.numLayers
-  let mut layerNormBounds : Array Float := Array.mkEmpty model.numLayers
   let mut ln1Inputs : Array ConcreteMatrix := Array.mkEmpty model.numLayers
-  for (layerHeadData, (norm, attnInput)) in layerResults do
+  for (layerHeadData, attnInput) in layerResults do
     headData := headData.push layerHeadData
-    layerNormBounds := layerNormBounds.push norm
     ln1Inputs := ln1Inputs.push attnInput
 
-  { model := model
+  return (headData, ln1Inputs)
+
+/-- Build a complete precomputed cache for a model.
+
+This precomputes all attention patterns, projections, and norms once.
+-/
+def build (model : ConcreteModel) (causal : Bool := true)
+    (computeLayerNormBounds : Bool := true)
+    (layerNormEffort : ConcreteMatrix.BoundEffort := ConcreteMatrix.BoundEffort.tier1)
+    (storeDiagnostics : Bool := false) :
+    PrecomputedCache := Id.run do
+  let fwdResult := model.runForward causal
+  let (headData, ln1Inputs) :=
+    buildHeadData model fwdResult causal layerNormEffort storeDiagnostics
+  let baseBounds := Array.replicate model.numLayers 0.0
+  let baseCache : PrecomputedCache := {
+    model := model
     forwardResult := fwdResult
     ln1Inputs := ln1Inputs
     headData := headData
-    layerNormBounds := layerNormBounds
-    layerNormBoundsComputed := computeLayerNormBounds }
+    layerNormBounds := baseBounds
+    layerNormBoundsComputed := false
+  }
+  if computeLayerNormBounds then
+    let layerNormBounds := PrecomputedCache.computeLayerNormBounds baseCache layerNormEffort
+    return { baseCache with
+      layerNormBounds := layerNormBounds
+      layerNormBoundsComputed := true }
+  else
+    return baseCache
 
 /-- Retrieve cached data for a specific head. -/
 def getHeadData (cache : PrecomputedCache) (layerIdx headIdx : Nat) :
@@ -6557,6 +6492,78 @@ def computeKCompositionScore
   else
     0.0
 
+/-- Core induction candidate data used for fast thresholding. -/
+structure InductionCandidateCore where
+  layer1Idx : Nat
+  layer2Idx : Nat
+  head1Idx : Nat
+  head2Idx : Nat
+  patternBound1 : Float
+  patternBound2 : Float
+  combinedError : Float
+  prevTokenStrength : Float
+  description : String
+
+namespace InductionCandidateCore
+
+/-- Finalize an induction candidate by computing expensive scores. -/
+def toInductionCandidate? (core : InductionCandidateCore) (cache : PrecomputedCache) :
+    Option CandidateInductionHead :=
+  match cache.getHeadData core.layer1Idx core.head1Idx,
+        cache.getHeadData core.layer2Idx core.head2Idx with
+  | some d1, some d2 =>
+      let inductionScore : Float :=
+        match cache.model.inputTokens with
+        | some tokens =>
+            (checkInductionCopyNextPattern tokens d2.attention (minScore := 0.0)).getD 0.0
+        | none => 1.0
+      let kComp := computeKCompositionScore cache.model d1 d2
+      some {
+        layer1Idx := core.layer1Idx
+        layer2Idx := core.layer2Idx
+        head1Idx := core.head1Idx
+        head2Idx := core.head2Idx
+        patternBound1 := core.patternBound1
+        patternBound2 := core.patternBound2
+        combinedError := core.combinedError
+        prevTokenStrength := core.prevTokenStrength
+        inductionScore := inductionScore
+        kComp := kComp
+        description := core.description
+      }
+  | _, _ => none
+
+end InductionCandidateCore
+
+/-- Convert a 2-layer deep circuit candidate into cheap induction-core data. -/
+def DeepCircuitCandidate.toInductionCandidateCore?
+    (c : DeepCircuitCandidate) (cache : PrecomputedCache) :
+    Option InductionCandidateCore :=
+  if c.layerIndices.size = 2 && c.headIndices.size = 2 then
+    let l1 := c.layerIndices[0]!
+    let l2 := c.layerIndices[1]!
+    let h1 := c.headIndices[0]!
+    let h2 := c.headIndices[1]!
+    match cache.getHeadData l1 h1, cache.getHeadData l2 h2 with
+    | some d1, some d2 =>
+        let ε1 := d1.faithfulnessRatio
+        let ε2 := d2.faithfulnessRatio
+        let combinedError := ε1 + ε2 + ε1 * ε2
+        some {
+          layer1Idx := l1
+          layer2Idx := l2
+          head1Idx := h1
+          head2Idx := h2
+          patternBound1 := ε1
+          patternBound2 := ε2
+          combinedError := combinedError
+          prevTokenStrength := d1.prevTokenStrength
+          description := s!"L{l1}H{h1}->L{l2}H{h2} (deep)"
+        }
+    | _, _ => none
+  else
+    none
+
 /-- Convert a 2-layer deep circuit candidate into an induction-head candidate.
 
 This is used to avoid re-running the expensive `checkInductionPattern` scan when both
@@ -6565,38 +6572,9 @@ induction heads and deep circuits are requested from the same cache.
 def DeepCircuitCandidate.toInductionCandidate?
     (c : DeepCircuitCandidate) (cache : PrecomputedCache) :
     Option CandidateInductionHead :=
-  if c.layerIndices.size = 2 && c.headIndices.size = 2 then
-    let l1 := c.layerIndices[0]!
-    let l2 := c.layerIndices[1]!
-    let h1 := c.headIndices[0]!
-    let h2 := c.headIndices[1]!
-    match cache.getHeadData l1 h1, cache.getHeadData l2 h2 with
-    | some d1, some d2 =>
-      let ε1 := d1.faithfulnessRatio
-      let ε2 := d2.faithfulnessRatio
-      let combinedError := ε1 + ε2 + ε1 * ε2
-      let inductionScore : Float :=
-        match cache.model.inputTokens with
-        | some tokens =>
-            (checkInductionCopyNextPattern tokens d2.attention (minScore := 0.0)).getD 0.0
-        | none => 1.0
-      let kComp := computeKCompositionScore cache.model d1 d2
-      some {
-        layer1Idx := l1
-        layer2Idx := l2
-        head1Idx := h1
-        head2Idx := h2
-        patternBound1 := ε1
-        patternBound2 := ε2
-        combinedError := combinedError
-        prevTokenStrength := d1.prevTokenStrength
-        inductionScore := inductionScore
-        kComp := kComp
-        description := s!"L{l1}H{h1}->L{l2}H{h2} (deep)"
-      }
-    | _, _ => none
-  else
-    none
+  match c.toInductionCandidateCore? cache with
+  | none => none
+  | some core => core.toInductionCandidate? cache
 
 /-- Find candidate (L1, L2) induction-head pairs from a `PrecomputedCache`.
 

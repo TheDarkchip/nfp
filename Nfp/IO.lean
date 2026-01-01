@@ -446,13 +446,22 @@ def analyzeModel (model : ConcreteModel) (modelName : String)
 
   -- Derive induction-head candidates from the same scan to avoid repeating
   -- the expensive `checkInductionPattern` computation.
-  let inductionHeads ← timeIt "analysis:induction-candidates" (fun () =>
-    pure <|
-      (deepCircuits.filterMap (·.toInductionCandidate? cache)).qsort
-        (·.combinedError < ·.combinedError))
-  let verifiedHeads := inductionHeads.filter (·.combinedError ≤ threshold)
+  let (totalInduction, verifiedHeads) ← timeIt "analysis:induction-candidates" (fun () => do
+    let mut total : Nat := 0
+    let mut verified : Array CandidateInductionHead := Array.mkEmpty 0
+    for circuit in deepCircuits do
+      match circuit.toInductionCandidateCore? cache with
+      | none => pure ()
+      | some core =>
+          total := total + 1
+          if core.combinedError ≤ threshold then
+            match core.toInductionCandidate? cache with
+            | some cand => verified := verified.push cand
+            | none => pure ()
+    let verifiedSorted := verified.qsort (·.combinedError < ·.combinedError)
+    return (total, verifiedSorted))
   IO.println s!"  Found {verifiedHeads.size} verified induction heads \
-    (of {inductionHeads.size} candidates)\n"
+    (of {totalInduction} candidates)\n"
 
   IO.println "Analysis complete!\n"
 
