@@ -151,19 +151,21 @@ lemma supported_comp {M : Mixer S T} {N : Mixer T U}
       -- For every j, either ¬R i j or ¬Q j k; hence the product weight vanishes.
       have hforall : ∀ j, M.w i j * N.w j k = 0 := by
         intro j
-        have hnot_and : ¬ (R i j ∧ Q j k) := by
-          -- `¬ ∃ j, R i j ∧ Q j k` ⇒ `¬ (R i j ∧ Q j k)` for each `j`.
-          intro hAnd
-          exact hnot ⟨j, hAnd⟩
-        have hdisj : ¬ R i j ∨ ¬ Q j k := (not_and_or.mp hnot_and)
-        aesop (add safe [hM, hN])
-      -- Sum of zero terms equals 0
-      have : (∑ j, M.w i j * N.w j k) = 0 := by
-            have hfun : (fun j => M.w i j * N.w j k) = (fun _ => (0 : NNReal)) := by
-                  funext j; simpa using hforall j
-            simp [hfun]
+        by_cases hR : R i j
+        · have hQ : ¬ Q j k := by
+            intro hQ
+            exact hnot ⟨j, hR, hQ⟩
+          have hN0 : N.w j k = 0 := hN j k hQ
+          simp [hN0]
+        · have hM0 : M.w i j = 0 := hM i j hR
+          simp [hM0]
+      have hsum : (∑ j, M.w i j * N.w j k) = 0 := by
+        have hfun : (fun j => M.w i j * N.w j k) = fun _ => (0 : NNReal) := by
+          funext j
+          simpa using hforall j
+        simp [hfun]
       -- This is exactly the weight on `(i,k)` inside `M.comp N`.
-      simp [Mixer.comp, this]
+      simp [Mixer.comp, hsum]
 
 /-- The support (positions with nonzero mass) of a probability vector. -/
 def supp (p : ProbVec S) : Set S := fun i => p.mass i ≠ 0

@@ -213,7 +213,7 @@ lemma pccMax_monotone (m : S → NNReal) :
     intro A hA
     rcases Finset.mem_filter.mp hA with ⟨hpow, hbudget⟩
     have hbudget' : normMass m A ≤ τ₂ := hbudget.trans hle
-    aesop (add simp [feasible])
+    exact (Finset.mem_filter.mpr ⟨hpow, hbudget'⟩)
   -- The τ₂-argmax is ≥ any τ₁-feasible value, in particular the τ₁-argmax.
   have hAτ1 := pccArg_mem (S:=S) m τ₁
   have hAτ1_in : pccArg (S:=S) m τ₁ ∈ feasible (S:=S) m τ₂ := hsubset hAτ1

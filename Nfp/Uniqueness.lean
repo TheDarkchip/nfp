@@ -4,7 +4,6 @@ import Mathlib.Data.NNReal.Basic
 import Mathlib.Data.Fin.Basic
 import Mathlib.Data.Finset.Basic
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Aesop
 
 namespace Nfp
 
@@ -19,8 +18,8 @@ story (fixed masks ⇒ linear system). It shows that for a finite DAG ordered by
 topological index, any two tracer families satisfying the same homogeneous linear
 recurrence coincide. This is a helper fact; Appendix A.5 in the paper is a
 counterexample narrative (not a formal lemma), so we avoid referring to A.5 here.
-Small parent-index checks in the inductive step are discharged by `aesop`; the
-overall proof structure (nested induction on the index bound) remains explicit.
+Small parent-index checks in the inductive step are kept explicit; the overall
+proof structure (nested induction on the index bound) remains explicit.
 -/
 
 /-- A local mixing system over `n` nodes, where each node `i` aggregates parents
@@ -82,7 +81,7 @@ theorem tracer_unique (L : LocalSystem n) {T T' : TracerFamily (S := S) n}
           have hlt : u.1 < k.succ := by
             simpa [hjeq] using L.topo (i := j) (u := u) hu
           have hle : u.1 ≤ k := Nat.le_of_lt_succ hlt
-          aesop
+          exact hle
         have hsum : (L.Pa j).sum (fun u => L.c j u * T u s) =
                      (L.Pa j).sum (fun u => L.c j u * T' u s) := by
           classical

@@ -277,7 +277,10 @@ private lemma incrementsAux_pairwise (parts : List (Finset S)) (seen : Finset S)
           incrementsAux_mem_disjoint_seen (parts:=parts) (seen:=seen ∪ A) (B:=B) hB
         refine Finset.disjoint_left.mpr ?_
         intro x hxHead hxB
-        aesop (add simp [Finset.disjoint_left, incrementsAux])
+        have hxA : x ∈ A := (Finset.mem_sdiff.mp hxHead).1
+        have hxUnion : x ∈ seen ∪ A := by
+          exact Finset.mem_union.mpr (Or.inr hxA)
+        exact (Finset.disjoint_left.mp hDisjoint) hxB hxUnion
       · simpa using ih (seen ∪ A)
 
 private lemma sdiff_union_left (A B C : Finset S) :

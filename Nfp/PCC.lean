@@ -6,7 +6,6 @@ import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.Finset.Basic
 import Mathlib.Data.List.Basic
 import Mathlib.Algebra.Order.Monoid.Defs
-import Aesop
 import Nfp.Prob
 import Nfp.Reroute.Heat
 
@@ -18,9 +17,9 @@ formalization of Appendix A.4 of the accompanying documentation:
 
 * `tracerOfContrib` – builds a probability vector from nonnegative contributions.
 * `sum_monotone_chain` / `monotone_removed_mass` – monotonicity of accumulated mass
-  along nested mask chains (with tiny nonnegativity side-conditions handled by `aesop`).
+  along nested mask chains (with tiny nonnegativity side-conditions handled by `simp`).
 
-All proofs are elementary (`simp`, small `aesop` calls on nonnegativity), and avoid `sorry`.
+All proofs are elementary (`simp`, small local lemmas), and avoid `sorry`.
 -/
 
 namespace Nfp
@@ -60,7 +59,7 @@ lemma sum_monotone_chain [Fintype S] (A : ℕ → Finset S) (w : S → NNReal)
     have hstep : (A k₂).sum (fun i => w i) ≤ (A (k₂+1)).sum (fun i => w i) := by
       refine Finset.sum_le_sum_of_subset_of_nonneg (hchain k₂) ?_
       intro i hi _
-      aesop
+      exact (show (0 : NNReal) ≤ w i from bot_le)
     exact ih.trans hstep
 
 /-- Appendix A.4 (monotonicity helper): removed mass is monotone along a nested mask chain. -/
