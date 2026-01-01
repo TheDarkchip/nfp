@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Batteries.Lean.Float
+import Init.Data.Array.Extract
 
 /-!
 # Executable Circuit Discovery for Induction Heads
@@ -122,15 +123,19 @@ def rowMaxAbs (M : ConcreteMatrix) (r : Nat) : Float :=
 
 /-- Take the first `n` rows of a matrix (keeping all columns). -/
 def takeRows (M : ConcreteMatrix) (n : Nat) : ConcreteMatrix :=
-  if n ≥ M.numRows then
+  if h : n ≥ M.numRows then
     M
   else
+    let rowCount := n * M.numCols
     { numRows := n
       numCols := M.numCols
-      data := .ofFn fun idx : Fin (n * M.numCols) =>
-        -- Since `n < M.numRows`, `idx.val < n*numCols ≤ numRows*numCols = data.size`.
-        M.data.getD idx.val 0.0
-      size_eq := Array.size_ofFn }
+      data := M.data.extract 0 rowCount
+      size_eq := by
+        have hrows : n ≤ M.numRows := Nat.le_of_lt (Nat.lt_of_not_ge h)
+        have hsize : rowCount ≤ M.data.size := by
+          simpa [rowCount, M.size_eq] using Nat.mul_le_mul_right M.numCols hrows
+        simpa [rowCount] using
+          (Array.size_extract_of_le (as := M.data) (i := 0) (j := rowCount) hsize) }
 
 /-- Create a zero matrix of given dimensions. -/
 def zeros (rows cols : Nat) : ConcreteMatrix where
@@ -1287,7 +1292,7 @@ def add (A B : ConcreteMatrix) : ConcreteMatrix :=
       numRows := A.numRows
       numCols := A.numCols
       data := .ofFn fun idx : Fin (A.numRows * A.numCols) =>
-        A.data.getD idx.val 0.0 + B.data.getD idx.val 0.0
+        A.data[idx.val]! + B.data[idx.val]!
       size_eq := Array.size_ofFn
     }
   else zeros 0 0
@@ -7850,7 +7855,7 @@ def ConcreteMatrix.sub (A B : ConcreteMatrix) : ConcreteMatrix :=
       numRows := A.numRows
       numCols := A.numCols
       data := .ofFn fun idx : Fin (A.numRows * A.numCols) =>
-        A.data.getD idx.val 0.0 - B.data.getD idx.val 0.0
+        A.data[idx.val]! - B.data[idx.val]!
       size_eq := Array.size_ofFn
     }
   else ConcreteMatrix.zeros 0 0
