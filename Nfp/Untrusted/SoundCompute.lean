@@ -6851,7 +6851,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (wvIntervals woIntervals : Array Fixed10Interval)
         (bV : Array Fixed10Interval) :
         Array (Array Fixed10Interval) :=
-      let useTasks := rows.size > 256
+      let useTasks := rows.size > 32
       if useTasks then
         Id.run do
           let chunkSize : Nat := 16
@@ -6934,7 +6934,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         let qRadii := addVecScaledInt qRadii0 bQRadii 1
         let useTasksHere := useTasks && seqLenEff > 32
         if useTasksHere then
-          let chunkSize : Nat := 16
+          let chunkSize : Nat := 32
           let numChunks : Nat := (seqLenEff + chunkSize - 1) / chunkSize
           let mut tasks : Array (Task (Option Int × Option Int)) := Array.mkEmpty numChunks
           let mut chunkIdx : Nat := 0
@@ -7504,6 +7504,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         needUpdate2 && perRowPatternLayers > 0 && layer2 ≤ l + perRowPatternLayers
       let useTightV := useTight2
       let usePerRowV := usePerRow2
+      let usePatternTasks : Bool := perRowPatternLayers = 0
       let needTightenNow : Bool := l == layer1 && useTight2 && causalPattern
       let skipAttnV := useTightV && causalPattern && seqLenEff < hdr.seqLen
       let shareUpdateV := residualsSameV && needUpdateV && !skipAttnV
@@ -7621,7 +7622,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
                       bestMatchPattern
                         layer1 head1 ln1Rows1Exact wq wk bQIntervals bKIntervals offset1
                         keyOffset1
-                        (useTasks := false)).run
+                        (useTasks := usePatternTasks)).run
               p1Task? := some task
             else
               let p1 ←
@@ -7639,7 +7640,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
                       bestMatchPattern
                         layer2 head2 ln1Rows2Exact wq wk bQIntervals bKIntervals offset2
                         keyOffset2
-                        (useTasks := false)).run
+                        (useTasks := usePatternTasks)).run
               p2Task? := some task
             else
               let p2 ←
