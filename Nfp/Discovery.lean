@@ -61,6 +61,50 @@ of minutes for full network analysis).
 
 namespace Nfp
 
+@[inline] private def sumSquares (xs : Array Float) : Float := Id.run do
+  let mut acc : Float := 0.0
+  for x in xs do
+    acc := acc + x * x
+  return acc
+
+@[inline] private def sumFloatArray (xs : Array Float) : Float := Id.run do
+  let mut acc : Float := 0.0
+  for x in xs do
+    acc := acc + x
+  return acc
+
+@[inline] private def sumNatArray (xs : Array Nat) : Nat := Id.run do
+  let mut acc : Nat := 0
+  for x in xs do
+    acc := acc + x
+  return acc
+
+@[inline] private def sumSizes {α : Type} (chunks : Array (Array α)) : Nat := Id.run do
+  let mut acc : Nat := 0
+  for cs in chunks do
+    acc := acc + cs.size
+  return acc
+
+@[inline] private def maxArray (xs : Array Float) : Float := Id.run do
+  let mut m : Float := 0.0
+  for x in xs do
+    if x > m then
+      m := x
+  return m
+
+@[inline] private def countTrue (xs : Array Bool) : Nat := Id.run do
+  let mut acc : Nat := 0
+  for b in xs do
+    if b then
+      acc := acc + 1
+  return acc
+
+@[inline] private def countTrueNested (xs : Array (Array Bool)) : Nat := Id.run do
+  let mut acc : Nat := 0
+  for row in xs do
+    acc := acc + countTrue row
+  return acc
+
 /-! ## Concrete Weight Representations -/
 
 /-- A concrete weight matrix stored as nested Arrays.
@@ -271,7 +315,7 @@ def matmul (A B : ConcreteMatrix) : ConcreteMatrix :=
 
 /-- Compute Frobenius norm squared: Σᵢⱼ M[i,j]². -/
 def frobeniusNormSq (M : ConcreteMatrix) : Float :=
-  M.data.foldl (fun acc x => acc + x * x) 0.0
+  sumSquares M.data
 
 /-- Compute Frobenius norm: √(Σᵢⱼ M[i,j]²). -/
 def frobeniusNorm (M : ConcreteMatrix) : Float :=
@@ -1658,7 +1702,7 @@ def dot (v1 v2 : ConcreteMatrix) : Float :=
 /-- Compute L2 norm of a vector (stored as n×1 matrix). -/
 def vecNorm (v : ConcreteMatrix) : Float :=
   if v.numCols = 1 then
-    Float.sqrt (v.data.foldl (fun acc x => acc + x * x) 0.0)
+    Float.sqrt (sumSquares v.data)
   else 0.0
 
 /-- Vector subtraction for n×1 matrices. -/
@@ -2124,12 +2168,12 @@ def neuronOutputWeights (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Array Flo
 /-- Compute the L2 norm of input weights for a neuron. -/
 def neuronInputNorm (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Float :=
   let weights := layer.neuronInputWeights neuronIdx
-  Float.sqrt (weights.foldl (fun acc w => acc + w * w) 0.0)
+  Float.sqrt (sumSquares weights)
 
 /-- Compute the L2 norm of output weights for a neuron. -/
 def neuronOutputNorm (layer : ConcreteMLPLayer) (neuronIdx : Nat) : Float :=
   let weights := layer.neuronOutputWeights neuronIdx
-  Float.sqrt (weights.foldl (fun acc w => acc + w * w) 0.0)
+  Float.sqrt (sumSquares weights)
 
 /-- Compute the "influence magnitude" of a neuron: ‖W_in[:,i]‖ · ‖W_out[i,:]‖
 
@@ -2542,12 +2586,12 @@ def decoderWeights (sae : ConcreteSAE) (featureIdx : Nat) : Array Float :=
 /-- Compute the L2 norm of encoder weights for feature k. -/
 def encoderNorm (sae : ConcreteSAE) (featureIdx : Nat) : Float :=
   let weights := sae.encoderWeights featureIdx
-  Float.sqrt (weights.foldl (fun acc w => acc + w * w) 0.0)
+  Float.sqrt (sumSquares weights)
 
 /-- Compute the L2 norm of decoder weights for feature k. -/
 def decoderNorm (sae : ConcreteSAE) (featureIdx : Nat) : Float :=
   let weights := sae.decoderWeights featureIdx
-  Float.sqrt (weights.foldl (fun acc w => acc + w * w) 0.0)
+  Float.sqrt (sumSquares weights)
 
 /-- Compute the "influence magnitude" of feature k: ‖W_enc[:,k]‖ · ‖W_dec[k,:]‖
 
@@ -2856,7 +2900,7 @@ This bounds the Frobenius norm of the softmax Jacobian for that row.
 - Uniform over n → sqrt((n-1)/n) ≈ 1 for large n
 -/
 def softmaxRowJacobianNorm (row : Array Float) : Float :=
-  let sumSq := row.foldl (fun acc p => acc + p * p) 0.0
+  let sumSq := sumSquares row
   Float.sqrt (max 0.0 (1.0 - sumSq))
 
 /-- Compute the average softmax Jacobian norm across all rows of attention weights.
@@ -3184,7 +3228,7 @@ def computeMLPLayerOpNormFromGeluDerivWithOpBounds
         if a > out[k]! then
           out := out.set! k a
     out
-  let globalDmax : Float := dMax.foldl (fun m x => max m x) 0.0
+  let globalDmax : Float := maxArray dMax
   if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
     -- If derivative information is degenerate, we can still use the global GeLU' upper bound (≈1.7).
     return legacy
@@ -3351,7 +3395,7 @@ def computeMLPOpAbsSchurDiag (layer : ConcreteMLPLayer) (geluDeriv : ConcreteMat
         if a > out[k]! then
           out := out.set! k a
     out
-  let globalDmax : Float := dMaxVec.foldl (fun m x => max m x) 0.0
+  let globalDmax : Float := maxArray dMaxVec
   if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
     return { dMax := 0.0, boundInf := 0.0, boundOne := 0.0, absSchur := 0.0 }
 
@@ -3444,7 +3488,7 @@ def ConcreteMLPLayer.precomputeJacobianBoundCore (layer : ConcreteMLPLayer)
         if a > out[k]! then
           out := out.set! k a
     out
-  let globalDmax : Float := dMax.foldl (fun m x => max m x) 0.0
+  let globalDmax : Float := maxArray dMax
   if globalDmax ≤ 0.0 || Float.isNaN globalDmax || Float.isInf globalDmax then
     return none
 
@@ -3631,7 +3675,7 @@ This avoids computing the full (N·D)² matrix!
 /-- Compute ‖valueTerm‖_F efficiently via factorization. -/
 def computeValueTermNorm (attn : ConcreteAttentionWeights)
     (valueOutputProjFrobNormSq : Float) : Float :=
-  let attnNormSq := attn.weights.foldl (fun acc x => acc + x * x) 0.0
+  let attnNormSq := sumSquares attn.weights
   Float.sqrt (attnNormSq * valueOutputProjFrobNormSq)
 
 /-- Information needed to bound the pattern term. -/
@@ -5076,7 +5120,7 @@ This precomputes all attention patterns, projections, and norms once.
           let queryMean := meanVec queries
           let valueMean := meanVec values
           let nF := seqLen.toFloat
-          let vMeanNormSq : Float := valueMean.foldl (fun acc x => acc + x * x) 0.0
+          let vMeanNormSq : Float := sumSquares valueMean
           let vFrobBound : Float :=
             Float.sqrt (max 0.0 (vFrobBoundRaw * vFrobBoundRaw - nF * vMeanNormSq))
           let vActGram := values.transpose.matmul values
@@ -6632,7 +6676,7 @@ def findInductionHeadCandidatesFromCache (cache : PrecomputedCache)
         computeForLayer i.val
 
   -- Join without quadratic copying.
-  let total := chunks.foldl (fun acc cs => acc + cs.size) 0
+  let total := sumSizes chunks
   let mut candidates : Array CandidateInductionHead := Array.mkEmpty total
   for cs in chunks do
     for c in cs do
@@ -6763,7 +6807,7 @@ def findDeepCircuitCandidatesFromCache (cache : PrecomputedCache)
         computeForLayer i.val
 
   -- Join without quadratic copying.
-  let total := chunks.foldl (fun acc cs => acc + cs.size) 0
+  let total := sumSizes chunks
   let mut candidates : Array DeepCircuitCandidate := Array.mkEmpty total
   for cs in chunks do
     for c in cs do
@@ -6964,13 +7008,11 @@ def isIncluded (circuit : ConcreteCircuit) (comp : ComponentId) : Bool :=
 
 /-- Count total number of included attention heads. -/
 def countIncludedHeads (circuit : ConcreteCircuit) : Nat :=
-  circuit.includedHeads.foldl (fun acc layer =>
-    acc + layer.foldl (fun acc' b => if b then acc' + 1 else acc') 0) 0
+  countTrueNested circuit.includedHeads
 
 /-- Count total number of included MLP neurons. -/
 def countIncludedNeurons (circuit : ConcreteCircuit) : Nat :=
-  circuit.includedNeurons.foldl (fun acc layer =>
-    acc + layer.foldl (fun acc' b => if b then acc' + 1 else acc') 0) 0
+  countTrueNested circuit.includedNeurons
 
 /-- Count total number of included components. -/
 def countIncluded (circuit : ConcreteCircuit) : Nat :=
@@ -6978,11 +7020,11 @@ def countIncluded (circuit : ConcreteCircuit) : Nat :=
 
 /-- Count total number of attention heads (included + excluded). -/
 def totalHeads (circuit : ConcreteCircuit) : Nat :=
-  circuit.headsPerLayer.foldl (· + ·) 0
+  sumNatArray circuit.headsPerLayer
 
 /-- Count total number of MLP neurons (included + excluded). -/
 def totalNeurons (circuit : ConcreteCircuit) : Nat :=
-  circuit.neuronsPerLayer.foldl (· + ·) 0
+  sumNatArray circuit.neuronsPerLayer
 
 /-- Count total number of components (included + excluded). -/
 def totalComponents (circuit : ConcreteCircuit) : Nat :=
@@ -7145,21 +7187,19 @@ def isIncluded (circuit : SAECircuit) (comp : ComponentId) : Bool :=
 
 /-- Count included heads. -/
 def countIncludedHeads (circuit : SAECircuit) : Nat :=
-  circuit.includedHeads.foldl (fun acc layer =>
-    acc + layer.foldl (fun acc' b => if b then acc' + 1 else acc') 0) 0
+  countTrueNested circuit.includedHeads
 
 /-- Count included features. -/
 def countIncludedFeatures (circuit : SAECircuit) : Nat :=
-  circuit.includedFeatures.foldl (fun acc layer =>
-    acc + layer.foldl (fun acc' b => if b then acc' + 1 else acc') 0) 0
+  countTrueNested circuit.includedFeatures
 
 /-- Total heads. -/
 def totalHeads (circuit : SAECircuit) : Nat :=
-  circuit.headsPerLayer.foldl (· + ·) 0
+  sumNatArray circuit.headsPerLayer
 
 /-- Total features. -/
 def totalFeatures (circuit : SAECircuit) : Nat :=
-  circuit.featuresPerLayer.foldl (· + ·) 0
+  sumNatArray circuit.featuresPerLayer
 
 /-- Create a full circuit (all components included). -/
 def full (numLayers : Nat) (headsPerLayer featuresPerLayer : Array Nat) : SAECircuit where
@@ -7766,8 +7806,7 @@ def ConcreteModel.runAblatedForward (model : ConcreteModel) (circuit : ConcreteC
     if hl : l < model.layers.size then
       let layerHeads := model.layers[l]
       let includedMask := circuit.includedHeads.getD l #[]
-      let includedCount :=
-        includedMask.foldl (fun acc b => if b then acc + 1 else acc) 0
+      let includedCount := countTrue includedMask
       let useParallelHeads :=
         layerHeads.size >= 4 && includedCount >= 4
       layerAttnOutputs :=
@@ -8196,8 +8235,8 @@ def computeAllImportance (model : ConcreteModel) : Array ComponentImportance := 
   let neuronChunks : Array (Array ComponentImportance) := layerPairs.map (·.2)
 
   -- Join in the same order as the original loop: heads then neurons, increasing layer index.
-  let totalHeads := headChunks.foldl (fun acc cs => acc + cs.size) 0
-  let totalNeurons := neuronChunks.foldl (fun acc cs => acc + cs.size) 0
+  let totalHeads := sumSizes headChunks
+  let totalNeurons := sumSizes neuronChunks
   let mut result : Array ComponentImportance := Array.mkEmpty (totalHeads + totalNeurons)
   for cs in headChunks do
     for c in cs do
@@ -8651,7 +8690,7 @@ def computeHeadTargetImportance (model : ConcreteModel) (layerIdx headIdx : Nat)
       let targetProj := projectedVec.vecNorm
 
       -- Scale by attention norm (as in standard valueTermNorm)
-      let attnNormSq := attn.weights.foldl (fun acc x => acc + x * x) 0.0
+      let attnNormSq := sumSquares attn.weights
       let attnNorm := Float.sqrt attnNormSq
       let targetImportance := attnNorm * targetProj
 
@@ -8758,8 +8797,8 @@ def computeAllTargetImportance (model : ConcreteModel)
         computeNeuronsForLayer i.val
 
   -- Join in the same order as the original loop: heads then neurons, increasing layer index.
-  let totalHeads := headChunks.foldl (fun acc cs => acc + cs.size) 0
-  let totalNeurons := neuronChunks.foldl (fun acc cs => acc + cs.size) 0
+  let totalHeads := sumSizes headChunks
+  let totalNeurons := sumSizes neuronChunks
   let mut result : Array TargetAwareImportance := Array.mkEmpty (totalHeads + totalNeurons)
   for cs in headChunks do
     for c in cs do
@@ -9000,7 +9039,7 @@ def verifyDeepCircuit (model : ConcreteModel)
       }
 
   -- Step 4: Compute total ablation error
-  let totalAblation := ablationErrors.foldl (· + ·) 0.0
+  let totalAblation := sumFloatArray ablationErrors
 
   -- Step 5: Compute total amplification factor
   let totalAmpFactor := computeSuffixAmplification normBounds 0
