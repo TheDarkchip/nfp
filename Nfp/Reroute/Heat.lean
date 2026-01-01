@@ -92,7 +92,7 @@ structure WeightedReroutePlan (S : Type*) [Fintype S] [DecidableEq S] where
     ∀ {A : Finset S} {w : NNReal},
       (A, w) ∈ plan.increments.zip weights →
       A.card = 0 → w = 0
-  weights_sum_pos : 0 < weights.foldr (fun w acc => w + acc) 0
+  weights_sum_pos : 0 < weights.sum
 
 namespace WeightedReroutePlan
 
@@ -100,7 +100,7 @@ variable (P : WeightedReroutePlan (S := S))
 
 /-- Helper: the total step weight (used for normalization). -/
 def weightsSum : NNReal :=
-  P.weights.foldr (fun w acc => w + acc) 0
+  P.weights.sum
 
 @[simp] lemma weightsSum_pos : 0 < P.weightsSum := P.weights_sum_pos
 
@@ -236,7 +236,7 @@ private lemma sum_heatRawAux (parts : List (Finset S)) (weights : List NNReal)
       ∀ {A : Finset S} {w : NNReal},
         (A, w) ∈ parts.zip weights → A.card = 0 → w = 0) :
     (∑ i : S, heatRawAux (S:=S) parts weights hlen i)
-      = weights.foldr (fun w acc => w + acc) 0 := by
+      = weights.sum := by
   classical
   revert weights hlen
   induction parts with
@@ -291,18 +291,14 @@ private lemma sum_heatRawAux (parts : List (Finset S)) (weights : List NNReal)
               (∑ i : S, heatRawAux (S:=S) (A :: parts) (w :: weights) hlen i)
                 = w + ∑ i : S, heatRawAux (S:=S) parts weights hlen' i := by
             simp [heatRawAux, Finset.sum_add_distrib, hsum_head]
-          have hfold :
-              (w :: weights).foldr (fun w acc => w + acc) 0
-                  = w + weights.foldr (fun w acc => w + acc) 0 := by
-            simp
           calc
             (∑ i : S, heatRawAux (S:=S) (A :: parts) (w :: weights) hlen i)
                 = w + ∑ i : S, heatRawAux (S:=S) parts weights hlen' i :=
                   hsum_current
-            _ = w + weights.foldr (fun w acc => w + acc) 0 := by
+            _ = w + weights.sum := by
                   simp [hsum_tail]
-            _ = (w :: weights).foldr (fun w acc => w + acc) 0 :=
-                  by simp [hfold]
+            _ = (w :: weights).sum := by
+                  simp
 
 omit [Fintype S] in
 private lemma sum_heatRawAux_disjoint
