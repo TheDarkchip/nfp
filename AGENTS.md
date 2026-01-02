@@ -270,7 +270,17 @@ but you **must** update this list in the same commit.
 - `Nfp/System.lean`
   - Aggregator for system modules.
 
-### 5.5 CLI surface
+### 5.5 Circuits (certification core)
+- `Nfp/Circuit/Basic.lean`
+  - DAG-based circuit structure with inputs/outputs and gate semantics.
+- `Nfp/Circuit/Semantics.lean`
+  - Well-founded evaluation semantics for circuits.
+- `Nfp/Circuit/Cert.lean`
+  - Equivalence definition and finite checker.
+- `Nfp/Circuit.lean`
+  - Aggregator for circuit modules.
+
+### 5.6 CLI surface
 - `Nfp/Cli.lean`
   - CLI commands and `main` implementation.
 - `Main.lean`
@@ -278,7 +288,7 @@ but you **must** update this list in the same commit.
 - `Nfp.lean`
   - Top-level reexports and axioms dashboard (`#print axioms`).
 
-### 5.6 Legacy (tabula rasa transition)
+### 5.7 Legacy (tabula rasa transition)
 - Legacy modules live under `Legacy/Nfp/` as reference only and are not built by default.
 
 If you introduce a new conceptual layer:

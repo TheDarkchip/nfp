@@ -4,6 +4,7 @@ import Nfp.Core
 import Nfp.Prob
 import Nfp.Mixer
 import Nfp.System
+import Nfp.Circuit
 
 /-!
 Top-level reexports and trust dashboard for the NFP rewrite.
@@ -25,3 +26,5 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 #print axioms Nfp.LocalSystem.toMixer
 #print axioms Nfp.LocalSystem.eval
 #print axioms Nfp.LocalSystem.eval_eq
+#print axioms Nfp.Circuit.eval
+#print axioms Nfp.Circuit.checkEquiv
