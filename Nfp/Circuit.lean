@@ -9,6 +9,7 @@ import Nfp.Circuit.Cert
 import Nfp.Circuit.Typed
 import Nfp.Circuit.Gates
 import Nfp.Circuit.Tensor
+import Nfp.Circuit.Layers
 
 /-!
 Circuit definitions, semantics, and equivalence checking.

@@ -293,6 +293,10 @@ but you **must** update this list in the same commit.
   - Aggregator for gate combinator modules.
 - `Nfp/Circuit/Tensor.lean`
   - Typed tensor indices and tensor aliases.
+- `Nfp/Circuit/Layers/Linear.lean`
+  - Linear/affine layer circuits with typed interfaces.
+- `Nfp/Circuit/Layers.lean`
+  - Aggregator for circuit layer modules.
 - `Nfp/Circuit.lean`
   - Aggregator for circuit modules.
 
