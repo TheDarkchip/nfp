@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Cli
+import Nfp.IO
 
 /-!
 Minimal CLI surface for the NFP rewrite.
@@ -24,12 +25,34 @@ def versionCmd : Cmd := `[Cli|
   "Print the NFP version."
 ]
 
+/-- Check a softmax-margin certificate for induction heads. -/
+def runInductionCertify (p : Parsed) : IO UInt32 := do
+  let scoresPath := p.flag! "scores" |>.as! String
+  IO.runInductionCertify scoresPath
+
+/-- `nfp induction certify` subcommand. -/
+def inductionCertifyCmd : Cmd := `[Cli|
+  certify VIA runInductionCertify;
+  "Check a softmax-margin certificate for induction heads."
+  FLAGS:
+    scores : String; "Path to the softmax-margin certificate file."
+]
+
+/-- Induction-head subcommands. -/
+def inductionCmd : Cmd := `[Cli|
+  induction NOOP;
+  "Induction-head utilities."
+  SUBCOMMANDS:
+    inductionCertifyCmd
+]
+
 /-- The root CLI command. -/
 def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
   "NFP: Neural Formal Pathways (rewrite in progress)."
   SUBCOMMANDS:
     versionCmd
+    inductionCmd
 ]
 
 /-- Main entry point for the CLI. -/
