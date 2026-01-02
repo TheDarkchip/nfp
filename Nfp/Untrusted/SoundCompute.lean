@@ -6726,6 +6726,8 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
   let action : ExceptT String IO InductionHeadBestMatchSoundCert := do
     let timingEnabled ← ExceptT.lift <| IO.getEnv "NFP_TIMING"
     let timing : Bool := timingEnabled.isSome
+    let debugMarginEnabled ← ExceptT.lift <| IO.getEnv "NFP_MARGIN_DEBUG"
+    let debugMargin : Bool := debugMarginEnabled.isSome
     let timeIt {α : Type} (label : String) (work : ExceptT String IO α) :
         ExceptT String IO α := do
       if !timing then
@@ -6846,6 +6848,45 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         (p : LayerNormParamsFixed) :
         Array (Array Fixed10Interval) :=
       fixedLayerNormRowsApproxExact cfg rows p eps soundnessBits
+    let logRowsWidth (tag label : String) (rows : Array (Array Fixed10Interval)) :
+        ExceptT String IO Unit := do
+      if debugMargin then
+        if rows.isEmpty then
+          ExceptT.lift <| IO.eprintln s!"{tag}:{label} empty"
+        else
+          let mut maxW : Rat := 0
+          for row in rows do
+            let w := centeredAbsSumFixed cfg row
+            if w > maxW then
+              maxW := w
+          let qW :=
+            if queryPos < rows.size then centeredAbsSumFixed cfg rows[queryPos]! else 0
+          ExceptT.lift <|
+            IO.eprintln s!"{tag}:{label} rows={rows.size} queryWidth={qW} maxWidth={maxW}"
+    let logVecWidth (tag label : String) (row : Array Fixed10Interval) :
+        ExceptT String IO Unit := do
+      if debugMargin then
+        let w := centeredAbsSumFixed cfg row
+        ExceptT.lift <| IO.eprintln s!"{tag}:{label} width={w}"
+    let calcVOutRowsIntervalsNoTask
+        (cfg : Fixed10Cfg)
+        (modelDim headDim : Nat)
+        (wvIntervals woIntervals : Array Fixed10Interval)
+        (bV : Array Fixed10Interval)
+        (rows : Array (Array Fixed10Interval))
+        (start stop : Nat) :
+        Array (Array Fixed10Interval) :=
+      Id.run do
+        let mut out : Array (Array Fixed10Interval) := Array.mkEmpty (stop - start)
+        let mut i := start
+        while i < stop do
+          let vHidden0 := matMulIntervalsFromIntervalsNoTask cfg modelDim headDim wvIntervals
+            (rows[i]!)
+          let vHidden := addVecFixed vHidden0 bV
+          let vOut := matMulIntervalsFromIntervalsNoTask cfg headDim modelDim woIntervals vHidden
+          out := out.push vOut
+          i := i + 1
+        return out
     let calcVOutRowsIntervals
         (rows : Array (Array Fixed10Interval))
         (wvIntervals woIntervals : Array Fixed10Interval)
@@ -6863,18 +6904,8 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             let stop := min rows.size (start + chunkSize)
             tasks := tasks.push <|
               Task.spawn (fun _ =>
-                Id.run do
-                  let mut outChunk : Array (Array Fixed10Interval) := Array.mkEmpty (stop - start)
-                  let mut i := start
-                  while i < stop do
-                    let vHidden0 := matMulIntervalsFromIntervalsNoTask cfg
-                      hdr.modelDim hdr.headDim wvIntervals (rows[i]!)
-                    let vHidden := addVecFixed vHidden0 bV
-                    let vOut := matMulIntervalsFromIntervalsNoTask cfg
-                      hdr.headDim hdr.modelDim woIntervals vHidden
-                    outChunk := outChunk.push vOut
-                    i := i + 1
-                  return outChunk)
+                calcVOutRowsIntervalsNoTask cfg hdr.modelDim hdr.headDim wvIntervals
+                  woIntervals bV rows start stop)
             chunkIdx := chunkIdx + 1
           let mut out : Array (Array Fixed10Interval) := Array.mkEmpty rows.size
           for t in tasks do
@@ -6882,16 +6913,8 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
               out := out.push row
           return out
       else
-        Id.run do
-          let mut out : Array (Array Fixed10Interval) := Array.mkEmpty rows.size
-          for row in rows do
-            let vHidden0 := matMulIntervalsFromIntervalsNoTask cfg
-              hdr.modelDim hdr.headDim wvIntervals row
-            let vHidden := addVecFixed vHidden0 bV
-            let vOut := matMulIntervalsFromIntervalsNoTask cfg
-              hdr.headDim hdr.modelDim woIntervals vHidden
-            out := out.push vOut
-          return out
+        calcVOutRowsIntervalsNoTask cfg hdr.modelDim hdr.headDim wvIntervals woIntervals bV rows 0
+          rows.size
     let calcVOutIntervals
         (row : Array Fixed10Interval)
         (wvIntervals woIntervals : Array Fixed10Interval)
@@ -6920,6 +6943,14 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
       let keyOffsetNeg : Nat := Int.toNat (-keyOffset)
       let mut bestMatchLower? : Option Int := none
       let mut bestNonmatchUpper? : Option Int := none
+      let mut matchCount : Nat := 0
+      let mut nonmatchCount : Nat := 0
+      let mut matchLowerMin? : Option Int := none
+      let mut matchUpperMax? : Option Int := none
+      let mut nonmatchLowerMax? : Option Int := none
+      let mut nonmatchUpperMax? : Option Int := none
+      let mut matchWidthMax : Int := 0
+      let mut nonmatchWidthMax : Int := 0
       if useAffine then
         let bQCenters := bQ.map (fun x => (x.lo + x.hi).ediv (Int.ofNat 2))
         let bKCenters := bK.map (fun x => (x.lo + x.hi).ediv (Int.ofNat 2))
@@ -6932,7 +6963,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             hdr.modelDim hdr.headDim wq qInputCenters qInputRadii
         let qCenters := addVecScaledInt qCenters0 bQCenters 1
         let qRadii := addVecScaledInt qRadii0 bQRadii 1
-        let useTasksHere := useTasks && seqLenEff > 32
+        let useTasksHere := useTasks && !debugMargin && seqLenEff > 32
         if useTasksHere then
           let chunkSize : Nat := 32
           let numChunks : Nat := (seqLenEff + chunkSize - 1) / chunkSize
@@ -7019,11 +7050,37 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
                     else
                       tokens[j - keyOffsetNeg]! = targetTok
               if isMatch then
+                if debugMargin then
+                  matchCount := matchCount + 1
+                  matchLowerMin? :=
+                    match matchLowerMin? with
+                    | none => some dot.lo
+                    | some v => some (min v dot.lo)
+                  matchUpperMax? :=
+                    match matchUpperMax? with
+                    | none => some dot.hi
+                    | some v => some (max v dot.hi)
+                  let width := dot.hi - dot.lo
+                  if width > matchWidthMax then
+                    matchWidthMax := width
                 bestMatchLower? :=
                   match bestMatchLower? with
                   | none => some dot.lo
                   | some m => some (max m dot.lo)
               else
+                if debugMargin then
+                  nonmatchCount := nonmatchCount + 1
+                  nonmatchLowerMax? :=
+                    match nonmatchLowerMax? with
+                    | none => some dot.lo
+                    | some v => some (max v dot.lo)
+                  nonmatchUpperMax? :=
+                    match nonmatchUpperMax? with
+                    | none => some dot.hi
+                    | some v => some (max v dot.hi)
+                  let width := dot.hi - dot.lo
+                  if width > nonmatchWidthMax then
+                    nonmatchWidthMax := width
                 bestNonmatchUpper? :=
                   match bestNonmatchUpper? with
                   | none => some dot.hi
@@ -7035,7 +7092,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           hdr.modelDim hdr.headDim wq (ln1Rows[queryPos]!)
         let qRow := addVecFixed qRow0 bQ
         let kRows :=
-          let useTasksHere := useTasks && ln1Rows.size > 32
+          let useTasksHere := useTasks && !debugMargin && ln1Rows.size > 32
           if useTasksHere then
             let tasks := ln1Rows.map (fun row =>
               Task.spawn (fun _ =>
@@ -7065,11 +7122,37 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
                   else
                     tokens[j - keyOffsetNeg]! = targetTok
             if isMatch then
+              if debugMargin then
+                matchCount := matchCount + 1
+                matchLowerMin? :=
+                  match matchLowerMin? with
+                  | none => some dot.lo
+                  | some v => some (min v dot.lo)
+                matchUpperMax? :=
+                  match matchUpperMax? with
+                  | none => some dot.hi
+                  | some v => some (max v dot.hi)
+                let width := dot.hi - dot.lo
+                if width > matchWidthMax then
+                  matchWidthMax := width
               bestMatchLower? :=
                 match bestMatchLower? with
                 | none => some dot.lo
                 | some m => some (max m dot.lo)
             else
+              if debugMargin then
+                nonmatchCount := nonmatchCount + 1
+                nonmatchLowerMax? :=
+                  match nonmatchLowerMax? with
+                  | none => some dot.lo
+                  | some v => some (max v dot.lo)
+                nonmatchUpperMax? :=
+                  match nonmatchUpperMax? with
+                  | none => some dot.hi
+                  | some v => some (max v dot.hi)
+                let width := dot.hi - dot.lo
+                if width > nonmatchWidthMax then
+                  nonmatchWidthMax := width
               bestNonmatchUpper? :=
                 match bestNonmatchUpper? with
                 | none => some dot.hi
@@ -7085,6 +7168,21 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         | none => bestMatchLower
         | some v => v
       let marginInt : Int := bestMatchLower - bestNonmatchUpper
+      if debugMargin then
+        let matchLowerMin := matchLowerMin?.getD bestMatchLower
+        let matchUpperMax := matchUpperMax?.getD bestMatchLower
+        let nonmatchLowerMax := nonmatchLowerMax?.getD bestNonmatchUpper
+        let nonmatchUpperMax := nonmatchUpperMax?.getD bestNonmatchUpper
+        let msg :=
+          s!"pattern_debug:layer{layerIdx}:head{headIdx} " ++
+          s!"targetTok={targetTok} queryPos={queryPos} offset={targetOffset} " ++
+          s!"keyOffset={keyOffset} scalePow10={scalePow10} " ++
+          s!"matches={matchCount} nonmatches={nonmatchCount} " ++
+          s!"matchLoMaxInt={bestMatchLower} matchLoMinInt={matchLowerMin} " ++
+          s!"matchHiMaxInt={matchUpperMax} nonmatchLoMaxInt={nonmatchLowerMax} " ++
+          s!"nonmatchHiMaxInt={nonmatchUpperMax} marginInt={marginInt} " ++
+          s!"matchWidthMaxInt={matchWidthMax} nonmatchWidthMaxInt={nonmatchWidthMax}"
+        ExceptT.lift <| IO.eprintln msg
       let bestMatchLowerRat := ratOfScaledInt scalePow10 bestMatchLower
       let bestNonmatchUpperRat := ratOfScaledInt scalePow10 bestNonmatchUpper
       let margin := ratOfScaledInt scalePow10 marginInt
@@ -7363,6 +7461,7 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         | some u => return (attnRows?, some (addVecFixed u vOut))
         | none => throw "missing attnUnion"
     let applyAttn
+        (label : String)
         (rows : Array (Array Fixed10Interval))
         (useTight : Bool)
         (attnRows? : Option (Array (Array Fixed10Interval)))
@@ -7373,22 +7472,30 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         match attnRows? with
         | some attnRows =>
             let attnRows := addVecFixedRows attnRows attnBias
-            return addRowsFixed rows attnRows
+            logRowsWidth "attn_debug" s!"{label}:attn_rows" attnRows
+            let out := addRowsFixed rows attnRows
+            logRowsWidth "attn_debug" s!"{label}:out" out
+            return out
         | none => throw "missing attnRows"
       else
         match attnUnion? with
         | some attnUnion =>
             let attnUnion := addVecFixed attnUnion attnBias
-            return addVecFixedRows rows attnUnion
+            logVecWidth "attn_debug" s!"{label}:attn_union" attnUnion
+            let out := addVecFixedRows rows attnUnion
+            logRowsWidth "attn_debug" s!"{label}:out" out
+            return out
         | none => throw "missing attnUnion"
     let applyMlp
+        (label : String)
         (rows : Array (Array Fixed10Interval))
         (usePerRow : Bool)
         (p : LayerNormParamsFixed)
         (wIn wOut : Array Int)
         (bIn bOut : Array Fixed10Interval) :
-        Array (Array Fixed10Interval) :=
+        ExceptT String IO (Array (Array Fixed10Interval)) := do
       let ln2Rows := calcLnRows rows p
+      logRowsWidth "ln2_debug" s!"{label}:ln2" ln2Rows
       let geluTargetUnion : GeluDerivTarget :=
         if hdr.geluDerivTarget = .tanh then .exact else hdr.geluDerivTarget
       if usePerRow then
@@ -7398,24 +7505,65 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             let wOutIntervals := intervalsFromScaled wOut slack
             let mlpRows := mlpRowsFromIntervals cfg geluTargetUnion
               hdr.modelDim hdr.hiddenDim wInIntervals wOutIntervals bIn bOut ln2Rows
-            addRowsFixed rows mlpRows
+            logRowsWidth "mlp_debug" s!"{label}:mlp_rows" mlpRows
+            let out := addRowsFixed rows mlpRows
+            logRowsWidth "mlp_debug" s!"{label}:out" out
+            return out
         | some idxs =>
-            Id.run do
-              let ln2Union := unionRowsFixed ln2Rows
-              let mlpUnion := mlpRowFromScaled cfg geluTargetUnion slack
-                hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Union
-              let mut out := addVecFixedRows rows mlpUnion
-              for idx in idxs do
-                if idx < ln2Rows.size then
-                  let mlpRow := mlpRowFromScaledNoTask cfg hdr.geluDerivTarget slack
-                    hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut (ln2Rows[idx]!)
-                  out := out.set! idx (addVecFixed (rows[idx]!) mlpRow)
-              return out
+            let ln2Union := unionRowsFixed ln2Rows
+            let mlpUnion := mlpRowFromScaled cfg geluTargetUnion slack
+              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Union
+            logVecWidth "mlp_debug" s!"{label}:mlp_union" mlpUnion
+            let idxsValid := idxs.filter (fun idx => idx < ln2Rows.size)
+            let useTasksHere := idxsValid.size > 4
+            let out :=
+              if useTasksHere then
+                Id.run do
+                  let chunkSize : Nat := 8
+                  let numChunks : Nat := (idxsValid.size + chunkSize - 1) / chunkSize
+                  let mut tasks : Array (Task (Array (Nat × Array Fixed10Interval))) :=
+                    Array.mkEmpty numChunks
+                  let mut chunkIdx : Nat := 0
+                  while chunkIdx < numChunks do
+                    let start := chunkIdx * chunkSize
+                    let stop := min idxsValid.size (start + chunkSize)
+                    tasks := tasks.push <|
+                      Task.spawn (fun _ =>
+                        Id.run do
+                          let mut outChunk : Array (Nat × Array Fixed10Interval) :=
+                            Array.mkEmpty (stop - start)
+                          let mut i := start
+                          while i < stop do
+                            let idx := idxsValid[i]!
+                            let mlpRow := mlpRowFromScaledNoTask cfg hdr.geluDerivTarget slack
+                              hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut (ln2Rows[idx]!)
+                            outChunk := outChunk.push (idx, mlpRow)
+                            i := i + 1
+                          return outChunk)
+                    chunkIdx := chunkIdx + 1
+                  let mut out := addVecFixedRows rows mlpUnion
+                  for t in tasks do
+                    for (idx, mlpRow) in t.get do
+                      out := out.set! idx (addVecFixed (rows[idx]!) mlpRow)
+                  return out
+              else
+                Id.run do
+                  let mut out := addVecFixedRows rows mlpUnion
+                  for idx in idxsValid do
+                    let mlpRow := mlpRowFromScaledNoTask cfg hdr.geluDerivTarget slack
+                      hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut (ln2Rows[idx]!)
+                    out := out.set! idx (addVecFixed (rows[idx]!) mlpRow)
+                  return out
+            logRowsWidth "mlp_debug" s!"{label}:out" out
+            return out
       else
         let ln2Union := unionRowsFixed ln2Rows
         let mlpOut := mlpRowFromScaled cfg geluTargetUnion slack
           hdr.modelDim hdr.hiddenDim wIn wOut bIn bOut ln2Union
-        addVecFixedRows rows mlpOut
+        logVecWidth "mlp_debug" s!"{label}:mlp_union" mlpOut
+        let out := addVecFixedRows rows mlpOut
+        logRowsWidth "mlp_debug" s!"{label}:out" out
+        return out
     let awaitPattern
         (pattern? : Option HeadBestMatchPatternCert)
         (task? : Option (Task (Except IO.Error (Except String HeadBestMatchPatternCert))))
@@ -7469,15 +7617,25 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
           pure none
       let mut ln1RowsShared? : Option (Array (Array Fixed10Interval)) := none
       if residualsSame && (needRows1 || needRows2) then
-        ln1RowsShared? := some (calcLnRows residuals1 ln1P)
+        let rows := calcLnRows residuals1 ln1P
+        ln1RowsShared? := some rows
+        logRowsWidth "ln1_debug" s!"layer{l}:ln1_shared" rows
       let mut ln1Rows1? : Option (Array (Array Fixed10Interval)) := none
       let mut ln1Rows2? : Option (Array (Array Fixed10Interval)) := none
       if needRows1 then
-        ln1Rows1? :=
-          some (ln1RowsShared?.getD (calcLnRows residuals1 ln1P))
+        match ln1RowsShared? with
+        | some rows => ln1Rows1? := some rows
+        | none =>
+            let rows := calcLnRows residuals1 ln1P
+            ln1Rows1? := some rows
+            logRowsWidth "ln1_debug" s!"layer{l}:ln1_1" rows
       if needRows2 then
-        ln1Rows2? :=
-          some (ln1RowsShared?.getD (calcLnRows residuals2 ln1P))
+        match ln1RowsShared? with
+        | some rows => ln1Rows2? := some rows
+        | none =>
+            let rows := calcLnRows residuals2 ln1P
+            ln1Rows2? := some rows
+            logRowsWidth "ln1_debug" s!"layer{l}:ln1_2" rows
       let mut ln1Rows1Exact? : Option (Array (Array Fixed10Interval)) := none
       let mut ln1Rows2Exact? : Option (Array (Array Fixed10Interval)) := none
       if at1 then
@@ -7489,7 +7647,9 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         if residualsSameV then
           ln1RowsV? := ln1Rows2?
         else
-          ln1RowsV? := some (calcLnRows residualsV ln1P)
+          let rows := calcLnRows residualsV ln1P
+          ln1RowsV? := some rows
+          logRowsWidth "ln1_debug" s!"layer{l}:ln1_v" rows
       if let some t0 := tLn10? then
         let t1 ← ExceptT.lift IO.monoNanosNow
         let dtMs := (t1 - t0) / 1000000
@@ -7852,15 +8012,23 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
             pure none
         let attnBias ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         if shareUpdate then
-          residuals1 ← applyAttn residuals1 useTight1 attnRowsShared? attnUnionShared? attnBias
+          residuals1 ←
+            applyAttn s!"layer{l}:attn_shared" residuals1 useTight1 attnRowsShared?
+              attnUnionShared? attnBias
           residuals2 := residuals1
         else
           if needUpdate1 then
-            residuals1 ← applyAttn residuals1 useTight1 attnRows1? attnUnion1? attnBias
+            residuals1 ←
+              applyAttn s!"layer{l}:attn_1" residuals1 useTight1 attnRows1? attnUnion1?
+                attnBias
           if needUpdate2 then
-            residuals2 ← applyAttn residuals2 useTight2 attnRows2? attnUnion2? attnBias
+            residuals2 ←
+              applyAttn s!"layer{l}:attn_2" residuals2 useTight2 attnRows2? attnUnion2?
+                attnBias
         if needUpdateV && !shareUpdateV && !skipAttnV then
-          residualsV ← applyAttn residualsV useTightV attnRowsV? attnUnionV? attnBias
+          residualsV ←
+            applyAttn s!"layer{l}:attn_v" residualsV useTightV attnRowsV? attnUnionV?
+              attnBias
         if let some t0 := tAttn0? then
           let t1 ← ExceptT.lift IO.monoNanosNow
           let dtMs := (t1 - t0) / 1000000
@@ -7879,18 +8047,22 @@ private def certifyInductionSoundBestMatchLocalBinaryPair
         let bOut ← ExceptT.mk (readVecIntervalsBinary h hdr.modelDim slack scalePow10)
         let ln2P := ln2Params.getD l defP
         if shareUpdate then
-          residuals1 := applyMlp residuals1 usePerRow1 ln2P wIn wOut bIn bOut
+          residuals1 ←
+            applyMlp s!"layer{l}:mlp_shared" residuals1 usePerRow1 ln2P wIn wOut bIn bOut
           residuals2 := residuals1
         else
           if needUpdate1 then
-            residuals1 := applyMlp residuals1 usePerRow1 ln2P wIn wOut bIn bOut
+            residuals1 ←
+              applyMlp s!"layer{l}:mlp_1" residuals1 usePerRow1 ln2P wIn wOut bIn bOut
           if needUpdate2 then
-            residuals2 := applyMlp residuals2 usePerRow2 ln2P wIn wOut bIn bOut
+            residuals2 ←
+              applyMlp s!"layer{l}:mlp_2" residuals2 usePerRow2 ln2P wIn wOut bIn bOut
         if needUpdateV then
           if shareUpdateV then
             residualsV := residuals2
           else
-            residualsV := applyMlp residualsV usePerRowV ln2P wIn wOut bIn bOut
+            residualsV ←
+              applyMlp s!"layer{l}:mlp_v" residualsV usePerRowV ln2P wIn wOut bIn bOut
         if shareUpdate then
           residualsSame := true
         else if needUpdate1 && needUpdate2 then
