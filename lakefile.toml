@@ -19,6 +19,7 @@ rev = "stable"
 
 [[lean_lib]]
 name = "Nfp"
+roots = ["Nfp"]
 
 [[lean_exe]]
 name = "nfp"

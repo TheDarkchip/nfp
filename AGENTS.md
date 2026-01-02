@@ -240,107 +240,46 @@ Note: Recent Lean versions changed the story around well-founded recursion trans
 This is a *map*, not a prison. You may reshuffle if a better design emerges,
 but you **must** update this list in the same commit.
 
-### 5.1 Core probability + mixing
-- `Prob.lean`
-  - Probability vectors (`ProbVec`) on finite types; normalization + basic lemmas.
-- `Mixer.lean`
-  - Row-stochastic operators (“mixers”), composition/pushforward/support tools.
-- `Influence.lean`
-  - Influence specifications/families, capacities, scaling, and conversion into mixers.
-- `Reroute/Partition.lean`
-  - Finite partitions + reroute planning structures.
-- `Reroute/Heat.lean`
-  - Weighted reroute plans and induced “heat” distributions.
-- `PCC.lean`
-  - Tracer/contribution utilities; discrete AUC / interval machinery.
-- `Uniqueness.lean`
-  - `LocalSystem` for finite DAG mixing systems; uniqueness theorem(s) for tracers.
-- `MixerLocalSystem.lean`
-  - Bridges mixers-on-DAGs to `LocalSystem` (interpreters using a topo order).
-- `Appendix.lean`
-  - Supplemental lemmas and wrappers that don’t belong elsewhere.
+### 5.1 Core types
+- `Nfp/Core/Basic.lean`
+  - `Mass` alias for nonnegative weights used throughout the rewrite.
+- `Nfp/Core.lean`
+  - Aggregator for core shared definitions.
 
-### 5.2 Interpretability / NN-oriented layers (mathematical, mostly proofs)
-- `Layers.lean`
-  - Neural-network layer operations modeled as mixers; attribution/ablation/reachability laws.
-- `Attribution.lean`
-  - Interpretability axioms and bridges from tracer-based notions.
-- `Induction.lean`
-  - True induction head definitions and certification theorems (pattern + faithfulness + functional effect).
-- `SignedMixer.lean`
-  - Signed/real-weight generalization (negative weights, affine maps, etc.).
-- `Linearization.lean`
-  - Jacobian-based linearizations, decomposition results, deep composition/error theorems.
-- `Abstraction.lean`
-  - Causal-consistency / intervention correspondence between “real” networks and abstract DAG views.
+### 5.2 Probability vectors
+- `Nfp/Prob/Basic.lean`
+  - `ProbVec` definition + invariants.
+- `Nfp/Prob/Operations.lean`
+  - `pure`, `mix`, and basic lemmas.
+- `Nfp/Prob.lean`
+  - Aggregator for probability modules.
 
-### 5.3 Executable analysis & CLI surface
-- `Discovery.lean`
-  - Executable discovery + bound computations and verification pipeline.
-  - May be performance-sensitive; keep proofs minimal and move them to proof modules when possible.
-- `Sound/Decimal.lean`
-  - Exact parsing of decimal/scientific numerals into `Rat` for sound mode.
-- `Sound/Activation.lean`
-  - Activation-derivative metadata + header parsing helpers for SOUND mode.
-- `Sound/ModelHeader.lean`
-  - Pure header parsing helpers for SOUND metadata (e.g., LayerNorm epsilon).
-- `Sound/BinaryPure.lean`
-  - Pure binary parsing/decoding helpers (IO-free, used by untrusted IO wrappers).
-- `Sound/TextPure.lean`
-  - Pure text parsing helpers for model-weight norms used in sound verification.
-- `Sound/CachePure.lean`
-  - Pure cache parsing/encoding helpers used by untrusted IO wrappers.
-- `Untrusted/SoundBinary.lean`
-  - IO wrappers for the SOUND binary path (untrusted).
-- `Untrusted/SoundCacheIO.lean`
-  - IO wrappers for the SOUND fixed-point cache (untrusted).
-- `Sound/Bounds.lean`
-  - Umbrella import for SOUND bound utilities (exact `Rat` arithmetic, no Float).
-- `Sound/Bounds/Basic.lean`
-  - Basic `Rat` helpers used across bounds modules.
-- `Sound/Bounds/MatrixNorm.lean`
-  - Rat matrices, row-sum norms, and multiplicativity bounds.
-- `Sound/Bounds/Gelu.lean`
-  - GeLU derivative envelopes (global).
-- `Sound/Bounds/Exp.lean`
-  - exp lower bounds (scaled Taylor + squaring).
-- `Sound/Bounds/Softmax.lean`
-  - Softmax Jacobian bounds and margin-derived weight helpers.
-- `Sound/Bounds/Attention.lean`
-  - Attention pattern-term coefficient helpers.
-- `Sound/Bounds/LayerNorm.lean`
-  - LayerNorm operator bounds (global/local).
-- `Sound/Bounds/Portfolio.lean`
-  - Placeholder for portfolio combinators.
-- `Sound/Bounds/Effort.lean`
-  - Placeholder for effort-tier records.
-- `Sound/Affine.lean`
-  - Affine-form scaffolding for future local soundness improvements.
-- `Sound/HeadCert.lean`
-  - Sound per-head contribution certificate structures.
-- `Sound/Bridge.lean`
-  - Lemmas connecting `Rat`-level bounds to `SignedMixer` operator-norm bounds.
-- `Sound/Cert.lean`
-  - Certificate/report structures and pretty-printing for SOUND-mode output.
-- `Sound/IO.lean`
-  - Trusted IO wrappers: read inputs, call untrusted computation, and verify certificates.
-- `Untrusted/SoundCompute.lean`
-  - IO-heavy witness generation for sound certificates (untrusted; verified by `Sound/IO`).
-- `Sound/Demo.lean`
-  - Tiny end-to-end lemma demo bridging to `Linearization.operatorNormBound`.
-- `Verification.lean`
-  - Executable **causal verification** via head ablation + runtime axiom checks (competence, control independence, energy matching).
-- `IO.lean`
-  - Parsing/loading/tokenization/report formatting glue.
-  - **IO-only principle:** no heavy proofs; keep it as a bridge to filesystem/CLI.
-- `IO/Pure.lean`
-  - Pure parsing, construction, and tokenization helpers used by `IO.lean`.
+### 5.3 Mixers
+- `Nfp/Mixer/Basic.lean`
+  - `Mixer` structure and row-stochastic invariant.
+- `Nfp/Mixer/Operations.lean`
+  - `push`, `comp`, and `id` mixers.
+- `Nfp/Mixer.lean`
+  - Aggregator for mixer modules.
+
+### 5.4 Systems (DAG + local mixing)
+- `Nfp/System/Dag.lean`
+  - DAG relation + parent/child sets.
+- `Nfp/System/LocalSystem.lean`
+  - `LocalSystem` with edge support and row-sum invariants.
+- `Nfp/System.lean`
+  - Aggregator for system modules.
+
+### 5.5 CLI surface
+- `Nfp/Cli.lean`
+  - CLI commands and `main` implementation.
 - `Main.lean`
-  - CLI entrypoint and subcommand wiring. Keep it thin:
-    - argument parsing + calling into `Nfp.IO` / `Discovery` / `Nfp.Sound.*` reporting helpers,
-    - minimal logic, minimal proof content.
+  - Thin entrypoint delegating to `Nfp.Cli.main`.
 - `Nfp.lean`
-  - Top-level reexports and an axioms check (`#print axioms` / trust dashboard).
+  - Top-level reexports and axioms dashboard (`#print axioms`).
+
+### 5.6 Legacy (tabula rasa transition)
+- Legacy modules live under `Legacy/Nfp/` as reference only and are not built by default.
 
 If you introduce a new conceptual layer:
 - either extend the closest existing file,
