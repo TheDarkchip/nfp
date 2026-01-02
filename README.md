@@ -21,8 +21,12 @@ The `tabula-rasa` branch is a fresh, minimal Lean 4 core focused on circuit cert
 
 Current core modules (new):
 - `Nfp/Core`, `Nfp/Prob`, `Nfp/Mixer`, `Nfp/System` define basic mass/probability, mixers, and DAG-backed local systems.
-- `Nfp/Circuit` defines DAG-based circuits with input-only evaluation, typed interfaces, well-formedness, and equivalence checkers.
-- `Nfp/Cli` and `Main.lean` are thin placeholders (no full transformer pipeline yet).
+- `Nfp/Circuit` defines DAG-based circuits with typed interfaces, well-formedness, and equivalence checkers.
+- `Nfp/Circuit/Compose` adds sequential and residual wiring combinators for typed circuits.
+- `Nfp/Circuit/Layers/Attention` contains Q/K/V projection wiring plus an attention score/mixing core.
+- `Nfp/Circuit/Layers/Induction` provides induction-head specs and the core attention one-hot lemma.
+- `Nfp/Circuit/Layers/TransformerBlock` wires LN/attention/MLP into a GPT-style block skeleton.
+- `Nfp/Cli` and `Main.lean` remain thin placeholders (no full transformer pipeline yet).
 
 Module map and invariants are tracked in `AGENTS.md`.
 
