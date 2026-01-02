@@ -21,4 +21,21 @@ structure Circuit (ι : Type u) [Fintype ι] (α : Type v) where
   /-- Gate semantics at each node, given values of its parents. -/
   gate : ∀ i, (∀ j, dag.rel j i → α) → α
 
+namespace Circuit
+
+variable {ι : Type u} [Fintype ι] {α : Type v}
+
+/-- External input assignment on the circuit's input nodes. -/
+abbrev InputAssignment (C : Circuit ι α) : Type (max u v) :=
+  { i // i ∈ C.inputs } → α
+
+/-- Reinterpret input assignments along an equality of input sets. -/
+def InputAssignment.cast {C₁ C₂ : Circuit ι α} (h : C₁.inputs = C₂.inputs) :
+    InputAssignment C₁ → InputAssignment C₂ := by
+  intro input i
+  refine input ⟨i.1, ?_⟩
+  simp [h]
+
+end Circuit
+
 end Nfp

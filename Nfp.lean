@@ -27,4 +27,5 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 #print axioms Nfp.LocalSystem.eval
 #print axioms Nfp.LocalSystem.eval_eq
 #print axioms Nfp.Circuit.eval
+#print axioms Nfp.Circuit.evalInput
 #print axioms Nfp.Circuit.checkEquiv

@@ -22,10 +22,19 @@ variable {α : Type v}
 def SameInterface (C₁ C₂ : Circuit ι α) : Prop :=
   C₁.inputs = C₂.inputs ∧ C₁.outputs = C₂.outputs
 
-/-- Circuits are equivalent if they agree on outputs for all inputs on the same interface. -/
+/-- `SameInterface` is decidable. -/
+instance (C₁ C₂ : Circuit ι α) : Decidable (SameInterface C₁ C₂) := by
+  dsimp [SameInterface]
+  infer_instance
+
+/-- Circuits agree on outputs for all input assignments on a fixed interface. -/
+def EquivOn (C₁ C₂ : Circuit ι α) (h : SameInterface C₁ C₂) : Prop :=
+  ∀ input : C₁.InputAssignment, ∀ i ∈ C₁.outputs,
+    evalInput C₁ input i = evalInput C₂ (InputAssignment.cast h.1 input) i
+
+/-- Circuits are equivalent if they share an interface and agree on all inputs. -/
 def Equiv (C₁ C₂ : Circuit ι α) : Prop :=
-  SameInterface C₁ C₂ ∧
-    ∀ input, ∀ i ∈ C₁.outputs, eval C₁ input i = eval C₂ input i
+  ∃ h : SameInterface C₁ C₂, EquivOn C₁ C₂ h
 
 section
 
@@ -70,17 +79,30 @@ theorem sameInterface_eq_true_iff (C₁ C₂ : Circuit ι α) :
     sameInterface C₁ C₂ = true ↔ SameInterface C₁ C₂ := by
   simp [sameInterface, SameInterface, Bool.and_eq_true]
 
-/-- Decide equivalence by enumerating all inputs on a finite value type. -/
+/-- Decide equivalence by enumerating all input assignments on a finite value type. -/
 def checkEquiv (C₁ C₂ : Circuit ι α) [Fintype α] [DecidableEq α] : Bool :=
-  sameInterface C₁ C₂ &&
-    finsetAll (Finset.univ : Finset (ι → α)) (fun input =>
-      finsetAll C₁.outputs (fun i => decide (eval C₁ input i = eval C₂ input i)))
+  if h : SameInterface C₁ C₂ then
+    finsetAll (Finset.univ : Finset C₁.InputAssignment) (fun input =>
+      finsetAll C₁.outputs (fun i =>
+        decide (evalInput C₁ input i = evalInput C₂ (InputAssignment.cast h.1 input) i)))
+  else
+    false
 
 /-- `checkEquiv` is sound and complete for `Equiv`. -/
 theorem checkEquiv_eq_true_iff (C₁ C₂ : Circuit ι α) [Fintype α] [DecidableEq α] :
     checkEquiv C₁ C₂ = true ↔ Equiv C₁ C₂ := by
   classical
-  simp [checkEquiv, Equiv, sameInterface_eq_true_iff, finsetAll_eq_true_iff, Bool.and_eq_true]
+  by_cases h : SameInterface C₁ C₂
+  · have hcheck : checkEquiv C₁ C₂ = true ↔ EquivOn C₁ C₂ h := by
+      simp [checkEquiv, h, EquivOn, finsetAll_eq_true_iff]
+    constructor
+    · intro hc
+      exact ⟨h, hcheck.mp hc⟩
+    · intro hEquiv
+      rcases hEquiv with ⟨h', hEq⟩
+      have hh : h' = h := Subsingleton.elim _ _
+      exact hcheck.mpr (by simpa [hh] using hEq)
+  · simp [checkEquiv, h, Equiv]
 
 end
 
