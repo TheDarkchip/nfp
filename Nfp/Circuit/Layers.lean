@@ -4,6 +4,7 @@ import Nfp.Circuit.Layers.Linear
 import Nfp.Circuit.Layers.Tensor
 import Nfp.Circuit.Layers.Reshape
 import Nfp.Circuit.Layers.Heads
+import Nfp.Circuit.Layers.Attention
 
 /-!
 Circuit layer combinators.
