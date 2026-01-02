@@ -297,6 +297,8 @@ but you **must** update this list in the same commit.
   - Linear/affine layer circuits with typed interfaces.
 - `Nfp/Circuit/Layers/Tensor.lean`
   - Batched linear/affine layer circuits for tensor-shaped data.
+- `Nfp/Circuit/Layers/Reshape.lean`
+  - Reshape combinators for product-typed circuit interfaces.
 - `Nfp/Circuit/Layers.lean`
   - Aggregator for circuit layer modules.
 - `Nfp/Circuit.lean`

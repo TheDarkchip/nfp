@@ -2,6 +2,7 @@
 
 import Nfp.Circuit.Layers.Linear
 import Nfp.Circuit.Layers.Tensor
+import Nfp.Circuit.Layers.Reshape
 
 /-!
 Circuit layer combinators.
