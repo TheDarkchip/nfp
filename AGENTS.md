@@ -322,9 +322,6 @@ but you **must** update this list in the same commit.
 - `Nfp.lean`
   - Top-level reexports and axioms dashboard (`#print axioms`).
 
-### 5.7 Legacy (tabula rasa transition)
-- Legacy modules live under `Legacy/Nfp/` as reference only and are not built by default.
-
 If you introduce a new conceptual layer:
 - either extend the closest existing file,
 - or add a new module with a clear name + top docstring,

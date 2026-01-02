@@ -17,7 +17,7 @@ This is research tooling. Interfaces may change; please treat results as experim
 
 ## Tabula Rasa Rewrite (current state)
 
-The `tabula-rasa` branch is a fresh, minimal Lean 4 core focused on circuit certification. The legacy system remains in `Legacy/Nfp/` and is not built by default.
+The `tabula-rasa` branch is a fresh, minimal Lean 4 core focused on circuit certification.
 
 Current core modules (new):
 - `Nfp/Core`, `Nfp/Prob`, `Nfp/Mixer`, `Nfp/System` define basic mass/probability, mixers, and DAG-backed local systems.
