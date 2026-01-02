@@ -9,7 +9,7 @@ Directed acyclic graph foundations.
 
 namespace Nfp
 
-universe u
+universe u u'
 
 /-- A finite directed acyclic graph, built on top of `Digraph`. -/
 structure Dag (ι : Type u) [Fintype ι] where
@@ -49,6 +49,21 @@ def children (G : Dag ι) (i : ι) : Finset ι := by
 @[simp] theorem mem_children {G : Dag ι} {i j : ι} :
     j ∈ G.children i ↔ G.rel i j := by
   simp [Dag.children]
+
+section Relabel
+
+variable {ι' : Type u'} [Fintype ι']
+
+/-- Relabel a DAG along an equivalence of vertex types. -/
+def relabel (G : Dag ι) (e : ι ≃ ι') : Dag ι' :=
+  { graph := { Adj := fun a b => G.rel (e.symm a) (e.symm b) }
+    decAdj := by
+      intro a b
+      exact G.decAdj (e.symm a) (e.symm b)
+    wf := by
+      simpa using (InvImage.wf (f := e.symm) (h := G.wf)) }
+
+end Relabel
 
 end Dag
 

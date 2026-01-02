@@ -273,6 +273,8 @@ but you **must** update this list in the same commit.
 ### 5.5 Circuits (certification core)
 - `Nfp/Circuit/Basic.lean`
   - DAG-based circuit structure with inputs/outputs and gate semantics.
+- `Nfp/Circuit/Combinators.lean`
+  - Core circuit combinators (relabeling, interface transport).
 - `Nfp/Circuit/Interface.lean`
   - Typed input/output interfaces and interface-based evaluation.
 - `Nfp/Circuit/Semantics.lean`
@@ -281,6 +283,12 @@ but you **must** update this list in the same commit.
   - Basic well-formedness conditions for circuit inputs.
 - `Nfp/Circuit/Cert.lean`
   - Equivalence definition and finite checker.
+- `Nfp/Circuit/Typed.lean`
+  - Typed circuit wrapper and interface-level equivalence checker.
+- `Nfp/Circuit/Gates/Basic.lean`
+  - Basic gate combinators for aggregating parent values.
+- `Nfp/Circuit/Gates.lean`
+  - Aggregator for gate combinator modules.
 - `Nfp/Circuit.lean`
   - Aggregator for circuit modules.
 
