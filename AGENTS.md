@@ -266,7 +266,7 @@ but you **must** update this list in the same commit.
 - `Nfp/System/Dag.lean`
   - DAG relation + parent/child sets.
 - `Nfp/System/LocalSystem.lean`
-  - `LocalSystem` with edge support and row-sum invariants.
+  - `LocalSystem` with edge support, row-stochastic predicate, and evaluation semantics.
 - `Nfp/System.lean`
   - Aggregator for system modules.
 

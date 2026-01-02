@@ -27,7 +27,7 @@ namespace Dag
 variable {ι : Type u} [Fintype ι]
 
 /-- The edge relation of a DAG. -/
-def rel (G : Dag ι) : ι → ι → Prop := G.graph.Adj
+abbrev rel (G : Dag ι) : ι → ι → Prop := G.graph.Adj
 
 /-- Parents (incoming neighbors) of a node. -/
 def parents (G : Dag ι) (i : ι) : Finset ι := by

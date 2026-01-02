@@ -23,3 +23,5 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 #print axioms Nfp.Mixer.id
 #print axioms Nfp.Dag.parents
 #print axioms Nfp.LocalSystem.toMixer
+#print axioms Nfp.LocalSystem.eval
+#print axioms Nfp.LocalSystem.eval_eq
