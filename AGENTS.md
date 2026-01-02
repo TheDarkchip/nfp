@@ -295,6 +295,8 @@ but you **must** update this list in the same commit.
   - Typed tensor indices and tensor aliases.
 - `Nfp/Circuit/Layers/Linear.lean`
   - Linear/affine layer circuits with typed interfaces.
+- `Nfp/Circuit/Layers/Tensor.lean`
+  - Batched linear/affine layer circuits for tensor-shaped data.
 - `Nfp/Circuit/Layers.lean`
   - Aggregator for circuit layer modules.
 - `Nfp/Circuit.lean`
