@@ -283,6 +283,8 @@ but you **must** update this list in the same commit.
   - Basic well-formedness conditions for circuit inputs.
 - `Nfp/Circuit/Cert.lean`
   - Equivalence definition and finite checker.
+- `Nfp/Circuit/Cert/SoftmaxMargin.lean`
+  - Softmax-margin certificate payloads and checker soundness.
 - `Nfp/Circuit/Typed.lean`
   - Typed circuit wrapper and interface-level equivalence checker.
 - `Nfp/Circuit/Compose.lean`

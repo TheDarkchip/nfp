@@ -6,6 +6,7 @@ import Nfp.Circuit.Interface
 import Nfp.Circuit.Semantics
 import Nfp.Circuit.WellFormed
 import Nfp.Circuit.Cert
+import Nfp.Circuit.Cert.SoftmaxMargin
 import Nfp.Circuit.Typed
 import Nfp.Circuit.Compose
 import Nfp.Circuit.Gates
