@@ -317,6 +317,10 @@ but you **must** update this list in the same commit.
   - Aggregator for circuit modules.
 
 ### 5.6 CLI surface
+- `Nfp/IO/Pure.lean`
+  - Pure parsing helpers for CLI inputs.
+- `Nfp/IO.lean`
+  - IO-only wrappers for loading inputs and running checks.
 - `Nfp/Cli.lean`
   - CLI commands and `main` implementation.
 - `Main.lean`
