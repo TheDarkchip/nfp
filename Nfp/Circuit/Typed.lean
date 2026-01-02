@@ -14,42 +14,42 @@ universe u v u' u_in u_out
 namespace Circuit
 
 /-- A circuit bundled with a typed input/output interface. -/
-structure TypedCircuit (ι : Type u) [Fintype ι] [DecidableEq ι] (α : Type v)
-    (ι_in : Type u_in) (ι_out : Type u_out) where
+structure TypedCircuit (Node : Type u) [Fintype Node] [DecidableEq Node] (Val : Type v)
+    (Input : Type u_in) (Output : Type u_out) where
   /-- The underlying circuit. -/
-  circuit : Circuit ι α
+  circuit : Circuit Node Val
   /-- Typed input/output interface for `circuit`. -/
-  interface : Interface circuit ι_in ι_out
+  interface : Interface circuit Input Output
 
 namespace TypedCircuit
 
-variable {ι : Type u} [Fintype ι] [DecidableEq ι]
-variable {α : Type v} {ι_in : Type u_in} {ι_out : Type u_out}
+variable {Node : Type u} [Fintype Node] [DecidableEq Node]
+variable {Val : Type v} {Input : Type u_in} {Output : Type u_out}
 
 /-- Evaluate a typed circuit on a typed input. -/
-def eval (T : TypedCircuit ι α ι_in ι_out) (input : ι_in → α) : ι_out → α :=
+def eval (T : TypedCircuit Node Val Input Output) (input : Input → Val) : Output → Val :=
   T.interface.eval input
 
 /-- Decide equivalence by enumerating typed inputs. -/
-def checkEquiv (T₁ T₂ : TypedCircuit ι α ι_in ι_out)
-    [Fintype ι_in] [DecidableEq ι_in] [Fintype ι_out]
-    [Fintype α] [DecidableEq α] : Bool :=
-  Circuit.checkEquivOnInterface T₁.circuit T₂.circuit T₁.interface T₂.interface
+def checkEquiv (T1 T2 : TypedCircuit Node Val Input Output)
+    [Fintype Input] [DecidableEq Input] [Fintype Output]
+    [Fintype Val] [DecidableEq Val] : Bool :=
+  Circuit.checkEquivOnInterface T1.circuit T2.circuit T1.interface T2.interface
 
 /-- `checkEquiv` is sound and complete for `EquivOnInterface`. -/
-theorem checkEquiv_eq_true_iff (T₁ T₂ : TypedCircuit ι α ι_in ι_out)
-    [Fintype ι_in] [DecidableEq ι_in] [Fintype ι_out]
-    [Fintype α] [DecidableEq α] :
-    checkEquiv T₁ T₂ = true ↔
-      EquivOnInterface T₁.circuit T₂.circuit T₁.interface T₂.interface := by
+theorem checkEquiv_eq_true_iff (T1 T2 : TypedCircuit Node Val Input Output)
+    [Fintype Input] [DecidableEq Input] [Fintype Output]
+    [Fintype Val] [DecidableEq Val] :
+    checkEquiv T1 T2 = true ↔
+      EquivOnInterface T1.circuit T2.circuit T1.interface T2.interface := by
   simpa [checkEquiv] using
-    (checkEquivOnInterface_eq_true_iff T₁.circuit T₂.circuit T₁.interface T₂.interface)
+    (checkEquivOnInterface_eq_true_iff T1.circuit T2.circuit T1.interface T2.interface)
 
-variable {ι' : Type u'} [Fintype ι'] [DecidableEq ι']
+variable {Node' : Type u'} [Fintype Node'] [DecidableEq Node']
 
 /-- Relabel the nodes of a typed circuit. -/
-def relabel (T : TypedCircuit ι α ι_in ι_out) (e : ι ≃ ι') :
-    TypedCircuit ι' α ι_in ι_out :=
+def relabel (T : TypedCircuit Node Val Input Output) (e : _root_.Equiv Node Node') :
+    TypedCircuit Node' Val Input Output :=
   { circuit := T.circuit.relabel e
     interface := T.interface.relabel e }
 

@@ -16,21 +16,21 @@ namespace Gates
 
 universe u v
 
-variable {ι : Type u} {α : Type v}
+variable {Node : Type u} {Val : Type v}
 
 /-- Sum of parent values. -/
-def sumParents (parents : Finset ι) (rec : ∀ j, j ∈ parents → α)
-    [AddCommMonoid α] : α :=
+def sumParents (parents : Finset Node) (rec : ∀ j, j ∈ parents → Val)
+    [AddCommMonoid Val] : Val :=
   parents.attach.sum fun j => rec j.1 j.2
 
 /-- Weighted sum of parent values using weights `w`. -/
-def weightedSumParents (parents : Finset ι) (w : ι → α)
-    (rec : ∀ j, j ∈ parents → α) [Semiring α] : α :=
+def weightedSumParents (parents : Finset Node) (w : Node → Val)
+    (rec : ∀ j, j ∈ parents → Val) [Semiring Val] : Val :=
   parents.attach.sum fun j => w j.1 * rec j.1 j.2
 
 /-- Affine combination of parent values with weights `w` and bias `b`. -/
-def affineParents (parents : Finset ι) (w : ι → α) (b : α)
-    (rec : ∀ j, j ∈ parents → α) [Semiring α] : α :=
+def affineParents (parents : Finset Node) (w : Node → Val) (b : Val)
+    (rec : ∀ j, j ∈ parents → Val) [Semiring Val] : Val :=
   weightedSumParents parents w rec + b
 
 end Gates

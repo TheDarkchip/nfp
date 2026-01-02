@@ -14,12 +14,12 @@ universe u v u' u_in u_out
 
 namespace Circuit
 
-variable {ι : Type u} [Fintype ι]
-variable {ι' : Type u'} [Fintype ι']
-variable {α : Type v}
+variable {Node : Type u} [Fintype Node]
+variable {Node' : Type u'} [Fintype Node']
+variable {Val : Type v}
 
 /-- Relabel the nodes of a circuit along an equivalence. -/
-def relabel (C : Circuit ι α) (e : ι ≃ ι') : Circuit ι' α := by
+def relabel (C : Circuit Node Val) (e : _root_.Equiv Node Node') : Circuit Node' Val := by
   refine
     { dag := C.dag.relabel e
       inputs := C.inputs.map e.toEmbedding
@@ -34,15 +34,15 @@ def relabel (C : Circuit ι α) (e : ι ≃ ι') : Circuit ι' α := by
 
 namespace Interface
 
-variable {ι : Type u} [Fintype ι] [DecidableEq ι]
-variable {ι' : Type u'} [Fintype ι'] [DecidableEq ι']
-variable {α : Type v}
-variable {ι_in : Type u_in} {ι_out : Type u_out}
-variable {C : Circuit ι α}
+variable {Node : Type u} [Fintype Node] [DecidableEq Node]
+variable {Node' : Type u'} [Fintype Node'] [DecidableEq Node']
+variable {Val : Type v}
+variable {Input : Type u_in} {Output : Type u_out}
+variable {C : Circuit Node Val}
 
 /-- Relabel a circuit interface along an equivalence of nodes. -/
-def relabel (I : Interface C ι_in ι_out) (e : ι ≃ ι') :
-    Interface (C.relabel e) ι_in ι_out := by
+def relabel (I : Interface C Input Output) (e : _root_.Equiv Node Node') :
+    Interface (C.relabel e) Input Output := by
   refine { inputs := ?_, outputs := ?_ }
   · refine I.inputs.trans ?_
     refine (e.subtypeEquiv ?_)
