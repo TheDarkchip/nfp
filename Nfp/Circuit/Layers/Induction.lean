@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Mathlib.Algebra.Order.Monoid.Unbundled.Basic
 import Nfp.Circuit.Layers.Attention
 
 /-!
@@ -60,6 +61,32 @@ def prevIndex : Fin (Nat.succ n) → Fin (Nat.succ n)
 
 end Spec
 
+section ApproxSpec
+
+variable {Val : Type v} [AddCommMonoid Val] [PartialOrder Val] [IsOrderedAddMonoid Val]
+variable {n : Nat}
+
+/-- Approximate induction-head spec: outputs are within `ε` of `prev` values. -/
+def InductionSpecApprox (ε : Val)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (out vals : Fin (Nat.succ n) → Val) : Prop :=
+  ∀ q, q ≠ 0 → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
+
+/-- Exact induction spec implies the approximate spec for any nonnegative tolerance. -/
+theorem inductionSpecApprox_of_spec (ε : Val) (hε : 0 ≤ ε)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (out vals : Fin (Nat.succ n) → Val)
+    (h : InductionSpec prev out vals) :
+    InductionSpecApprox (Val := Val) (n := n) ε prev out vals := by
+  intro q hq
+  have hq' : out q = vals (prev q) := h q hq
+  constructor <;>
+    simpa [hq'] using
+      (le_add_of_nonneg_right hε :
+        vals (prev q) ≤ vals (prev q) + ε)
+
+end ApproxSpec
+
 section Bounds
 
 variable {Val : Type v} [Semiring Val] [PartialOrder Val]
@@ -112,6 +139,94 @@ theorem oneHot_of_boundsOn (prev : Fin seq → Fin seq)
     simp [Pi.single, hk, hzero]
 
 end Bounds
+
+section ApproxBounds
+
+variable {Val : Type v} [Semiring Val] [PartialOrder Val]
+variable {seq : Nat} [NeZero seq]
+
+/-- Approximate one-hot bounds for attention weights on nonzero queries. -/
+structure OneHotApproxBoundsOn (ε : Val) (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val) : Prop where
+  /-- All weights are nonnegative on nonzero queries. -/
+  nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
+  /-- Weights sum to one on nonzero queries. -/
+  sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
+  /-- The `prev` weight is within `ε` of one on nonzero queries. -/
+  prev_large : ∀ q, q ≠ 0 → 1 ≤ weights q (prev q) + ε
+  /-- Non-prev weights are at most `ε` on nonzero queries. -/
+  other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Approximate induction weights: prev weight near one, others at most `ε`. -/
+def InductionWeightsApprox (ε : Val) (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val) : Prop :=
+  ∀ q, q ≠ 0 →
+    1 ≤ weights q (prev q) + ε ∧
+      ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Approximate bounds imply approximate induction weights. -/
+theorem inductionWeightsApprox_of_boundsOn (ε : Val) (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val)
+    (h : OneHotApproxBoundsOn ε prev weights) :
+    InductionWeightsApprox (Val := Val) ε prev weights := by
+  intro q hq
+  exact ⟨h.prev_large q hq, h.other_le q hq⟩
+
+end ApproxBounds
+
+section SoftmaxMargin
+
+variable {Val : Type v} [Semiring Val] [PartialOrder Val]
+variable {seq : Nat} [NeZero seq]
+
+/-- Softmax margin certificates for approximate one-hot weights. -/
+structure SoftmaxMarginBounds (ε margin : Val) (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val) : Prop where
+  /-- Score gap between `prev` and other keys on nonzero queries. -/
+  score_margin : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → scores q k + margin ≤ scores q (prev q)
+  /-- All weights are nonnegative on nonzero queries. -/
+  nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
+  /-- Weights sum to one on nonzero queries. -/
+  sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
+  /-- The `prev` weight is within `ε` of one on nonzero queries. -/
+  prev_large : ∀ q, q ≠ 0 → 1 ≤ weights q (prev q) + ε
+  /-- Non-prev weights are at most `ε` on nonzero queries. -/
+  other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Margin certificates yield approximate one-hot bounds for the weights. -/
+theorem oneHotApproxBounds_of_softmaxMargin (ε margin : Val) (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val)
+    (h : SoftmaxMarginBounds (Val := Val) ε margin prev scores weights) :
+    OneHotApproxBoundsOn (Val := Val) ε prev weights := by
+  exact
+    { nonneg := h.nonneg
+      sum_one := h.sum_one
+      prev_large := h.prev_large
+      other_le := h.other_le }
+
+/-- Margin certificates imply approximate induction-weight bounds. -/
+theorem inductionWeightsApprox_of_softmaxMargin (ε margin : Val)
+    (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val)
+    (h : SoftmaxMarginBounds (Val := Val) ε margin prev scores weights) :
+    InductionWeightsApprox (Val := Val) ε prev weights := by
+  exact inductionWeightsApprox_of_boundsOn
+    (Val := Val)
+    (seq := seq)
+    (ε := ε)
+    (prev := prev)
+    (weights := weights)
+    (h := oneHotApproxBounds_of_softmaxMargin
+      (Val := Val)
+      (seq := seq)
+      (ε := ε)
+      (margin := margin)
+      (prev := prev)
+      (scores := scores)
+      (weights := weights)
+      h)
+
+end SoftmaxMargin
 
 section Attention
 
@@ -408,6 +523,75 @@ theorem attentionTyped_eval_inductionSpec_prevIndex
     hweights
 
 end InductionSpecTyped
+
+section InductionSpecApproxTyped
+
+variable {Batch : Type} [Fintype Batch] [DecidableEq Batch]
+variable {heads dim n : Nat}
+variable {Val : Type v} [NonAssocSemiring Val] [PartialOrder Val] [IsOrderedAddMonoid Val]
+
+variable (scale : Val)
+variable (softmax : (Fin (Nat.succ n) → Val) → Fin (Nat.succ n) → Val)
+
+/-- One-hot weights imply the approximate induction spec for any nonnegative tolerance. -/
+theorem attentionTyped_eval_inductionSpecApprox_of_oneHot (ε : Val) (hε : 0 ≤ ε)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (input : AttentionInput Batch (Nat.succ n) heads dim → Val)
+    (b : Batch) (h : Fin heads) (d : Fin dim)
+    (hweights :
+      ∀ q, q ≠ 0 →
+        attentionOutWeights
+            (Batch := Batch)
+            (seq := Nat.succ n)
+            (heads := heads)
+            (dim := dim)
+            b h q d
+            (fun j _ =>
+              Circuit.evalInput
+                (attentionCircuit
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax)
+                ((attentionInterface
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax).toInputAssignment input) j) =
+          Pi.single (prev q) 1) :
+    InductionSpecApprox (Val := Val) (n := n) ε prev
+      (fun q =>
+        (attentionTyped
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          scale softmax).eval input (b, q, h, d))
+      (fun k =>
+        input (attnInputV
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          (b, k, h, d))) := by
+  apply inductionSpecApprox_of_spec (Val := Val) (n := n) (ε := ε) hε
+  exact attentionTyped_eval_inductionSpec_of_oneHot
+    (Batch := Batch)
+    (heads := heads)
+    (dim := dim)
+    (n := n)
+    (scale := scale)
+    (softmax := softmax)
+    (prev := prev)
+    (input := input)
+    (b := b)
+    (h := h)
+    (d := d)
+    hweights
+
+end InductionSpecApproxTyped
 
 end Layers
 
