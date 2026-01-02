@@ -15,6 +15,17 @@ This repo contains:
 
 This is research tooling. Interfaces may change; please treat results as experimental unless they are backed by a certificate/check you trust.
 
+## Tabula Rasa Rewrite (current state)
+
+The `tabula-rasa` branch is a fresh, minimal Lean 4 core focused on circuit certification. The legacy system remains in `Legacy/Nfp/` and is not built by default.
+
+Current core modules (new):
+- `Nfp/Core`, `Nfp/Prob`, `Nfp/Mixer`, `Nfp/System` define basic mass/probability, mixers, and DAG-backed local systems.
+- `Nfp/Circuit` defines DAG-based circuits with input-only evaluation, typed interfaces, well-formedness, and equivalence checkers.
+- `Nfp/Cli` and `Main.lean` are thin placeholders (no full transformer pipeline yet).
+
+Module map and invariants are tracked in `AGENTS.md`.
+
 ## Soundness statement (what is proven vs checked)
 
 The Lean library defines the core math objects (finite probability, mixers, linearizations, and operator-norm-style bounds) and proves a number of lemmas about them. The CLI sound path produces certificates using exact `Rat` arithmetic and a trusted checker that verifies internal arithmetic relationships between certificate fields.
