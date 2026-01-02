@@ -287,8 +287,12 @@ but you **must** update this list in the same commit.
   - Typed circuit wrapper and interface-level equivalence checker.
 - `Nfp/Circuit/Gates/Basic.lean`
   - Basic gate combinators for aggregating parent values.
+- `Nfp/Circuit/Gates/Linear.lean`
+  - Linear and affine gate combinators built from `Matrix.mulVec`.
 - `Nfp/Circuit/Gates.lean`
   - Aggregator for gate combinator modules.
+- `Nfp/Circuit/Tensor.lean`
+  - Typed tensor indices and tensor aliases.
 - `Nfp/Circuit.lean`
   - Aggregator for circuit modules.
 
