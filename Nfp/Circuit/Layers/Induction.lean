@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Nfp.Circuit.Layers.Attention
 
 /-!
@@ -13,6 +14,8 @@ namespace Circuit
 namespace Layers
 
 universe v
+
+open scoped BigOperators
 
 section Weights
 
@@ -56,6 +59,59 @@ def prevIndex : Fin (Nat.succ n) → Fin (Nat.succ n)
       ⟨k, Nat.lt_trans (Nat.lt_of_succ_lt_succ hk) (Nat.lt_succ_self n)⟩
 
 end Spec
+
+section Bounds
+
+variable {Val : Type v} [Semiring Val] [PartialOrder Val]
+variable {seq : Nat} [NeZero seq]
+
+/-- Numeric bounds certifying one-hot weights on nonzero queries. -/
+structure OneHotBoundsOn (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val) : Prop where
+  /-- All weights are nonnegative on nonzero queries. -/
+  nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
+  /-- Weights sum to one on nonzero queries. -/
+  sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
+  /-- Non-prev weights are nonpositive on nonzero queries. -/
+  other_le_zero : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ 0
+
+/-- Certified bounds imply one-hot weights on nonzero queries. -/
+theorem oneHot_of_boundsOn (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val) [DecidableEq (Fin seq)]
+    (h : OneHotBoundsOn prev weights) :
+    ∀ q, q ≠ 0 → weights q = Pi.single (prev q) 1 := by
+  intro q hq
+  funext k
+  by_cases hk : k = prev q
+  · subst hk
+    have hzero :
+        (∑ k ∈ (Finset.univ.erase (prev q)), weights q k) = 0 := by
+      refine Finset.sum_eq_zero ?_
+      intro k hk'
+      have hkne : k ≠ prev q := (Finset.mem_erase.1 hk').1
+      have hle : weights q k ≤ 0 := h.other_le_zero q hq k hkne
+      have hge : 0 ≤ weights q k := h.nonneg q hq k
+      exact le_antisymm hle hge
+    have hsum :
+        weights q (prev q) +
+            ∑ k ∈ (Finset.univ.erase (prev q)), weights q k =
+          ∑ k, weights q k := by
+      simpa using
+        (Finset.add_sum_erase
+          (s := (Finset.univ : Finset (Fin seq)))
+          (f := weights q) (a := prev q) (by simp))
+    have hprev : weights q (prev q) = 1 := by
+      have hsum' :
+          weights q (prev q) + 0 = 1 := by
+        simpa [hzero, h.sum_one q hq] using hsum
+      simpa using hsum'
+    simp [Pi.single, hprev]
+  · have hle : weights q k ≤ 0 := h.other_le_zero q hq k hk
+    have hge : 0 ≤ weights q k := h.nonneg q hq k
+    have hzero : weights q k = 0 := le_antisymm hle hge
+    simp [Pi.single, hk, hzero]
+
+end Bounds
 
 section Attention
 
@@ -225,6 +281,133 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
 end Typed
 
 end Attention
+
+section InductionSpecTyped
+
+variable {Batch : Type} [Fintype Batch] [DecidableEq Batch]
+variable {heads dim n : Nat}
+variable {Val : Type v} [NonAssocSemiring Val]
+
+variable (scale : Val)
+variable (softmax : (Fin (Nat.succ n) → Val) → Fin (Nat.succ n) → Val)
+
+/-- One-hot weights on nonzero queries imply the induction spec for typed evaluation. -/
+theorem attentionTyped_eval_inductionSpec_of_oneHot
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (input : AttentionInput Batch (Nat.succ n) heads dim → Val)
+    (b : Batch) (h : Fin heads) (d : Fin dim)
+    (hweights :
+      ∀ q, q ≠ 0 →
+        attentionOutWeights
+            (Batch := Batch)
+            (seq := Nat.succ n)
+            (heads := heads)
+            (dim := dim)
+            b h q d
+            (fun j _ =>
+              Circuit.evalInput
+                (attentionCircuit
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax)
+                ((attentionInterface
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax).toInputAssignment input) j) =
+          Pi.single (prev q) 1) :
+    InductionSpec (n := n) prev
+      (fun q =>
+        (attentionTyped
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          scale softmax).eval input (b, q, h, d))
+      (fun k =>
+        input (attnInputV
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          (b, k, h, d))) := by
+  intro q hq
+  have hweights_q := hweights q hq
+  exact attentionTyped_eval_out_eq_of_oneHot
+    (Batch := Batch)
+    (seq := Nat.succ n)
+    (heads := heads)
+    (dim := dim)
+    (scale := scale)
+    (softmax := softmax)
+    (prev := prev)
+    (input := input)
+    (b := b)
+    (h := h)
+    (q := q)
+    (d := d)
+    hweights_q
+
+/-- Induction spec for `prevIndex` under one-hot weight hypotheses. -/
+theorem attentionTyped_eval_inductionSpec_prevIndex
+    (input : AttentionInput Batch (Nat.succ n) heads dim → Val)
+    (b : Batch) (h : Fin heads) (d : Fin dim)
+    (hweights :
+      ∀ q, q ≠ 0 →
+        attentionOutWeights
+            (Batch := Batch)
+            (seq := Nat.succ n)
+            (heads := heads)
+            (dim := dim)
+            b h q d
+            (fun j _ =>
+              Circuit.evalInput
+                (attentionCircuit
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax)
+                ((attentionInterface
+                  (Batch := Batch)
+                  (seq := Nat.succ n)
+                  (heads := heads)
+                  (dim := dim)
+                  scale softmax).toInputAssignment input) j) =
+          Pi.single (prevIndex (n := n) q) 1) :
+    InductionSpec (n := n) (prevIndex (n := n))
+      (fun q =>
+        (attentionTyped
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          scale softmax).eval input (b, q, h, d))
+      (fun k =>
+        input (attnInputV
+          (Batch := Batch)
+          (seq := Nat.succ n)
+          (heads := heads)
+          (dim := dim)
+          (b, k, h, d))) := by
+  exact attentionTyped_eval_inductionSpec_of_oneHot
+    (Batch := Batch)
+    (heads := heads)
+    (dim := dim)
+    (n := n)
+    (scale := scale)
+    (softmax := softmax)
+    (prev := prevIndex (n := n))
+    (input := input)
+    (b := b)
+    (h := h)
+    (d := d)
+    hweights
+
+end InductionSpecTyped
 
 end Layers
 
