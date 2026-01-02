@@ -285,6 +285,8 @@ but you **must** update this list in the same commit.
   - Equivalence definition and finite checker.
 - `Nfp/Circuit/Typed.lean`
   - Typed circuit wrapper and interface-level equivalence checker.
+- `Nfp/Circuit/Compose.lean`
+  - Sequential composition and residual wiring for typed circuits.
 - `Nfp/Circuit/Gates/Basic.lean`
   - Basic gate combinators for aggregating parent values.
 - `Nfp/Circuit/Gates/Linear.lean`
@@ -302,7 +304,11 @@ but you **must** update this list in the same commit.
 - `Nfp/Circuit/Layers/Heads.lean`
   - Head split/merge combinators for transformer-shaped indices.
 - `Nfp/Circuit/Layers/Attention.lean`
-  - Q/K/V and output projection wiring for attention layers.
+  - Q/K/V, output projection wiring, and attention score/mixing core.
+- `Nfp/Circuit/Layers/Induction.lean`
+  - Induction-head weight specs and attention-core output lemmas.
+- `Nfp/Circuit/Layers/TransformerBlock.lean`
+  - GPT-style transformer block wiring from LN/attention/MLP circuits.
 - `Nfp/Circuit/Layers.lean`
   - Aggregator for circuit layer modules.
 - `Nfp/Circuit.lean`
