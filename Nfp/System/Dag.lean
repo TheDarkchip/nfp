@@ -26,6 +26,9 @@ namespace Dag
 
 variable {ι : Type u} [Fintype ι]
 
+/-- Coerce a DAG to its underlying digraph. -/
+instance : Coe (Dag ι) (Digraph ι) := ⟨Dag.graph⟩
+
 /-- The edge relation of a DAG. -/
 abbrev rel (G : Dag ι) : ι → ι → Prop := G.graph.Adj
 
