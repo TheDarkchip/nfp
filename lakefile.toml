@@ -11,6 +11,9 @@ weak.linter.mathlibStandardSet = true
 maxSynthPendingDepth = 3
 linter.unusedVariables = true
 weak.linter.unreachableTactic = true
+weak.linter.missingDocs = true
+weak.linter.unusedTactic = true
+weak.linter.omit = true
 
 [[require]]
 name = "mathlib"
