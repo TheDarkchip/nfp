@@ -14,6 +14,15 @@ weak.linter.unreachableTactic = true
 weak.linter.missingDocs = true
 weak.linter.unusedTactic = true
 weak.linter.omit = true
+weak.linter.style.longFile = 1500
+weak.linter.style.setOption = true
+weak.linter.style.missingEnd = true
+weak.linter.style.openClassical = true
+weak.linter.style.show = true
+weak.linter.style.lambdaSyntax = true
+weak.linter.style.dollarSyntax = true
+weak.linter.style.cdot = true
+weak.linter.style.longLine = true
 
 [[require]]
 name = "mathlib"
