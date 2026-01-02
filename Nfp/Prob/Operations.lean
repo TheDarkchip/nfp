@@ -19,12 +19,16 @@ variable {ι : Type u} [Fintype ι]
 /-- The pure distribution at a single point. -/
 def pure (i0 : ι) [DecidableEq ι] : ProbVec ι := by
   refine
-    { mass := fun i => if i = i0 then 1 else 0
+    { mass := Pi.single i0 (1 : Mass)
       sum_mass := ?_ }
-  exact (Fintype.sum_ite_eq' (ι := ι) (i := i0) (f := fun _ => (1 : Mass)))
+  exact (Fintype.sum_pi_single' (ι := ι) (i := i0) (a := (1 : Mass)))
 
 @[simp] theorem mass_pure (i0 i : ι) [DecidableEq ι] :
-    (pure i0).mass i = if i = i0 then 1 else 0 := rfl
+    (pure i0).mass i = if i = i0 then 1 else 0 := by
+  by_cases h : i = i0
+  · subst h
+    simp [pure, Pi.single]
+  · simp [pure, Pi.single, h]
 
 /-- Convex combination of two probability vectors with weights that sum to one. -/
 def mix (a b : Mass) (h : a + b = 1) (p q : ProbVec ι) : ProbVec ι :=
