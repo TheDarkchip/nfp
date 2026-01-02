@@ -3,6 +3,7 @@
 import Mathlib.Data.Finset.Fold
 import Mathlib.Data.Finset.Insert
 import Mathlib.Data.Fintype.Pi
+import Nfp.Circuit.Interface
 import Nfp.Circuit.Semantics
 
 /-!
@@ -11,7 +12,7 @@ Circuit equivalence and a finite checker.
 
 namespace Nfp
 
-universe u v
+universe u v u' u_in u_out
 
 namespace Circuit
 
@@ -35,6 +36,19 @@ def EquivOn (C₁ C₂ : Circuit ι α) (h : SameInterface C₁ C₂) : Prop :=
 /-- Circuits are equivalent if they share an interface and agree on all inputs. -/
 def Equiv (C₁ C₂ : Circuit ι α) : Prop :=
   ∃ h : SameInterface C₁ C₂, EquivOn C₁ C₂ h
+
+section Interface
+
+variable {ι₁ : Type u} [Fintype ι₁] [DecidableEq ι₁]
+variable {ι₂ : Type u'} [Fintype ι₂] [DecidableEq ι₂]
+variable {ι_in : Type u_in} {ι_out : Type u_out}
+
+/-- Circuits agree on outputs for all typed inputs on a shared interface. -/
+def EquivOnInterface (C₁ : Circuit ι₁ α) (C₂ : Circuit ι₂ α)
+    (I₁ : Interface C₁ ι_in ι_out) (I₂ : Interface C₂ ι_in ι_out) : Prop :=
+  ∀ input : ι_in → α, ∀ o : ι_out, I₁.eval input o = I₂.eval input o
+
+end Interface
 
 section
 
@@ -105,6 +119,31 @@ theorem checkEquiv_eq_true_iff (C₁ C₂ : Circuit ι α) [Fintype α] [Decidab
   · simp [checkEquiv, h, Equiv]
 
 end
+
+section InterfaceCheck
+
+variable {ι₁ : Type u} [Fintype ι₁] [DecidableEq ι₁]
+variable {ι₂ : Type u'} [Fintype ι₂] [DecidableEq ι₂]
+variable {ι_in : Type u_in} [Fintype ι_in] [DecidableEq ι_in]
+variable {ι_out : Type u_out} [Fintype ι_out]
+
+/-- Decide interface-based equivalence by enumerating typed inputs. -/
+def checkEquivOnInterface (C₁ : Circuit ι₁ α) (C₂ : Circuit ι₂ α)
+    (I₁ : Interface C₁ ι_in ι_out) (I₂ : Interface C₂ ι_in ι_out)
+    [Fintype α] [DecidableEq α] : Bool :=
+  finsetAll (Finset.univ : Finset (ι_in → α)) (fun input =>
+    finsetAll (Finset.univ : Finset ι_out) (fun o =>
+      decide (I₁.eval input o = I₂.eval input o)))
+
+/-- `checkEquivOnInterface` is sound and complete for `EquivOnInterface`. -/
+theorem checkEquivOnInterface_eq_true_iff (C₁ : Circuit ι₁ α) (C₂ : Circuit ι₂ α)
+    (I₁ : Interface C₁ ι_in ι_out) (I₂ : Interface C₂ ι_in ι_out)
+    [Fintype α] [DecidableEq α] :
+    checkEquivOnInterface C₁ C₂ I₁ I₂ = true ↔ EquivOnInterface C₁ C₂ I₁ I₂ := by
+  classical
+  simp [checkEquivOnInterface, EquivOnInterface, finsetAll_eq_true_iff]
+
+end InterfaceCheck
 
 end Circuit
 

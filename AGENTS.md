@@ -273,8 +273,12 @@ but you **must** update this list in the same commit.
 ### 5.5 Circuits (certification core)
 - `Nfp/Circuit/Basic.lean`
   - DAG-based circuit structure with inputs/outputs and gate semantics.
+- `Nfp/Circuit/Interface.lean`
+  - Typed input/output interfaces and interface-based evaluation.
 - `Nfp/Circuit/Semantics.lean`
   - Well-founded evaluation semantics for circuits.
+- `Nfp/Circuit/WellFormed.lean`
+  - Basic well-formedness conditions for circuit inputs.
 - `Nfp/Circuit/Cert.lean`
   - Equivalence definition and finite checker.
 - `Nfp/Circuit.lean`
