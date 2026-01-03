@@ -5,6 +5,7 @@ import Mathlib.Algebra.Order.Ring.Abs
 import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.Matrix.Mul
 import Nfp.Circuit.Cert.DownstreamLinear
+import Nfp.Circuit.Cert.ResidualInterval
 
 /-!
 Row-sum matrix norms for downstream linear certificates.
@@ -138,6 +139,16 @@ def dotIntervalUpper {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
 def dotIntervalAbsBound {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
   max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi|
 
+/-- Lower interval endpoint for a matrix-vector product under input intervals. -/
+def mulVecIntervalLower {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi : Fin n → Rat) : Fin m → Rat :=
+  fun i => dotIntervalLower (fun j => W i j) lo hi
+
+/-- Upper interval endpoint for a matrix-vector product under input intervals. -/
+def mulVecIntervalUpper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi : Fin n → Rat) : Fin m → Rat :=
+  fun i => dotIntervalUpper (fun j => W i j) lo hi
+
 theorem dotIntervalLower_le_dotProduct {n : Nat} (v lo hi x : Fin n → Rat)
     (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     dotIntervalLower v lo hi ≤ dotProduct v x := by
@@ -201,6 +212,50 @@ theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → R
     abs_le_max_abs_abs_of_interval hlow hhigh
   unfold dotIntervalAbsBound
   exact habs
+
+/-- Matrix-interval lower bounds dominate matrix-vector products. -/
+theorem mulVecIntervalLower_le_mulVec {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
+    ∀ i, mulVecIntervalLower W lo hi i ≤ Matrix.mulVec W x i := by
+  intro i
+  have h :=
+    dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi x hlo hhi
+  simpa [mulVecIntervalLower, Matrix.mulVec, dotProduct] using h
+
+/-- Matrix-interval upper bounds dominate matrix-vector products. -/
+theorem mulVec_le_mulVecIntervalUpper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
+    ∀ i, Matrix.mulVec W x i ≤ mulVecIntervalUpper W lo hi i := by
+  intro i
+  have h :=
+    dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi x hlo hhi
+  simpa [mulVecIntervalUpper, Matrix.mulVec, dotProduct] using h
+
+/-- Interval endpoints for `mulVec` are ordered when the input interval is ordered. -/
+theorem mulVecIntervalLower_le_upper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
+    ∀ i, mulVecIntervalLower W lo hi i ≤ mulVecIntervalUpper W lo hi i := by
+  intro i
+  have hlow :
+      dotIntervalLower (fun j => W i j) lo hi ≤ dotProduct (fun j => W i j) lo :=
+    dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi lo
+      (fun j => le_rfl) hlohi
+  have hhigh :
+      dotProduct (fun j => W i j) lo ≤ dotIntervalUpper (fun j => W i j) lo hi :=
+    dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi lo
+      (fun j => le_rfl) hlohi
+  exact le_trans hlow hhigh
+
+/-- Build a residual-interval certificate by applying a matrix to an input interval. -/
+def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
+    {c : Circuit.ResidualIntervalCert m // Circuit.ResidualIntervalBounds c} := by
+  let lo' := mulVecIntervalLower W lo hi
+  let hi' := mulVecIntervalUpper W lo hi
+  refine ⟨{ lo := lo', hi := hi' }, ?_⟩
+  refine { lo_le_hi := ?_ }
+  intro i
+  exact mulVecIntervalLower_le_upper W lo hi hlohi i
 
 /-- Row-sum norm bounds a matrix-vector product under a uniform input bound. -/
 theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
