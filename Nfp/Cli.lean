@@ -29,7 +29,12 @@ def versionCmd : Cmd := `[Cli|
 def runInductionCertify (p : Parsed) : IO UInt32 := do
   let scoresPath := p.flag! "scores" |>.as! String
   let valuesPath? := (p.flag? "values").map (·.as! String)
-  IO.runInductionCertify scoresPath valuesPath?
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertify scoresPath valuesPath? minActive? minLogitDiffStr?
+    minMarginStr? maxEpsStr?
 
 /-- `nfp induction certify` subcommand. -/
 def inductionCertifyCmd : Cmd := `[Cli|
@@ -38,6 +43,93 @@ def inductionCertifyCmd : Cmd := `[Cli|
   FLAGS:
     scores : String; "Path to the softmax-margin certificate file."
     values : String; "Optional path to a value-range certificate file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal; requires --values). Defaults \
+                                to 0 when direction metadata is present."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify-sound` subcommand. -/
+def runInductionCertifySound (p : Parsed) : IO UInt32 := do
+  let scoresPath := p.flag! "scores" |>.as! String
+  let valuesPath := p.flag! "values" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifySound scoresPath valuesPath minActive? minLogitDiffStr?
+    minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_sound` subcommand. -/
+def inductionCertifySoundCmd : Cmd := `[Cli|
+  certify_sound VIA runInductionCertifySound;
+  "Check induction certificates from raw scores/values."
+  FLAGS:
+    scores : String; "Path to the raw scores/weights file."
+    values : String; "Path to the raw value entries file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0 when \
+                                direction metadata is present."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify_end_to_end` subcommand. -/
+def runInductionCertifyEndToEnd (p : Parsed) : IO UInt32 := do
+  let scoresPath := p.flag! "scores" |>.as! String
+  let valuesPath := p.flag! "values" |>.as! String
+  let downstreamPath := p.flag! "downstream" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyEndToEnd scoresPath valuesPath downstreamPath
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_end_to_end` subcommand. -/
+def inductionCertifyEndToEndCmd : Cmd := `[Cli|
+  certify_end_to_end VIA runInductionCertifyEndToEnd;
+  "Check end-to-end induction bounds with a downstream error certificate."
+  FLAGS:
+    scores : String; "Path to the softmax-margin certificate file."
+    values : String; "Path to the value-range certificate file."
+    downstream : String; "Path to the downstream linear certificate file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0 when \
+                                direction metadata is present."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify_head` subcommand. -/
+def runInductionCertifyHead (p : Parsed) : IO UInt32 := do
+  let inputsPath := p.flag! "inputs" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
+    minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_head` subcommand. -/
+def inductionCertifyHeadCmd : Cmd := `[Cli|
+  certify_head VIA runInductionCertifyHead;
+  "Check induction certificates from exact head inputs."
+  FLAGS:
+    inputs : String; "Path to the induction head input file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
 ]
 
 /-- Induction-head subcommands. -/
@@ -45,7 +137,10 @@ def inductionCmd : Cmd := `[Cli|
   induction NOOP;
   "Induction-head utilities."
   SUBCOMMANDS:
-    inductionCertifyCmd
+    inductionCertifyCmd;
+    inductionCertifySoundCmd;
+    inductionCertifyEndToEndCmd;
+    inductionCertifyHeadCmd
 ]
 
 /-- The root CLI command. -/

@@ -8,6 +8,8 @@ import Nfp.Circuit.WellFormed
 import Nfp.Circuit.Cert
 import Nfp.Circuit.Cert.SoftmaxMargin
 import Nfp.Circuit.Cert.ValueRange
+import Nfp.Circuit.Cert.LogitDiff
+import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Typed
 import Nfp.Circuit.Compose
 import Nfp.Circuit.Gates

@@ -287,6 +287,10 @@ but you **must** update this list in the same commit.
   - Softmax-margin certificate payloads and checker soundness.
 - `Nfp/Circuit/Cert/ValueRange.lean`
   - Value-range certificate payloads and checker soundness.
+- `Nfp/Circuit/Cert/LogitDiff.lean`
+  - Logit-diff lower-bound computation for induction certificates.
+- `Nfp/Circuit/Cert/DownstreamLinear.lean`
+  - Downstream linear error certificates for end-to-end induction bounds.
 - `Nfp/Circuit/Typed.lean`
   - Typed circuit wrapper and interface-level equivalence checker.
 - `Nfp/Circuit/Compose.lean`
@@ -307,6 +311,8 @@ but you **must** update this list in the same commit.
   - Reshape combinators for product-typed circuit interfaces.
 - `Nfp/Circuit/Layers/Heads.lean`
   - Head split/merge combinators for transformer-shaped indices.
+- `Nfp/Circuit/Layers/Softmax.lean`
+  - Softmax helpers and margin-based bounds for layer reasoning.
 - `Nfp/Circuit/Layers/Attention.lean`
   - Q/K/V, output projection wiring, and attention score/mixing core.
 - `Nfp/Circuit/Layers/Induction.lean`
@@ -329,6 +335,26 @@ but you **must** update this list in the same commit.
   - Thin entrypoint delegating to `Nfp.Cli.main`.
 - `Nfp.lean`
   - Top-level reexports and axioms dashboard (`#print axioms`).
+
+### 5.7 Sound certification
+- `Nfp/Sound/Induction.lean`
+  - Sound builders for induction certificates from exact inputs.
+- `Nfp/Sound/Linear/FinFold.lean`
+  - Tail-recursive folds and sums for sound linear computations.
+- `Nfp/Sound/Gpt2/HeadInputs.lean`
+  - Sound construction of GPT-2 induction head inputs.
+- `Nfp/Sound.lean`
+  - Aggregator for sound certification modules.
+
+### 5.8 Model inputs
+- `Nfp/Model/InductionHead.lean`
+  - Exact induction-head input payloads (embeddings and projection weights).
+- `Nfp/Model/InductionPrompt.lean`
+  - Prompt utilities (`prev` map and active set for periodic prompts).
+- `Nfp/Model/Gpt2.lean`
+  - Exact GPT-2 head-slice data and embedding helpers.
+- `Nfp/Model.lean`
+  - Aggregator for model input modules.
 
 If you introduce a new conceptual layer:
 - either extend the closest existing file,

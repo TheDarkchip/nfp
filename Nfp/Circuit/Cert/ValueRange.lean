@@ -17,6 +17,13 @@ open scoped BigOperators
 
 variable {seq : Nat}
 
+/-- Metadata describing a logit-diff direction (target minus negative token). -/
+structure DirectionSpec where
+  /-- Target token id for the logit-diff direction. -/
+  target : Nat
+  /-- Negative token id for the logit-diff direction. -/
+  negative : Nat
+
 /-- Certificate payload for value-range bounds (Rat-valued). -/
 structure ValueRangeCert (seq : Nat) where
   /-- Lower bound for values. -/
@@ -25,6 +32,8 @@ structure ValueRangeCert (seq : Nat) where
   hi : Rat
   /-- Value entries. -/
   vals : Fin seq → Rat
+  /-- Optional logit-diff direction metadata (ignored by the checker). -/
+  direction : Option DirectionSpec
 
 /-- Boolean checker for value-range certificates. -/
 def checkValueRangeCert [NeZero seq] (c : ValueRangeCert seq) : Bool :=

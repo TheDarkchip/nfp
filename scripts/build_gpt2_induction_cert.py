@@ -5,12 +5,17 @@
 Build a softmax-margin certificate for a GPT-2-small induction head.
 
 This script is untrusted and uses floating-point arithmetic to produce a
-rational certificate compatible with `nfp induction certify`.
+rational certificate compatible with `nfp induction certify`. Active
+induction positions are recorded as `active <q>` lines in the output.
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
     --layer 5 --head 1 --seq 32 --pattern-length 16 \
-    --values-out reports/gpt2_induction.values --value-dim 0
+    --values-out reports/gpt2_induction.values --value-dim 0 \
+    --active-eps-max 0.2
+
+Optionally, provide a logit-diff direction:
+  --direction-target <tok_id> --direction-negative <tok_id>
 """
 
 import argparse
@@ -50,16 +55,23 @@ def build_tokens(seq: int, pattern_len: int, random_pattern: bool, seed: int) ->
     return np.tile(pattern, repeats)[:seq]
 
 
-def build_prev(tokens: np.ndarray) -> np.ndarray:
+def build_prev(tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     prev = np.zeros_like(tokens)
+    active = np.zeros_like(tokens, dtype=bool)
     last_seen = {}
     for idx, tok in enumerate(tokens):
         if idx == 0:
             prev[idx] = 0
+            active[idx] = False
         else:
-            prev[idx] = last_seen.get(tok, 0)
+            if tok in last_seen:
+                prev[idx] = last_seen[tok]
+                active[idx] = True
+            else:
+                prev[idx] = 0
+                active[idx] = False
         last_seen[tok] = idx
-    return prev
+    return prev, active
 
 
 def compute_scores_weights(model, input_ids, layer: int, head: int, device: str):
@@ -89,13 +101,17 @@ def compute_scores_weights(model, input_ids, layer: int, head: int, device: str)
             vh.squeeze(0).cpu().numpy())
 
 
-def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=None, margin=None):
+def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=None, margin=None,
+                 active=None):
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
         if eps is not None:
             f.write(f"eps {rat_to_str(eps)}\n")
         if margin is not None:
             f.write(f"margin {rat_to_str(margin)}\n")
+        if active is not None:
+            for q in active:
+                f.write(f"active {q}\n")
         for q, k in enumerate(prev.tolist()):
             f.write(f"prev {q} {k}\n")
         for q in range(seq):
@@ -106,12 +122,16 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
                 f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
 
 
-def write_value_range(path: Path, seq: int, values, decimals: int) -> None:
+def write_value_range(path: Path, seq: int, values, decimals: int,
+                      direction_target=None, direction_negative=None) -> None:
     vals_rat = [rat_from_float(float(values[k]), decimals) for k in range(seq)]
     lo = min(vals_rat)
     hi = max(vals_rat)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
+        if direction_target is not None and direction_negative is not None:
+            f.write(f"direction-target {direction_target}\n")
+            f.write(f"direction-negative {direction_negative}\n")
         f.write(f"lo {rat_to_str(lo)}\n")
         f.write(f"hi {rat_to_str(hi)}\n")
         for k, val in enumerate(vals_rat):
@@ -134,13 +154,20 @@ def main() -> None:
     parser.add_argument("--values-out", help="Optional path for a value-range certificate")
     parser.add_argument("--value-dim", type=int, default=0,
                         help="Value dimension index for the value-range certificate")
+    parser.add_argument("--active-eps-max", default="1/2",
+                        help="Maximum eps to include an active position (default: 1/2).")
+    parser.add_argument("--direction-target", type=int,
+                        help="Target token id for logit-diff direction (optional)")
+    parser.add_argument("--direction-negative", type=int,
+                        help="Negative token id for logit-diff direction (optional)")
     args = parser.parse_args()
 
     if args.seq <= 0:
         raise SystemExit("seq must be positive")
 
     tokens = build_tokens(args.seq, args.pattern_length, args.random_pattern, args.seed)
-    prev = build_prev(tokens)
+    prev, active_mask = build_prev(tokens)
+    candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
 
     model = GPT2Model.from_pretrained(args.model)
     model.to(args.device)
@@ -162,37 +189,70 @@ def main() -> None:
 
     eps = Fraction(0)
     margin = None
-    for q in range(1, args.seq):
+    eps_by_q: dict[int, Fraction] = {}
+    margin_by_q: dict[int, Fraction] = {}
+    for q in candidate_positions:
         prev_q = prev[q]
         prev_w = weights_rat[q][prev_q]
         max_other = max(weights_rat[q][k] for k in range(args.seq) if k != prev_q)
         deficit = Fraction(1) - prev_w
-        eps = max(eps, max(max_other, deficit))
+        eps_by_q[q] = max(max_other, deficit)
 
         diffs = [scores_rat[q][prev_q] - scores_rat[q][k]
                  for k in range(args.seq) if k != prev_q]
         if diffs:
-            min_diff = min(diffs)
-            margin = min_diff if margin is None else min(margin, min_diff)
+            margin_by_q[q] = min(diffs)
 
-    if margin is None:
+    active_positions = candidate_positions
+    eps_threshold = Fraction(args.active_eps_max)
+    active_positions = [q for q in candidate_positions if eps_by_q[q] <= eps_threshold]
+    if not active_positions and candidate_positions:
+        print("Warning: no active positions satisfy active-eps-max; certificate may be vacuous.")
+
+    if active_positions:
+        eps = max(eps_by_q[q] for q in active_positions)
+        margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))
+    else:
         margin = Fraction(0)
+
+    if candidate_positions:
+        print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_scores(output_path, args.seq, prev, scores_rat, weights_rat, eps=eps, margin=margin)
+    write_scores(output_path, args.seq, prev, scores_rat, weights_rat,
+                 eps=eps, margin=margin, active=active_positions)
 
     if args.scores_out:
         scores_path = Path(args.scores_out)
         scores_path.parent.mkdir(parents=True, exist_ok=True)
-        write_scores(scores_path, args.seq, prev, scores_rat, weights_rat)
+        write_scores(scores_path, args.seq, prev, scores_rat, weights_rat,
+                     active=active_positions)
 
     if args.values_out:
-        if args.value_dim < 0 or args.value_dim >= values.shape[1]:
-            raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")
         values_path = Path(args.values_out)
         values_path.parent.mkdir(parents=True, exist_ok=True)
-        write_value_range(values_path, args.seq, values[:, args.value_dim], args.decimals)
+        if (args.direction_target is None) != (args.direction_negative is None):
+            raise SystemExit("direction-target and direction-negative must be provided together")
+        if args.direction_target is not None:
+            wte = model.wte.weight.detach().cpu().numpy()
+            if args.direction_target < 0 or args.direction_target >= wte.shape[0]:
+                raise SystemExit("direction-target out of vocab range")
+            if args.direction_negative < 0 or args.direction_negative >= wte.shape[0]:
+                raise SystemExit("direction-negative out of vocab range")
+            direction = wte[args.direction_target] - wte[args.direction_negative]
+            head_dim = model.config.n_embd // model.config.n_head
+            start, end = args.head * head_dim, (args.head + 1) * head_dim
+            w_o = model.h[args.layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
+            dir_head = w_o.T @ direction
+            dir_vals = values @ dir_head
+            write_value_range(values_path, args.seq, dir_vals, args.decimals,
+                              direction_target=args.direction_target,
+                              direction_negative=args.direction_negative)
+        else:
+            if args.value_dim < 0 or args.value_dim >= values.shape[1]:
+                raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")
+            write_value_range(values_path, args.seq, values[:, args.value_dim], args.decimals)
 
     print(f"Wrote certificate to {output_path}")
     if args.scores_out:

@@ -23,6 +23,8 @@ structure SoftmaxMarginCert (seq : Nat) where
   eps : Rat
   /-- Score margin used to justify weight bounds. -/
   margin : Rat
+  /-- Active queries for which bounds are checked. -/
+  active : Finset (Fin seq)
   /-- `prev` selector for induction-style attention. -/
   prev : Fin seq → Fin seq
   /-- Score matrix entries. -/
@@ -33,9 +35,7 @@ structure SoftmaxMarginCert (seq : Nat) where
 /-- Boolean checker for softmax-margin certificates. -/
 def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
   finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
-    if q = 0 then
-      true
-    else
+    if q ∈ c.active then
       finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
           decide (0 ≤ c.weights q k) &&
             (if k = c.prev q then
@@ -48,19 +48,20 @@ def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
           else
             decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
         decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-        decide ((∑ k, c.weights q k) = 1))
+        decide ((∑ k, c.weights q k) = 1)
+    else
+      true)
 
-/-- `checkSoftmaxMarginCert` is sound for `SoftmaxMarginBounds`. -/
+/-- `checkSoftmaxMarginCert` is sound for `SoftmaxMarginBoundsOn`. -/
 theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
     checkSoftmaxMarginCert c = true →
-      Layers.SoftmaxMarginBounds (Val := Rat) c.eps c.margin c.prev c.scores c.weights := by
+      Layers.SoftmaxMarginBoundsOn (Val := Rat) c.eps c.margin (fun q => q ∈ c.active)
+        c.prev c.scores c.weights := by
   classical
   intro hcheck
   have hqall :
       ∀ q ∈ (Finset.univ : Finset (Fin seq)),
-        (if q = 0 then
-          true
-        else
+        (if q ∈ c.active then
           finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
               decide (0 ≤ c.weights q k) &&
                 (if k = c.prev q then
@@ -73,13 +74,13 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
               else
                 decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
             decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1)) = true := by
+            decide ((∑ k, c.weights q k) = 1)
+        else
+          true) = true := by
     have hcheck' : checkSoftmaxMarginCert c = true := hcheck
     have hcheck'' :
         finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
-            if q = 0 then
-              true
-            else
+            if q ∈ c.active then
               finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
                   decide (0 ≤ c.weights q k) &&
                     (if k = c.prev q then
@@ -92,7 +93,9 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
                   else
                     decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
                 decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-                decide ((∑ k, c.weights q k) = 1)) = true := by
+                decide ((∑ k, c.weights q k) = 1)
+            else
+              true) = true := by
       simpa [checkSoftmaxMarginCert] using hcheck'
     exact (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hcheck''
   refine

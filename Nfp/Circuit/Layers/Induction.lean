@@ -74,6 +74,12 @@ def InductionSpecApprox (ε : Val)
     (out vals : Fin (Nat.succ n) → Val) : Prop :=
   ∀ q, q ≠ 0 → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
 
+/-- Approximate induction-head spec restricted to active queries. -/
+def InductionSpecApproxOn (ε : Val) (active : Fin (Nat.succ n) → Prop)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (out vals : Fin (Nat.succ n) → Val) : Prop :=
+  ∀ q, active q → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
+
 /-- Exact induction spec implies the approximate spec for any nonnegative tolerance. -/
 theorem inductionSpecApprox_of_spec (ε : Val) (hε : 0 ≤ ε)
     (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
@@ -175,6 +181,34 @@ structure OneHotApproxBoundsOn (ε : Val) (prev : Fin seq → Fin seq)
   /-- Non-prev weights are at most `ε` on nonzero queries. -/
   other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
 
+/-- Approximate one-hot bounds for attention weights on active queries. -/
+structure OneHotApproxBoundsOnActive (ε : Val) (active : Fin seq → Prop)
+    (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val) : Prop where
+  /-- All weights are nonnegative on active queries. -/
+  nonneg : ∀ q, active q → ∀ k, 0 ≤ weights q k
+  /-- Weights sum to one on active queries. -/
+  sum_one : ∀ q, active q → (∑ k, weights q k) = 1
+  /-- The `prev` weight is within `ε` of one on active queries. -/
+  prev_large : ∀ q, active q → 1 ≤ weights q (prev q) + ε
+  /-- Non-prev weights are at most `ε` on active queries. -/
+  other_le : ∀ q, active q → ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Lift global approximate bounds to an active-set version. -/
+theorem oneHotApproxBoundsOnActive_of_on (ε : Val) (prev : Fin seq → Fin seq)
+    (weights : Fin seq → Fin seq → Val)
+    (h : OneHotApproxBoundsOn (Val := Val) ε prev weights) :
+    OneHotApproxBoundsOnActive (Val := Val) ε (fun q => q ≠ 0) prev weights := by
+  refine { nonneg := ?_, sum_one := ?_, prev_large := ?_, other_le := ?_ }
+  · intro q hq k
+    exact h.nonneg q hq k
+  · intro q hq
+    exact h.sum_one q hq
+  · intro q hq
+    exact h.prev_large q hq
+  · intro q hq k hk
+    exact h.other_le q hq k hk
+
 /-- Approximate induction weights: prev weight near one, others at most `ε`. -/
 def InductionWeightsApprox (ε : Val) (prev : Fin seq → Fin seq)
     (weights : Fin seq → Fin seq → Val) : Prop :=
@@ -199,15 +233,16 @@ variable {n : Nat}
 
 local instance : NeZero (Nat.succ n) := ⟨by simp⟩
 
-/-- Approximate one-hot weights plus bounded values yield an approximate induction spec. -/
-theorem inductionSpecApprox_of_oneHotApprox_valueRange
-    (ε lo hi : Val)
+/-- Approximate one-hot weights plus bounded values yield an approximate induction spec
+    on active queries. -/
+theorem inductionSpecApproxOn_of_oneHotApprox_valueRange
+    (ε lo hi : Val) (active : Fin (Nat.succ n) → Prop)
     (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Val)
     (vals : Fin (Nat.succ n) → Val)
-    (hweights : OneHotApproxBoundsOn (Val := Val) ε prev weights)
+    (hweights : OneHotApproxBoundsOnActive (Val := Val) ε active prev weights)
     (hvals : ValueRangeBounds (Val := Val) lo hi vals) :
-    InductionSpecApprox (Val := Val) (n := n) (ε * (hi - lo)) prev
+    InductionSpecApproxOn (Val := Val) (n := n) (ε * (hi - lo)) active prev
       (fun q => dotProduct (weights q) vals) vals := by
   classical
   intro q hq
@@ -408,6 +443,34 @@ theorem inductionSpecApprox_of_oneHotApprox_valueRange
     exact (sub_le_iff_le_add).1 hlow
   exact ⟨hupper, hlower⟩
 
+/-- Approximate one-hot weights plus bounded values yield an approximate induction spec. -/
+theorem inductionSpecApprox_of_oneHotApprox_valueRange
+    (ε lo hi : Val)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Val)
+    (vals : Fin (Nat.succ n) → Val)
+    (hweights : OneHotApproxBoundsOn (Val := Val) ε prev weights)
+    (hvals : ValueRangeBounds (Val := Val) lo hi vals) :
+    InductionSpecApprox (Val := Val) (n := n) (ε * (hi - lo)) prev
+      (fun q => dotProduct (weights q) vals) vals := by
+  have hweights' :
+      OneHotApproxBoundsOnActive (Val := Val) ε (fun q => q ≠ 0) prev weights :=
+    oneHotApproxBoundsOnActive_of_on (Val := Val) (seq := Nat.succ n)
+      (ε := ε) (prev := prev) (weights := weights) hweights
+  exact
+    inductionSpecApproxOn_of_oneHotApprox_valueRange
+      (Val := Val)
+      (n := n)
+      (ε := ε)
+      (lo := lo)
+      (hi := hi)
+      (active := fun q => q ≠ 0)
+      (prev := prev)
+      (weights := weights)
+      (vals := vals)
+      (hweights := hweights')
+      (hvals := hvals)
+
 end ApproxOutput
 
 section SoftmaxMargin
@@ -428,6 +491,43 @@ structure SoftmaxMarginBounds (ε margin : Val) (prev : Fin seq → Fin seq)
   prev_large : ∀ q, q ≠ 0 → 1 ≤ weights q (prev q) + ε
   /-- Non-prev weights are at most `ε` on nonzero queries. -/
   other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Softmax margin certificates for approximate one-hot weights on active queries. -/
+structure SoftmaxMarginBoundsOn (ε margin : Val) (active : Fin seq → Prop)
+    (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val) : Prop where
+  /-- Score gap between `prev` and other keys on active queries. -/
+  score_margin : ∀ q, active q → ∀ k, k ≠ prev q → scores q k + margin ≤ scores q (prev q)
+  /-- All weights are nonnegative on active queries. -/
+  nonneg : ∀ q, active q → ∀ k, 0 ≤ weights q k
+  /-- Weights sum to one on active queries. -/
+  sum_one : ∀ q, active q → (∑ k, weights q k) = 1
+  /-- The `prev` weight is within `ε` of one on active queries. -/
+  prev_large : ∀ q, active q → 1 ≤ weights q (prev q) + ε
+  /-- Non-prev weights are at most `ε` on active queries. -/
+  other_le : ∀ q, active q → ∀ k, k ≠ prev q → weights q k ≤ ε
+
+/-- Lift global softmax-margin bounds to an active-set version. -/
+theorem softmaxMarginBoundsOn_of_on (ε margin : Val) (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val)
+    (h : SoftmaxMarginBounds (Val := Val) ε margin prev scores weights) :
+    SoftmaxMarginBoundsOn (Val := Val) ε margin (fun q => q ≠ 0) prev scores weights := by
+  refine
+    { score_margin := ?_
+      nonneg := ?_
+      sum_one := ?_
+      prev_large := ?_
+      other_le := ?_ }
+  · intro q hq k hk
+    exact h.score_margin q hq k hk
+  · intro q hq k
+    exact h.nonneg q hq k
+  · intro q hq
+    exact h.sum_one q hq
+  · intro q hq
+    exact h.prev_large q hq
+  · intro q hq k hk
+    exact h.other_le q hq k hk
 
 /-- Margin certificates yield approximate one-hot bounds for the weights. -/
 theorem oneHotApproxBounds_of_softmaxMargin (ε margin : Val) (prev : Fin seq → Fin seq)
@@ -463,6 +563,26 @@ theorem inductionWeightsApprox_of_softmaxMargin (ε margin : Val)
       h)
 
 end SoftmaxMargin
+
+section SoftmaxMarginActive
+
+variable {Val : Type v} [Semiring Val] [PartialOrder Val]
+variable {seq : Nat}
+
+/-- Margin certificates yield approximate one-hot bounds on active queries. -/
+theorem oneHotApproxBoundsOnActive_of_softmaxMargin (ε margin : Val)
+    (active : Fin seq → Prop)
+    (prev : Fin seq → Fin seq)
+    (scores weights : Fin seq → Fin seq → Val)
+    (h : SoftmaxMarginBoundsOn (Val := Val) ε margin active prev scores weights) :
+    OneHotApproxBoundsOnActive (Val := Val) ε active prev weights := by
+  exact
+    { nonneg := h.nonneg
+      sum_one := h.sum_one
+      prev_large := h.prev_large
+      other_le := h.other_le }
+
+end SoftmaxMarginActive
 
 section Attention
 

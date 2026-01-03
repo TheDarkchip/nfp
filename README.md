@@ -32,8 +32,9 @@ Module map and invariants are tracked in `AGENTS.md`.
 
 ## Induction Certification (prototype)
 
-The current end-to-end prototype checks a **softmax-margin certificate** for a single GPT-2-small
-head. The certificate is produced by an **untrusted** helper script and verified by the CLI.
+The current prototype checks **head-level induction certificates** and can optionally compose
+them with a **downstream error bound**. Certificates are produced by **untrusted** helper scripts
+and verified by the CLI.
 
 Generate certificates (untrusted):
 
@@ -41,7 +42,14 @@ Generate certificates (untrusted):
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
   --layer 5 --head 1 --seq 32 --pattern-length 16 \
-  --values-out reports/gpt2_induction.values --value-dim 0
+  --values-out reports/gpt2_induction.values --value-dim 0 \
+  --active-eps-max 1/2
+```
+
+To produce value-range certificates aligned with a logit-diff direction, add:
+
+```
+--direction-target <token_id> --direction-negative <token_id>
 ```
 
 Verify it (trusted checker):
@@ -51,35 +59,141 @@ lake exe nfp induction certify --scores reports/gpt2_induction.cert \
   --values reports/gpt2_induction.values
 ```
 
+You can enforce non-vacuity checks with:
+
+```
+--min-margin <rat>   --max-eps <rat>   --min-active <n>   --min-logit-diff <rat>
+```
+
+To recompute `eps`/`margin` and `lo`/`hi` inside Lean (sound builder), run:
+
+```bash
+lake exe nfp induction certify_sound --scores reports/gpt2_induction.cert \
+  --values reports/gpt2_induction.values
+```
+
+To compute scores/values inside Lean from exact head inputs, run:
+
+```bash
+lake exe nfp induction certify_head --inputs reports/gpt2_induction.head
+```
+
+To add a downstream error bound (end-to-end check), supply a downstream certificate
+that records a nonnegative error bound computed externally:
+
+```bash
+python scripts/build_downstream_linear_cert.py \
+  --output reports/gpt2_downstream.cert \
+  --gain 3/2 --input-bound 5/4
+
+lake exe nfp induction certify_end_to_end --scores reports/gpt2_induction.cert \
+  --values reports/gpt2_induction.values --downstream reports/gpt2_downstream.cert
+```
+
+To build a head-input file from an exported `.nfpt` binary:
+
+```bash
+python scripts/build_gpt2_head_inputs.py --model models/gpt2_rigorous.nfpt \
+  --layer 5 --head 1 --direction-target 17850 --direction-negative 31215 \
+  --output reports/gpt2_induction.head
+```
+
+This extractor is **untrusted** and currently ignores LN/bias terms, so treat it as a
+convenience path for exercising the `certify_head` pipeline rather than a full
+end-to-end verification of GPT-2 internals.
+
 Softmax-margin certificate format (line-oriented):
 
 ```
 seq <n>
 eps <rat>
 margin <rat>
+active <q>
 prev <q> <k>
 score <q> <k> <rat>
 weight <q> <k> <rat>
 ```
 
+`active <q>` lines declare the queries on which the bounds are required; if omitted,
+the checker defaults to all nonzero queries.
+
 Value-range certificate format (line-oriented):
 
 ```
 seq <n>
+direction-target <tok_id>
+direction-negative <tok_id>
 lo <rat>
 hi <rat>
 val <k> <rat>
 ```
 
-The checker validates that the provided scores/weights satisfy `SoftmaxMarginBounds` and that the
-value entries are bounded by `lo`/`hi`. When both are provided, the CLI reports a tolerance
-`eps * (hi - lo)` for the approximate induction spec.
+`direction-*` lines are optional metadata for directional (logit-diff) values.
+
+Downstream linear certificate format (line-oriented):
+
+```
+error <rat>
+gain <rat>
+input-bound <rat>
+```
+
+The checker enforces `error = gain * input-bound` and nonnegativity of all fields.
+
+Head input format for `certify_head` (line-oriented):
+
+```
+seq <n>
+d_model <n>
+d_head <n>
+scale <rat>
+direction-target <tok_id>
+direction-negative <tok_id>
+direction <d> <rat>
+active <q>
+prev <q> <k>
+embed <q> <d> <rat>
+wq <i> <j> <rat>
+wk <i> <j> <rat>
+wv <i> <j> <rat>
+wo <i> <j> <rat>
+```
+
+All `direction`, `embed`, and projection matrices must be fully specified. If no
+`active` lines appear, the checker defaults to all nonzero queries.
+
+The checker derives a softmax tolerance from the score margins and validates the value-range
+bounds. The CLI reports a tolerance `eps * (hi - lo)` for the approximate induction spec.
+
+For tighter, non-vacuous bounds, use `--active-eps-max` when building the certificate to restrict
+`active` queries to positions with small `eps` (at the cost of fewer certified positions).
+You can enforce a minimum active coverage at check time with `--min-active <n>`.
+The default minimum is `max 1 (seq / 8)` when the flag is omitted.
+
+`certify`/`certify_sound`/`certify_end_to_end` also accept `--min-margin` and `--max-eps` to
+reject vacuous score gaps or overly large tolerances (defaults: `0` and `1/2`).
+
+If the value-range certificate is built from a logit-diff direction (see below),
+the checker also reports `logitDiffLB`. When `direction-target`/`direction-negative`
+metadata is present, the checker defaults `--min-logit-diff` to `0` to avoid
+vacuous directional bounds. You can override with a higher rational literal.
+
+`certify-sound` ignores any supplied `eps`/`margin`/`lo`/`hi` lines and recomputes
+those bounds from the raw entries.
+
+`certify_head` reads a single input file with exact head inputs (embeddings,
+projection weights, direction vector, and scale) and recomputes
+scores/values inside Lean.
 
 ## Soundness statement (what is proven vs checked)
 
 The Lean library defines the core math objects (finite probability, mixers, linearizations, and operator-norm-style bounds) and proves a number of lemmas about them. The CLI sound path produces certificates using exact `Rat` arithmetic and a trusted checker that verifies internal arithmetic relationships between certificate fields.
 
-At present, the checker does **not** include a bridge theorem that connects certificate validity to the Lean-defined Jacobian bounds (for example, a theorem of the form `||layerJacobian - I|| <= C`). Treat sound certificates as **internally consistent bound reports**, not as a fully formal end-to-end verification of transformer Jacobians.
+At present, the checker does **not** include a bridge theorem that connects certificate validity to
+Lean-defined Jacobian bounds (for example, a theorem of the form `||layerJacobian - I|| <= C`).
+The downstream error certificate is only checked for internal arithmetic consistency.
+Treat sound certificates as **internally consistent bound reports**, not as a fully formal
+end-to-end verification of transformer Jacobians.
 
 Margin-based softmax tightening exists, but only **best-match margin evidence** is accepted today. Direct `--softmaxMargin` is rejected by the checker, and best-match logit bounds are generated in untrusted code and only checked for internal consistency.
 

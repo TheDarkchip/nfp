@@ -1,11 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.Order.Ring.Rat
+import Mathlib.Data.Finset.Insert
 import Nfp.Circuit.Cert.SoftmaxMargin
 import Nfp.Circuit.Cert.ValueRange
+import Nfp.Circuit.Cert.DownstreamLinear
+import Nfp.Model.InductionHead
 
 /-!
-Pure parsing helpers for softmax-margin and value-range certificates.
+Pure parsing helpers for softmax-margin, value-range, and downstream certificates.
 -/
 
 namespace Nfp
@@ -38,7 +41,8 @@ private def parseInt (s : String) : Except String Int :=
   | some n => Except.ok n
   | none => Except.error s!"expected Int, got '{s}'"
 
-private def parseRat (s : String) : Except String Rat := do
+/-- Parse a rational literal of the form `a` or `a/b`. -/
+def parseRat (s : String) : Except String Rat := do
   match s.splitOn "/" with
   | [num] =>
       return Rat.ofInt (← parseInt num)
@@ -55,6 +59,8 @@ private def parseRat (s : String) : Except String Rat := do
 private structure SoftmaxMarginParseState (seq : Nat) where
   eps : Option Rat
   margin : Option Rat
+  active : Finset (Fin seq)
+  activeSeen : Bool
   prev : Fin seq → Option (Fin seq)
   scores : Fin seq → Fin seq → Option Rat
   weights : Fin seq → Fin seq → Option Rat
@@ -62,6 +68,8 @@ private structure SoftmaxMarginParseState (seq : Nat) where
 private def initState (seq : Nat) : SoftmaxMarginParseState seq :=
   { eps := none
     margin := none
+    active := ∅
+    activeSeen := false
     prev := fun _ => none
     scores := fun _ _ => none
     weights := fun _ _ => none }
@@ -86,6 +94,17 @@ private def setPrev {seq : Nat} (st : SoftmaxMarginParseState seq)
       throw s!"prev index out of range: k={k}"
   else
     throw s!"prev index out of range: q={q}"
+
+private def setActive {seq : Nat} (st : SoftmaxMarginParseState seq)
+    (q : Nat) : Except String (SoftmaxMarginParseState seq) := do
+  if hq : q < seq then
+    let qFin : Fin seq := ⟨q, hq⟩
+    if qFin ∈ st.active then
+      throw s!"duplicate active entry for q={q}"
+    else
+      return { st with active := insert qFin st.active, activeSeen := true }
+  else
+    throw s!"active index out of range: q={q}"
 
 private def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Rat)
     (q k : Nat) (v : Rat) : Except String (Fin seq → Fin seq → Option Rat) := do
@@ -124,6 +143,8 @@ private def parseLine {seq : Nat} (st : SoftmaxMarginParseState seq)
         throw "duplicate margin entry"
       else
         return { st with margin := some (← parseRat val) }
+  | ["active", q] =>
+      setActive st (← parseNat q)
   | ["prev", q, k] =>
       setPrev st (← parseNat q) (← parseNat k)
   | ["score", q, k, val] =>
@@ -160,9 +181,15 @@ private def finalizeState {seq : Nat} (hpos : 0 < seq)
     (st.scores q k).getD 0
   let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
     (st.weights q k).getD 0
+  let active :=
+    if st.activeSeen then
+      st.active
+    else
+      (Finset.univ : Finset (Fin seq)).erase defaultPrev
   pure
     { eps := eps
       margin := margin
+      active := active
       prev := prevFun
       scores := scoresFun
       weights := weightsFun }
@@ -198,15 +225,89 @@ def parseSoftmaxMarginCert (input : String) :
       let cert ← finalizeState hpos st
       return ⟨seq, cert⟩
 
+/-- Raw softmax-margin payload without `eps`/`margin`. -/
+structure SoftmaxMarginRaw (seq : Nat) where
+  /-- Active queries for which bounds are required. -/
+  active : Finset (Fin seq)
+  /-- `prev` selector for induction-style attention. -/
+  prev : Fin seq → Fin seq
+  /-- Score matrix entries. -/
+  scores : Fin seq → Fin seq → Rat
+  /-- Attention weight entries. -/
+  weights : Fin seq → Fin seq → Rat
+
+private def finalizeRawState {seq : Nat} (hpos : 0 < seq)
+    (st : SoftmaxMarginParseState seq) : Except String (SoftmaxMarginRaw seq) := do
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q => (st.prev q).isSome) then
+    throw "missing prev entries"
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
+      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.scores q k).isSome)) then
+    throw "missing score entries"
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
+      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.weights q k).isSome)) then
+    throw "missing weight entries"
+  let defaultPrev : Fin seq := ⟨0, hpos⟩
+  let prevFun : Fin seq → Fin seq := fun q =>
+    (st.prev q).getD defaultPrev
+  let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
+    (st.scores q k).getD 0
+  let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
+    (st.weights q k).getD 0
+  let active :=
+    if st.activeSeen then
+      st.active
+    else
+      (Finset.univ : Finset (Fin seq)).erase defaultPrev
+  pure
+    { active := active
+      prev := prevFun
+      scores := scoresFun
+      weights := weightsFun }
+
+/-- Parse a raw softmax-margin payload from text (ignores any `eps`/`margin`). -/
+def parseSoftmaxMarginRaw (input : String) :
+    Except String (Sigma SoftmaxMarginRaw) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let mut seq? : Option Nat := none
+  for t in tokens do
+    match t with
+    | ["seq", n] =>
+        if seq?.isSome then
+          throw "duplicate seq entry"
+        else
+          seq? := some (← parseNat n)
+    | _ => pure ()
+  let seq ←
+    match seq? with
+    | some v => pure v
+    | none => throw "missing seq entry"
+  match seq with
+  | 0 => throw "seq must be positive"
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let hpos : 0 < seq := Nat.succ_pos n
+      let st0 : SoftmaxMarginParseState seq := initState seq
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | _ => parseLine st t) st0
+      let raw ← finalizeRawState hpos st
+      return ⟨seq, raw⟩
+
 private structure ValueRangeParseState (seq : Nat) where
   lo : Option Rat
   hi : Option Rat
   vals : Fin seq → Option Rat
+  directionTarget : Option Nat
+  directionNegative : Option Nat
 
 private def initValueRangeState (seq : Nat) : ValueRangeParseState seq :=
   { lo := none
     hi := none
-    vals := fun _ => none }
+    vals := fun _ => none
+    directionTarget := none
+    directionNegative := none }
 
 private def setVal {seq : Nat} (st : ValueRangeParseState seq)
     (k : Nat) (v : Rat) : Except String (ValueRangeParseState seq) := do
@@ -240,6 +341,16 @@ private def parseValueLine {seq : Nat} (st : ValueRangeParseState seq)
         return { st with hi := some (← parseRat val) }
   | ["val", k, val] =>
       setVal st (← parseNat k) (← parseRat val)
+  | ["direction-target", tok] =>
+      if st.directionTarget.isSome then
+        throw "duplicate direction-target entry"
+      else
+        return { st with directionTarget := some (← parseNat tok) }
+  | ["direction-negative", tok] =>
+      if st.directionNegative.isSome then
+        throw "duplicate direction-negative entry"
+      else
+        return { st with directionNegative := some (← parseNat tok) }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
@@ -257,7 +368,14 @@ private def finalizeValueState {seq : Nat} (st : ValueRangeParseState seq) :
     throw "missing value entries"
   let valsFun : Fin seq → Rat := fun k =>
     (st.vals k).getD 0
-  return { lo := lo, hi := hi, vals := valsFun }
+  let direction ←
+    match st.directionTarget, st.directionNegative with
+    | none, none => pure none
+    | some target, some negative =>
+        pure (some { target := target, negative := negative })
+    | _, _ =>
+        throw "direction metadata requires both direction-target and direction-negative"
+  return { lo := lo, hi := hi, vals := valsFun, direction := direction }
 
 /-- Parse a value-range certificate from a text payload. -/
 def parseValueRangeCert (input : String) :
@@ -288,6 +406,376 @@ def parseValueRangeCert (input : String) :
           | _ => parseValueLine st t) st0
       let cert ← finalizeValueState st
       return ⟨seq, cert⟩
+
+/-- Raw value-range payload without `lo`/`hi` bounds. -/
+structure ValueRangeRaw (seq : Nat) where
+  /-- Value entries. -/
+  vals : Fin seq → Rat
+  /-- Optional logit-diff direction metadata. -/
+  direction : Option Circuit.DirectionSpec
+
+private def finalizeValueRawState {seq : Nat} (st : ValueRangeParseState seq) :
+    Except String (ValueRangeRaw seq) := do
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.vals k).isSome) then
+    throw "missing value entries"
+  let valsFun : Fin seq → Rat := fun k =>
+    (st.vals k).getD 0
+  let direction ←
+    match st.directionTarget, st.directionNegative with
+    | none, none => pure none
+    | some target, some negative =>
+        pure (some { target := target, negative := negative })
+    | _, _ =>
+        throw "direction metadata requires both direction-target and direction-negative"
+  return { vals := valsFun, direction := direction }
+
+/-- Parse a raw value-range payload from text (ignores any `lo`/`hi`). -/
+def parseValueRangeRaw (input : String) :
+    Except String (Sigma ValueRangeRaw) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let mut seq? : Option Nat := none
+  for t in tokens do
+    match t with
+    | ["seq", n] =>
+        if seq?.isSome then
+          throw "duplicate seq entry"
+        else
+          seq? := some (← parseNat n)
+    | _ => pure ()
+  let seq ←
+    match seq? with
+    | some v => pure v
+    | none => throw "missing seq entry"
+  match seq with
+  | 0 => throw "seq must be positive"
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let st0 : ValueRangeParseState seq := initValueRangeState seq
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | _ => parseValueLine st t) st0
+      let raw ← finalizeValueRawState st
+      return ⟨seq, raw⟩
+
+private structure DownstreamLinearParseState where
+  error : Option Rat
+  gain : Option Rat
+  inputBound : Option Rat
+
+private def initDownstreamLinearState : DownstreamLinearParseState :=
+  { error := none, gain := none, inputBound := none }
+
+private def parseDownstreamLinearLine (st : DownstreamLinearParseState)
+    (tokens : List String) : Except String DownstreamLinearParseState := do
+  match tokens with
+  | ["error", val] =>
+      if st.error.isSome then
+        throw "duplicate error entry"
+      else
+        return { st with error := some (← parseRat val) }
+  | ["gain", val] =>
+      if st.gain.isSome then
+        throw "duplicate gain entry"
+      else
+        return { st with gain := some (← parseRat val) }
+  | ["input-bound", val] =>
+      if st.inputBound.isSome then
+        throw "duplicate input-bound entry"
+      else
+        return { st with inputBound := some (← parseRat val) }
+  | _ =>
+      throw s!"unrecognized line: '{String.intercalate " " tokens}'"
+
+private def finalizeDownstreamLinearState (st : DownstreamLinearParseState) :
+    Except String Circuit.DownstreamLinearCert := do
+  let error ←
+    match st.error with
+    | some v => pure v
+    | none => throw "missing error entry"
+  let gain ←
+    match st.gain with
+    | some v => pure v
+    | none => throw "missing gain entry"
+  let inputBound ←
+    match st.inputBound with
+    | some v => pure v
+    | none => throw "missing input-bound entry"
+  return { error := error, gain := gain, inputBound := inputBound }
+
+/-- Parse a downstream linear certificate from a text payload. -/
+def parseDownstreamLinearCert (input : String) :
+    Except String Circuit.DownstreamLinearCert := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let st0 := initDownstreamLinearState
+  let st ← tokens.foldlM (fun st t => parseDownstreamLinearLine st t) st0
+  finalizeDownstreamLinearState st
+
+private def setVecEntry {n : Nat} (vec : Fin n → Option Rat)
+    (i : Nat) (v : Rat) : Except String (Fin n → Option Rat) := do
+  if hi : i < n then
+    let iFin : Fin n := ⟨i, hi⟩
+    match vec iFin with
+    | some _ =>
+        throw s!"duplicate entry for index={i}"
+    | none =>
+        let vec' : Fin n → Option Rat := fun i' =>
+          if i' = iFin then
+            some v
+          else
+            vec i'
+        return vec'
+  else
+    throw s!"index out of range: i={i}"
+
+private def setMatEntry {m n : Nat} (mat : Fin m → Fin n → Option Rat)
+    (i j : Nat) (v : Rat) : Except String (Fin m → Fin n → Option Rat) := do
+  if hi : i < m then
+    if hj : j < n then
+      let iFin : Fin m := ⟨i, hi⟩
+      let jFin : Fin n := ⟨j, hj⟩
+      match mat iFin jFin with
+      | some _ =>
+          throw s!"duplicate entry for indices={i},{j}"
+      | none =>
+          let mat' : Fin m → Fin n → Option Rat := fun i' j' =>
+            if i' = iFin then
+              if j' = jFin then
+                some v
+              else
+                mat i' j'
+            else
+              mat i' j'
+          return mat'
+    else
+      throw s!"index out of range: j={j}"
+  else
+    throw s!"index out of range: i={i}"
+
+private structure HeadParseState (seq dModel dHead : Nat) where
+  scale : Option Rat
+  active : Finset (Fin seq)
+  activeSeen : Bool
+  prev : Fin seq → Option (Fin seq)
+  embed : Fin seq → Fin dModel → Option Rat
+  wq : Fin dModel → Fin dHead → Option Rat
+  wk : Fin dModel → Fin dHead → Option Rat
+  wv : Fin dModel → Fin dHead → Option Rat
+  wo : Fin dModel → Fin dHead → Option Rat
+  directionTarget : Option Nat
+  directionNegative : Option Nat
+  direction : Fin dModel → Option Rat
+
+private def initHeadState (seq dModel dHead : Nat) : HeadParseState seq dModel dHead :=
+  { scale := none
+    active := ∅
+    activeSeen := false
+    prev := fun _ => none
+    embed := fun _ _ => none
+    wq := fun _ _ => none
+    wk := fun _ _ => none
+    wv := fun _ _ => none
+    wo := fun _ _ => none
+    directionTarget := none
+    directionNegative := none
+    direction := fun _ => none }
+
+private def setHeadActive {seq dModel dHead : Nat}
+    (st : HeadParseState seq dModel dHead) (q : Nat) :
+    Except String (HeadParseState seq dModel dHead) := do
+  if hq : q < seq then
+    let qFin : Fin seq := ⟨q, hq⟩
+    return { st with active := st.active ∪ {qFin}, activeSeen := true }
+  else
+    throw s!"active index out of range: q={q}"
+
+private def setHeadPrev {seq dModel dHead : Nat}
+    (st : HeadParseState seq dModel dHead) (q k : Nat) :
+    Except String (HeadParseState seq dModel dHead) := do
+  if hq : q < seq then
+    if hk : k < seq then
+      let qFin : Fin seq := ⟨q, hq⟩
+      let kFin : Fin seq := ⟨k, hk⟩
+      match st.prev qFin with
+      | some _ =>
+          throw s!"duplicate prev entry for q={q}"
+      | none =>
+          let prev' : Fin seq → Option (Fin seq) := fun q' =>
+            if q' = qFin then
+              some kFin
+            else
+              st.prev q'
+          return { st with prev := prev' }
+    else
+      throw s!"prev index out of range: k={k}"
+  else
+    throw s!"prev index out of range: q={q}"
+
+private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dModel dHead)
+    (tokens : List String) : Except String (HeadParseState seq dModel dHead) := do
+  match tokens with
+  | ["scale", val] =>
+      if st.scale.isSome then
+        throw "duplicate scale entry"
+      else
+        return { st with scale := some (← parseRat val) }
+  | ["active", q] =>
+      setHeadActive st (← parseNat q)
+  | ["prev", q, k] =>
+      setHeadPrev st (← parseNat q) (← parseNat k)
+  | ["embed", q, d, val] =>
+      let mat ← setMatEntry st.embed (← parseNat q) (← parseNat d) (← parseRat val)
+      return { st with embed := mat }
+  | ["wq", i, j, val] =>
+      let mat ← setMatEntry st.wq (← parseNat i) (← parseNat j) (← parseRat val)
+      return { st with wq := mat }
+  | ["wk", i, j, val] =>
+      let mat ← setMatEntry st.wk (← parseNat i) (← parseNat j) (← parseRat val)
+      return { st with wk := mat }
+  | ["wv", i, j, val] =>
+      let mat ← setMatEntry st.wv (← parseNat i) (← parseNat j) (← parseRat val)
+      return { st with wv := mat }
+  | ["wo", i, j, val] =>
+      let mat ← setMatEntry st.wo (← parseNat i) (← parseNat j) (← parseRat val)
+      return { st with wo := mat }
+  | ["direction-target", tok] =>
+      if st.directionTarget.isSome then
+        throw "duplicate direction-target entry"
+      else
+        return { st with directionTarget := some (← parseNat tok) }
+  | ["direction-negative", tok] =>
+      if st.directionNegative.isSome then
+        throw "duplicate direction-negative entry"
+      else
+        return { st with directionNegative := some (← parseNat tok) }
+  | ["direction", d, val] =>
+      let vec ← setVecEntry st.direction (← parseNat d) (← parseRat val)
+      return { st with direction := vec }
+  | _ =>
+      throw s!"unrecognized line: '{String.intercalate " " tokens}'"
+
+private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
+    (st : HeadParseState seq dModel dHead) :
+    Except String (Model.InductionHeadInputs seq dModel dHead) := do
+  let scale ←
+    match st.scale with
+    | some v => pure v
+    | none => throw "missing scale entry"
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q => (st.prev q).isSome) then
+    throw "missing prev entries"
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
+      finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.embed q d).isSome)) then
+    throw "missing embed entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
+      finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wq i j).isSome)) then
+    throw "missing wq entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
+      finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wk i j).isSome)) then
+    throw "missing wk entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
+      finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wv i j).isSome)) then
+    throw "missing wv entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
+      finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wo i j).isSome)) then
+    throw "missing wo entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.direction d).isSome) then
+    throw "missing direction entries"
+  let directionSpec ←
+    match st.directionTarget, st.directionNegative with
+    | some target, some negative => pure { target := target, negative := negative }
+    | _, _ =>
+        throw "direction metadata requires both direction-target and direction-negative"
+  let defaultPrev : Fin seq := ⟨0, hpos⟩
+  let prevFun : Fin seq → Fin seq := fun q =>
+    (st.prev q).getD defaultPrev
+  let embedFun : Fin seq → Fin dModel → Rat := fun q d =>
+    (st.embed q d).getD 0
+  let wqFun : Fin dModel → Fin dHead → Rat := fun i j =>
+    (st.wq i j).getD 0
+  let wkFun : Fin dModel → Fin dHead → Rat := fun i j =>
+    (st.wk i j).getD 0
+  let wvFun : Fin dModel → Fin dHead → Rat := fun i j =>
+    (st.wv i j).getD 0
+  let woFun : Fin dModel → Fin dHead → Rat := fun i j =>
+    (st.wo i j).getD 0
+  let directionFun : Fin dModel → Rat := fun d =>
+    (st.direction d).getD 0
+  let active :=
+    if st.activeSeen then
+      st.active
+    else
+      (Finset.univ : Finset (Fin seq)).erase defaultPrev
+  pure
+    { scale := scale
+      active := active
+      prev := prevFun
+      embed := embedFun
+      wq := wqFun
+      wk := wkFun
+      wv := wvFun
+      wo := woFun
+      directionSpec := directionSpec
+      direction := directionFun }
+
+/-- Parse a raw induction head input payload from text. -/
+def parseInductionHeadInputs (input : String) :
+    Except String (Sigma (fun seq =>
+      Sigma (fun dModel => Sigma (fun dHead => Model.InductionHeadInputs seq dModel dHead)))) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let mut seq? : Option Nat := none
+  let mut dModel? : Option Nat := none
+  let mut dHead? : Option Nat := none
+  for t in tokens do
+    match t with
+    | ["seq", n] =>
+        if seq?.isSome then
+          throw "duplicate seq entry"
+        else
+          seq? := some (← parseNat n)
+    | ["d_model", n] =>
+        if dModel?.isSome then
+          throw "duplicate d_model entry"
+        else
+          dModel? := some (← parseNat n)
+    | ["d_head", n] =>
+        if dHead?.isSome then
+          throw "duplicate d_head entry"
+        else
+          dHead? := some (← parseNat n)
+    | _ => pure ()
+  let seq ←
+    match seq? with
+    | some v => pure v
+    | none => throw "missing seq entry"
+  let dModel ←
+    match dModel? with
+    | some v => pure v
+    | none => throw "missing d_model entry"
+  let dHead ←
+    match dHead? with
+    | some v => pure v
+    | none => throw "missing d_head entry"
+  match seq, dModel, dHead with
+  | 0, _, _ => throw "seq must be positive"
+  | _, 0, _ => throw "d_model must be positive"
+  | _, _, 0 => throw "d_head must be positive"
+  | Nat.succ n, Nat.succ m, Nat.succ h =>
+      let seq := Nat.succ n
+      let dModel := Nat.succ m
+      let dHead := Nat.succ h
+      let hpos : 0 < seq := Nat.succ_pos n
+      let st0 : HeadParseState seq dModel dHead := initHeadState seq dModel dHead
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | ["d_model", _] => pure st
+          | ["d_head", _] => pure st
+          | _ => parseHeadLine st t) st0
+      let inputs ← finalizeHeadState hpos st
+      return ⟨seq, ⟨dModel, ⟨dHead, inputs⟩⟩⟩
 
 end Pure
 

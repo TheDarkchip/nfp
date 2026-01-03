@@ -1,6 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Nfp.IO.Pure
+import Nfp.Circuit.Cert.LogitDiff
+import Nfp.Circuit.Cert.DownstreamLinear
+import Nfp.Sound.Induction
 
 /-!
 IO wrappers for loading and checking induction certificates.
@@ -18,11 +21,36 @@ def loadSoftmaxMarginCert (path : System.FilePath) :
   let data ← IO.FS.readFile path
   return Pure.parseSoftmaxMarginCert data
 
+/-- Load raw softmax-margin inputs from disk. -/
+def loadSoftmaxMarginRaw (path : System.FilePath) :
+    IO (Except String (Sigma Pure.SoftmaxMarginRaw)) := do
+  let data ← IO.FS.readFile path
+  return Pure.parseSoftmaxMarginRaw data
+
 /-- Load a value-range certificate from disk. -/
 def loadValueRangeCert (path : System.FilePath) :
     IO (Except String (Sigma ValueRangeCert)) := do
   let data ← IO.FS.readFile path
   return Pure.parseValueRangeCert data
+
+/-- Load a downstream linear certificate from disk. -/
+def loadDownstreamLinearCert (path : System.FilePath) :
+    IO (Except String DownstreamLinearCert) := do
+  let data ← IO.FS.readFile path
+  return Pure.parseDownstreamLinearCert data
+
+/-- Load raw value-range inputs from disk. -/
+def loadValueRangeRaw (path : System.FilePath) :
+    IO (Except String (Sigma Pure.ValueRangeRaw)) := do
+  let data ← IO.FS.readFile path
+  return Pure.parseValueRangeRaw data
+
+/-- Load induction head inputs from disk. -/
+def loadInductionHeadInputs (path : System.FilePath) :
+    IO (Except String (Sigma (fun seq =>
+      Sigma (fun dModel => Sigma (fun dHead => Model.InductionHeadInputs seq dModel dHead))))) := do
+  let data ← IO.FS.readFile path
+  return Pure.parseInductionHeadInputs data
 
 private def checkSoftmaxMargin (seq : Nat) (cert : SoftmaxMarginCert seq) :
     IO (Except String Unit) :=
@@ -50,44 +78,439 @@ private def checkValueRange (seq : Nat) (cert : ValueRangeCert seq) :
       else
         return Except.error "value-range certificate rejected"
 
+private def parseRatOpt (label : String) (raw? : Option String) :
+    Except String (Option Rat) :=
+  match raw? with
+  | none => Except.ok none
+  | some raw =>
+      match Pure.parseRat raw with
+      | Except.ok v => Except.ok (some v)
+      | Except.error msg => Except.error s!"invalid {label}: {msg}"
+
 /-- Check induction certificates and print a short status line. -/
 def runInductionCertify (scoresPath : System.FilePath)
-    (valuesPath? : Option System.FilePath) : IO UInt32 := do
-  let parsedScores ← loadSoftmaxMarginCert scoresPath
-  match parsedScores with
-  | Except.error msg =>
+    (valuesPath? : Option System.FilePath) (minActive? : Option Nat)
+    (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
+    (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
-      return 1
-  | Except.ok ⟨seq, cert⟩ =>
-      let scoresOk ← checkSoftmaxMargin seq cert
-      match scoresOk with
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      if minLogitDiff?.isSome && valuesPath?.isNone then
+        IO.eprintln "error: min-logit-diff requires --values"
+        return 2
+      let parsedScores ← loadSoftmaxMarginCert scoresPath
+      match parsedScores with
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"
-          return 2
-      | Except.ok () =>
-          match valuesPath? with
-          | none =>
-              IO.println s!"ok: softmax-margin certificate accepted (seq={seq})"
-              return 0
-          | some valuesPath =>
+          return 1
+      | Except.ok ⟨seq, cert⟩ =>
+          let scoresOk ← checkSoftmaxMargin seq cert
+          match scoresOk with
+          | Except.error msg =>
+              IO.eprintln s!"error: {msg}"
+              return 2
+          | Except.ok () =>
+              let activeCount := cert.active.card
+              let defaultMinActive := max 1 (seq / 8)
+              let minActive := minActive?.getD defaultMinActive
+              if activeCount < minActive then
+                IO.eprintln
+                  s!"error: active queries {activeCount} below minimum {minActive}"
+                return 2
+              if cert.margin < minMargin then
+                IO.eprintln
+                  s!"error: margin {cert.margin} below minimum {minMargin}"
+                return 2
+              if maxEps < cert.eps then
+                IO.eprintln
+                  s!"error: eps {cert.eps} above maximum {maxEps}"
+                return 2
+              match valuesPath? with
+              | none =>
+                  IO.println
+                    s!"ok: softmax-margin certificate accepted \
+                    (seq={seq}, active={activeCount})"
+                  return 0
+              | some valuesPath =>
+                  let parsedValues ← loadValueRangeCert valuesPath
+                  match parsedValues with
+                  | Except.error msg =>
+                      IO.eprintln s!"error: {msg}"
+                      return 1
+                  | Except.ok ⟨seqVals, certVals⟩ =>
+                      if hseq : seqVals ≠ seq then
+                        IO.eprintln s!"error: seq mismatch (scores={seq}, values={seqVals})"
+                        return 2
+                      else
+                        have hseq' : seqVals = seq := by
+                          exact (not_ne_iff).1 hseq
+                        let certVals' : ValueRangeCert seq := by
+                          simpa [hseq'] using certVals
+                        let valuesOk ← checkValueRange seq certVals'
+                        match valuesOk with
+                        | Except.error msg =>
+                            IO.eprintln s!"error: {msg}"
+                            return 2
+                        | Except.ok () =>
+                            let tol := cert.eps * (certVals'.hi - certVals'.lo)
+                            let logitDiffLB? :=
+                              Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
+                                certVals'.lo certVals'.hi certVals'.vals
+                            let effectiveMinLogitDiff :=
+                              match minLogitDiff?, certVals'.direction with
+                              | some v, _ => some v
+                              | none, some _ => some (0 : Rat)
+                              | none, none => none
+                            match logitDiffLB? with
+                            | none =>
+                                IO.eprintln "error: empty active set for logit-diff bound"
+                                return (2 : UInt32)
+                            | some logitDiffLB =>
+                                let violation? : Option Rat :=
+                                  match effectiveMinLogitDiff with
+                                  | none => none
+                                  | some minLogitDiff =>
+                                      if logitDiffLB < minLogitDiff then
+                                        some minLogitDiff
+                                      else
+                                        none
+                                match violation? with
+                                | some minLogitDiff =>
+                                    IO.eprintln
+                                      s!"error: logitDiffLB {logitDiffLB} \
+                                      below minimum {minLogitDiff}"
+                                    return (2 : UInt32)
+                                | none =>
+                                IO.println
+                                  s!"ok: induction bound certified \
+                                  (seq={seq}, active={activeCount}, tol={tol}, \
+                                  logitDiffLB={logitDiffLB})"
+                                return 0
+
+/-- Build and check induction certificates from raw scores/values. -/
+def runInductionCertifySound (scoresPath : System.FilePath)
+    (valuesPath : System.FilePath) (minActive? : Option Nat)
+    (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
+    (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      let parsedScores ← loadSoftmaxMarginRaw scoresPath
+      match parsedScores with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨seq, raw⟩ =>
+          match seq with
+          | 0 =>
+              IO.eprintln "error: seq must be positive"
+              return 2
+          | Nat.succ n =>
+              let seq := Nat.succ n
+              let _ : NeZero seq := ⟨by simp⟩
+              match Sound.buildSoftmaxMarginCert? raw.active raw.prev raw.scores raw.weights with
+              | none =>
+                  IO.eprintln "error: softmax-margin inputs rejected"
+                  return 2
+              | some ⟨cert, _⟩ =>
+                  let activeCount := cert.active.card
+                  let defaultMinActive := max 1 (seq / 8)
+                  let minActive := minActive?.getD defaultMinActive
+                  if activeCount < minActive then
+                    IO.eprintln
+                      s!"error: active queries {activeCount} below minimum {minActive}"
+                    return 2
+                  if cert.margin < minMargin then
+                    IO.eprintln
+                      s!"error: margin {cert.margin} below minimum {minMargin}"
+                    return 2
+                  if maxEps < cert.eps then
+                    IO.eprintln
+                      s!"error: eps {cert.eps} above maximum {maxEps}"
+                    return 2
+                  let parsedValues ← loadValueRangeRaw valuesPath
+                  match parsedValues with
+                  | Except.error msg =>
+                      IO.eprintln s!"error: {msg}"
+                      return 1
+                  | Except.ok ⟨seqVals, rawVals⟩ =>
+                      if hseq : seqVals ≠ seq then
+                        IO.eprintln
+                          s!"error: seq mismatch (scores={seq}, values={seqVals})"
+                        return 2
+                      else
+                        have hseq' : seqVals = seq := by
+                          exact (not_ne_iff).1 hseq
+                        let rawVals' : Pure.ValueRangeRaw seq := by
+                          simpa [hseq'] using rawVals
+                        match Sound.buildValueRangeCert? rawVals'.vals rawVals'.direction with
+                        | none =>
+                            IO.eprintln "error: value-range inputs rejected"
+                            return 2
+                        | some ⟨certVals, _⟩ =>
+                            let tol := cert.eps * (certVals.hi - certVals.lo)
+                            let logitDiffLB? :=
+                              Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
+                                certVals.lo certVals.hi certVals.vals
+                            let effectiveMinLogitDiff :=
+                              match minLogitDiff?, certVals.direction with
+                              | some v, _ => some v
+                              | none, some _ => some (0 : Rat)
+                              | none, none => none
+                            match logitDiffLB? with
+                            | none =>
+                                IO.eprintln "error: empty active set for logit-diff bound"
+                                return 2
+                            | some logitDiffLB =>
+                                let violation? : Option Rat :=
+                                  match effectiveMinLogitDiff with
+                                  | none => none
+                                  | some minLogitDiff =>
+                                      if logitDiffLB < minLogitDiff then
+                                        some minLogitDiff
+                                      else
+                                        none
+                                match violation? with
+                                | some minLogitDiff =>
+                                    IO.eprintln
+                                      s!"error: logitDiffLB {logitDiffLB} \
+                                      below minimum {minLogitDiff}"
+                                    return 2
+                                | none =>
+                                IO.println
+                                  s!"ok: induction bound certified \
+                                  (seq={seq}, active={activeCount}, \
+                                  tol={tol}, logitDiffLB={logitDiffLB})"
+                                return 0
+
+/-- Check end-to-end induction certificates with a downstream error bound. -/
+def runInductionCertifyEndToEnd (scoresPath : System.FilePath)
+    (valuesPath : System.FilePath) (downstreamPath : System.FilePath)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      let parsedScores ← loadSoftmaxMarginCert scoresPath
+      match parsedScores with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨seq, cert⟩ =>
+          let scoresOk ← checkSoftmaxMargin seq cert
+          match scoresOk with
+          | Except.error msg =>
+              IO.eprintln s!"error: {msg}"
+              return 2
+          | Except.ok () =>
+              let activeCount := cert.active.card
+              let defaultMinActive := max 1 (seq / 8)
+              let minActive := minActive?.getD defaultMinActive
+              if activeCount < minActive then
+                IO.eprintln
+                  s!"error: active queries {activeCount} below minimum {minActive}"
+                return 2
+              if cert.margin < minMargin then
+                IO.eprintln
+                  s!"error: margin {cert.margin} below minimum {minMargin}"
+                return 2
+              if maxEps < cert.eps then
+                IO.eprintln
+                  s!"error: eps {cert.eps} above maximum {maxEps}"
+                return 2
               let parsedValues ← loadValueRangeCert valuesPath
               match parsedValues with
               | Except.error msg =>
                   IO.eprintln s!"error: {msg}"
                   return 1
               | Except.ok ⟨seqVals, certVals⟩ =>
-                  if seqVals ≠ seq then
+                  if hseq : seqVals ≠ seq then
                     IO.eprintln s!"error: seq mismatch (scores={seq}, values={seqVals})"
                     return 2
-                  let valuesOk ← checkValueRange seqVals certVals
-                  match valuesOk with
-                  | Except.error msg =>
-                      IO.eprintln s!"error: {msg}"
+                  else
+                    have hseq' : seqVals = seq := by
+                      exact (not_ne_iff).1 hseq
+                    let certVals' : ValueRangeCert seq := by
+                      simpa [hseq'] using certVals
+                    let valuesOk ← checkValueRange seq certVals'
+                    match valuesOk with
+                    | Except.error msg =>
+                        IO.eprintln s!"error: {msg}"
+                        return 2
+                    | Except.ok () =>
+                        let logitDiffLB? :=
+                          Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
+                            certVals'.lo certVals'.hi certVals'.vals
+                        let effectiveMinLogitDiff :=
+                          match minLogitDiff?, certVals'.direction with
+                          | some v, _ => some v
+                          | none, some _ => some (0 : Rat)
+                          | none, none => none
+                        match logitDiffLB? with
+                        | none =>
+                            IO.eprintln "error: empty active set for logit-diff bound"
+                            return (2 : UInt32)
+                        | some logitDiffLB =>
+                            let parsedDownstream ← loadDownstreamLinearCert downstreamPath
+                            match parsedDownstream with
+                            | Except.error msg =>
+                                IO.eprintln s!"error: {msg}"
+                                return 1
+                            | Except.ok downstream =>
+                                let downstreamOk := Circuit.checkDownstreamLinearCert downstream
+                                if downstreamOk then
+                                  let finalLB := logitDiffLB - downstream.error
+                                  let violation? : Option Rat :=
+                                    match effectiveMinLogitDiff with
+                                    | none => none
+                                    | some minLogitDiff =>
+                                        if finalLB < minLogitDiff then
+                                          some minLogitDiff
+                                        else
+                                          none
+                                  match violation? with
+                                  | some minLogitDiff =>
+                                      IO.eprintln
+                                        s!"error: end-to-end logitDiffLB {finalLB} \
+                                        below minimum {minLogitDiff}"
+                                      return (2 : UInt32)
+                                  | none =>
+                                      IO.println
+                                        s!"ok: end-to-end induction bound certified \
+                                        (seq={seq}, active={activeCount}, \
+                                        logitDiffLB={logitDiffLB}, \
+                                        downstreamError={downstream.error}, \
+                                        finalLB={finalLB})"
+                                      return 0
+                                else
+                                  IO.eprintln "error: downstream certificate rejected"
+                                  return 2
+
+/-- Build and check induction certificates from exact head inputs. -/
+def runInductionCertifyHead (inputsPath : System.FilePath)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      let parsedInputs ← loadInductionHeadInputs inputsPath
+      match parsedInputs with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨seq, ⟨dModel, ⟨dHead, inputs⟩⟩⟩ =>
+          match seq with
+          | 0 =>
+              IO.eprintln "error: seq must be positive"
+              return 2
+          | Nat.succ n =>
+              let seq := Nat.succ n
+              let _ : NeZero seq := ⟨by simp⟩
+              match Sound.buildInductionCertFromHead? inputs with
+              | none =>
+                  IO.eprintln "error: head inputs rejected"
+                  return 2
+              | some ⟨cert, _hcert⟩ =>
+                  let activeCount := cert.active.card
+                  let defaultMinActive := max 1 (seq / 8)
+                  let minActive := minActive?.getD defaultMinActive
+                  if activeCount < minActive then
+                    IO.eprintln
+                      s!"error: active queries {activeCount} below minimum {minActive}"
+                    return 2
+                  if cert.margin < minMargin then
+                    IO.eprintln
+                      s!"error: margin {cert.margin} below minimum {minMargin}"
+                    return 2
+                  if maxEps < cert.eps then
+                    IO.eprintln
+                      s!"error: eps {cert.eps} above maximum {maxEps}"
+                    return 2
+                  let tol := cert.eps * (cert.values.hi - cert.values.lo)
+                  let logitDiffLB? :=
+                    Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
+                      cert.values.lo cert.values.hi cert.values.vals
+                  let effectiveMinLogitDiff :=
+                    match minLogitDiff? with
+                    | some v => some v
+                    | none => some (0 : Rat)
+                  match logitDiffLB? with
+                  | none =>
+                      IO.eprintln "error: empty active set for logit-diff bound"
                       return 2
-                  | Except.ok () =>
-                      let tol := cert.eps * (certVals.hi - certVals.lo)
-                      IO.println s!"ok: induction bound certified (seq={seq}, tol={tol})"
-                      return 0
+                  | some logitDiffLB =>
+                      let violation? : Option Rat :=
+                        match effectiveMinLogitDiff with
+                        | none => none
+                        | some minLogitDiff =>
+                            if logitDiffLB < minLogitDiff then
+                              some minLogitDiff
+                            else
+                              none
+                      match violation? with
+                      | some minLogitDiff =>
+                          IO.eprintln
+                            s!"error: logitDiffLB {logitDiffLB} \
+                            below minimum {minLogitDiff}"
+                          return 2
+                      | none =>
+                          IO.println
+                            s!"ok: induction bound certified \
+                            (seq={seq}, active={activeCount}, \
+                            tol={tol}, logitDiffLB={logitDiffLB})"
+                          return 0
 
 end IO
 
