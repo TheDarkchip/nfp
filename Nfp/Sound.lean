@@ -2,6 +2,7 @@
 
 import Nfp.Sound.Gpt2.HeadInputs
 import Nfp.Sound.Induction
+import Nfp.Sound.Bounds.MatrixNorm
 import Nfp.Sound.Linear.FinFold
 
 /-!

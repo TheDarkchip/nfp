@@ -339,6 +339,8 @@ but you **must** update this list in the same commit.
 ### 5.7 Sound certification
 - `Nfp/Sound/Induction.lean`
   - Sound builders for induction certificates from exact inputs.
+- `Nfp/Sound/Bounds/MatrixNorm.lean`
+  - Row-sum matrix norms and downstream linear certificate builders.
 - `Nfp/Sound/Linear/FinFold.lean`
   - Tail-recursive folds and sums for sound linear computations.
 - `Nfp/Sound/Gpt2/HeadInputs.lean`
