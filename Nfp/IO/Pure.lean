@@ -2,9 +2,10 @@
 
 import Mathlib.Algebra.Order.Ring.Rat
 import Nfp.Circuit.Cert.SoftmaxMargin
+import Nfp.Circuit.Cert.ValueRange
 
 /-!
-Pure parsing helpers for softmax-margin certificates.
+Pure parsing helpers for softmax-margin and value-range certificates.
 -/
 
 namespace Nfp
@@ -16,7 +17,7 @@ namespace Pure
 open Nfp.Circuit
 
 private def splitWords (line : String) : List String :=
-  line.split (fun c => c = ' ' || c = '\t') |>.filter (· ≠ "")
+  line.splitToList (fun c => c = ' ' || c = '\t') |>.filter (· ≠ "")
 
 private def cleanTokens (line : String) : Option (List String) :=
   let trimmed := line.trim
@@ -37,9 +38,10 @@ private def parseInt (s : String) : Except String Int :=
   | some n => Except.ok n
   | none => Except.error s!"expected Int, got '{s}'"
 
-private def parseRat (s : String) : Except String Rat :=
+private def parseRat (s : String) : Except String Rat := do
   match s.splitOn "/" with
-  | [num] => return Rat.ofInt (← parseInt num)
+  | [num] =>
+      return Rat.ofInt (← parseInt num)
   | [num, den] =>
       let n ← parseInt num
       let d ← parseNat den
@@ -47,24 +49,22 @@ private def parseRat (s : String) : Except String Rat :=
         throw s!"invalid rational '{s}': zero denominator"
       else
         return Rat.ofInt n / Rat.ofInt (Int.ofNat d)
-  | _ => throw s!"invalid rational '{s}'"
+  | _ =>
+      throw s!"invalid rational '{s}'"
 
 private structure SoftmaxMarginParseState (seq : Nat) where
   eps : Option Rat
   margin : Option Rat
-  prev : Array (Option (Fin seq))
-  scores : Array (Array (Option Rat))
-  weights : Array (Array (Option Rat))
+  prev : Fin seq → Option (Fin seq)
+  scores : Fin seq → Fin seq → Option Rat
+  weights : Fin seq → Fin seq → Option Rat
 
 private def initState (seq : Nat) : SoftmaxMarginParseState seq :=
-  let prev := Array.mkArray seq none
-  let row : Array (Option Rat) := Array.mkArray seq none
-  let mat : Array (Array (Option Rat)) := Array.mkArray seq row
   { eps := none
     margin := none
-    prev := prev
-    scores := mat
-    weights := mat }
+    prev := fun _ => none
+    scores := fun _ _ => none
+    weights := fun _ _ => none }
 
 private def setPrev {seq : Nat} (st : SoftmaxMarginParseState seq)
     (q k : Nat) : Except String (SoftmaxMarginParseState seq) := do
@@ -72,30 +72,40 @@ private def setPrev {seq : Nat} (st : SoftmaxMarginParseState seq)
     if hk : k < seq then
       let qFin : Fin seq := ⟨q, hq⟩
       let kFin : Fin seq := ⟨k, hk⟩
-      match st.prev.get qFin with
+      match st.prev qFin with
       | some _ =>
           throw s!"duplicate prev entry for q={q}"
       | none =>
-          let prev' := st.prev.set qFin (some kFin)
+          let prev' : Fin seq → Option (Fin seq) := fun q' =>
+            if q' = qFin then
+              some kFin
+            else
+              st.prev q'
           return { st with prev := prev' }
     else
       throw s!"prev index out of range: k={k}"
   else
     throw s!"prev index out of range: q={q}"
 
-private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
-    (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
+private def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Rat)
+    (q k : Nat) (v : Rat) : Except String (Fin seq → Fin seq → Option Rat) := do
   if hq : q < seq then
     if hk : k < seq then
       let qFin : Fin seq := ⟨q, hq⟩
       let kFin : Fin seq := ⟨k, hk⟩
-      let row := mat.get qFin
-      match row.get kFin with
+      match mat qFin kFin with
       | some _ =>
           throw s!"duplicate matrix entry at ({q}, {k})"
       | none =>
-          let row' := row.set kFin (some v)
-          return mat.set qFin row'
+          let mat' : Fin seq → Fin seq → Option Rat := fun q' k' =>
+            if q' = qFin then
+              if k' = kFin then
+                some v
+              else
+                mat q' k'
+            else
+              mat q' k'
+          return mat'
     else
       throw s!"index out of range: k={k}"
   else
@@ -125,12 +135,6 @@ private def parseLine {seq : Nat} (st : SoftmaxMarginParseState seq)
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
-private def allSomeArray {α : Type} (arr : Array (Option α)) : Bool :=
-  arr.all (fun v => v.isSome)
-
-private def allSomeMatrix {α : Type} (mat : Array (Array (Option α))) : Bool :=
-  mat.all (fun row => row.all (fun v => v.isSome))
-
 private def finalizeState {seq : Nat} (hpos : 0 < seq)
     (st : SoftmaxMarginParseState seq) : Except String (SoftmaxMarginCert seq) := do
   let eps ←
@@ -141,20 +145,22 @@ private def finalizeState {seq : Nat} (hpos : 0 < seq)
     match st.margin with
     | some v => pure v
     | none => throw "missing margin entry"
-  if !allSomeArray st.prev then
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q => (st.prev q).isSome) then
     throw "missing prev entries"
-  if !allSomeMatrix st.scores then
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
+      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.scores q k).isSome)) then
     throw "missing score entries"
-  if !allSomeMatrix st.weights then
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
+      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.weights q k).isSome)) then
     throw "missing weight entries"
   let defaultPrev : Fin seq := ⟨0, hpos⟩
   let prevFun : Fin seq → Fin seq := fun q =>
-    (st.prev.get q).getD defaultPrev
+    (st.prev q).getD defaultPrev
   let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
-    (st.scores.get q).get k |>.getD 0
+    (st.scores q k).getD 0
   let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
-    (st.weights.get q).get k |>.getD 0
-  return
+    (st.weights q k).getD 0
+  pure
     { eps := eps
       margin := margin
       prev := prevFun
@@ -190,6 +196,97 @@ def parseSoftmaxMarginCert (input : String) :
           | ["seq", _] => pure st
           | _ => parseLine st t) st0
       let cert ← finalizeState hpos st
+      return ⟨seq, cert⟩
+
+private structure ValueRangeParseState (seq : Nat) where
+  lo : Option Rat
+  hi : Option Rat
+  vals : Fin seq → Option Rat
+
+private def initValueRangeState (seq : Nat) : ValueRangeParseState seq :=
+  { lo := none
+    hi := none
+    vals := fun _ => none }
+
+private def setVal {seq : Nat} (st : ValueRangeParseState seq)
+    (k : Nat) (v : Rat) : Except String (ValueRangeParseState seq) := do
+  if hk : k < seq then
+    let kFin : Fin seq := ⟨k, hk⟩
+    match st.vals kFin with
+    | some _ =>
+        throw s!"duplicate value entry for k={k}"
+    | none =>
+        let vals' : Fin seq → Option Rat := fun k' =>
+          if k' = kFin then
+            some v
+          else
+            st.vals k'
+        return { st with vals := vals' }
+  else
+    throw s!"value index out of range: k={k}"
+
+private def parseValueLine {seq : Nat} (st : ValueRangeParseState seq)
+    (tokens : List String) : Except String (ValueRangeParseState seq) := do
+  match tokens with
+  | ["lo", val] =>
+      if st.lo.isSome then
+        throw "duplicate lo entry"
+      else
+        return { st with lo := some (← parseRat val) }
+  | ["hi", val] =>
+      if st.hi.isSome then
+        throw "duplicate hi entry"
+      else
+        return { st with hi := some (← parseRat val) }
+  | ["val", k, val] =>
+      setVal st (← parseNat k) (← parseRat val)
+  | _ =>
+      throw s!"unrecognized line: '{String.intercalate " " tokens}'"
+
+private def finalizeValueState {seq : Nat} (st : ValueRangeParseState seq) :
+    Except String (ValueRangeCert seq) := do
+  let lo ←
+    match st.lo with
+    | some v => pure v
+    | none => throw "missing lo entry"
+  let hi ←
+    match st.hi with
+    | some v => pure v
+    | none => throw "missing hi entry"
+  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.vals k).isSome) then
+    throw "missing value entries"
+  let valsFun : Fin seq → Rat := fun k =>
+    (st.vals k).getD 0
+  return { lo := lo, hi := hi, vals := valsFun }
+
+/-- Parse a value-range certificate from a text payload. -/
+def parseValueRangeCert (input : String) :
+    Except String (Sigma ValueRangeCert) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let mut seq? : Option Nat := none
+  for t in tokens do
+    match t with
+    | ["seq", n] =>
+        if seq?.isSome then
+          throw "duplicate seq entry"
+        else
+          seq? := some (← parseNat n)
+    | _ => pure ()
+  let seq ←
+    match seq? with
+    | some v => pure v
+    | none => throw "missing seq entry"
+  match seq with
+  | 0 => throw "seq must be positive"
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let st0 : ValueRangeParseState seq := initValueRangeState seq
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | _ => parseValueLine st t) st0
+      let cert ← finalizeValueState st
       return ⟨seq, cert⟩
 
 end Pure

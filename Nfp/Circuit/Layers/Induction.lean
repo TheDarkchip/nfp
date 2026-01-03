@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Mathlib.Algebra.BigOperators.Ring.Finset
 import Mathlib.Algebra.Order.Monoid.Unbundled.Basic
+import Mathlib.Algebra.Order.Ring.Defs
 import Nfp.Circuit.Layers.Attention
 
 /-!
@@ -86,6 +88,22 @@ theorem inductionSpecApprox_of_spec (ε : Val) (hε : 0 ≤ ε)
         vals (prev q) ≤ vals (prev q) + ε)
 
 end ApproxSpec
+
+section ValueRange
+
+variable {Val : Type v} [PartialOrder Val]
+variable {seq : Nat}
+
+/-- Value-range bounds for a vector of attention values. -/
+structure ValueRangeBounds (lo hi : Val) (vals : Fin seq → Val) : Prop where
+  /-- Lower and upper bounds are ordered. -/
+  lo_le_hi : lo ≤ hi
+  /-- All values are at least `lo`. -/
+  lo_le : ∀ k, lo ≤ vals k
+  /-- All values are at most `hi`. -/
+  le_hi : ∀ k, vals k ≤ hi
+
+end ValueRange
 
 section Bounds
 
@@ -173,6 +191,224 @@ theorem inductionWeightsApprox_of_boundsOn (ε : Val) (prev : Fin seq → Fin se
   exact ⟨h.prev_large q hq, h.other_le q hq⟩
 
 end ApproxBounds
+
+section ApproxOutput
+
+variable {Val : Type v} [Ring Val] [LinearOrder Val] [IsOrderedRing Val]
+variable {n : Nat}
+
+local instance : NeZero (Nat.succ n) := ⟨by simp⟩
+
+/-- Approximate one-hot weights plus bounded values yield an approximate induction spec. -/
+theorem inductionSpecApprox_of_oneHotApprox_valueRange
+    (ε lo hi : Val)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Val)
+    (vals : Fin (Nat.succ n) → Val)
+    (hweights : OneHotApproxBoundsOn (Val := Val) ε prev weights)
+    (hvals : ValueRangeBounds (Val := Val) lo hi vals) :
+    InductionSpecApprox (Val := Val) (n := n) (ε * (hi - lo)) prev
+      (fun q => dotProduct (weights q) vals) vals := by
+  classical
+  intro q hq
+  let others : Finset (Fin (Nat.succ n)) :=
+    (Finset.univ : Finset (Fin (Nat.succ n))).erase (prev q)
+  have hsum_decomp :
+      weights q (prev q) + ∑ k ∈ others, weights q k = ∑ k, weights q k := by
+    simp [others]
+  have hsum :
+      weights q (prev q) + ∑ k ∈ others, weights q k = 1 := by
+    simpa [hweights.sum_one q hq] using hsum_decomp
+  have hsum_others_le : (∑ k ∈ others, weights q k) ≤ ε := by
+    have hprev : 1 ≤ weights q (prev q) + ε := hweights.prev_large q hq
+    have hprev' :
+        weights q (prev q) + ∑ k ∈ others, weights q k ≤ weights q (prev q) + ε := by
+      simpa [hsum] using hprev
+    exact (add_le_add_iff_left (weights q (prev q))).1 hprev'
+  have hsum_others_nonneg : 0 ≤ ∑ k ∈ others, weights q k := by
+    refine Finset.sum_nonneg ?_
+    intro k hk
+    exact hweights.nonneg q hq k
+  have hvals_hi : ∀ k, vals k ≤ hi := hvals.le_hi
+  have hvals_lo : ∀ k, lo ≤ vals k := hvals.lo_le
+  have hdiff_nonneg : 0 ≤ hi - lo := sub_nonneg.mpr hvals.lo_le_hi
+  have hsum_vals_le :
+      (∑ k ∈ others, weights q k * vals k) ≤ (∑ k ∈ others, weights q k) * hi := by
+    have hle : ∀ k ∈ others, weights q k * vals k ≤ weights q k * hi := by
+      intro k hk
+      have hval : vals k ≤ hi := hvals_hi k
+      have hnonneg : 0 ≤ weights q k := hweights.nonneg q hq k
+      exact mul_le_mul_of_nonneg_left hval hnonneg
+    calc
+      ∑ k ∈ others, weights q k * vals k
+          ≤ ∑ k ∈ others, weights q k * hi := Finset.sum_le_sum hle
+      _ = (∑ k ∈ others, weights q k) * hi := by
+          simpa using
+            (Finset.sum_mul (s := others) (f := fun k => weights q k) (a := hi)).symm
+  have hsum_vals_ge :
+      (∑ k ∈ others, weights q k) * lo ≤ (∑ k ∈ others, weights q k * vals k) := by
+    have hle : ∀ k ∈ others, weights q k * lo ≤ weights q k * vals k := by
+      intro k hk
+      have hval : lo ≤ vals k := hvals_lo k
+      have hnonneg : 0 ≤ weights q k := hweights.nonneg q hq k
+      exact mul_le_mul_of_nonneg_left hval hnonneg
+    calc
+      (∑ k ∈ others, weights q k) * lo
+          = ∑ k ∈ others, weights q k * lo := by
+              exact
+                (Finset.sum_mul (s := others) (f := fun k => weights q k) (a := lo))
+      _ ≤ ∑ k ∈ others, weights q k * vals k := Finset.sum_le_sum hle
+  have hsum_prod :
+      weights q (prev q) * vals (prev q) + ∑ k ∈ others, weights q k * vals k =
+        ∑ k, weights q k * vals k := by
+    simp [others]
+  have hout_eq :
+      dotProduct (weights q) vals =
+        weights q (prev q) * vals (prev q) + ∑ k ∈ others, weights q k * vals k := by
+    simpa [dotProduct] using hsum_prod.symm
+  have hsum_val_prev :
+      weights q (prev q) * vals (prev q) +
+          (∑ k ∈ others, weights q k) * vals (prev q) =
+        vals (prev q) := by
+    calc
+      weights q (prev q) * vals (prev q) +
+          (∑ k ∈ others, weights q k) * vals (prev q) =
+        (weights q (prev q) + ∑ k ∈ others, weights q k) * vals (prev q) := by
+          simpa using
+            (add_mul (weights q (prev q)) (∑ k ∈ others, weights q k) (vals (prev q))).symm
+      _ = 1 * vals (prev q) := by
+          simp [hsum]
+      _ = vals (prev q) := by simp
+  have hsplit :
+      (∑ k ∈ others, weights q k) * hi =
+        (∑ k ∈ others, weights q k) * lo +
+          (∑ k ∈ others, weights q k) * (hi - lo) := by
+    calc
+      (∑ k ∈ others, weights q k) * hi =
+          (∑ k ∈ others, weights q k) * lo +
+            (∑ k ∈ others, weights q k) * hi -
+            (∑ k ∈ others, weights q k) * lo := by
+        exact
+          (add_sub_cancel_left
+            ((∑ k ∈ others, weights q k) * lo) ((∑ k ∈ others, weights q k) * hi)).symm
+      _ = (∑ k ∈ others, weights q k) * lo +
+          ((∑ k ∈ others, weights q k) * hi -
+            (∑ k ∈ others, weights q k) * lo) := by
+        simp [sub_eq_add_neg, add_assoc]
+      _ = (∑ k ∈ others, weights q k) * lo +
+          (∑ k ∈ others, weights q k) * (hi - lo) := by
+        simp [mul_sub]
+  have hsum_prev_le :
+      weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * lo ≤
+        vals (prev q) := by
+    have hmul : (∑ k ∈ others, weights q k) * lo ≤
+        (∑ k ∈ others, weights q k) * vals (prev q) :=
+      mul_le_mul_of_nonneg_left (hvals_lo (prev q)) hsum_others_nonneg
+    calc
+      weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * lo
+          ≤ weights q (prev q) * vals (prev q) +
+              (∑ k ∈ others, weights q k) * vals (prev q) := by
+                have h :=
+                  add_le_add_left hmul (weights q (prev q) * vals (prev q))
+                simpa [add_comm, add_left_comm, add_assoc] using h
+      _ = vals (prev q) := hsum_val_prev
+  have hupper_mid :
+      weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi ≤
+        vals (prev q) + (∑ k ∈ others, weights q k) * (hi - lo) := by
+    calc
+      weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi =
+          weights q (prev q) * vals (prev q) +
+            ((∑ k ∈ others, weights q k) * lo +
+              (∑ k ∈ others, weights q k) * (hi - lo)) := by
+            simp [hsplit]
+      _ = weights q (prev q) * vals (prev q) +
+            (∑ k ∈ others, weights q k) * lo +
+            (∑ k ∈ others, weights q k) * (hi - lo) := by
+          simp [add_assoc]
+      _ ≤ vals (prev q) + (∑ k ∈ others, weights q k) * (hi - lo) := by
+          have h :=
+            add_le_add_right hsum_prev_le ((∑ k ∈ others, weights q k) * (hi - lo))
+          simpa [add_comm, add_left_comm, add_assoc] using h
+  have hupper :
+      dotProduct (weights q) vals ≤ vals (prev q) + ε * (hi - lo) := by
+    have hmul :
+        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) :=
+      mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
+    calc
+      dotProduct (weights q) vals =
+          weights q (prev q) * vals (prev q) + ∑ k ∈ others, weights q k * vals k := hout_eq
+      _ ≤ weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi := by
+          have h :=
+            add_le_add_left hsum_vals_le (weights q (prev q) * vals (prev q))
+          simpa [add_comm, add_left_comm, add_assoc] using h
+      _ ≤ vals (prev q) + (∑ k ∈ others, weights q k) * (hi - lo) := hupper_mid
+      _ ≤ vals (prev q) + ε * (hi - lo) := by
+          have h := add_le_add_left hmul (vals (prev q))
+          simpa [add_comm, add_left_comm, add_assoc] using h
+  have hprev_le :
+      vals (prev q) ≤
+        weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi := by
+    have hmul : (∑ k ∈ others, weights q k) * vals (prev q) ≤
+        (∑ k ∈ others, weights q k) * hi :=
+      mul_le_mul_of_nonneg_left (hvals_hi (prev q)) hsum_others_nonneg
+    have hmul' :
+        weights q (prev q) * vals (prev q) +
+            (∑ k ∈ others, weights q k) * vals (prev q) ≤
+          weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi := by
+      have h :=
+        add_le_add_left hmul (weights q (prev q) * vals (prev q))
+      simpa [add_comm, add_left_comm, add_assoc] using h
+    calc
+      vals (prev q) =
+          weights q (prev q) * vals (prev q) +
+            (∑ k ∈ others, weights q k) * vals (prev q) := by
+          simpa using hsum_val_prev.symm
+      _ ≤ weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi := hmul'
+  have hprev_le' :
+      vals (prev q) ≤
+        weights q (prev q) * vals (prev q) +
+          (∑ k ∈ others, weights q k) * lo +
+          (∑ k ∈ others, weights q k) * (hi - lo) := by
+    calc
+      vals (prev q) ≤
+          weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * hi := hprev_le
+      _ =
+          weights q (prev q) * vals (prev q) +
+            (∑ k ∈ others, weights q k) * lo +
+            (∑ k ∈ others, weights q k) * (hi - lo) := by
+          simp [hsplit, add_assoc]
+  have hsub :
+      vals (prev q) - (∑ k ∈ others, weights q k) * (hi - lo) ≤
+        weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * lo := by
+    exact (sub_le_iff_le_add).2 hprev_le'
+  have hlowershift :
+      vals (prev q) - ε * (hi - lo) ≤
+        vals (prev q) - (∑ k ∈ others, weights q k) * (hi - lo) := by
+    have hmul :
+        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) :=
+      mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
+    exact sub_le_sub_left hmul (vals (prev q))
+  have hlow :
+      vals (prev q) - ε * (hi - lo) ≤ dotProduct (weights q) vals := by
+    calc
+      vals (prev q) - ε * (hi - lo) ≤
+          vals (prev q) - (∑ k ∈ others, weights q k) * (hi - lo) := hlowershift
+      _ ≤ weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * lo := hsub
+      _ ≤ dotProduct (weights q) vals := by
+          calc
+            weights q (prev q) * vals (prev q) + (∑ k ∈ others, weights q k) * lo
+                ≤ weights q (prev q) * vals (prev q) + ∑ k ∈ others, weights q k * vals k := by
+                    have h :=
+                      add_le_add_left hsum_vals_ge (weights q (prev q) * vals (prev q))
+                    simpa [add_comm, add_left_comm, add_assoc] using h
+            _ = dotProduct (weights q) vals := by
+                simp [hout_eq]
+  have hlower :
+      vals (prev q) ≤ dotProduct (weights q) vals + ε * (hi - lo) := by
+    exact (sub_le_iff_le_add).1 hlow
+  exact ⟨hupper, hlower⟩
+
+end ApproxOutput
 
 section SoftmaxMargin
 

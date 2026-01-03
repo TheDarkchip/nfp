@@ -25,17 +25,19 @@ def versionCmd : Cmd := `[Cli|
   "Print the NFP version."
 ]
 
-/-- Check a softmax-margin certificate for induction heads. -/
+/-- Check induction certificates for induction heads. -/
 def runInductionCertify (p : Parsed) : IO UInt32 := do
   let scoresPath := p.flag! "scores" |>.as! String
-  IO.runInductionCertify scoresPath
+  let valuesPath? := (p.flag? "values").map (·.as! String)
+  IO.runInductionCertify scoresPath valuesPath?
 
 /-- `nfp induction certify` subcommand. -/
 def inductionCertifyCmd : Cmd := `[Cli|
   certify VIA runInductionCertify;
-  "Check a softmax-margin certificate for induction heads."
+  "Check induction certificates for induction heads."
   FLAGS:
     scores : String; "Path to the softmax-margin certificate file."
+    values : String; "Optional path to a value-range certificate file."
 ]
 
 /-- Induction-head subcommands. -/
@@ -51,7 +53,7 @@ def nfpCmd : Cmd := `[Cli|
   nfp NOOP;
   "NFP: Neural Formal Pathways (rewrite in progress)."
   SUBCOMMANDS:
-    versionCmd
+    versionCmd;
     inductionCmd
 ]
 

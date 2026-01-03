@@ -30,6 +30,51 @@ Current core modules (new):
 
 Module map and invariants are tracked in `AGENTS.md`.
 
+## Induction Certification (prototype)
+
+The current end-to-end prototype checks a **softmax-margin certificate** for a single GPT-2-small
+head. The certificate is produced by an **untrusted** helper script and verified by the CLI.
+
+Generate certificates (untrusted):
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 5 --head 1 --seq 32 --pattern-length 16 \
+  --values-out reports/gpt2_induction.values --value-dim 0
+```
+
+Verify it (trusted checker):
+
+```bash
+lake exe nfp induction certify --scores reports/gpt2_induction.cert \
+  --values reports/gpt2_induction.values
+```
+
+Softmax-margin certificate format (line-oriented):
+
+```
+seq <n>
+eps <rat>
+margin <rat>
+prev <q> <k>
+score <q> <k> <rat>
+weight <q> <k> <rat>
+```
+
+Value-range certificate format (line-oriented):
+
+```
+seq <n>
+lo <rat>
+hi <rat>
+val <k> <rat>
+```
+
+The checker validates that the provided scores/weights satisfy `SoftmaxMarginBounds` and that the
+value entries are bounded by `lo`/`hi`. When both are provided, the CLI reports a tolerance
+`eps * (hi - lo)` for the approximate induction spec.
+
 ## Soundness statement (what is proven vs checked)
 
 The Lean library defines the core math objects (finite probability, mixers, linearizations, and operator-norm-style bounds) and proves a number of lemmas about them. The CLI sound path produces certificates using exact `Rat` arithmetic and a trusted checker that verifies internal arithmetic relationships between certificate fields.
