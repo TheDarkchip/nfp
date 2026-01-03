@@ -12,6 +12,7 @@ This repo contains:
 > Goal: *no “hand-wavy” numerics in the bound path.* Heuristic estimates (e.g. power iteration) may exist for diagnostics, but the bounds reported as “rigorous” are computed via conservative inequalities.
 
 ## Status
+**Heavy rewrite in progress, please refer to the tabula-rasa branch for current status**
 
 This is research tooling. Interfaces may change; please treat results as experimental unless they are backed by a certificate/check you trust.
 
