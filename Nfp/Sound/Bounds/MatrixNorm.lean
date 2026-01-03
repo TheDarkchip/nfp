@@ -25,10 +25,23 @@ open scoped BigOperators
 def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) : Rat :=
   ∑ j, |W i j|
 
+/-- Weighted row-sum using per-coordinate bounds. -/
+def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) : Rat :=
+  ∑ j, |W i j| * bound j
+
 /-- Maximum row-sum norm (defaults to `0` on empty matrices). -/
 def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) : Rat :=
   if h : (Finset.univ : Finset (Fin m)).Nonempty then
     (Finset.univ).sup' h (fun i => rowSum W i)
+  else
+    0
+
+/-- Maximum weighted row-sum (defaults to `0` on empty matrices). -/
+def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) : Rat :=
+  if h : (Finset.univ : Finset (Fin m)).Nonempty then
+    (Finset.univ).sup' h (fun i => rowSumWeighted W bound i)
   else
     0
 
@@ -38,6 +51,14 @@ theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
   refine Finset.sum_nonneg ?_
   intro j _
   exact abs_nonneg (W i j)
+
+/-- Weighted row-sums are nonnegative under nonnegative bounds. -/
+theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
+    0 ≤ rowSumWeighted W bound i := by
+  refine Finset.sum_nonneg ?_
+  intro j _
+  exact mul_nonneg (abs_nonneg (W i j)) (hbound j)
 
 /-- Each row-sum is bounded by the row-sum norm. -/
 theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
@@ -53,6 +74,22 @@ theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : F
         (by simp : i ∈ (Finset.univ : Finset (Fin m))))
   simpa [rowSumNorm, h] using hle
 
+/-- Each weighted row-sum is bounded by the weighted row-sum norm. -/
+theorem rowSumWeighted_le_rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) :
+    rowSumWeighted W bound i ≤ rowSumWeightedNorm W bound := by
+  classical
+  have h : (Finset.univ : Finset (Fin m)).Nonempty := ⟨i, by simp⟩
+  have hle :
+      rowSumWeighted W bound i ≤
+        (Finset.univ).sup' h (fun i => rowSumWeighted W bound i) := by
+    simpa using
+      (Finset.le_sup'
+        (s := (Finset.univ : Finset (Fin m)))
+        (f := fun i => rowSumWeighted W bound i)
+        (by simp : i ∈ (Finset.univ : Finset (Fin m))))
+  simpa [rowSumWeightedNorm, h] using hle
+
 /-- The row-sum norm is nonnegative. -/
 theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) :
     0 ≤ rowSumNorm W := by
@@ -63,6 +100,31 @@ theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) :
     have hle : rowSum W i ≤ rowSumNorm W := rowSum_le_rowSumNorm W i
     exact le_trans hrow hle
   · simp [rowSumNorm, h]
+
+/-- Weighted row-sum norm is nonnegative under nonnegative bounds. -/
+theorem rowSumWeightedNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (hbound : ∀ j, 0 ≤ bound j) :
+    0 ≤ rowSumWeightedNorm W bound := by
+  classical
+  by_cases h : (Finset.univ : Finset (Fin m)).Nonempty
+  · rcases h with ⟨i, hi⟩
+    have hrow : 0 ≤ rowSumWeighted W bound i :=
+      rowSumWeighted_nonneg W bound i hbound
+    have hle : rowSumWeighted W bound i ≤ rowSumWeightedNorm W bound :=
+      rowSumWeighted_le_rowSumWeightedNorm W bound i
+    exact le_trans hrow hle
+  · simp [rowSumWeightedNorm, h]
+
+/-- Downstream error from per-coordinate residual bounds. -/
+def downstreamErrorFromBounds {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) : Rat :=
+  rowSumWeightedNorm W bound
+
+/-- `downstreamErrorFromBounds` is nonnegative. -/
+theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (hbound : ∀ j, 0 ≤ bound j) :
+    0 ≤ downstreamErrorFromBounds W bound := by
+  simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound hbound
 
 /-- Row-sum norm bounds a matrix-vector product under a uniform input bound. -/
 theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)

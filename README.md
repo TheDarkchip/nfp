@@ -125,7 +125,7 @@ lake exe nfp induction certify_end_to_end_model \
   --scores reports/gpt2_induction.cert \
   --values reports/gpt2_induction.values \
   --model models/gpt2_rigorous.nfpt \
-  --input-bound 1/2
+  --residual-bound reports/gpt2_residual.bound
 ```
 
 ## File formats
@@ -178,6 +178,16 @@ w <i> <j> <rat>
 ```
 
 The checker computes a row-sum norm bound from the matrix entries.
+
+### Residual-bound certificate
+
+```
+dim <n>
+bound <i> <rat>
+```
+
+Each `bound` entry supplies a nonnegative absolute bound for the residual vector
+coordinate `i`, used to compute downstream error.
 
 ### Head input format (for `certify_head`)
 

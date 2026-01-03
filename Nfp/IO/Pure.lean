@@ -5,6 +5,7 @@ import Mathlib.Data.Finset.Insert
 import Nfp.Circuit.Cert.SoftmaxMargin
 import Nfp.Circuit.Cert.ValueRange
 import Nfp.Circuit.Cert.DownstreamLinear
+import Nfp.Circuit.Cert.ResidualBound
 import Nfp.Model.InductionHead
 
 /-!
@@ -887,6 +888,67 @@ def parseDownstreamMatrixRaw (input : String) :
           | _ => parseDownstreamMatrixLine st t) st0
       let raw ← finalizeDownstreamMatrixState st
       return ⟨rows, ⟨cols, raw⟩⟩
+
+private structure ResidualBoundParseState (n : Nat) where
+  bounds : Fin n → Option Rat
+
+private def initResidualBoundState (n : Nat) : ResidualBoundParseState n :=
+  { bounds := fun _ => none }
+
+private def setVectorEntry {n : Nat} (bounds : Fin n → Option Rat)
+    (i : Nat) (v : Rat) : Except String (Fin n → Option Rat) := do
+  if hi : i < n then
+    let iFin : Fin n := ⟨i, hi⟩
+    match bounds iFin with
+    | some _ =>
+        throw s!"duplicate bound entry at index {i}"
+    | none =>
+        let bounds' : Fin n → Option Rat := fun i' =>
+          if i' = iFin then
+            some v
+          else
+            bounds i'
+        return bounds'
+  else
+    throw s!"index out of range: {i}"
+
+private def parseResidualBoundLine {n : Nat} (st : ResidualBoundParseState n)
+    (tokens : List String) : Except String (ResidualBoundParseState n) := do
+  match tokens with
+  | ["bound", i, val] =>
+      let bounds ← setVectorEntry st.bounds (← parseNat i) (← parseRat val)
+      return { st with bounds := bounds }
+  | ["dim", _] =>
+      throw "duplicate dim entry"
+  | _ =>
+      throw s!"unrecognized line: '{String.intercalate " " tokens}'"
+
+private def finalizeResidualBoundState {n : Nat} (st : ResidualBoundParseState n) :
+    Except String (Circuit.ResidualBoundCert n) := do
+  if !finsetAll (Finset.univ : Finset (Fin n)) (fun i => (st.bounds i).isSome) then
+    throw "missing bound entries"
+  let bound : Fin n → Rat := fun i =>
+    (st.bounds i).getD 0
+  return { bound := bound }
+
+/-- Parse a residual-bound payload from text. -/
+def parseResidualBoundCert (input : String) :
+    Except String (Sigma (fun n => Circuit.ResidualBoundCert n)) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  match tokens with
+  | [] => throw "empty residual-bound payload"
+  | ["dim", nStr] :: rest =>
+      let n ← parseNat nStr
+      match n with
+      | 0 => throw "dim must be positive"
+      | Nat.succ n' =>
+          let dim := Nat.succ n'
+          let st0 := initResidualBoundState dim
+          let st ← rest.foldlM (fun st t => parseResidualBoundLine st t) st0
+          let cert ← finalizeResidualBoundState st
+          return ⟨dim, cert⟩
+  | _ => throw "expected header 'dim <n>'"
 
 end Pure
 

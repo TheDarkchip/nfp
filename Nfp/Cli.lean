@@ -142,12 +142,12 @@ def runInductionCertifyEndToEndModel (p : Parsed) : IO UInt32 := do
   let scoresPath := p.flag! "scores" |>.as! String
   let valuesPath := p.flag! "values" |>.as! String
   let modelPath := p.flag! "model" |>.as! String
-  let inputBound := p.flag! "input-bound" |>.as! String
+  let residualPath := p.flag! "residual-bound" |>.as! String
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
-  IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath inputBound
+  IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath residualPath
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
 
 /-- `nfp induction certify_end_to_end_model` subcommand. -/
@@ -158,7 +158,7 @@ def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
     scores : String; "Path to the softmax-margin certificate file."
     values : String; "Path to the value-range certificate file."
     model : String; "Path to the NFP_BINARY_V1 model file."
-    "input-bound" : String; "Nonnegative input bound for the downstream matrix (rational literal)."
+    "residual-bound" : String; "Path to the residual-bound certificate file."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \

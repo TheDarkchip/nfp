@@ -291,6 +291,8 @@ but you **must** update this list in the same commit.
   - Logit-diff lower-bound computation for induction certificates.
 - `Nfp/Circuit/Cert/DownstreamLinear.lean`
   - Downstream linear error certificates for end-to-end induction bounds.
+- `Nfp/Circuit/Cert/ResidualBound.lean`
+  - Residual-stream bound certificates for downstream error computation.
 - `Nfp/Circuit/Typed.lean`
   - Typed circuit wrapper and interface-level equivalence checker.
 - `Nfp/Circuit/Compose.lean`

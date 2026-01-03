@@ -12,6 +12,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 - Logit-diff lower bound lemma: `logitDiffLowerBound_le`.
 - Downstream linear certificate soundness: `checkDownstreamLinearCert` implies
   `DownstreamLinearBounds`.
+- Residual-bound certificate soundness: `checkResidualBoundCert` implies
+  `ResidualBoundBounds`.
 - Row-sum matrix norm bounds for `mulVec` under uniform input magnitude.
 
 ## Soundly checked by the trusted CLI
@@ -27,8 +29,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 - `nfp induction certify_end_to_end_matrix` computes a downstream bound from a matrix payload
   using verified row-sum norms, then composes it with the head-level logit-diff lower bound.
 - `nfp induction certify_end_to_end_model` derives a downstream matrix from an `NFP_BINARY_V1`
-  model file (unembedding direction only) and composes it with the head-level logit-diff
-  lower bound.
+  model file (unembedding direction only), computes a downstream error bound from a
+  residual-bound certificate, and composes it with the head-level logit-diff lower bound.
 
 ## Untrusted / heuristic
 
@@ -36,7 +38,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `scripts/build_gpt2_induction_cert.py`, `scripts/build_gpt2_head_inputs.py`,
   `scripts/build_downstream_linear_cert.py`.
 - The head-input extractor currently ignores LayerNorm and bias terms.
-- Any downstream error bound provided externally (outside the matrix-payload or model-based path).
+- Residual-bound certificates are generated externally (unchecked beyond nonnegativity).
+- Any downstream error bound provided externally (outside the matrix-payload path).
 
 ## Not yet proven
 
