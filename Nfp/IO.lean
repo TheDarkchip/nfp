@@ -5,6 +5,7 @@ import Nfp.IO.NfptPure
 import Nfp.Circuit.Cert.LogitDiff
 import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Cert.ResidualBound
+import Nfp.Circuit.Cert.ResidualInterval
 import Nfp.Sound.Bounds.MatrixNorm
 import Nfp.Sound.Induction
 
@@ -54,6 +55,12 @@ def loadResidualBoundCert (path : System.FilePath) :
     IO (Except String (Sigma (fun n => ResidualBoundCert n))) := do
   let data ← IO.FS.readFile path
   return Pure.parseResidualBoundCert data
+
+/-- Load a residual-interval certificate from disk. -/
+def loadResidualIntervalCert (path : System.FilePath) :
+    IO (Except String (Sigma (fun n => ResidualIntervalCert n))) := do
+  let data ← IO.FS.readFile path
+  return Pure.parseResidualIntervalCert data
 
 /-- Load raw value-range inputs from disk. -/
 def loadValueRangeRaw (path : System.FilePath) :
@@ -566,7 +573,7 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
 /-- Check end-to-end induction certificates using a model file and residual bounds. -/
 def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (modelPath : System.FilePath)
-    (residualPath : System.FilePath) (minActive? : Option Nat)
+    (residualIntervalPath : System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
@@ -658,7 +665,8 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                     IO.eprintln s!"error: {msg}"
                                     return 1
                                 | Except.ok ⟨header, start⟩ =>
-                                    let parsedResidual ← loadResidualBoundCert residualPath
+                                    let parsedResidual ←
+                                      loadResidualIntervalCert residualIntervalPath
                                     match parsedResidual with
                                     | Except.error msg =>
                                         IO.eprintln s!"error: {msg}"
@@ -666,10 +674,10 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                     | Except.ok ⟨dim, residualCert⟩ =>
                                         if hdim : dim = header.modelDim then
                                           let residualCert' :
-                                              ResidualBoundCert header.modelDim := by
+                                              ResidualIntervalCert header.modelDim := by
                                             simpa [hdim] using residualCert
                                           let residualOk :=
-                                            Circuit.checkResidualBoundCert residualCert'
+                                            Circuit.checkResidualIntervalCert residualCert'
                                           if residualOk then
                                             let dirPos := dirSpec.target
                                             let dirNeg := dirSpec.negative
@@ -691,13 +699,9 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                     let dirVec :
                                                         Fin header.modelDim → Rat :=
                                                       fun i => colTarget i - colNeg i
-                                                    let W :
-                                                        Matrix (Fin 1)
-                                                          (Fin header.modelDim) Rat :=
-                                                      fun _ j => dirVec j
                                                     let downstreamError :=
-                                                      Sound.Bounds.downstreamErrorFromBounds
-                                                        W residualCert'.bound
+                                                      Sound.Bounds.dotIntervalAbsBound
+                                                        dirVec residualCert'.lo residualCert'.hi
                                                     let finalLB := logitDiffLB - downstreamError
                                                     let violation? : Option Rat :=
                                                       match effectiveMinLogitDiff with
@@ -725,11 +729,11 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                         return 0
                                           else
                                             IO.eprintln
-                                              "error: residual-bound certificate rejected"
+                                              "error: residual-interval certificate rejected"
                                             return 2
                                         else
                                           IO.eprintln
-                                            s!"error: residual bound dim {dim} \
+                                            s!"error: residual interval dim {dim} \
                                             does not match model dim {header.modelDim}"
                                           return 2
 

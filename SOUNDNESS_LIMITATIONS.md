@@ -10,7 +10,7 @@ It is intentionally brief and focused on the soundness boundary.
   They do **not** yet imply end-to-end model behavior.
 - Downstream error bounds can be computed from a **matrix payload** inside Lean. A model-based
   path exists, but it currently uses only the unembedding direction and relies on an external
-  **residual-bound certificate** (per-coordinate absolute bounds).
+  **residual-interval certificate** (per-coordinate lower/upper bounds).
 - The `certify_head` path uses a **head-input file** extracted by an untrusted script; the extractor
   currently ignores LayerNorm and bias terms, so it is not end-to-end faithful.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
@@ -21,7 +21,7 @@ It is intentionally brief and focused on the soundness boundary.
 
 - Compute the downstream bound **inside Lean** from model weights and certified residual
   bounds (not just matrix payloads), and wire this into `certify_end_to_end`.
-- Replace untrusted residual-bound generation with a verified derivation from upstream bounds.
+- Replace untrusted residual-interval generation with a verified derivation from upstream bounds.
 - Replace untrusted extraction with a verified parser for model weight slices.
 - Add a formal bridge from certificates to circuit semantics and (eventually) to end-to-end
   transformer claims.

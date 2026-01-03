@@ -126,6 +126,82 @@ theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n)
     0 ≤ downstreamErrorFromBounds W bound := by
   simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound hbound
 
+/-- Lower interval endpoint for a dot product with per-coordinate bounds. -/
+def dotIntervalLower {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
+  ∑ j, if 0 ≤ v j then v j * lo j else v j * hi j
+
+/-- Upper interval endpoint for a dot product with per-coordinate bounds. -/
+def dotIntervalUpper {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
+  ∑ j, if 0 ≤ v j then v j * hi j else v j * lo j
+
+/-- Absolute bound from interval endpoints for a dot product. -/
+def dotIntervalAbsBound {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
+  max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi|
+
+theorem dotIntervalLower_le_dotProduct {n : Nat} (v lo hi x : Fin n → Rat)
+    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
+    dotIntervalLower v lo hi ≤ dotProduct v x := by
+  classical
+  refine Finset.sum_le_sum ?_
+  intro j _
+  by_cases hv : 0 ≤ v j
+  · have h1 : v j * lo j ≤ v j * x j :=
+      mul_le_mul_of_nonneg_left (hlo j) hv
+    simpa [hv] using h1
+  · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
+    have h1 : v j * hi j ≤ v j * x j :=
+      mul_le_mul_of_nonpos_left (hhi j) hv'
+    simpa [hv] using h1
+
+theorem dotProduct_le_dotIntervalUpper {n : Nat} (v lo hi x : Fin n → Rat)
+    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
+    dotProduct v x ≤ dotIntervalUpper v lo hi := by
+  classical
+  refine Finset.sum_le_sum ?_
+  intro j _
+  by_cases hv : 0 ≤ v j
+  · have h1 : v j * x j ≤ v j * hi j :=
+      mul_le_mul_of_nonneg_left (hhi j) hv
+    simpa [hv] using h1
+  · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
+    have h1 : v j * x j ≤ v j * lo j :=
+      mul_le_mul_of_nonpos_left (hlo j) hv'
+    simpa [hv] using h1
+
+theorem abs_le_max_abs_abs_of_interval {a b x : Rat} (hlo : a ≤ x) (hhi : x ≤ b) :
+    |x| ≤ max |a| |b| := by
+  by_cases hx : 0 ≤ x
+  · have hb : 0 ≤ b := le_trans hx hhi
+    have hx' : |x| = x := abs_of_nonneg hx
+    have hb' : |b| = b := abs_of_nonneg hb
+    calc
+      |x| = x := hx'
+      _ ≤ b := hhi
+      _ = |b| := hb'.symm
+      _ ≤ max |a| |b| := le_max_right _ _
+  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
+    have ha : a ≤ 0 := le_trans hlo hx'
+    have hxabs : |x| = -x := abs_of_nonpos hx'
+    have haabs : |a| = -a := abs_of_nonpos ha
+    calc
+      |x| = -x := hxabs
+      _ ≤ -a := neg_le_neg hlo
+      _ = |a| := by simp [haabs]
+      _ ≤ max |a| |b| := le_max_left _ _
+
+theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → Rat)
+    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
+    |dotProduct v x| ≤ dotIntervalAbsBound v lo hi := by
+  have hlow : dotIntervalLower v lo hi ≤ dotProduct v x :=
+    dotIntervalLower_le_dotProduct v lo hi x hlo hhi
+  have hhigh : dotProduct v x ≤ dotIntervalUpper v lo hi :=
+    dotProduct_le_dotIntervalUpper v lo hi x hlo hhi
+  have habs : |dotProduct v x| ≤
+      max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi| :=
+    abs_le_max_abs_abs_of_interval hlow hhigh
+  unfold dotIntervalAbsBound
+  exact habs
+
 /-- Row-sum norm bounds a matrix-vector product under a uniform input bound. -/
 theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (x : Fin n → Rat) (inputBound : Rat)

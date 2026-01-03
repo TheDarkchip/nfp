@@ -293,6 +293,8 @@ but you **must** update this list in the same commit.
   - Downstream linear error certificates for end-to-end induction bounds.
 - `Nfp/Circuit/Cert/ResidualBound.lean`
   - Residual-stream bound certificates for downstream error computation.
+- `Nfp/Circuit/Cert/ResidualInterval.lean`
+  - Residual-stream interval certificates for downstream dot-product bounds.
 - `Nfp/Circuit/Typed.lean`
   - Typed circuit wrapper and interface-level equivalence checker.
 - `Nfp/Circuit/Compose.lean`
