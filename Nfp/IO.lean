@@ -808,7 +808,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           let tol := cert.eps * (cert.values.hi - cert.values.lo)
           let logitDiffLB? :=
             Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
-              cert.values.lo cert.values.hi cert.values.vals
+              cert.values.lo cert.values.hi cert.values.valsLo
           let effectiveMinLogitDiff :=
             match minLogitDiff? with
             | some v => some v
@@ -869,7 +869,7 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
-    (layer head period dirTarget dirNegative : Nat)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
@@ -896,7 +896,7 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
       | Except.ok ⟨header, start⟩ =>
           match
             NfptPure.readInductionHeadInputs
-              data start header layer head period dirTarget dirNegative
+              data start header layer head dirTarget dirNegative period?
           with
           | Except.error msg =>
               IO.eprintln s!"error: {msg}"
@@ -917,7 +917,7 @@ def runInductionHeadInterval (inputsPath : System.FilePath)
 
 /-- Build head-output interval bounds from a model binary. -/
 def runInductionHeadIntervalModel (modelPath : System.FilePath)
-    (layer head period dirTarget dirNegative : Nat)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (outPath? : Option System.FilePath) : IO UInt32 := do
   let data ← IO.FS.readBinFile modelPath
   match NfptPure.parseHeader data with
@@ -927,7 +927,7 @@ def runInductionHeadIntervalModel (modelPath : System.FilePath)
   | Except.ok ⟨header, start⟩ =>
       match
         NfptPure.readInductionHeadInputs
-          data start header layer head period dirTarget dirNegative
+          data start header layer head dirTarget dirNegative period?
       with
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"

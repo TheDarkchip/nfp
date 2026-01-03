@@ -4,6 +4,9 @@ import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Algebra.Order.Ring.Abs
 import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.Matrix.Mul
+import Mathlib.Data.Rat.BigOperators
+import Mathlib.Data.Rat.Cast.Order
+import Mathlib.Data.Real.Basic
 import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Cert.ResidualInterval
 
@@ -212,6 +215,109 @@ theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → R
     abs_le_max_abs_abs_of_interval hlow hhigh
   unfold dotIntervalAbsBound
   exact habs
+
+/-! Real-valued bounds from rational intervals. -/
+
+theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
+    (x : Fin n → Real)
+    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
+    (dotIntervalLower v lo hi : Real) ≤ dotProduct (fun j => (v j : Real)) x := by
+  classical
+  have hcast :
+      (dotIntervalLower v lo hi : Real) =
+        ∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real) := by
+    conv_lhs => simp [dotIntervalLower]
+    refine Finset.sum_congr rfl ?_
+    intro j _
+    by_cases hv : 0 ≤ v j
+    · simp [hv]
+    · simp [hv]
+  have hsum :
+      (∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real)) ≤
+        ∑ j, (v j : Real) * x j := by
+    refine Finset.sum_le_sum ?_
+    intro j _
+    by_cases hv : 0 ≤ v j
+    · have h1 : (v j : Real) * (lo j : Real) ≤ (v j : Real) * x j := by
+        exact mul_le_mul_of_nonneg_left (hlo j) (by exact_mod_cast hv)
+      simpa [hv] using h1
+    · have hv' : (v j : Real) ≤ 0 := by
+        exact_mod_cast (le_of_lt (lt_of_not_ge hv))
+      have h1 : (v j : Real) * (hi j : Real) ≤ (v j : Real) * x j := by
+        exact mul_le_mul_of_nonpos_left (hhi j) hv'
+      simpa [hv] using h1
+  simpa [hcast, dotProduct] using hsum
+
+theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
+    (x : Fin n → Real)
+    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
+    dotProduct (fun j => (v j : Real)) x ≤ (dotIntervalUpper v lo hi : Real) := by
+  classical
+  have hcast :
+      (dotIntervalUpper v lo hi : Real) =
+        ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
+    conv_lhs => simp [dotIntervalUpper]
+    refine Finset.sum_congr rfl ?_
+    intro j _
+    by_cases hv : 0 ≤ v j
+    · simp [hv]
+    · simp [hv]
+  have hsum :
+      ∑ j, (v j : Real) * x j ≤
+        ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
+    refine Finset.sum_le_sum ?_
+    intro j _
+    by_cases hv : 0 ≤ v j
+    · have h1 : (v j : Real) * x j ≤ (v j : Real) * (hi j : Real) := by
+        exact mul_le_mul_of_nonneg_left (hhi j) (by exact_mod_cast hv)
+      simpa [hv] using h1
+    · have hv' : (v j : Real) ≤ 0 := by
+        exact_mod_cast (le_of_lt (lt_of_not_ge hv))
+      have h1 : (v j : Real) * x j ≤ (v j : Real) * (lo j : Real) := by
+        exact mul_le_mul_of_nonpos_left (hlo j) hv'
+      simpa [hv] using h1
+  simpa [hcast, dotProduct] using hsum
+
+theorem abs_le_max_abs_abs_of_interval_real {a b x : Real} (hlo : a ≤ x) (hhi : x ≤ b) :
+    |x| ≤ max |a| |b| := by
+  by_cases hx : 0 ≤ x
+  · have hb : 0 ≤ b := le_trans hx hhi
+    have hx' : |x| = x := abs_of_nonneg hx
+    have hb' : |b| = b := abs_of_nonneg hb
+    calc
+      |x| = x := hx'
+      _ ≤ b := hhi
+      _ = |b| := hb'.symm
+      _ ≤ max |a| |b| := le_max_right _ _
+  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
+    have ha : a ≤ 0 := le_trans hlo hx'
+    have hxabs : |x| = -x := abs_of_nonpos hx'
+    have haabs : |a| = -a := abs_of_nonpos ha
+    calc
+      |x| = -x := hxabs
+      _ ≤ -a := neg_le_neg hlo
+      _ = |a| := by simp [haabs]
+      _ ≤ max |a| |b| := le_max_left _ _
+
+theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n → Rat)
+    (x : Fin n → Real)
+    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
+    |dotProduct (fun j => (v j : Real)) x| ≤ (dotIntervalAbsBound v lo hi : Real) := by
+  have hlow :
+      (dotIntervalLower v lo hi : Real) ≤ dotProduct (fun j => (v j : Real)) x :=
+    dotIntervalLower_le_dotProduct_real v lo hi x hlo hhi
+  have hhigh :
+      dotProduct (fun j => (v j : Real)) x ≤ (dotIntervalUpper v lo hi : Real) :=
+    dotProduct_le_dotIntervalUpper_real v lo hi x hlo hhi
+  have habs :
+      |dotProduct (fun j => (v j : Real)) x| ≤
+        max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| :=
+    abs_le_max_abs_abs_of_interval_real hlow hhigh
+  have hcast :
+      (dotIntervalAbsBound v lo hi : Real) =
+        max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| := by
+    simp [dotIntervalAbsBound]
+  simpa [hcast] using habs
 
 /-- Matrix-interval lower bounds dominate matrix-vector products. -/
 theorem mulVecIntervalLower_le_mulVec {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)

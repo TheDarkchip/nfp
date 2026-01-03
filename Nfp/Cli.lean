@@ -197,14 +197,14 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   let modelPath := p.flag! "model" |>.as! String
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
-  let period := p.flag! "period" |>.as! Nat
+  let period? := (p.flag? "period").map (·.as! Nat)
   let dirTarget := p.flag! "direction-target" |>.as! Nat
   let dirNegative := p.flag! "direction-negative" |>.as! Nat
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
-  IO.runInductionCertifyHeadModel modelPath layer head period dirTarget dirNegative
+  IO.runInductionCertifyHeadModel modelPath layer head dirTarget dirNegative period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
 
 /-- `nfp induction certify_head_model` subcommand. -/
@@ -215,7 +215,7 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head."
     head : Nat; "Head index for the induction head."
-    period : Nat; "Prompt period used to derive active/prev."
+    period : Nat; "Optional prompt period override (default: derive from tokens)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
     "min-active" : Nat; "Optional minimum number of active queries required \
@@ -246,11 +246,11 @@ def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
   let modelPath := p.flag! "model" |>.as! String
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
-  let period := p.flag! "period" |>.as! Nat
+  let period? := (p.flag? "period").map (·.as! Nat)
   let dirTarget := p.flag! "direction-target" |>.as! Nat
   let dirNegative := p.flag! "direction-negative" |>.as! Nat
   let outPath? := (p.flag? "out").map (·.as! String)
-  IO.runInductionHeadIntervalModel modelPath layer head period dirTarget dirNegative outPath?
+  IO.runInductionHeadIntervalModel modelPath layer head dirTarget dirNegative period? outPath?
 
 /-- `nfp induction head_interval_model` subcommand. -/
 def inductionHeadIntervalModelCmd : Cmd := `[Cli|
@@ -260,7 +260,7 @@ def inductionHeadIntervalModelCmd : Cmd := `[Cli|
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head."
     head : Nat; "Head index for the induction head."
-    period : Nat; "Prompt period used to derive active/prev."
+    period : Nat; "Optional prompt period override (default: derive from tokens)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
     out : String; "Optional path to write the residual-interval certificate."

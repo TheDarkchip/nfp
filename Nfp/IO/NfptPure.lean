@@ -226,6 +226,15 @@ private def readNatLE (data : ByteArray) (off : Nat) (count : Nat) : Option Nat 
   else
     none
 
+private def readI32 (data : ByteArray) (off : Nat) : Option Int := do
+  let bits ← readNatLE data off 4
+  let two31 := pow2 31
+  let two32 := pow2 32
+  if bits < two31 then
+    some (Int.ofNat bits)
+  else
+    some (Int.ofNat bits - Int.ofNat two32)
+
 private def readF64Rat (data : ByteArray) (off : Nat) : Option Rat := do
   let bits ← readNatLE data off 8
   ratOfFloatBits bits
@@ -276,6 +285,17 @@ private def readF64List (data : ByteArray) (off : Nat) (count : Nat) :
         return ⟨v :: rest.1, by simp [rest.2]⟩
       | none => throw s!"invalid f64 at offset {off}"
 
+private def readI32List (data : ByteArray) (off : Nat) (count : Nat) :
+    Except String {xs : List Int // xs.length = count} := do
+  match count with
+  | 0 => return ⟨[], rfl⟩
+  | Nat.succ n =>
+      match readI32 data off with
+      | some v =>
+        let rest ← readI32List data (off + bytesI32 1) n
+        return ⟨v :: rest.1, by simp [rest.2]⟩
+      | none => throw s!"invalid i32 at offset {off}"
+
 private def readF64Matrix (data : ByteArray) (off : Nat) (rows cols : Nat) :
     Except String (Fin rows → Fin cols → Rat) := do
   let count := rows * cols
@@ -322,6 +342,19 @@ def readEmbeddings (data : ByteArray) (start : Nat) (h : NfptHeader) :
     Except String (Fin h.seqLen → Fin h.modelDim → Rat) := do
   let base := start + bytesI32 h.seqLen
   readF64Matrix data base h.seqLen h.modelDim
+
+/-- Read input token ids stored in the binary. -/
+def readTokens (data : ByteArray) (start : Nat) (h : NfptHeader) :
+    Except String (Fin h.seqLen → Nat) := do
+  let ⟨vals, hlen⟩ ← readI32List data start h.seqLen
+  let ok := vals.all (fun z => decide (0 ≤ z))
+  if !ok then
+    throw "token ids must be nonnegative"
+  let hlen' : vals.length = h.seqLen := by
+    simpa using hlen
+  let tokens : Fin h.seqLen → Nat := fun i =>
+    Int.toNat (vals.get ⟨i.val, lt_of_lt_of_eq i.isLt hlen'.symm⟩)
+  return tokens
 
 private def headOffset (h : NfptHeader) (layer head : Nat) : Nat :=
   bytesI32 h.seqLen +
@@ -412,9 +445,10 @@ def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : N
 
 /-- Read induction-head inputs directly from the model binary. -/
 def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
-    (layer head period dirTarget dirNegative : Nat) :
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) :
     Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
   let scale ← scaleOfHeadDim h.headDim
+  let tokens ← readTokens data start h
   let embed ← readEmbeddings data start h
   let weights ← readHeadWeights data start h layer head
   let (attnBias, ln1Gamma, ln1Beta) ← readLayerAttnBiasLn1 data start h layer
@@ -423,8 +457,14 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
   let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
   let directionSpec : Circuit.DirectionSpec :=
     { target := dirTarget, negative := dirNegative }
-  let active := Model.activeOfPeriod (seq := h.seqLen) period
-  let prev := Model.prevOfPeriod (seq := h.seqLen) period
+  let active :=
+    match period? with
+    | some period => Model.activeOfPeriod (seq := h.seqLen) period
+    | none => Model.activeOfTokens (seq := h.seqLen) tokens
+  let prev :=
+    match period? with
+    | some period => Model.prevOfPeriod (seq := h.seqLen) period
+    | none => Model.prevOfTokens (seq := h.seqLen) tokens
   pure
     { scale := scale
       active := active

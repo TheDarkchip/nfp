@@ -99,9 +99,13 @@ You can also derive the head inputs directly from an `NFP_BINARY_V1` model file:
 ```bash
 lake exe nfp induction certify_head_model \
   --model models/gpt2_rigorous_with_gelu_kind_seq32.nfpt \
-  --layer 5 --head 1 --period 16 \
+  --layer 5 --head 1 \
   --direction-target 1 --direction-negative 2
 ```
+
+By default, `certify_head_model` derives the `prev` map and active set from the
+token sequence stored in the model file. Use `--period <n>` to override with a
+fixed periodic prompt.
 
 ### End-to-end check with downstream bound (prototype)
 
