@@ -573,6 +573,8 @@ private structure HeadParseState (seq dModel dHead : Nat) where
   bv : Fin dHead → Option Rat
   wo : Fin dModel → Fin dHead → Option Rat
   attnBias : Fin dModel → Option Rat
+  maskCausal : Option Bool
+  maskValue : Option Rat
   directionTarget : Option Nat
   directionNegative : Option Nat
   direction : Fin dModel → Option Rat
@@ -594,6 +596,8 @@ private def initHeadState (seq dModel dHead : Nat) : HeadParseState seq dModel d
     bv := fun _ => none
     wo := fun _ _ => none
     attnBias := fun _ => none
+    maskCausal := none
+    maskValue := none
     directionTarget := none
     directionNegative := none
     direction := fun _ => none }
@@ -679,6 +683,19 @@ private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dMod
   | ["attn_bias", d, val] =>
       let vec ← setVecEntry st.attnBias (← parseNat d) (← parseRat val)
       return { st with attnBias := vec }
+  | ["mask", kind] =>
+      if st.maskCausal.isSome then
+        throw "duplicate mask entry"
+      else
+        match kind with
+        | "causal" => return { st with maskCausal := some true }
+        | "none" => return { st with maskCausal := some false }
+        | _ => throw "mask must be 'causal' or 'none'"
+  | ["mask_value", val] =>
+      if st.maskValue.isSome then
+        throw "duplicate mask_value entry"
+      else
+        return { st with maskValue := some (← parseRat val) }
   | ["direction-target", tok] =>
       if st.directionTarget.isSome then
         throw "duplicate direction-target entry"
@@ -767,6 +784,11 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
     (st.wo i j).getD 0
   let attnBiasFun : Fin dModel → Rat := fun d =>
     (st.attnBias d).getD 0
+  let maskCausal := st.maskCausal.getD false
+  let maskValue :=
+    match st.maskValue with
+    | some v => v
+    | none => if maskCausal then (-10000 : Rat) else 0
   let directionFun : Fin dModel → Rat := fun d =>
     (st.direction d).getD 0
   let active :=
@@ -790,6 +812,8 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
       bv := bvFun
       wo := woFun
       attnBias := attnBiasFun
+      maskCausal := maskCausal
+      maskValue := maskValue
       directionSpec := directionSpec
       direction := directionFun }
 

@@ -62,26 +62,50 @@ theorem variance_nonneg {n : Nat} (x : Fin n → Rat) (h : n ≠ 0) :
     div_nonneg hsum hden
   simpa [variance_def x h] using hdiv
 
-/-- Rational lower bound for a square root. -/
-def sqrtLower (q : Rat) : Rat :=
+/-! Square-root bounds. -/
+
+/-- Base rational lower bound for a square root. -/
+def sqrtLowerBase (q : Rat) : Rat :=
   let num := q.num.natAbs
   let den := q.den
   let a := Nat.sqrt num
   let b := Nat.sqrt den
   (a : Rat) / (b + 1 : Rat)
 
-/-- Rational upper bound for a square root. -/
-def sqrtUpper (q : Rat) : Rat :=
+/-- Base rational upper bound for a square root. -/
+def sqrtUpperBase (q : Rat) : Rat :=
   let num := q.num.natAbs
   let den := q.den
   let a := Nat.sqrt num
   let b := Nat.sqrt den
   (a + 1 : Rat) / (b : Rat)
 
-/-- `sqrtLower` is nonnegative. -/
-theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
+/-- Alternate rational lower bound for a square root. -/
+def sqrtLowerAlt (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
+  let a := Nat.sqrt (num * den)
+  (a : Rat) / den
+
+/-- Alternate rational upper bound for a square root. -/
+def sqrtUpperAlt (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
+  let a := Nat.sqrt (num * den)
+  (a + 1 : Rat) / den
+
+/-- Rational lower bound for a square root (tighter of two bounds). -/
+def sqrtLower (q : Rat) : Rat :=
+  max (sqrtLowerBase q) (sqrtLowerAlt q)
+
+/-- Rational upper bound for a square root (tighter of two bounds). -/
+def sqrtUpper (q : Rat) : Rat :=
+  min (sqrtUpperBase q) (sqrtUpperAlt q)
+
+/-- `sqrtLowerBase` is nonnegative. -/
+theorem sqrtLowerBase_nonneg (q : Rat) : 0 ≤ sqrtLowerBase q := by
   classical
-  unfold sqrtLower
+  unfold sqrtLowerBase
   have hden : 0 ≤ (Nat.sqrt q.den + 1 : Rat) := by
     exact_mod_cast (Nat.zero_le _)
   have hnum : 0 ≤ (Nat.sqrt q.num.natAbs : Rat) := by
@@ -90,10 +114,12 @@ theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
 
 /-! Strict positivity helpers. -/
 
-/-- `sqrtLower` is positive when its input is positive. -/
-theorem sqrtLower_pos {q : Rat} (hq : 0 < q) : 0 < sqrtLower q := by
+/-! Base bounds. -/
+
+/-- `sqrtLowerBase` is positive when its input is positive. -/
+theorem sqrtLowerBase_pos {q : Rat} (hq : 0 < q) : 0 < sqrtLowerBase q := by
   classical
-  unfold sqrtLower
+  unfold sqrtLowerBase
   have hnum_pos : 0 < (Nat.sqrt q.num.natAbs : Rat) := by
     have hnum_pos' : 0 < q.num.natAbs := by
       have hnum : 0 < q.num := (Rat.num_pos (a := q)).2 hq
@@ -103,20 +129,20 @@ theorem sqrtLower_pos {q : Rat} (hq : 0 < q) : 0 < sqrtLower q := by
     exact_mod_cast (Nat.succ_pos _)
   exact div_pos hnum_pos hden_pos
 
-/-- `sqrtUpper` is nonnegative. -/
-theorem sqrtUpper_nonneg (q : Rat) : 0 ≤ sqrtUpper q := by
+/-- `sqrtUpperBase` is nonnegative. -/
+theorem sqrtUpperBase_nonneg (q : Rat) : 0 ≤ sqrtUpperBase q := by
   classical
-  unfold sqrtUpper
+  unfold sqrtUpperBase
   have hden : 0 ≤ (Nat.sqrt q.den : Rat) := by
     exact_mod_cast (Nat.zero_le _)
   have hnum : 0 ≤ (Nat.sqrt q.num.natAbs + 1 : Rat) := by
     exact_mod_cast (Nat.zero_le _)
   exact div_nonneg hnum hden
 
-/-- `sqrtUpper` is always positive. -/
-theorem sqrtUpper_pos (q : Rat) : 0 < sqrtUpper q := by
+/-- `sqrtUpperBase` is always positive. -/
+theorem sqrtUpperBase_pos (q : Rat) : 0 < sqrtUpperBase q := by
   classical
-  unfold sqrtUpper
+  unfold sqrtUpperBase
   have hnum_pos : 0 < (Nat.sqrt q.num.natAbs + 1 : Rat) := by
     exact_mod_cast (Nat.succ_pos _)
   have hden_pos : 0 < (Nat.sqrt q.den : Rat) := by
@@ -124,9 +150,81 @@ theorem sqrtUpper_pos (q : Rat) : 0 < sqrtUpper q := by
     exact_mod_cast (Nat.sqrt_pos.2 hden)
   exact div_pos hnum_pos hden_pos
 
+/-! Alternate bounds. -/
+
+/-- `sqrtLowerAlt` is nonnegative. -/
+theorem sqrtLowerAlt_nonneg (q : Rat) : 0 ≤ sqrtLowerAlt q := by
+  classical
+  unfold sqrtLowerAlt
+  have hnum : 0 ≤ (Nat.sqrt (q.num.natAbs * q.den) : Rat) := by
+    exact_mod_cast (Nat.zero_le _)
+  have hden : 0 ≤ (q.den : Rat) := by
+    exact_mod_cast (Nat.zero_le _)
+  exact div_nonneg hnum hden
+
+/-- `sqrtLowerAlt` is positive when its input is positive. -/
+theorem sqrtLowerAlt_pos {q : Rat} (hq : 0 < q) : 0 < sqrtLowerAlt q := by
+  classical
+  unfold sqrtLowerAlt
+  have hnum_pos : 0 < (Nat.sqrt (q.num.natAbs * q.den) : Rat) := by
+    have hnum_pos' : 0 < q.num.natAbs := by
+      have hnum : 0 < q.num := (Rat.num_pos (a := q)).2 hq
+      exact Int.natAbs_pos.mpr hnum.ne'
+    have hden_pos : 0 < q.den := q.den_pos
+    have hmul_pos : 0 < q.num.natAbs * q.den := by
+      exact Nat.mul_pos hnum_pos' hden_pos
+    exact_mod_cast (Nat.sqrt_pos.2 hmul_pos)
+  have hden_pos : 0 < (q.den : Rat) := by
+    exact_mod_cast q.den_pos
+  exact div_pos hnum_pos hden_pos
+
+/-- `sqrtUpperAlt` is nonnegative. -/
+theorem sqrtUpperAlt_nonneg (q : Rat) : 0 ≤ sqrtUpperAlt q := by
+  classical
+  unfold sqrtUpperAlt
+  have hnum : 0 ≤ (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) := by
+    exact_mod_cast (Nat.zero_le _)
+  have hden : 0 ≤ (q.den : Rat) := by
+    exact_mod_cast (Nat.zero_le _)
+  exact div_nonneg hnum hden
+
+/-- `sqrtUpperAlt` is always positive. -/
+theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
+  classical
+  unfold sqrtUpperAlt
+  have hnum_pos : 0 < (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) := by
+    exact_mod_cast (Nat.succ_pos _)
+  have hden_pos : 0 < (q.den : Rat) := by
+    exact_mod_cast q.den_pos
+  exact div_pos hnum_pos hden_pos
+
+/-! Combined bounds. -/
+
+/-- `sqrtLower` is nonnegative. -/
+theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
+  have hbase : 0 ≤ sqrtLowerBase q := sqrtLowerBase_nonneg q
+  exact le_trans hbase (le_max_left _ _)
+
+/-- `sqrtLower` is positive when its input is positive. -/
+theorem sqrtLower_pos {q : Rat} (hq : 0 < q) : 0 < sqrtLower q := by
+  have hbase : 0 < sqrtLowerBase q := sqrtLowerBase_pos hq
+  exact lt_of_lt_of_le hbase (le_max_left _ _)
+
+/-- `sqrtUpper` is nonnegative. -/
+theorem sqrtUpper_nonneg (q : Rat) : 0 ≤ sqrtUpper q := by
+  have hbase : 0 ≤ sqrtUpperBase q := sqrtUpperBase_nonneg q
+  have halt : 0 ≤ sqrtUpperAlt q := sqrtUpperAlt_nonneg q
+  exact le_min hbase halt
+
+/-- `sqrtUpper` is always positive. -/
+theorem sqrtUpper_pos (q : Rat) : 0 < sqrtUpper q := by
+  have hbase : 0 < sqrtUpperBase q := sqrtUpperBase_pos q
+  have halt : 0 < sqrtUpperAlt q := sqrtUpperAlt_pos q
+  exact lt_min hbase halt
+
 /-- Square-root lower bound in reals. -/
-theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
-    (sqrtLower q : Real) ≤ Real.sqrt (q : Real) := by
+theorem sqrtLowerBase_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
+    (sqrtLowerBase q : Real) ≤ Real.sqrt (q : Real) := by
   classical
   -- Set up numerator/denominator witnesses.
   set num : Nat := q.num.natAbs
@@ -170,11 +268,11 @@ theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
   have hq_nonneg : 0 ≤ (q : Real) := by exact_mod_cast hq
   have hle : (a : Real) / (b + 1 : Real) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
-  simpa [sqrtLower, num, den, a, b] using hle
+  simpa [sqrtLowerBase, num, den, a, b] using hle
 
 /-- Square-root upper bound in reals. -/
-theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
-    Real.sqrt (q : Real) ≤ (sqrtUpper q : Real) := by
+theorem real_sqrt_le_sqrtUpperBase {q : Rat} (hq : 0 ≤ q) :
+    Real.sqrt (q : Real) ≤ (sqrtUpperBase q : Real) := by
   classical
   set num : Nat := q.num.natAbs
   set den : Nat := q.den
@@ -221,7 +319,122 @@ theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
     exact div_nonneg hnum_nonneg hden_nonneg
   have hle : Real.sqrt (q : Real) ≤ (a + 1 : Real) / (b : Real) :=
     (Real.sqrt_le_iff).2 ⟨hnonneg, hsq⟩
-  simpa [sqrtUpper, num, den, a, b] using hle
+  simpa [sqrtUpperBase, num, den, a, b] using hle
+
+/-- Alternate square-root lower bound in reals. -/
+theorem sqrtLowerAlt_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
+    (sqrtLowerAlt q : Real) ≤ Real.sqrt (q : Real) := by
+  classical
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
+  set a : Nat := Nat.sqrt (num * den)
+  have hden_pos : 0 < (den : Real) := by
+    exact_mod_cast q.den_pos
+  have hnumden_le : (a ^ 2 : Real) ≤ (num * den : Nat) := by
+    exact_mod_cast (Nat.sqrt_le' (num * den))
+  have hmul : (a ^ 2 : Real) ≤ (num : Real) * den := by
+    simpa [num, den, Nat.cast_mul] using hnumden_le
+  have hden_pos2 : 0 < (den : Real) ^ 2 := by
+    nlinarith [hden_pos]
+  have hdiv :
+      (a ^ 2 : Real) / (den : Real) ^ 2 ≤ (num : Real) * den / (den : Real) ^ 2 := by
+    have hmul' :
+        (a ^ 2 : Real) * (den : Real) ^ 2 ≤ (num : Real) * den * (den : Real) ^ 2 := by
+      have hden_sq_nonneg : 0 ≤ (den : Real) ^ 2 := by
+        exact sq_nonneg (den : Real)
+      exact mul_le_mul_of_nonneg_right hmul hden_sq_nonneg
+    exact (div_le_div_iff₀ hden_pos2 hden_pos2).2 hmul'
+  have hden_ne : (den : Real) ≠ 0 := by
+    exact_mod_cast q.den_pos.ne'
+  have hq_cast : (q : Real) = (num : Real) * den / (den : Real) ^ 2 := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
+      simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
+    have hnum_cast : (q.num : Real) = (num : Real) := by
+      exact_mod_cast hnum_eq.symm
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
+    have hq_eq :
+        (num : Real) / den = (num : Real) * den / (den : Real) ^ 2 := by
+      field_simp [hden_ne]
+    simpa [hnum_cast, den, hq_eq] using hq_rat
+  have hsq : ((a : Real) / (den : Real)) ^ 2 ≤ (q : Real) := by
+    simpa [hq_cast, pow_two, div_mul_div_comm] using hdiv
+  have hnonneg : 0 ≤ (a : Real) / (den : Real) := by
+    have hnum_nonneg : 0 ≤ (a : Real) := by exact_mod_cast (Nat.zero_le a)
+    have hden_nonneg : 0 ≤ (den : Real) := by exact_mod_cast (Nat.zero_le den)
+    exact div_nonneg hnum_nonneg hden_nonneg
+  have hq_nonneg : 0 ≤ (q : Real) := by exact_mod_cast hq
+  have hle : (a : Real) / (den : Real) ≤ Real.sqrt (q : Real) :=
+    (Real.le_sqrt hnonneg hq_nonneg).2 hsq
+  simpa [sqrtLowerAlt, num, den, a] using hle
+
+/-- Alternate square-root upper bound in reals. -/
+theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
+    Real.sqrt (q : Real) ≤ (sqrtUpperAlt q : Real) := by
+  classical
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
+  set a : Nat := Nat.sqrt (num * den)
+  have hden_pos : 0 < (den : Real) := by
+    exact_mod_cast q.den_pos
+  have hnumden_lt : (num * den : Real) < (a + 1) ^ 2 := by
+    exact_mod_cast (Nat.lt_succ_sqrt' (num * den))
+  have hmul : (num : Real) * den ≤ (a + 1 : Real) ^ 2 := by
+    exact le_of_lt hnumden_lt
+  have hden_pos2 : 0 < (den : Real) ^ 2 := by
+    nlinarith [hden_pos]
+  have hdiv :
+      (num : Real) * den / (den : Real) ^ 2 ≤ (a + 1 : Real) ^ 2 / (den : Real) ^ 2 := by
+    have hmul' :
+        (num : Real) * den * (den : Real) ^ 2 ≤ (a + 1 : Real) ^ 2 * (den : Real) ^ 2 := by
+      have hden_sq_nonneg : 0 ≤ (den : Real) ^ 2 := by
+        exact sq_nonneg (den : Real)
+      exact mul_le_mul_of_nonneg_right hmul hden_sq_nonneg
+    exact (div_le_div_iff₀ hden_pos2 hden_pos2).2 hmul'
+  have hden_ne : (den : Real) ≠ 0 := by
+    exact_mod_cast q.den_pos.ne'
+  have hq_cast : (q : Real) = (num : Real) * den / (den : Real) ^ 2 := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
+      simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
+    have hnum_cast : (q.num : Real) = (num : Real) := by
+      exact_mod_cast hnum_eq.symm
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
+    have hq_eq :
+        (num : Real) / den = (num : Real) * den / (den : Real) ^ 2 := by
+      field_simp [hden_ne]
+    simpa [hnum_cast, den, hq_eq] using hq_rat
+  have hpow :
+      ((a + 1 : Real) / (den : Real)) ^ 2 =
+        (a + 1 : Real) ^ 2 / (den : Real) ^ 2 := by
+    simp [pow_two, div_mul_div_comm]
+  have hsq : (q : Real) ≤ ((a + 1 : Real) / (den : Real)) ^ 2 := by
+    simpa [hq_cast, hpow] using hdiv
+  have hnonneg : 0 ≤ ((a + 1 : Real) / (den : Real)) := by
+    have hnum_nonneg : 0 ≤ (a + 1 : Real) := by exact_mod_cast (Nat.zero_le (a + 1))
+    have hden_nonneg : 0 ≤ (den : Real) := by exact_mod_cast (Nat.zero_le den)
+    exact div_nonneg hnum_nonneg hden_nonneg
+  have hle : Real.sqrt (q : Real) ≤ (a + 1 : Real) / (den : Real) :=
+    (Real.sqrt_le_iff).2 ⟨hnonneg, hsq⟩
+  simpa [sqrtUpperAlt, num, den, a] using hle
+
+/-- Square-root lower bound in reals (tighter of two bounds). -/
+theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
+    (sqrtLower q : Real) ≤ Real.sqrt (q : Real) := by
+  have hbase := sqrtLowerBase_le_real_sqrt (q := q) hq
+  have halt := sqrtLowerAlt_le_real_sqrt (q := q) hq
+  simpa [sqrtLower] using (max_le_iff).2 ⟨hbase, halt⟩
+
+/-- Square-root upper bound in reals (tighter of two bounds). -/
+theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
+    Real.sqrt (q : Real) ≤ (sqrtUpper q : Real) := by
+  have hbase := real_sqrt_le_sqrtUpperBase (q := q) hq
+  have halt := real_sqrt_le_sqrtUpperAlt (q := q) hq
+  simpa [sqrtUpper] using (le_min_iff).2 ⟨hbase, halt⟩
 
 /-- Bounds for multiplying a scalar by a bounded value. -/
 def scaleInterval (x lo hi : Rat) : Rat × Rat :=

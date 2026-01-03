@@ -481,6 +481,8 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
       bv := weights.bv
       wo := weights.wo
       attnBias := attnBias
+      maskCausal := true
+      maskValue := (-10000 : Rat)
       directionSpec := directionSpec
       direction := direction }
 

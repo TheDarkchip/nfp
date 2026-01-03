@@ -49,6 +49,10 @@ structure InductionHeadInputs (seq dModel dHead : Nat) where
   wo : Fin dModel → Fin dHead → Rat
   /-- Attention output bias (shared across heads). -/
   attnBias : Fin dModel → Rat
+  /-- Whether to apply a causal mask to attention scores. -/
+  maskCausal : Bool
+  /-- Score value for masked entries (e.g. `-10000` for GPT-2 causal masking). -/
+  maskValue : Rat
   /-- Logit-diff direction metadata. -/
   directionSpec : DirectionSpec
   /-- Logit-diff direction vector in model space. -/

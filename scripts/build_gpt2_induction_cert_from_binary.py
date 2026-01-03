@@ -2,11 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Build an induction head input file from an NFP_BINARY_V1 model.
+Build a softmax-margin certificate and value-range certificate from an NFP_BINARY_V1 model.
 
-This is an untrusted helper that extracts a single head slice plus the
-prompt embeddings from an `.nfpt` file and writes the text format consumed by
-`nfp induction certify_head`.
+This is untrusted and uses floating-point arithmetic to produce rational certificates
+compatible with `nfp induction certify`.
 """
 
 from __future__ import annotations
@@ -21,11 +20,9 @@ from typing import Dict, Tuple
 import numpy as np
 
 
-def rat_from_float_exact(x: float) -> Fraction:
-    if not math.isfinite(x):
-        raise SystemExit(f"non-finite float encountered: {x}")
-    num, den = x.as_integer_ratio()
-    return Fraction(num, den)
+def rat_from_float(x: float, decimals: int) -> Fraction:
+    scale = 10 ** decimals
+    return Fraction(int(round(x * scale)), scale)
 
 
 def rat_to_str(q: Fraction) -> str:
@@ -118,11 +115,11 @@ def read_head_weights(
     for layer_idx in range(num_layers):
         for head_idx in range(num_heads):
             wq_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            bq_block = read_f64(f, head_dim)  # b_Q
+            bq_block = read_f64(f, head_dim)
             wk_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            bk_block = read_f64(f, head_dim)  # b_K
+            bk_block = read_f64(f, head_dim)
             wv_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            bv_block = read_f64(f, head_dim)  # b_V
+            bv_block = read_f64(f, head_dim)
             wo_block = read_f64(f, head_dim * model_dim).reshape(head_dim, model_dim)
             if (layer_idx, head_idx) == target:
                 wq = wq_block
@@ -132,16 +129,15 @@ def read_head_weights(
                 bq = bq_block
                 bk = bk_block
                 bv = bv_block
-        # Skip per-layer non-head data.
-        attn_bias_block = read_f64(f, model_dim)  # attn_bias
-        skip_f64(f, model_dim * hidden_dim)  # w_in
-        skip_f64(f, hidden_dim)  # b_in
-        skip_f64(f, hidden_dim * model_dim)  # w_out
-        skip_f64(f, model_dim)  # b_out
-        ln1_gamma_block = read_f64(f, model_dim)  # ln1_gamma
-        ln1_beta_block = read_f64(f, model_dim)  # ln1_beta
-        skip_f64(f, model_dim)  # ln2_gamma
-        skip_f64(f, model_dim)  # ln2_beta
+        attn_bias_block = read_f64(f, model_dim)
+        skip_f64(f, model_dim * hidden_dim)
+        skip_f64(f, hidden_dim)
+        skip_f64(f, hidden_dim * model_dim)
+        skip_f64(f, model_dim)
+        ln1_gamma_block = read_f64(f, model_dim)
+        ln1_beta_block = read_f64(f, model_dim)
+        skip_f64(f, model_dim)
+        skip_f64(f, model_dim)
         if layer_idx == layer:
             attn_bias = attn_bias_block
             ln1_gamma = ln1_gamma_block
@@ -182,76 +178,52 @@ def read_unembed_columns(
     return col_t, col_n
 
 
-def write_head_inputs(
-    path: Path,
-    scale: Fraction,
-    tokens: np.ndarray,
-    embeddings: np.ndarray,
-    prev: np.ndarray,
-    active: np.ndarray,
-    wq: np.ndarray,
-    bq: np.ndarray,
-    wk: np.ndarray,
-    bk: np.ndarray,
-    wv: np.ndarray,
-    bv: np.ndarray,
-    wo: np.ndarray,
-    attn_bias: np.ndarray,
-    ln_eps: Fraction,
-    ln1_gamma: np.ndarray,
-    ln1_beta: np.ndarray,
-    mask_causal: bool,
-    mask_value: Fraction,
-    direction_target: int,
-    direction_negative: int,
-    direction: np.ndarray,
-) -> None:
-    seq, model_dim = embeddings.shape
-    _, head_dim = wq.shape
+def layer_norm(x: np.ndarray, gamma: np.ndarray, beta: np.ndarray, eps: float) -> np.ndarray:
+    mean = x.mean(axis=1, keepdims=True)
+    var = ((x - mean) ** 2).mean(axis=1, keepdims=True)
+    x_hat = (x - mean) / np.sqrt(var + eps)
+    return x_hat * gamma + beta
+
+
+def softmax(scores: np.ndarray) -> np.ndarray:
+    shift = scores - scores.max(axis=1, keepdims=True)
+    exp = np.exp(shift)
+    return exp / exp.sum(axis=1, keepdims=True)
+
+
+def write_softmax_cert(path: Path, seq: int, prev: np.ndarray,
+                        scores_rat, weights_rat, eps: Fraction,
+                        margin: Fraction, active_positions) -> None:
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
-        f.write(f"d_model {model_dim}\n")
-        f.write(f"d_head {head_dim}\n")
-        f.write(f"scale {rat_to_str(scale)}\n")
-        for q, flag in enumerate(active.tolist()):
-            if flag:
-                f.write(f"active {q}\n")
+        f.write(f"eps {rat_to_str(eps)}\n")
+        f.write(f"margin {rat_to_str(margin)}\n")
+        for q in active_positions:
+            f.write(f"active {q}\n")
         for q, k in enumerate(prev.tolist()):
             f.write(f"prev {q} {k}\n")
         for q in range(seq):
-            for d in range(model_dim):
-                f.write(f"embed {q} {d} {rat_to_str(rat_from_float_exact(float(embeddings[q, d])))}\n")
-        f.write(f"ln_eps {rat_to_str(ln_eps)}\n")
-        for d in range(model_dim):
-            f.write(f"ln1_gamma {d} {rat_to_str(rat_from_float_exact(float(ln1_gamma[d])))}\n")
-        for d in range(model_dim):
-            f.write(f"ln1_beta {d} {rat_to_str(rat_from_float_exact(float(ln1_beta[d])))}\n")
-        for i in range(model_dim):
-            for j in range(head_dim):
-                f.write(f"wq {i} {j} {rat_to_str(rat_from_float_exact(float(wq[i, j])))}\n")
-        for j in range(head_dim):
-            f.write(f"bq {j} {rat_to_str(rat_from_float_exact(float(bq[j])))}\n")
-        for i in range(model_dim):
-            for j in range(head_dim):
-                f.write(f"wk {i} {j} {rat_to_str(rat_from_float_exact(float(wk[i, j])))}\n")
-        for j in range(head_dim):
-            f.write(f"bk {j} {rat_to_str(rat_from_float_exact(float(bk[j])))}\n")
-        for i in range(model_dim):
-            for j in range(head_dim):
-                f.write(f"wv {i} {j} {rat_to_str(rat_from_float_exact(float(wv[i, j])))}\n")
-        for j in range(head_dim):
-            f.write(f"bv {j} {rat_to_str(rat_from_float_exact(float(bv[j])))}\n")
-        for i in range(model_dim):
-            for j in range(head_dim):
-                f.write(f"wo {i} {j} {rat_to_str(rat_from_float_exact(float(wo[i, j])))}\n")
-        for d in range(model_dim):
-            f.write(f"attn_bias {d} {rat_to_str(rat_from_float_exact(float(attn_bias[d])))}\n")
-        f.write(f"mask {'causal' if mask_causal else 'none'}\n")
-        f.write(f"mask_value {rat_to_str(mask_value)}\n")
-        f.write(f"direction-target {direction_target}\n")
-        f.write(f"direction-negative {direction_negative}\n")
-        for d in range(model_dim):
-            f.write(f"direction {d} {rat_to_str(rat_from_float_exact(float(direction[d])))}\n")
+            for k in range(seq):
+                f.write(f"score {q} {k} {rat_to_str(scores_rat[q][k])}\n")
+        for q in range(seq):
+            for k in range(seq):
+                f.write(f"weight {q} {k} {rat_to_str(weights_rat[q][k])}\n")
+
+
+def write_value_range(path: Path, seq: int, values, decimals: int,
+                      direction_target=None, direction_negative=None) -> None:
+    vals_rat = [rat_from_float(float(values[k]), decimals) for k in range(seq)]
+    lo = min(vals_rat)
+    hi = max(vals_rat)
+    with path.open("w", encoding="ascii") as f:
+        f.write(f"seq {seq}\n")
+        if direction_target is not None and direction_negative is not None:
+            f.write(f"direction-target {direction_target}\n")
+            f.write(f"direction-negative {direction_negative}\n")
+        f.write(f"lo {rat_to_str(lo)}\n")
+        f.write(f"hi {rat_to_str(hi)}\n")
+        for k, val in enumerate(vals_rat):
+            f.write(f"val {k} {rat_to_str(val)}\n")
 
 
 def main() -> None:
@@ -259,9 +231,17 @@ def main() -> None:
     ap.add_argument("--model", type=Path, required=True, help="Path to NFP_BINARY_V1 model")
     ap.add_argument("--layer", type=int, required=True, help="Layer index")
     ap.add_argument("--head", type=int, required=True, help="Head index")
-    ap.add_argument("--output", type=Path, required=True, help="Path for the head input file")
-    ap.add_argument("--direction-target", type=int, required=True, help="Target token id")
-    ap.add_argument("--direction-negative", type=int, required=True, help="Negative token id")
+    ap.add_argument("--output", type=Path, required=True, help="Path for softmax certificate")
+    ap.add_argument("--values-out", type=Path, required=True,
+                    help="Path for value-range certificate")
+    ap.add_argument("--direction-target", type=int, required=True,
+                    help="Target token id for logit-diff direction")
+    ap.add_argument("--direction-negative", type=int, required=True,
+                    help="Negative token id for logit-diff direction")
+    ap.add_argument("--decimals", type=int, default=6,
+                    help="Decimal rounding for rationals")
+    ap.add_argument("--active-eps-max", default="1/2",
+                    help="Maximum eps to include an active position")
     args = ap.parse_args()
 
     if not args.model.exists():
@@ -276,6 +256,7 @@ def main() -> None:
         vocab_size = int(header["vocab_size"])
         seq_len = int(header["seq_len"])
         hidden_dim = int(header["hidden_dim"])
+        ln_eps = float(header.get("layer_norm_eps", header.get("eps", "0")))
 
         if args.layer < 0 or args.layer >= num_layers:
             raise SystemExit("layer index out of range")
@@ -289,7 +270,7 @@ def main() -> None:
         tokens = read_i32(f, seq_len)
         embeddings = read_f64(f, seq_len * model_dim).reshape(seq_len, model_dim)
 
-        wq, bq, wk, bk, wv, bv, wo_raw, attn_bias, ln1_gamma, ln1_beta = read_head_weights(
+        wq, bq, wk, bk, wv, bv, wo_raw, _attn_bias, ln1_gamma, ln1_beta = read_head_weights(
             f,
             num_layers,
             num_heads,
@@ -300,9 +281,8 @@ def main() -> None:
             args.head,
         )
 
-        # Skip final layer norm parameters.
-        skip_f64(f, model_dim)  # ln_f_gamma
-        skip_f64(f, model_dim)  # ln_f_beta
+        skip_f64(f, model_dim)
+        skip_f64(f, model_dim)
 
         unembed_start = f.tell()
         col_target, col_negative = read_unembed_columns(
@@ -314,52 +294,83 @@ def main() -> None:
             args.direction_negative,
         )
 
-    prev, active = build_prev(tokens)
-    direction = col_target - col_negative
+    prev, active_mask = build_prev(tokens)
+    candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
+    active_eps_max = Fraction(args.active_eps_max)
+
     scale_denom = int(math.isqrt(head_dim))
     if scale_denom * scale_denom != head_dim:
-        scale = rat_from_float_exact(1.0 / math.sqrt(head_dim))
+        scale = 1.0 / math.sqrt(head_dim)
     else:
-        scale = Fraction(1, scale_denom)
+        scale = 1.0 / scale_denom
 
-    # Stored W_O is (head_dim, model_dim); transpose to model_dim × head_dim.
+    ln = layer_norm(embeddings, ln1_gamma, ln1_beta, ln_eps)
+    q = ln @ wq + bq
+    k = ln @ wk + bk
+    v = ln @ wv + bv
+
+    scores = scale * (q @ k.T)
+    mask_value = -10000.0
+    mask = np.triu(np.ones((seq_len, seq_len), dtype=bool), k=1)
+    scores = scores.copy()
+    scores[mask] = mask_value
+    weights = softmax(scores)
+
+    scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals)
+                   for k in range(seq_len)] for q in range(seq_len)]
+    weights_rat = [[rat_from_float(float(weights[q, k]), args.decimals)
+                    for k in range(seq_len)] for q in range(seq_len)]
+
+    for q in range(seq_len):
+        total = sum(weights_rat[q], Fraction(0))
+        if total == 0:
+            raise SystemExit(f"zero weight sum at q={q}")
+        weights_rat[q] = [w / total for w in weights_rat[q]]
+
+    eps_by_q: dict[int, Fraction] = {}
+    margin_by_q: dict[int, Fraction] = {}
+    for q in candidate_positions:
+        prev_q = prev[q]
+        prev_w = weights_rat[q][prev_q]
+        max_other = max(weights_rat[q][k] for k in range(seq_len) if k != prev_q)
+        deficit = Fraction(1) - prev_w
+        eps_by_q[q] = max(max_other, deficit)
+
+        diffs = [scores_rat[q][prev_q] - scores_rat[q][k]
+                 for k in range(seq_len) if k != prev_q]
+        if diffs:
+            margin_by_q[q] = min(diffs)
+
+    active_positions = [q for q in candidate_positions if eps_by_q[q] <= active_eps_max]
+    if not active_positions and candidate_positions:
+        print("Warning: no active positions satisfy active-eps-max; certificate may be vacuous.")
+
+    if active_positions:
+        eps = max(eps_by_q[q] for q in active_positions)
+        margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))
+    else:
+        eps = Fraction(0)
+        margin = Fraction(0)
+
+    output_path = args.output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_softmax_cert(output_path, seq_len, prev, scores_rat, weights_rat, eps, margin,
+                       active_positions)
+
     wo = wo_raw.T
+    direction = col_target - col_negative
+    dir_head = wo.T @ direction
+    dir_vals = v @ dir_head
+    values_path = args.values_out
+    values_path.parent.mkdir(parents=True, exist_ok=True)
+    write_value_range(values_path, seq_len, dir_vals, args.decimals,
+                      direction_target=args.direction_target,
+                      direction_negative=args.direction_negative)
 
-    mask_causal = True
-    mask_value = Fraction(-10000, 1)
-
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    ln_eps_raw = header.get("layer_norm_eps")
-    if ln_eps_raw is None:
-        raise SystemExit("Missing layer_norm_eps in header.")
-    ln_eps = rat_from_float_exact(float(ln_eps_raw))
-    write_head_inputs(
-        args.output,
-        scale,
-        tokens,
-        embeddings,
-        prev,
-        active,
-        wq,
-        bq,
-        wk,
-        bk,
-        wv,
-        bv,
-        wo,
-        attn_bias,
-        ln_eps,
-        ln1_gamma,
-        ln1_beta,
-        mask_causal,
-        mask_value,
-        args.direction_target,
-        args.direction_negative,
-        direction,
-    )
-
-    print(f"Wrote head inputs to {args.output}")
-    print(f"seq={seq_len} d_model={model_dim} d_head={head_dim}")
+    print(f"Wrote softmax certificate to {output_path}")
+    print(f"Wrote value-range certificate to {values_path}")
+    if candidate_positions:
+        print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 
 
 if __name__ == "__main__":

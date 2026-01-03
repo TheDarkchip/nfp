@@ -94,7 +94,7 @@ def compute_scores_weights(model, input_ids, layer: int, head: int, device: str)
         scores = torch.matmul(qh, kh.transpose(-2, -1)) / math.sqrt(head_dim)
         seq = scores.shape[-1]
         mask = torch.triu(torch.ones(seq, seq, device=device), diagonal=1).bool()
-        scores = scores.masked_fill(mask, -1e9)
+        scores = scores.masked_fill(mask, -10000.0)
         weights = torch.softmax(scores, dim=-1)
     return (scores.squeeze(0).cpu().numpy(),
             weights.squeeze(0).cpu().numpy(),

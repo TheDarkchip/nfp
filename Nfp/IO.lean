@@ -9,6 +9,7 @@ import Nfp.Circuit.Cert.ResidualBound
 import Nfp.Circuit.Cert.ResidualInterval
 import Nfp.Sound.Bounds.MatrixNorm
 import Nfp.Sound.Induction
+import Nfp.Sound.Induction.LogitDiff
 
 /-!
 IO wrappers for loading and checking induction certificates.
@@ -839,6 +840,65 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                     tol={tol}, logitDiffLB={logitDiffLB})"
                   return 0
 
+private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (minActive? : Option Nat) (minLogitDiff? : Option Rat)
+    (minMargin maxEps : Rat) : IO UInt32 := do
+  match seq with
+  | 0 =>
+      IO.eprintln "error: seq must be positive"
+      return 2
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let _ : NeZero seq := ⟨by simp⟩
+      match Sound.buildInductionLogitLowerBoundNonvacuous? inputs with
+      | none =>
+          IO.eprintln "error: nonvacuous logit-diff bound unavailable"
+          return 2
+      | some result =>
+          let cert := result.base.cert
+          let logitDiffLB := result.base.lb
+          let activeCount := cert.active.card
+          let defaultMinActive := max 1 (seq / 8)
+          let minActive := minActive?.getD defaultMinActive
+          if activeCount < minActive then
+            IO.eprintln
+              s!"error: active queries {activeCount} below minimum {minActive}"
+            return 2
+          if cert.margin < minMargin then
+            IO.eprintln
+              s!"error: margin {cert.margin} below minimum {minMargin}"
+            return 2
+          if maxEps < cert.eps then
+            IO.eprintln
+              s!"error: eps {cert.eps} above maximum {maxEps}"
+            return 2
+          let tol := cert.eps * (cert.values.hi - cert.values.lo)
+          let effectiveMinLogitDiff :=
+            match minLogitDiff? with
+            | some v => some v
+            | none => some (0 : Rat)
+          let violation? : Option Rat :=
+            match effectiveMinLogitDiff with
+            | none => none
+            | some minLogitDiff =>
+                if logitDiffLB < minLogitDiff then
+                  some minLogitDiff
+                else
+                  none
+          match violation? with
+          | some minLogitDiff =>
+              IO.eprintln
+                s!"error: logitDiffLB {logitDiffLB} \
+                below minimum {minLogitDiff}"
+              return 2
+          | none =>
+              IO.println
+                s!"ok: nonvacuous induction bound certified \
+                (seq={seq}, active={activeCount}, \
+                tol={tol}, logitDiffLB={logitDiffLB})"
+              return 0
+
 /-- Build and check induction certificates from exact head inputs. -/
 def runInductionCertifyHead (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
@@ -866,6 +926,34 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
           return 1
       | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
           checkInductionHeadInputs inputs minActive? minLogitDiff? minMargin maxEps
+
+/-- Build and check a strictly positive induction logit-diff bound from head inputs. -/
+def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      let parsedInputs ← loadInductionHeadInputs inputsPath
+      match parsedInputs with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
+          checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff? minMargin maxEps
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
@@ -903,6 +991,43 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
               return 1
           | Except.ok inputs =>
               checkInductionHeadInputs inputs minActive? minLogitDiff? minMargin maxEps
+
+/-- Build and check a strictly positive induction logit-diff bound from a model binary. -/
+def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (1 / 2 : Rat)
+      let data ← IO.FS.readBinFile modelPath
+      match NfptPure.parseHeader data with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨header, start⟩ =>
+          match
+            NfptPure.readInductionHeadInputs
+              data start header layer head dirTarget dirNegative period?
+          with
+          | Except.error msg =>
+              IO.eprintln s!"error: {msg}"
+              return 1
+          | Except.ok inputs =>
+              checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff? minMargin maxEps
 
 /-- Build head-output interval bounds from exact head inputs. -/
 def runInductionHeadInterval (inputsPath : System.FilePath)

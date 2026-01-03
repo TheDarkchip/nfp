@@ -12,8 +12,12 @@ Dataset intent (heuristic, model-agnostic):
 This aims to isolate induction-style copying from semantic completion.
 """
 
+from __future__ import annotations
+
+import argparse
 import sys
 from pathlib import Path
+
 import numpy as np
 import torch
 
@@ -25,63 +29,94 @@ except ImportError:
     sys.exit(1)
 
 
-def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
-    print("Loading GPT-2 Small...")
-    model = GPT2Model.from_pretrained("gpt2")
-    tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+def select_vocab_candidates(
+    tokenizer,
+    vocab_min: int,
+    vocab_max: int,
+    min_word_length: int,
+    require_leading_space: bool,
+) -> list[int]:
+    candidates = []
+    for tid in range(vocab_min, vocab_max):
+        word = tokenizer.decode([tid])
+        if len(word.strip()) <= min_word_length:
+            continue
+        if require_leading_space and not word.startswith(" "):
+            continue
+        candidates.append(tid)
+    return candidates
+
+
+def export_rigorous_induction(
+    output_path: str = "models/gpt2_rigorous.nfpt",
+    seq_len: int = 256,
+    pattern_len: int = 20,
+    seed: int = 1337,
+    vocab_min: int = 1000,
+    vocab_max: int = 5000,
+    min_word_length: int = 4,
+    require_leading_space: bool = True,
+    model_name: str = "gpt2",
+) -> None:
+    print(f"Loading {model_name}...")
+    model = GPT2Model.from_pretrained(model_name)
+    tokenizer = GPT2Tokenizer.from_pretrained(model_name)
     config = model.config
     layer_norm_eps = float(config.layer_norm_epsilon)
 
-    # 1. Define a vocabulary of common, distinct English nouns
-    # These token IDs are single-token words in GPT-2 (e.g., " apple", " logic")
-    # This prevents fragmentation issues.
-    # IDs: 1000-5000 range usually contains common words.
-    # We filter for length > 4 to ensure they are substantive.
-    vocab_candidates = []
-    for tid in range(1000, 5000):
-        word = tokenizer.decode([tid])
-        if len(word.strip()) > 4 and word.startswith(" "):
-            vocab_candidates.append(tid)
+    if seq_len <= 0:
+        raise ValueError("seq_len must be positive")
+    if pattern_len <= 0 or pattern_len > seq_len:
+        raise ValueError("pattern_len must be between 1 and seq_len")
+    if vocab_min < 0 or vocab_max <= vocab_min:
+        raise ValueError("invalid vocab range")
 
-    # 2. Construct the Random Repeated Sequence
-    # Pattern length L=20, repeated to fill seq_len (256 tokens).
-    seq_len = 256
-    pattern_len = 20
+    vocab_candidates = select_vocab_candidates(
+        tokenizer,
+        vocab_min=vocab_min,
+        vocab_max=vocab_max,
+        min_word_length=min_word_length,
+        require_leading_space=require_leading_space,
+    )
+    if len(vocab_candidates) < pattern_len:
+        raise ValueError(
+            f"Need at least {pattern_len} vocab candidates; only found {len(vocab_candidates)}"
+        )
 
-    np.random.seed(1337)  # Fixed seed for reproducibility
+    np.random.seed(seed)
     unique_pattern = np.random.choice(vocab_candidates, size=pattern_len, replace=False)
 
-    # [A, B, C, ...] -> [A, B, C, ..., A, B, C, ...]
     repeats = (seq_len // pattern_len) + 1
     full_sequence = np.tile(unique_pattern, repeats)[:seq_len]
 
-    # 3. Verify the "Induction Target" property
-    # The last token T[N] must have appeared at T[N - pattern_len].
-    # The target is T[N - pattern_len + 1].
     last_token = full_sequence[-1]
     prev_idx = seq_len - 1 - pattern_len
     target_token = full_sequence[prev_idx + 1]
 
-    print(f"\nSequence Structure:")
+    print("\nSequence Structure:")
     print(f"  Pattern Length: {pattern_len}")
     print(f"  Total Length:   {seq_len}")
+    print(f"  Seed:           {seed}")
+    print(f"  Vocab Range:    [{vocab_min}, {vocab_max})")
+    print(
+        f"  Token Filter:   min_len>{min_word_length}, "
+        f"leading_space={require_leading_space}"
+    )
     print(f"  Last Token:     '{tokenizer.decode([last_token])}' (ID: {last_token})")
     print(f"  Previous Occur: Index {prev_idx}")
     print(
         f"  True Target:    '{tokenizer.decode([target_token])}' (ID: {target_token})"
     )
 
-    # 4. Compute Embeddings & Weights
     wte = model.wte.weight.detach().numpy()
     wpe = model.wpe.weight.detach().numpy()
     sample_embeddings = wte[full_sequence] + wpe[:seq_len]
 
-    # 5. Export
     output_file = Path(output_path)
     output_file.parent.mkdir(parents=True, exist_ok=True)
 
     print(f"\nExporting to {output_path}...")
-    with open(output_path, "wb") as f:
+    with output_file.open("wb") as f:
         write_header(
             f,
             num_layers=config.n_layer,
@@ -98,7 +133,6 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
         write_i32(f, full_sequence)
         write_f64(f, sample_embeddings)
 
-        # Export Layers (Standard Loop)
         for layer_idx in range(config.n_layer):
             block = model.h[layer_idx]
 
@@ -107,21 +141,21 @@ def export_rigorous_induction(output_path: str = "models/gpt2_rigorous.nfpt"):
             c_proj = block.attn.c_proj.weight.detach().numpy()
             c_proj_bias = get_bias(block.attn.c_proj.bias, 768)
 
-            W_Q_all = c_attn[:, 0:768]
-            W_K_all = c_attn[:, 768 : 2 * 768]
-            W_V_all = c_attn[:, 2 * 768 : 3 * 768]
-            b_Q_all = c_attn_bias[0:768]
-            b_K_all = c_attn_bias[768 : 2 * 768]
-            b_V_all = c_attn_bias[2 * 768 : 3 * 768]
+            w_q_all = c_attn[:, 0:768]
+            w_k_all = c_attn[:, 768 : 2 * 768]
+            w_v_all = c_attn[:, 2 * 768 : 3 * 768]
+            b_q_all = c_attn_bias[0:768]
+            b_k_all = c_attn_bias[768 : 2 * 768]
+            b_v_all = c_attn_bias[2 * 768 : 3 * 768]
 
             for h in range(12):
                 start, end = h * 64, (h + 1) * 64
-                write_f64(f, W_Q_all[:, start:end])
-                write_f64(f, b_Q_all[start:end])
-                write_f64(f, W_K_all[:, start:end])
-                write_f64(f, b_K_all[start:end])
-                write_f64(f, W_V_all[:, start:end])
-                write_f64(f, b_V_all[start:end])
+                write_f64(f, w_q_all[:, start:end])
+                write_f64(f, b_q_all[start:end])
+                write_f64(f, w_k_all[:, start:end])
+                write_f64(f, b_k_all[start:end])
+                write_f64(f, w_v_all[:, start:end])
+                write_f64(f, b_v_all[start:end])
                 write_f64(f, c_proj[start:end, :])
 
             write_f64(f, c_proj_bias)
@@ -167,4 +201,32 @@ def get_bias(param, size: int) -> np.ndarray:
 
 
 if __name__ == "__main__":
-    export_rigorous_induction()
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--output", default="models/gpt2_rigorous.nfpt")
+    parser.add_argument("--seq-len", type=int, default=256)
+    parser.add_argument("--pattern-len", type=int, default=20)
+    parser.add_argument("--seed", type=int, default=1337)
+    parser.add_argument("--vocab-min", type=int, default=1000)
+    parser.add_argument("--vocab-max", type=int, default=5000)
+    parser.add_argument("--min-word-length", type=int, default=4)
+    parser.add_argument("--require-leading-space", action="store_true", default=True)
+    parser.add_argument(
+        "--allow-no-leading-space",
+        action="store_true",
+        help="Permit tokens without a leading space",
+    )
+    parser.add_argument("--model", default="gpt2")
+    args = parser.parse_args()
+
+    require_leading_space = args.require_leading_space and not args.allow_no_leading_space
+    export_rigorous_induction(
+        output_path=args.output,
+        seq_len=args.seq_len,
+        pattern_len=args.pattern_len,
+        seed=args.seed,
+        vocab_min=args.vocab_min,
+        vocab_max=args.vocab_max,
+        min_word_length=args.min_word_length,
+        require_leading_space=require_leading_space,
+        model_name=args.model,
+    )
