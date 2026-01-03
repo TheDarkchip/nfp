@@ -8,8 +8,9 @@ It is intentionally brief and focused on the soundness boundary.
 - The trusted CLI only **checks certificates**; it does not search for witnesses or run a model.
 - Induction certificates are **head-level** (softmax-margin + value-range + logit-diff lower bound).
   They do **not** yet imply end-to-end model behavior.
-- Downstream error bounds are still **external**. `certify_end_to_end` checks arithmetic
-  consistency, but it does not derive the downstream bound from GPT-2 weights.
+- Downstream error bounds can be computed from a **matrix payload** inside Lean. A model-based
+  path exists, but it currently uses only the unembedding direction and still requires an
+  external `input-bound` assumption.
 - The `certify_head` path uses a **head-input file** extracted by an untrusted script; the extractor
   currently ignores LayerNorm and bias terms, so it is not end-to-end faithful.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
@@ -18,8 +19,8 @@ It is intentionally brief and focused on the soundness boundary.
 
 ## Remaining work
 
-- Compute the downstream bound **inside Lean** from model weights and verified bounds
-  (row-sum norms, LayerNorm/GeLU/softmax envelopes), and wire this into `certify_end_to_end`.
+- Compute the downstream bound **inside Lean** from model weights (not just matrix payloads),
+  and wire this into `certify_end_to_end`.
 - Replace untrusted extraction with a verified parser for model weight slices.
 - Add a formal bridge from certificates to circuit semantics and (eventually) to end-to-end
   transformer claims.

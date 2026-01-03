@@ -777,6 +777,117 @@ def parseInductionHeadInputs (input : String) :
       let inputs ← finalizeHeadState hpos st
       return ⟨seq, ⟨dModel, ⟨dHead, inputs⟩⟩⟩
 
+/-- Raw downstream matrix payload with an input bound. -/
+structure DownstreamMatrixRaw (rows cols : Nat) where
+  /-- Input magnitude bound. -/
+  inputBound : Rat
+  /-- Matrix entries. -/
+  entries : Fin rows → Fin cols → Rat
+
+private structure DownstreamMatrixParseState (rows cols : Nat) where
+  inputBound : Option Rat
+  entries : Fin rows → Fin cols → Option Rat
+
+private def initDownstreamMatrixState (rows cols : Nat) :
+    DownstreamMatrixParseState rows cols :=
+  { inputBound := none, entries := fun _ _ => none }
+
+private def setRectEntry {rows cols : Nat} (mat : Fin rows → Fin cols → Option Rat)
+    (i j : Nat) (v : Rat) : Except String (Fin rows → Fin cols → Option Rat) := do
+  if hi : i < rows then
+    if hj : j < cols then
+      let iFin : Fin rows := ⟨i, hi⟩
+      let jFin : Fin cols := ⟨j, hj⟩
+      match mat iFin jFin with
+      | some _ =>
+          throw s!"duplicate matrix entry at ({i}, {j})"
+      | none =>
+          let mat' : Fin rows → Fin cols → Option Rat := fun i' j' =>
+            if i' = iFin then
+              if j' = jFin then
+                some v
+              else
+                mat i' j'
+            else
+              mat i' j'
+          return mat'
+    else
+      throw s!"index out of range: col={j}"
+  else
+    throw s!"index out of range: row={i}"
+
+private def parseDownstreamMatrixLine {rows cols : Nat}
+    (st : DownstreamMatrixParseState rows cols) (tokens : List String) :
+    Except String (DownstreamMatrixParseState rows cols) := do
+  match tokens with
+  | ["input-bound", val] =>
+      if st.inputBound.isSome then
+        throw "duplicate input-bound entry"
+      else
+        return { st with inputBound := some (← parseRat val) }
+  | ["w", i, j, val] =>
+      let mat ← setRectEntry st.entries (← parseNat i) (← parseNat j) (← parseRat val)
+      return { st with entries := mat }
+  | _ =>
+      throw s!"unrecognized line: '{String.intercalate " " tokens}'"
+
+private def finalizeDownstreamMatrixState {rows cols : Nat}
+    (st : DownstreamMatrixParseState rows cols) :
+    Except String (DownstreamMatrixRaw rows cols) := do
+  let inputBound ←
+    match st.inputBound with
+    | some v => pure v
+    | none => throw "missing input-bound entry"
+  if !finsetAll (Finset.univ : Finset (Fin rows)) (fun i =>
+      finsetAll (Finset.univ : Finset (Fin cols)) (fun j => (st.entries i j).isSome)) then
+    throw "missing matrix entries"
+  let entries : Fin rows → Fin cols → Rat := fun i j =>
+    (st.entries i j).getD 0
+  return { inputBound := inputBound, entries := entries }
+
+/-- Parse a downstream matrix payload from text. -/
+def parseDownstreamMatrixRaw (input : String) :
+    Except String (Sigma (fun rows => Sigma (fun cols => DownstreamMatrixRaw rows cols))) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let mut rows? : Option Nat := none
+  let mut cols? : Option Nat := none
+  for t in tokens do
+    match t with
+    | ["rows", n] =>
+        if rows?.isSome then
+          throw "duplicate rows entry"
+        else
+          rows? := some (← parseNat n)
+    | ["cols", n] =>
+        if cols?.isSome then
+          throw "duplicate cols entry"
+        else
+          cols? := some (← parseNat n)
+    | _ => pure ()
+  let rows ←
+    match rows? with
+    | some v => pure v
+    | none => throw "missing rows entry"
+  let cols ←
+    match cols? with
+    | some v => pure v
+    | none => throw "missing cols entry"
+  match rows, cols with
+  | 0, _ => throw "rows must be positive"
+  | _, 0 => throw "cols must be positive"
+  | Nat.succ r, Nat.succ c =>
+      let rows := Nat.succ r
+      let cols := Nat.succ c
+      let st0 := initDownstreamMatrixState rows cols
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["rows", _] => pure st
+          | ["cols", _] => pure st
+          | _ => parseDownstreamMatrixLine st t) st0
+      let raw ← finalizeDownstreamMatrixState st
+      return ⟨rows, ⟨cols, raw⟩⟩
+
 end Pure
 
 end IO

@@ -108,6 +108,66 @@ def inductionCertifyEndToEndCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
 ]
 
+/-- `nfp induction certify_end_to_end_matrix` subcommand. -/
+def runInductionCertifyEndToEndMatrix (p : Parsed) : IO UInt32 := do
+  let scoresPath := p.flag! "scores" |>.as! String
+  let valuesPath := p.flag! "values" |>.as! String
+  let matrixPath := p.flag! "matrix" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyEndToEndMatrix scoresPath valuesPath matrixPath
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_end_to_end_matrix` subcommand. -/
+def inductionCertifyEndToEndMatrixCmd : Cmd := `[Cli|
+  certify_end_to_end_matrix VIA runInductionCertifyEndToEndMatrix;
+  "Check end-to-end induction bounds using a downstream matrix payload."
+  FLAGS:
+    scores : String; "Path to the softmax-margin certificate file."
+    values : String; "Path to the value-range certificate file."
+    matrix : String; "Path to the downstream matrix payload file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0 when \
+                                direction metadata is present."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify_end_to_end_model` subcommand. -/
+def runInductionCertifyEndToEndModel (p : Parsed) : IO UInt32 := do
+  let scoresPath := p.flag! "scores" |>.as! String
+  let valuesPath := p.flag! "values" |>.as! String
+  let modelPath := p.flag! "model" |>.as! String
+  let inputBound := p.flag! "input-bound" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath inputBound
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_end_to_end_model` subcommand. -/
+def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
+  certify_end_to_end_model VIA runInductionCertifyEndToEndModel;
+  "Check end-to-end induction bounds using a model file for the downstream matrix."
+  FLAGS:
+    scores : String; "Path to the softmax-margin certificate file."
+    values : String; "Path to the value-range certificate file."
+    model : String; "Path to the NFP_BINARY_V1 model file."
+    "input-bound" : String; "Nonnegative input bound for the downstream matrix (rational literal)."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0 when \
+                                direction metadata is present."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
 /-- `nfp induction certify_head` subcommand. -/
 def runInductionCertifyHead (p : Parsed) : IO UInt32 := do
   let inputsPath := p.flag! "inputs" |>.as! String
@@ -140,6 +200,8 @@ def inductionCmd : Cmd := `[Cli|
     inductionCertifyCmd;
     inductionCertifySoundCmd;
     inductionCertifyEndToEndCmd;
+    inductionCertifyEndToEndMatrixCmd;
+    inductionCertifyEndToEndModelCmd;
     inductionCertifyHeadCmd
 ]
 

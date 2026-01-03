@@ -24,6 +24,11 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   the resulting induction certificate (experimental, potentially slow).
 - `nfp induction certify_end_to_end` composes a head-level logit-diff lower bound with a
   downstream error certificate (arithmetic consistency only).
+- `nfp induction certify_end_to_end_matrix` computes a downstream bound from a matrix payload
+  using verified row-sum norms, then composes it with the head-level logit-diff lower bound.
+- `nfp induction certify_end_to_end_model` derives a downstream matrix from an `NFP_BINARY_V1`
+  model file (unembedding direction only) and composes it with the head-level logit-diff
+  lower bound.
 
 ## Untrusted / heuristic
 
@@ -31,7 +36,7 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `scripts/build_gpt2_induction_cert.py`, `scripts/build_gpt2_head_inputs.py`,
   `scripts/build_downstream_linear_cert.py`.
 - The head-input extractor currently ignores LayerNorm and bias terms.
-- Any downstream error bound provided externally (until it is computed in Lean).
+- Any downstream error bound provided externally (outside the matrix-payload or model-based path).
 
 ## Not yet proven
 

@@ -107,8 +107,26 @@ lake exe nfp induction certify_end_to_end \
   --downstream reports/gpt2_downstream.cert
 ```
 
-The downstream certificate is **checked for internal arithmetic consistency** but is still
-externally computed. Work is ongoing to compute this bound inside Lean from model weights.
+The downstream certificate is **checked for internal arithmetic consistency** but is externally
+computed. You can also compute the downstream bound inside Lean from a matrix payload:
+
+```bash
+lake exe nfp induction certify_end_to_end_matrix \
+  --scores reports/gpt2_induction.cert \
+  --values reports/gpt2_induction.values \
+  --matrix reports/gpt2_downstream.matrix
+```
+
+Or derive the downstream matrix directly from an `NFP_BINARY_V1` model file
+(currently uses the unembedding direction only):
+
+```bash
+lake exe nfp induction certify_end_to_end_model \
+  --scores reports/gpt2_induction.cert \
+  --values reports/gpt2_induction.values \
+  --model models/gpt2_rigorous.nfpt \
+  --input-bound 1/2
+```
 
 ## File formats
 
@@ -149,6 +167,17 @@ input-bound <rat>
 ```
 
 The checker enforces `error = gain * input-bound` and nonnegativity of all fields.
+
+### Downstream matrix payload
+
+```
+rows <n>
+cols <n>
+input-bound <rat>
+w <i> <j> <rat>
+```
+
+The checker computes a row-sum norm bound from the matrix entries.
 
 ### Head input format (for `certify_head`)
 

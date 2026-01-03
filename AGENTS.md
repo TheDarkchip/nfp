@@ -327,6 +327,8 @@ but you **must** update this list in the same commit.
 ### 5.6 CLI surface
 - `Nfp/IO/Pure.lean`
   - Pure parsing helpers for CLI inputs.
+- `Nfp/IO/NfptPure.lean`
+  - Pure parsing helpers for `NFP_BINARY_V1` model slices.
 - `Nfp/IO.lean`
   - IO-only wrappers for loading inputs and running checks.
 - `Nfp/Cli.lean`
