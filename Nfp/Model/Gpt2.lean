@@ -39,12 +39,26 @@ structure Gpt2HeadSlice (seq dModel dHead vocab : Nat) where
   wpe : Fin seq → Fin dModel → Rat
   /-- Query projection weights. -/
   wq : Fin dModel → Fin dHead → Rat
+  /-- Query projection bias. -/
+  bq : Fin dHead → Rat
   /-- Key projection weights. -/
   wk : Fin dModel → Fin dHead → Rat
+  /-- Key projection bias. -/
+  bk : Fin dHead → Rat
   /-- Value projection weights. -/
   wv : Fin dModel → Fin dHead → Rat
+  /-- Value projection bias. -/
+  bv : Fin dHead → Rat
   /-- Output projection weights for this head slice. -/
   wo : Fin dModel → Fin dHead → Rat
+  /-- Attention output bias (shared across heads). -/
+  attnBias : Fin dModel → Rat
+  /-- LayerNorm epsilon for the attention input. -/
+  lnEps : Rat
+  /-- LayerNorm scale for the attention input. -/
+  ln1Gamma : Fin dModel → Rat
+  /-- LayerNorm bias for the attention input. -/
+  ln1Beta : Fin dModel → Rat
   /-- Direction tokens for logit-diff certification. -/
   direction : DirectionTokens vocab
 

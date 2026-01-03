@@ -99,36 +99,67 @@ def read_head_weights(
     hidden_dim: int,
     layer: int,
     head: int,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     target = (layer, head)
     wq = wk = wv = wo = None
+    bq = bk = bv = None
+    attn_bias = ln1_gamma = ln1_beta = None
     for layer_idx in range(num_layers):
         for head_idx in range(num_heads):
             wq_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            _ = read_f64(f, head_dim)  # b_Q
+            bq_block = read_f64(f, head_dim)  # b_Q
             wk_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            _ = read_f64(f, head_dim)  # b_K
+            bk_block = read_f64(f, head_dim)  # b_K
             wv_block = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
-            _ = read_f64(f, head_dim)  # b_V
+            bv_block = read_f64(f, head_dim)  # b_V
             wo_block = read_f64(f, head_dim * model_dim).reshape(head_dim, model_dim)
             if (layer_idx, head_idx) == target:
                 wq = wq_block
                 wk = wk_block
                 wv = wv_block
                 wo = wo_block
+                bq = bq_block
+                bk = bk_block
+                bv = bv_block
         # Skip per-layer non-head data.
-        skip_f64(f, model_dim)  # attn_bias
+        attn_bias_block = read_f64(f, model_dim)  # attn_bias
         skip_f64(f, model_dim * hidden_dim)  # w_in
         skip_f64(f, hidden_dim)  # b_in
         skip_f64(f, hidden_dim * model_dim)  # w_out
         skip_f64(f, model_dim)  # b_out
-        skip_f64(f, model_dim)  # ln1_gamma
-        skip_f64(f, model_dim)  # ln1_beta
+        ln1_gamma_block = read_f64(f, model_dim)  # ln1_gamma
+        ln1_beta_block = read_f64(f, model_dim)  # ln1_beta
         skip_f64(f, model_dim)  # ln2_gamma
         skip_f64(f, model_dim)  # ln2_beta
-    if wq is None or wk is None or wv is None or wo is None:
+        if layer_idx == layer:
+            attn_bias = attn_bias_block
+            ln1_gamma = ln1_gamma_block
+            ln1_beta = ln1_beta_block
+    if (
+        wq is None
+        or wk is None
+        or wv is None
+        or wo is None
+        or bq is None
+        or bk is None
+        or bv is None
+        or attn_bias is None
+        or ln1_gamma is None
+        or ln1_beta is None
+    ):
         raise SystemExit("Failed to locate head weights.")
-    return wq, wk, wv, wo
+    return wq, bq, wk, bk, wv, bv, wo, attn_bias, ln1_gamma, ln1_beta
 
 
 def read_unembed_columns(
@@ -159,9 +190,16 @@ def write_head_inputs(
     prev: np.ndarray,
     active: np.ndarray,
     wq: np.ndarray,
+    bq: np.ndarray,
     wk: np.ndarray,
+    bk: np.ndarray,
     wv: np.ndarray,
+    bv: np.ndarray,
     wo: np.ndarray,
+    attn_bias: np.ndarray,
+    ln_eps: Fraction,
+    ln1_gamma: np.ndarray,
+    ln1_beta: np.ndarray,
     direction_target: int,
     direction_negative: int,
     direction: np.ndarray,
@@ -181,18 +219,31 @@ def write_head_inputs(
         for q in range(seq):
             for d in range(model_dim):
                 f.write(f"embed {q} {d} {rat_to_str(rat_from_float_exact(float(embeddings[q, d])))}\n")
+        f.write(f"ln_eps {rat_to_str(ln_eps)}\n")
+        for d in range(model_dim):
+            f.write(f"ln1_gamma {d} {rat_to_str(rat_from_float_exact(float(ln1_gamma[d])))}\n")
+        for d in range(model_dim):
+            f.write(f"ln1_beta {d} {rat_to_str(rat_from_float_exact(float(ln1_beta[d])))}\n")
         for i in range(model_dim):
             for j in range(head_dim):
                 f.write(f"wq {i} {j} {rat_to_str(rat_from_float_exact(float(wq[i, j])))}\n")
+        for j in range(head_dim):
+            f.write(f"bq {j} {rat_to_str(rat_from_float_exact(float(bq[j])))}\n")
         for i in range(model_dim):
             for j in range(head_dim):
                 f.write(f"wk {i} {j} {rat_to_str(rat_from_float_exact(float(wk[i, j])))}\n")
+        for j in range(head_dim):
+            f.write(f"bk {j} {rat_to_str(rat_from_float_exact(float(bk[j])))}\n")
         for i in range(model_dim):
             for j in range(head_dim):
                 f.write(f"wv {i} {j} {rat_to_str(rat_from_float_exact(float(wv[i, j])))}\n")
+        for j in range(head_dim):
+            f.write(f"bv {j} {rat_to_str(rat_from_float_exact(float(bv[j])))}\n")
         for i in range(model_dim):
             for j in range(head_dim):
                 f.write(f"wo {i} {j} {rat_to_str(rat_from_float_exact(float(wo[i, j])))}\n")
+        for d in range(model_dim):
+            f.write(f"attn_bias {d} {rat_to_str(rat_from_float_exact(float(attn_bias[d])))}\n")
         f.write(f"direction-target {direction_target}\n")
         f.write(f"direction-negative {direction_negative}\n")
         for d in range(model_dim):
@@ -234,7 +285,7 @@ def main() -> None:
         tokens = read_i32(f, seq_len)
         embeddings = read_f64(f, seq_len * model_dim).reshape(seq_len, model_dim)
 
-        wq, wk, wv, wo_raw = read_head_weights(
+        wq, bq, wk, bk, wv, bv, wo_raw, attn_bias, ln1_gamma, ln1_beta = read_head_weights(
             f,
             num_layers,
             num_heads,
@@ -271,6 +322,10 @@ def main() -> None:
     wo = wo_raw.T
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    ln_eps_raw = header.get("layer_norm_eps")
+    if ln_eps_raw is None:
+        raise SystemExit("Missing layer_norm_eps in header.")
+    ln_eps = rat_from_float_exact(float(ln_eps_raw))
     write_head_inputs(
         args.output,
         scale,
@@ -279,9 +334,16 @@ def main() -> None:
         prev,
         active,
         wq,
+        bq,
         wk,
+        bk,
         wv,
+        bv,
         wo,
+        attn_bias,
+        ln_eps,
+        ln1_gamma,
+        ln1_beta,
         args.direction_target,
         args.direction_negative,
         direction,

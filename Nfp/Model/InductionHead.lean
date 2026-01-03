@@ -27,14 +27,28 @@ structure InductionHeadInputs (seq dModel dHead : Nat) where
   prev : Fin seq → Fin seq
   /-- Token embeddings for the sequence. -/
   embed : Fin seq → Fin dModel → Rat
+  /-- LayerNorm epsilon used before attention. -/
+  lnEps : Rat
+  /-- LayerNorm scale for pre-attention normalization. -/
+  ln1Gamma : Fin dModel → Rat
+  /-- LayerNorm bias for pre-attention normalization. -/
+  ln1Beta : Fin dModel → Rat
   /-- Query projection weights. -/
   wq : Fin dModel → Fin dHead → Rat
+  /-- Query projection bias. -/
+  bq : Fin dHead → Rat
   /-- Key projection weights. -/
   wk : Fin dModel → Fin dHead → Rat
+  /-- Key projection bias. -/
+  bk : Fin dHead → Rat
   /-- Value projection weights. -/
   wv : Fin dModel → Fin dHead → Rat
+  /-- Value projection bias. -/
+  bv : Fin dHead → Rat
   /-- Output projection weights (head slice). -/
   wo : Fin dModel → Fin dHead → Rat
+  /-- Attention output bias (shared across heads). -/
+  attnBias : Fin dModel → Rat
   /-- Logit-diff direction metadata. -/
   directionSpec : DirectionSpec
   /-- Logit-diff direction vector in model space. -/

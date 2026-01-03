@@ -33,6 +33,8 @@ structure NfptHeader where
   vocabSize : Nat
   /-- Sequence length used in the binary. -/
   seqLen : Nat
+  /-- LayerNorm epsilon parameter. -/
+  layerNormEps : Rat
 
 private def parseNat (s : String) : Except String Nat :=
   match s.toNat? with
@@ -49,6 +51,64 @@ private def readHeaderField (name : String) (fields : List (String × String)) :
   match fields.find? (fun kv => kv.1 = name) with
   | some kv => parseNat kv.2
   | none => throw s!"missing header field '{name}'"
+
+private def parseInt (s : String) : Except String Int :=
+  match s.toInt? with
+  | some n => Except.ok n
+  | none => Except.error s!"expected Int, got '{s}'"
+
+private def pow10 (k : Nat) : Nat :=
+  Nat.pow 10 k
+
+private def parseRatScientific (s : String) : Except String Rat := do
+  let s := s.trim
+  let (sign, rest) :=
+    if s.startsWith "-" then
+      (-1, s.drop 1)
+    else if s.startsWith "+" then
+      (1, s.drop 1)
+    else
+      (1, s)
+  let parts := rest.toLower.splitOn "e"
+  let (mant, expStr?) ←
+    match parts with
+    | [m] => pure (m, none)
+    | [m, e] => pure (m, some e)
+    | _ => throw s!"invalid scientific literal '{s}'"
+  let (intPart, fracPart) ←
+    match mant.splitOn "." with
+    | [i] => pure (i, "")
+    | [i, f] => pure (i, f)
+    | _ => throw s!"invalid decimal literal '{s}'"
+  let digits := intPart ++ fracPart
+  if digits = "" then
+    throw s!"invalid decimal literal '{s}'"
+  let n ← parseNat digits
+  let scale := fracPart.length
+  let base : Rat :=
+    (Rat.ofInt (sign * Int.ofNat n)) / Rat.ofInt (Int.ofNat (pow10 scale))
+  let exp ←
+    match expStr? with
+    | none => pure (0 : Int)
+    | some e => parseInt e
+  if exp ≥ 0 then
+    let k := Int.toNat exp
+    pure (base * Rat.ofInt (Int.ofNat (pow10 k)))
+  else
+    let k := Int.toNat (-exp)
+    pure (base / Rat.ofInt (Int.ofNat (pow10 k)))
+
+private def readHeaderFieldRat (names : List String) (fields : List (String × String)) :
+    Except String Rat := do
+  let rec loop : List String → Option String
+    | [] => none
+    | name :: rest =>
+        match fields.find? (fun kv => kv.1 = name) with
+        | some kv => some kv.2
+        | none => loop rest
+  match loop names with
+  | some raw => parseRatScientific raw
+  | none => throw s!"missing header field '{String.intercalate "|" names}'"
 
 private def sentinelBytes : ByteArray :=
   "BINARY_START\n".toUTF8
@@ -97,6 +157,7 @@ def parseHeader (data : ByteArray) : Except String (NfptHeader × Nat) := do
       let hiddenDim ← readHeaderField "hidden_dim" fields
       let vocabSize ← readHeaderField "vocab_size" fields
       let seqLen ← readHeaderField "seq_len" fields
+      let layerNormEps ← readHeaderFieldRat ["layer_norm_eps", "eps"] fields
       if numLayers = 0 then
         throw "num_layers must be positive"
       if numHeads = 0 then
@@ -118,7 +179,8 @@ def parseHeader (data : ByteArray) : Except String (NfptHeader × Nat) := do
                 headDim := headDim
                 hiddenDim := hiddenDim
                 vocabSize := vocabSize
-                seqLen := seqLen }, start)
+                seqLen := seqLen
+                layerNormEps := layerNormEps }, start)
 
 private def pow2 (k : Nat) : Nat :=
   Nat.pow 2 k
@@ -226,6 +288,15 @@ private def readF64Matrix (data : ByteArray) (off : Nat) (rows cols : Nat) :
     vals.get ⟨idx.val, hidx⟩
   return mat
 
+private def readF64Vec (data : ByteArray) (off : Nat) (count : Nat) :
+    Except String (Fin count → Rat) := do
+  let ⟨vals, hlen⟩ ← readF64List data off count
+  let hlen' : vals.length = count := by
+    simpa using hlen
+  let vec : Fin count → Rat := fun i =>
+    vals.get ⟨i.val, lt_of_lt_of_eq i.isLt hlen'.symm⟩
+  return vec
+
 private def f64CountPerHead (h : NfptHeader) : Nat :=
   4 * h.modelDim * h.headDim + 3 * h.headDim
 
@@ -258,30 +329,64 @@ private def headOffset (h : NfptHeader) (layer head : Nat) : Nat :=
       layer * f64CountPerLayer h +
       head * f64CountPerHead h)
 
+private def layerExtrasOffset (h : NfptHeader) (layer : Nat) : Nat :=
+  bytesI32 h.seqLen +
+    bytesF64 (f64CountBeforeHeads h +
+      layer * f64CountPerLayer h +
+      h.numHeads * f64CountPerHead h)
+
+/-- Head weights plus biases for a single attention head. -/
+private structure HeadWeights (dModel dHead : Nat) where
+  wq : Fin dModel → Fin dHead → Rat
+  bq : Fin dHead → Rat
+  wk : Fin dModel → Fin dHead → Rat
+  bk : Fin dHead → Rat
+  wv : Fin dModel → Fin dHead → Rat
+  bv : Fin dHead → Rat
+  wo : Fin dModel → Fin dHead → Rat
+
 private def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
     (layer head : Nat) :
-    Except String
-      ((Fin h.modelDim → Fin h.headDim → Rat) ×
-        (Fin h.modelDim → Fin h.headDim → Rat) ×
-        (Fin h.modelDim → Fin h.headDim → Rat) ×
-        (Fin h.modelDim → Fin h.headDim → Rat)) := do
+    Except String (HeadWeights h.modelDim h.headDim) := do
   if layer < h.numLayers then
     if head < h.numHeads then
       let base := start + headOffset h layer head
       let wq ← readF64Matrix data base h.modelDim h.headDim
       let offbq := base + bytesF64 (h.modelDim * h.headDim)
+      let bq ← readF64Vec data offbq h.headDim
       let offwk := offbq + bytesF64 h.headDim
       let wk ← readF64Matrix data offwk h.modelDim h.headDim
       let offbk := offwk + bytesF64 (h.modelDim * h.headDim)
+      let bk ← readF64Vec data offbk h.headDim
       let offwv := offbk + bytesF64 h.headDim
       let wv ← readF64Matrix data offwv h.modelDim h.headDim
       let offbv := offwv + bytesF64 (h.modelDim * h.headDim)
+      let bv ← readF64Vec data offbv h.headDim
       let offwo := offbv + bytesF64 h.headDim
       let woRaw ← readF64Matrix data offwo h.headDim h.modelDim
       let wo : Fin h.modelDim → Fin h.headDim → Rat := fun i j => woRaw j i
-      return (wq, wk, wv, wo)
+      return { wq := wq, bq := bq, wk := wk, bk := bk, wv := wv, bv := bv, wo := wo }
     else
       throw s!"head index out of range: {head}"
+  else
+    throw s!"layer index out of range: {layer}"
+
+private def readLayerAttnBiasLn1 (data : ByteArray) (start : Nat) (h : NfptHeader)
+    (layer : Nat) :
+    Except String ((Fin h.modelDim → Rat) × (Fin h.modelDim → Rat) ×
+      (Fin h.modelDim → Rat)) := do
+  if layer < h.numLayers then
+    let base := start + layerExtrasOffset h layer
+    let attnBias ← readF64Vec data base h.modelDim
+    let offWIn := base + bytesF64 h.modelDim
+    let offBIn := offWIn + bytesF64 (h.modelDim * h.hiddenDim)
+    let offWOut := offBIn + bytesF64 h.hiddenDim
+    let offBOut := offWOut + bytesF64 (h.hiddenDim * h.modelDim)
+    let offLn1Gamma := offBOut + bytesF64 h.modelDim
+    let ln1Gamma ← readF64Vec data offLn1Gamma h.modelDim
+    let offLn1Beta := offLn1Gamma + bytesF64 h.modelDim
+    let ln1Beta ← readF64Vec data offLn1Beta h.modelDim
+    return (attnBias, ln1Gamma, ln1Beta)
   else
     throw s!"layer index out of range: {layer}"
 
@@ -311,7 +416,8 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
     Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
   let scale ← scaleOfHeadDim h.headDim
   let embed ← readEmbeddings data start h
-  let (wq, wk, wv, wo) ← readHeadWeights data start h layer head
+  let weights ← readHeadWeights data start h layer head
+  let (attnBias, ln1Gamma, ln1Beta) ← readLayerAttnBiasLn1 data start h layer
   let colTarget ← readUnembedColumn data start h dirTarget
   let colNegative ← readUnembedColumn data start h dirNegative
   let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
@@ -324,10 +430,17 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
       active := active
       prev := prev
       embed := embed
-      wq := wq
-      wk := wk
-      wv := wv
-      wo := wo
+      lnEps := h.layerNormEps
+      ln1Gamma := ln1Gamma
+      ln1Beta := ln1Beta
+      wq := weights.wq
+      bq := weights.bq
+      wk := weights.wk
+      bk := weights.bk
+      wv := weights.wv
+      bv := weights.bv
+      wo := weights.wo
+      attnBias := attnBias
       directionSpec := directionSpec
       direction := direction }
 

@@ -28,10 +28,17 @@ def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
     active := activeOfPeriod (seq := seq) period
     prev := prevOfPeriod (seq := seq) period
     embed := slice.embed
+    lnEps := slice.lnEps
+    ln1Gamma := slice.ln1Gamma
+    ln1Beta := slice.ln1Beta
     wq := slice.wq
+    bq := slice.bq
     wk := slice.wk
+    bk := slice.bk
     wv := slice.wv
+    bv := slice.bv
     wo := slice.wo
+    attnBias := slice.attnBias
     directionSpec := slice.direction.spec
     direction := slice.directionVec }
 
@@ -43,10 +50,17 @@ theorem buildInductionHeadInputs_def {seq dModel dHead vocab : Nat}
         active := activeOfPeriod (seq := seq) period
         prev := prevOfPeriod (seq := seq) period
         embed := slice.embed
+        lnEps := slice.lnEps
+        ln1Gamma := slice.ln1Gamma
+        ln1Beta := slice.ln1Beta
         wq := slice.wq
+        bq := slice.bq
         wk := slice.wk
+        bk := slice.bk
         wv := slice.wv
+        bv := slice.bv
         wo := slice.wo
+        attnBias := slice.attnBias
         directionSpec := slice.direction.spec
         direction := slice.directionVec } := rfl
 

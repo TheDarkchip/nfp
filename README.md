@@ -212,10 +212,17 @@ direction <d> <rat>
 active <q>
 prev <q> <k>
 embed <q> <d> <rat>
+ln_eps <rat>
+ln1_gamma <d> <rat>
+ln1_beta <d> <rat>
 wq <i> <j> <rat>
+bq <j> <rat>
 wk <i> <j> <rat>
+bk <j> <rat>
 wv <i> <j> <rat>
+bv <j> <rat>
 wo <i> <j> <rat>
+attn_bias <d> <rat>
 ```
 
 All `direction`, `embed`, and projection matrices must be fully specified. If no `active` lines

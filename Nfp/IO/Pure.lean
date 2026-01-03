@@ -562,10 +562,17 @@ private structure HeadParseState (seq dModel dHead : Nat) where
   activeSeen : Bool
   prev : Fin seq → Option (Fin seq)
   embed : Fin seq → Fin dModel → Option Rat
+  lnEps : Option Rat
+  ln1Gamma : Fin dModel → Option Rat
+  ln1Beta : Fin dModel → Option Rat
   wq : Fin dModel → Fin dHead → Option Rat
+  bq : Fin dHead → Option Rat
   wk : Fin dModel → Fin dHead → Option Rat
+  bk : Fin dHead → Option Rat
   wv : Fin dModel → Fin dHead → Option Rat
+  bv : Fin dHead → Option Rat
   wo : Fin dModel → Fin dHead → Option Rat
+  attnBias : Fin dModel → Option Rat
   directionTarget : Option Nat
   directionNegative : Option Nat
   direction : Fin dModel → Option Rat
@@ -576,10 +583,17 @@ private def initHeadState (seq dModel dHead : Nat) : HeadParseState seq dModel d
     activeSeen := false
     prev := fun _ => none
     embed := fun _ _ => none
+    lnEps := none
+    ln1Gamma := fun _ => none
+    ln1Beta := fun _ => none
     wq := fun _ _ => none
+    bq := fun _ => none
     wk := fun _ _ => none
+    bk := fun _ => none
     wv := fun _ _ => none
+    bv := fun _ => none
     wo := fun _ _ => none
+    attnBias := fun _ => none
     directionTarget := none
     directionNegative := none
     direction := fun _ => none }
@@ -630,18 +644,41 @@ private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dMod
   | ["embed", q, d, val] =>
       let mat ← setMatEntry st.embed (← parseNat q) (← parseNat d) (← parseRat val)
       return { st with embed := mat }
+  | ["ln_eps", val] =>
+      if st.lnEps.isSome then
+        throw "duplicate ln_eps entry"
+      else
+        return { st with lnEps := some (← parseRat val) }
+  | ["ln1_gamma", d, val] =>
+      let vec ← setVecEntry st.ln1Gamma (← parseNat d) (← parseRat val)
+      return { st with ln1Gamma := vec }
+  | ["ln1_beta", d, val] =>
+      let vec ← setVecEntry st.ln1Beta (← parseNat d) (← parseRat val)
+      return { st with ln1Beta := vec }
   | ["wq", i, j, val] =>
       let mat ← setMatEntry st.wq (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wq := mat }
+  | ["bq", j, val] =>
+      let vec ← setVecEntry st.bq (← parseNat j) (← parseRat val)
+      return { st with bq := vec }
   | ["wk", i, j, val] =>
       let mat ← setMatEntry st.wk (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wk := mat }
+  | ["bk", j, val] =>
+      let vec ← setVecEntry st.bk (← parseNat j) (← parseRat val)
+      return { st with bk := vec }
   | ["wv", i, j, val] =>
       let mat ← setMatEntry st.wv (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wv := mat }
+  | ["bv", j, val] =>
+      let vec ← setVecEntry st.bv (← parseNat j) (← parseRat val)
+      return { st with bv := vec }
   | ["wo", i, j, val] =>
       let mat ← setMatEntry st.wo (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wo := mat }
+  | ["attn_bias", d, val] =>
+      let vec ← setVecEntry st.attnBias (← parseNat d) (← parseRat val)
+      return { st with attnBias := vec }
   | ["direction-target", tok] =>
       if st.directionTarget.isSome then
         throw "duplicate direction-target entry"
@@ -670,18 +707,34 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
   if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
       finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.embed q d).isSome)) then
     throw "missing embed entries"
+  let lnEps ←
+    match st.lnEps with
+    | some v => pure v
+    | none => throw "missing ln_eps entry"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.ln1Gamma d).isSome) then
+    throw "missing ln1_gamma entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.ln1Beta d).isSome) then
+    throw "missing ln1_beta entries"
   if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
       finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wq i j).isSome)) then
     throw "missing wq entries"
+  if !finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.bq j).isSome) then
+    throw "missing bq entries"
   if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
       finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wk i j).isSome)) then
     throw "missing wk entries"
+  if !finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.bk j).isSome) then
+    throw "missing bk entries"
   if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
       finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wv i j).isSome)) then
     throw "missing wv entries"
+  if !finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.bv j).isSome) then
+    throw "missing bv entries"
   if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun i =>
       finsetAll (Finset.univ : Finset (Fin dHead)) (fun j => (st.wo i j).isSome)) then
     throw "missing wo entries"
+  if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.attnBias d).isSome) then
+    throw "missing attn_bias entries"
   if !finsetAll (Finset.univ : Finset (Fin dModel)) (fun d => (st.direction d).isSome) then
     throw "missing direction entries"
   let directionSpec ←
@@ -694,14 +747,26 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
     (st.prev q).getD defaultPrev
   let embedFun : Fin seq → Fin dModel → Rat := fun q d =>
     (st.embed q d).getD 0
+  let ln1GammaFun : Fin dModel → Rat := fun d =>
+    (st.ln1Gamma d).getD 0
+  let ln1BetaFun : Fin dModel → Rat := fun d =>
+    (st.ln1Beta d).getD 0
   let wqFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (st.wq i j).getD 0
+  let bqFun : Fin dHead → Rat := fun j =>
+    (st.bq j).getD 0
   let wkFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (st.wk i j).getD 0
+  let bkFun : Fin dHead → Rat := fun j =>
+    (st.bk j).getD 0
   let wvFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (st.wv i j).getD 0
+  let bvFun : Fin dHead → Rat := fun j =>
+    (st.bv j).getD 0
   let woFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (st.wo i j).getD 0
+  let attnBiasFun : Fin dModel → Rat := fun d =>
+    (st.attnBias d).getD 0
   let directionFun : Fin dModel → Rat := fun d =>
     (st.direction d).getD 0
   let active :=
@@ -714,10 +779,17 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
       active := active
       prev := prevFun
       embed := embedFun
+      lnEps := lnEps
+      ln1Gamma := ln1GammaFun
+      ln1Beta := ln1BetaFun
       wq := wqFun
+      bq := bqFun
       wk := wkFun
+      bk := bkFun
       wv := wvFun
+      bv := bvFun
       wo := woFun
+      attnBias := attnBiasFun
       directionSpec := directionSpec
       direction := directionFun }
 

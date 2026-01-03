@@ -35,21 +35,24 @@ private opaque qVecVecOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector (Vector Rat dHead) seq :=
   Vector.ofFn (fun q : Fin seq =>
     Vector.ofFn (fun d : Fin dHead =>
-      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wq j d)))
+      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wq j d) +
+        inputs.bq d))
 
 /-- Cached key projections for head inputs (opaque to avoid kernel reduction). -/
 private opaque kVecVecOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector (Vector Rat dHead) seq :=
   Vector.ofFn (fun q : Fin seq =>
     Vector.ofFn (fun d : Fin dHead =>
-      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wk j d)))
+      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wk j d) +
+        inputs.bk d))
 
 /-- Cached value projections for head inputs (opaque to avoid kernel reduction). -/
 private opaque vVecVecOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector (Vector Rat dHead) seq :=
   Vector.ofFn (fun q : Fin seq =>
     Vector.ofFn (fun d : Fin dHead =>
-      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wv j d)))
+      Linear.dotFin dModel (fun j => inputs.embed q j) (fun j => inputs.wv j d) +
+        inputs.bv d))
 
 /-- Cached attention scores for head inputs (opaque to avoid kernel reduction). -/
 private opaque scoresVecOfInputs {seq dModel dHead : Nat}
