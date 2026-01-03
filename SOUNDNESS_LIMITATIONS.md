@@ -13,6 +13,9 @@ It is intentionally brief and focused on the soundness boundary.
   **residual-interval certificate** (per-coordinate lower/upper bounds).
 - The `certify_head` path uses a **head-input file** extracted by an untrusted script; the extractor
   currently ignores LayerNorm and bias terms, so it is not end-to-end faithful.
+- The `certify_head_model` path derives head inputs from the model binary in Lean, but it still
+  ignores attention biases and LayerNorm, and currently requires `head_dim` to be a perfect square
+  to represent the scale as an exact rational.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
 - There is no bridge theorem connecting certificate validity to a full circuit/model semantics
   statement (for example, a formal statement about logits under a transformer block stack).

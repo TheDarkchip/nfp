@@ -24,6 +24,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   and verifies the resulting certificates.
 - `nfp induction certify_head` recomputes scores/values from exact head inputs and verifies
   the resulting induction certificate (experimental, potentially slow).
+- `nfp induction certify_head_model` reads a model binary, derives head inputs in Lean, and
+  verifies the resulting induction certificate (still ignores attention biases).
 - `nfp induction certify_end_to_end` composes a head-level logit-diff lower bound with a
   downstream error certificate (arithmetic consistency only).
 - `nfp induction certify_end_to_end_matrix` computes a downstream bound from a matrix payload

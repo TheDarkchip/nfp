@@ -2,6 +2,8 @@
 
 import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.List.Range
+import Nfp.Model.InductionHead
+import Nfp.Model.InductionPrompt
 
 /-!
 Pure parsing utilities for `NFP_BINARY_V1` model files.
@@ -172,6 +174,58 @@ private def bytesI32 (n : Nat) : Nat :=
 private def bytesF64 (n : Nat) : Nat :=
   n * 8
 
+private def sqrtNat? (n : Nat) : Option Nat :=
+  let k := Nat.sqrt n
+  if k * k = n then
+    some k
+  else
+    none
+
+private def scaleOfHeadDim (dHead : Nat) : Except String Rat := do
+  match sqrtNat? dHead with
+  | some k =>
+      if k = 0 then
+        throw "head_dim must be positive"
+      else
+        pure (Rat.ofInt 1 / Rat.ofInt (Int.ofNat k))
+  | none =>
+      throw "head_dim must be a perfect square to compute scale"
+
+private def matrixIndex {rows cols : Nat} (i : Fin rows) (j : Fin cols) : Fin (rows * cols) :=
+  let idx := i.val * cols + j.val
+  have hstep : i.val * cols + j.val < (i.val + 1) * cols := by
+    have h' : i.val * cols + j.val < i.val * cols + cols :=
+      Nat.add_lt_add_left j.isLt _
+    have hmul : (i.val + 1) * cols = i.val * cols + cols := by
+      simpa [Nat.succ_eq_add_one] using (Nat.succ_mul i.val cols)
+    exact hmul ▸ h'
+  have hle : (i.val + 1) * cols ≤ rows * cols :=
+    Nat.mul_le_mul_right cols (Nat.succ_le_iff.mpr i.isLt)
+  ⟨idx, lt_of_lt_of_le hstep hle⟩
+
+private def readF64List (data : ByteArray) (off : Nat) (count : Nat) :
+    Except String {xs : List Rat // xs.length = count} := do
+  match count with
+  | 0 => return ⟨[], rfl⟩
+  | Nat.succ n =>
+      match readF64Rat data off with
+      | some v =>
+        let rest ← readF64List data (off + bytesF64 1) n
+        return ⟨v :: rest.1, by simp [rest.2]⟩
+      | none => throw s!"invalid f64 at offset {off}"
+
+private def readF64Matrix (data : ByteArray) (off : Nat) (rows cols : Nat) :
+    Except String (Fin rows → Fin cols → Rat) := do
+  let count := rows * cols
+  let ⟨vals, hlen⟩ ← readF64List data off count
+  let hlen' : vals.length = rows * cols := by
+    simpa using hlen
+  let mat : Fin rows → Fin cols → Rat := fun i j =>
+    let idx := matrixIndex i j
+    let hidx : idx.val < vals.length := lt_of_lt_of_eq idx.isLt hlen'.symm
+    vals.get ⟨idx.val, hidx⟩
+  return mat
+
 private def f64CountPerHead (h : NfptHeader) : Nat :=
   4 * h.modelDim * h.headDim + 3 * h.headDim
 
@@ -185,9 +239,51 @@ private def f64CountBeforeUnembed (h : NfptHeader) : Nat :=
     h.numLayers * f64CountPerLayer h +
     (2 * h.modelDim)
 
+private def f64CountBeforeHeads (h : NfptHeader) : Nat :=
+  h.seqLen * h.modelDim
+
 /-- Byte offset from the binary start to the unembedding matrix. -/
 def unembedOffset (h : NfptHeader) : Nat :=
   bytesI32 h.seqLen + bytesF64 (f64CountBeforeUnembed h)
+
+/-- Read input embeddings stored in the binary. -/
+def readEmbeddings (data : ByteArray) (start : Nat) (h : NfptHeader) :
+    Except String (Fin h.seqLen → Fin h.modelDim → Rat) := do
+  let base := start + bytesI32 h.seqLen
+  readF64Matrix data base h.seqLen h.modelDim
+
+private def headOffset (h : NfptHeader) (layer head : Nat) : Nat :=
+  bytesI32 h.seqLen +
+    bytesF64 (f64CountBeforeHeads h +
+      layer * f64CountPerLayer h +
+      head * f64CountPerHead h)
+
+private def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
+    (layer head : Nat) :
+    Except String
+      ((Fin h.modelDim → Fin h.headDim → Rat) ×
+        (Fin h.modelDim → Fin h.headDim → Rat) ×
+        (Fin h.modelDim → Fin h.headDim → Rat) ×
+        (Fin h.modelDim → Fin h.headDim → Rat)) := do
+  if layer < h.numLayers then
+    if head < h.numHeads then
+      let base := start + headOffset h layer head
+      let wq ← readF64Matrix data base h.modelDim h.headDim
+      let offbq := base + bytesF64 (h.modelDim * h.headDim)
+      let offwk := offbq + bytesF64 h.headDim
+      let wk ← readF64Matrix data offwk h.modelDim h.headDim
+      let offbk := offwk + bytesF64 (h.modelDim * h.headDim)
+      let offwv := offbk + bytesF64 h.headDim
+      let wv ← readF64Matrix data offwv h.modelDim h.headDim
+      let offbv := offwv + bytesF64 (h.modelDim * h.headDim)
+      let offwo := offbv + bytesF64 h.headDim
+      let woRaw ← readF64Matrix data offwo h.headDim h.modelDim
+      let wo : Fin h.modelDim → Fin h.headDim → Rat := fun i j => woRaw j i
+      return (wq, wk, wv, wo)
+    else
+      throw s!"head index out of range: {head}"
+  else
+    throw s!"layer index out of range: {layer}"
 
 /-- Read a single unembedding column as exact rationals. -/
 def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : Nat) :
@@ -208,6 +304,32 @@ def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : N
       throw "internal error: unembed column length mismatch"
   else
     throw s!"column out of range: {col}"
+
+/-- Read induction-head inputs directly from the model binary. -/
+def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
+    (layer head period dirTarget dirNegative : Nat) :
+    Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
+  let scale ← scaleOfHeadDim h.headDim
+  let embed ← readEmbeddings data start h
+  let (wq, wk, wv, wo) ← readHeadWeights data start h layer head
+  let colTarget ← readUnembedColumn data start h dirTarget
+  let colNegative ← readUnembedColumn data start h dirNegative
+  let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
+  let directionSpec : Circuit.DirectionSpec :=
+    { target := dirTarget, negative := dirNegative }
+  let active := Model.activeOfPeriod (seq := h.seqLen) period
+  let prev := Model.prevOfPeriod (seq := h.seqLen) period
+  pure
+    { scale := scale
+      active := active
+      prev := prev
+      embed := embed
+      wq := wq
+      wk := wk
+      wv := wv
+      wo := wo
+      directionSpec := directionSpec
+      direction := direction }
 
 end NfptPure
 

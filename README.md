@@ -94,6 +94,15 @@ lake exe nfp induction certify_head --inputs reports/gpt2_induction.head
 This path recomputes scores/values in Lean from exact head inputs. It is **experimental** and can
 be slow for nontrivial sequence lengths.
 
+You can also derive the head inputs directly from an `NFP_BINARY_V1` model file:
+
+```bash
+lake exe nfp induction certify_head_model \
+  --model models/gpt2_rigorous_with_gelu_kind_seq32.nfpt \
+  --layer 5 --head 1 --period 16 \
+  --direction-target 1 --direction-negative 2
+```
+
 ### End-to-end check with downstream bound (prototype)
 
 ```bash
