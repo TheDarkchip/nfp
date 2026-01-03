@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Mathlib.Data.List.Range
 import Nfp.IO.Pure
 import Nfp.IO.NfptPure
 import Nfp.Circuit.Cert.LogitDiff
@@ -74,6 +75,42 @@ def loadInductionHeadInputs (path : System.FilePath) :
       Sigma (fun dModel => Sigma (fun dHead => Model.InductionHeadInputs seq dModel dHead))))) := do
   let data ← IO.FS.readFile path
   return Pure.parseInductionHeadInputs data
+
+private def renderResidualIntervalCert {n : Nat} (c : ResidualIntervalCert n) : String :=
+  let header := s!"dim {n}"
+  let lines :=
+    (List.finRange n).foldr (fun i acc =>
+      s!"lo {i.val} {c.lo i}" :: s!"hi {i.val} {c.hi i}" :: acc) []
+  String.intercalate "\n" (header :: lines)
+
+private def emitResidualIntervalCert {n : Nat} (c : ResidualIntervalCert n)
+    (outPath? : Option System.FilePath) : IO Unit := do
+  let payload := renderResidualIntervalCert c
+  match outPath? with
+  | some path => IO.FS.writeFile path (payload ++ "\n")
+  | none => IO.println payload
+
+private def buildHeadOutputIntervalFromInputs {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (outPath? : Option System.FilePath) : IO UInt32 := do
+  match seq with
+  | 0 =>
+      IO.eprintln "error: seq must be positive"
+      return 2
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let _ : NeZero seq := ⟨by simp⟩
+      match Sound.buildHeadOutputIntervalFromHead? inputs with
+      | none =>
+          IO.eprintln "error: head output interval rejected"
+          return 2
+      | some result =>
+          emitResidualIntervalCert result.cert outPath?
+          if outPath?.isSome then
+            let activeCount := result.active.card
+            IO.println
+              s!"ok: head output interval built (seq={seq}, dim={dModel}, active={activeCount})"
+          return 0
 
 private def checkSoftmaxMargin (seq : Nat) (cert : SoftmaxMarginCert seq) :
     IO (Except String Unit) :=
@@ -866,6 +903,37 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
               return 1
           | Except.ok inputs =>
               checkInductionHeadInputs inputs minActive? minLogitDiff? minMargin maxEps
+
+/-- Build head-output interval bounds from exact head inputs. -/
+def runInductionHeadInterval (inputsPath : System.FilePath)
+    (outPath? : Option System.FilePath) : IO UInt32 := do
+  let parsedInputs ← loadInductionHeadInputs inputsPath
+  match parsedInputs with
+  | Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 1
+  | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
+      buildHeadOutputIntervalFromInputs inputs outPath?
+
+/-- Build head-output interval bounds from a model binary. -/
+def runInductionHeadIntervalModel (modelPath : System.FilePath)
+    (layer head period dirTarget dirNegative : Nat)
+    (outPath? : Option System.FilePath) : IO UInt32 := do
+  let data ← IO.FS.readBinFile modelPath
+  match NfptPure.parseHeader data with
+  | Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 1
+  | Except.ok ⟨header, start⟩ =>
+      match
+        NfptPure.readInductionHeadInputs
+          data start header layer head period dirTarget dirNegative
+      with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok inputs =>
+          buildHeadOutputIntervalFromInputs inputs outPath?
 
 end IO
 

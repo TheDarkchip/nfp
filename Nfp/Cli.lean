@@ -226,6 +226,46 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
 ]
 
+/-- `nfp induction head_interval` subcommand. -/
+def runInductionHeadInterval (p : Parsed) : IO UInt32 := do
+  let inputsPath := p.flag! "inputs" |>.as! String
+  let outPath? := (p.flag? "out").map (·.as! String)
+  IO.runInductionHeadInterval inputsPath outPath?
+
+/-- `nfp induction head_interval` subcommand. -/
+def inductionHeadIntervalCmd : Cmd := `[Cli|
+  head_interval VIA runInductionHeadInterval;
+  "Build head-output interval bounds from exact head inputs."
+  FLAGS:
+    inputs : String; "Path to the induction head input file."
+    out : String; "Optional path to write the residual-interval certificate."
+]
+
+/-- `nfp induction head_interval_model` subcommand. -/
+def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
+  let modelPath := p.flag! "model" |>.as! String
+  let layer := p.flag! "layer" |>.as! Nat
+  let head := p.flag! "head" |>.as! Nat
+  let period := p.flag! "period" |>.as! Nat
+  let dirTarget := p.flag! "direction-target" |>.as! Nat
+  let dirNegative := p.flag! "direction-negative" |>.as! Nat
+  let outPath? := (p.flag? "out").map (·.as! String)
+  IO.runInductionHeadIntervalModel modelPath layer head period dirTarget dirNegative outPath?
+
+/-- `nfp induction head_interval_model` subcommand. -/
+def inductionHeadIntervalModelCmd : Cmd := `[Cli|
+  head_interval_model VIA runInductionHeadIntervalModel;
+  "Build head-output interval bounds by reading a model binary directly."
+  FLAGS:
+    model : String; "Path to the NFP_BINARY_V1 model file."
+    layer : Nat; "Layer index for the induction head."
+    head : Nat; "Head index for the induction head."
+    period : Nat; "Prompt period used to derive active/prev."
+    "direction-target" : Nat; "Target token id for logit-diff direction."
+    "direction-negative" : Nat; "Negative token id for logit-diff direction."
+    out : String; "Optional path to write the residual-interval certificate."
+]
+
 /-- Induction-head subcommands. -/
 def inductionCmd : Cmd := `[Cli|
   induction NOOP;
@@ -237,7 +277,9 @@ def inductionCmd : Cmd := `[Cli|
     inductionCertifyEndToEndMatrixCmd;
     inductionCertifyEndToEndModelCmd;
     inductionCertifyHeadCmd;
-    inductionCertifyHeadModelCmd
+    inductionCertifyHeadModelCmd;
+    inductionHeadIntervalCmd;
+    inductionHeadIntervalModelCmd
 ]
 
 /-- The root CLI command. -/

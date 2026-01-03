@@ -5,6 +5,7 @@ import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.Finset.Lattice.Fold
 import Mathlib.Data.Rat.Cast.Order
 import Mathlib.Data.Vector.Defs
+import Nfp.Circuit.Cert.ResidualInterval
 import Nfp.Circuit.Cert.SoftmaxMargin
 import Nfp.Circuit.Cert.ValueRange
 import Nfp.Circuit.Layers.Softmax
@@ -75,6 +76,15 @@ private opaque valsVecOfInputs {seq dModel dHead : Nat}
     let vVec : Fin dHead → Rat := fun d => (vVecVec.get k).get d
     let dirHead : Fin dHead → Rat := fun d => dirHeadVec.get d
     Linear.dotFin dHead (fun d => vVec d) (fun d => dirHead d))
+
+/-- Cached per-key head outputs in model space (opaque to avoid kernel reduction). -/
+private opaque headValueVecOfInputs {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (vVecVec : Vector (Vector Rat dHead) seq) : Vector (Vector Rat dModel) seq :=
+  Vector.ofFn (fun k : Fin seq =>
+    Vector.ofFn (fun i : Fin dModel =>
+      let vVec : Fin dHead → Rat := fun d => (vVecVec.get k).get d
+      Linear.dotFin dHead (fun d => vVec d) (fun d => inputs.wo i d)))
 
 /-- Sound induction-certificate payload built from exact head inputs. -/
 structure InductionHeadCert (seq : Nat) where
@@ -433,6 +443,249 @@ def buildInductionCertFromHead? [NeZero seq] {dModel dHead : Nat}
             simpa using h
           exact hle.trans hsum_others_le
       some ⟨cert, { softmax_bounds := hsoftmax_bounds, value_bounds := hvalues }⟩
+
+section HeadOutputInterval
+
+variable {seq dModel dHead : Nat}
+
+noncomputable section
+
+/-- Real-valued head output using explicit score inputs. -/
+def headOutputWithScores (scores : Fin seq → Fin seq → Rat)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (q : Fin seq) (i : Fin dModel) : Real :=
+  let weights : Fin seq → Fin seq → Real := fun q k =>
+    Circuit.softmax (fun j => (scores q j : Real)) k
+  let vVecVec := vVecVecOfInputs inputs
+  let headValuesVec := headValueVecOfInputs inputs vVecVec
+  let vals : Fin seq → Real := fun k => (headValuesVec.get k).get i
+  dotProduct (weights q) vals
+
+/-- Unfolding lemma for `headOutputWithScores`. -/
+theorem headOutputWithScores_def (scores : Fin seq → Fin seq → Rat)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (q : Fin seq) (i : Fin dModel) :
+    headOutputWithScores scores inputs q i =
+      let weights : Fin seq → Fin seq → Real := fun q k =>
+        Circuit.softmax (fun j => (scores q j : Real)) k
+      let vVecVec := vVecVecOfInputs inputs
+      let headValuesVec := headValueVecOfInputs inputs vVecVec
+      let vals : Fin seq → Real := fun k => (headValuesVec.get k).get i
+      dotProduct (weights q) vals := rfl
+
+/-- Real-valued head output for a query and model dimension. -/
+def headOutput (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (q : Fin seq) (i : Fin dModel) : Real :=
+  let qVecVec := qVecVecOfInputs inputs
+  let kVecVec := kVecVecOfInputs inputs
+  let scoresVec := scoresVecOfInputs inputs qVecVec kVecVec
+  let scores : Fin seq → Fin seq → Rat := fun q k => (scoresVec.get q).get k
+  headOutputWithScores scores inputs q i
+
+/-- Unfolding lemma for `headOutput`. -/
+theorem headOutput_def (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (q : Fin seq) (i : Fin dModel) :
+    headOutput inputs q i =
+      let qVecVec := qVecVecOfInputs inputs
+      let kVecVec := kVecVecOfInputs inputs
+      let scoresVec := scoresVecOfInputs inputs qVecVec kVecVec
+      let scores : Fin seq → Fin seq → Rat := fun q k => (scoresVec.get q).get k
+      headOutputWithScores scores inputs q i := rfl
+
+/-- Soundness predicate for head-output interval bounds. -/
+structure HeadOutputIntervalSound [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (scores : Fin seq → Fin seq → Rat)
+    (active : Finset (Fin seq))
+    (c : Circuit.ResidualIntervalCert dModel) : Prop where
+  /-- Interval bounds are ordered coordinatewise. -/
+  bounds : Circuit.ResidualIntervalBounds c
+  /-- Active-query outputs lie inside the interval bounds. -/
+  output_mem :
+    ∀ q, q ∈ active → ∀ i,
+      (c.lo i : Real) ≤ headOutputWithScores scores inputs q i ∧
+        headOutputWithScores scores inputs q i ≤ (c.hi i : Real)
+
+/-- Certified head-output interval data for a specific active set. -/
+structure HeadOutputIntervalResult [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead) where
+  /-- Scores used to derive softmax weights. -/
+  scores : Fin seq → Fin seq → Rat
+  /-- Active queries covered by the interval bounds. -/
+  active : Finset (Fin seq)
+  /-- Residual-interval certificate for head outputs. -/
+  cert : Circuit.ResidualIntervalCert dModel
+  /-- Soundness proof for the interval bounds. -/
+  sound : HeadOutputIntervalSound inputs scores active cert
+
+/-- Build residual-interval bounds for head outputs on active queries. -/
+def buildHeadOutputIntervalFromHead? [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    Option (HeadOutputIntervalResult inputs) := by
+  classical
+  cases seq with
+  | zero =>
+      cases (NeZero.ne (n := (0 : Nat)) rfl)
+  | succ n =>
+      cases hbuild : buildInductionCertFromHead? inputs with
+      | none => exact none
+      | some certWithProof =>
+          rcases certWithProof with ⟨cert, hcert⟩
+          let vVecVec := vVecVecOfInputs inputs
+          let headValuesVec := headValueVecOfInputs inputs vVecVec
+          let headValue : Fin (Nat.succ n) → Fin dModel → Rat := fun k i =>
+            (headValuesVec.get k).get i
+          let scores : Fin (Nat.succ n) → Fin (Nat.succ n) → Rat := cert.scores
+          let scoresReal : Fin (Nat.succ n) → Fin (Nat.succ n) → Real :=
+            fun q k => (scores q k : Real)
+          let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
+            Circuit.softmax (scoresReal q) k
+          let activeSet : Finset (Fin (Nat.succ n)) := cert.active
+          let univ : Finset (Fin (Nat.succ n)) := Finset.univ
+          have huniv : univ.Nonempty := Finset.univ_nonempty
+          let loVal : Fin dModel → Rat := fun i =>
+            univ.inf' huniv (fun k => headValue k i)
+          let hiVal : Fin dModel → Rat := fun i =>
+            univ.sup' huniv (fun k => headValue k i)
+          have hvalsBounds :
+              ∀ i, Layers.ValueRangeBounds (Val := Rat) (loVal i) (hiVal i)
+                (fun k => headValue k i) := by
+            intro i
+            refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
+            · rcases huniv with ⟨k0, hk0⟩
+              have hlo :=
+                Finset.inf'_le (s := univ) (f := fun k => headValue k i) hk0
+              have hhi :=
+                Finset.le_sup' (s := univ) (f := fun k => headValue k i) hk0
+              exact le_trans hlo hhi
+            · intro k
+              exact Finset.inf'_le (s := univ) (f := fun k => headValue k i) (by simp [univ])
+            · intro k
+              exact Finset.le_sup' (s := univ) (f := fun k => headValue k i) (by simp [univ])
+          have hvalsBoundsReal :
+              ∀ i, Layers.ValueRangeBounds (Val := Real)
+                (loVal i : Real) (hiVal i : Real)
+                (fun k => (headValue k i : Real)) := by
+            intro i
+            have hvals := hvalsBounds i
+            refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
+            · exact (Rat.cast_le (K := Real)).2 hvals.lo_le_hi
+            · intro k
+              exact (Rat.cast_le (K := Real)).2 (hvals.lo_le k)
+            · intro k
+              exact (Rat.cast_le (K := Real)).2 (hvals.le_hi k)
+          have hsoftmax :
+              Layers.SoftmaxMarginBoundsOn (Val := Real) (cert.eps : Real) (cert.margin : Real)
+                (fun q => q ∈ activeSet) cert.prev scoresReal weights := by
+            simpa [scoresReal, weights, activeSet] using hcert.softmax_bounds
+          have hweights :
+              Layers.OneHotApproxBoundsOnActive (Val := Real) (cert.eps : Real)
+                (fun q => q ∈ activeSet) cert.prev weights :=
+            Layers.oneHotApproxBoundsOnActive_of_softmaxMargin
+              (Val := Real)
+              (ε := (cert.eps : Real))
+              (margin := (cert.margin : Real))
+              (active := fun q => q ∈ activeSet)
+              (prev := cert.prev)
+              (scores := scoresReal)
+              (weights := weights)
+              hsoftmax
+          have happrox :
+              ∀ i, Layers.InductionSpecApproxOn (Val := Real) (n := n)
+                ((cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)))
+                (fun q => q ∈ activeSet) cert.prev
+                (fun q => dotProduct (weights q) (fun k => (headValue k i : Real)))
+                (fun k => (headValue k i : Real)) := by
+            intro i
+            exact
+              Layers.inductionSpecApproxOn_of_oneHotApprox_valueRange
+                (Val := Real)
+                (n := n)
+                (ε := (cert.eps : Real))
+                (lo := (loVal i : Real))
+                (hi := (hiVal i : Real))
+                (active := fun q => q ∈ activeSet)
+                (prev := cert.prev)
+                (weights := weights)
+                (vals := fun k => (headValue k i : Real))
+                (hweights := hweights)
+                (hvals := hvalsBoundsReal i)
+          let delta : Fin dModel → Rat := fun i => hiVal i - loVal i
+          let boundLoRat : Fin (Nat.succ n) → Fin dModel → Rat := fun q i =>
+            headValue (cert.prev q) i - cert.eps * delta i
+          let boundHiRat : Fin (Nat.succ n) → Fin dModel → Rat := fun q i =>
+            headValue (cert.prev q) i + cert.eps * delta i
+          let loOut : Fin dModel → Rat := fun i =>
+            if h : activeSet.Nonempty then
+              activeSet.inf' h (fun q => boundLoRat q i)
+            else
+              0
+          let hiOut : Fin dModel → Rat := fun i =>
+            if h : activeSet.Nonempty then
+              activeSet.sup' h (fun q => boundHiRat q i)
+            else
+              0
+          have hout :
+              ∀ q, q ∈ activeSet → ∀ i,
+                (loOut i : Real) ≤ headOutputWithScores scores inputs q i ∧
+                  headOutputWithScores scores inputs q i ≤ (hiOut i : Real) := by
+            intro q hq i
+            have hactive : activeSet.Nonempty := ⟨q, hq⟩
+            have hspec := (happrox i) q hq
+            have hout_def :
+                headOutputWithScores scores inputs q i =
+                  dotProduct (weights q) (fun k => (headValue k i : Real)) := by
+              simp [headOutputWithScores, scoresReal, weights, headValue, headValuesVec, vVecVec]
+            have hupper :
+                headOutputWithScores scores inputs q i ≤ (boundHiRat q i : Real) := by
+              have hupper' :=
+                (happrox i) q hq |>.1
+              simpa [hout_def, boundHiRat, delta] using hupper'
+            have hlower :
+                (boundLoRat q i : Real) ≤ headOutputWithScores scores inputs q i := by
+              have hlower' :
+                  (headValue (cert.prev q) i : Real) -
+                      (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) ≤
+                    dotProduct (weights q) (fun k => (headValue k i : Real)) := by
+                exact (sub_le_iff_le_add).2 hspec.2
+              simpa [hout_def, boundLoRat, delta] using hlower'
+            have hlo :
+                (loOut i : Real) ≤ (boundLoRat q i : Real) := by
+              have hloRat : loOut i ≤ boundLoRat q i := by
+                simpa [loOut, hactive] using
+                  (Finset.inf'_le (s := activeSet) (f := fun q => boundLoRat q i) hq)
+              exact (Rat.cast_le (K := Real)).2 hloRat
+            have hhi :
+                (boundHiRat q i : Real) ≤ (hiOut i : Real) := by
+              have hhiRat : boundHiRat q i ≤ hiOut i := by
+                simpa [hiOut, hactive] using
+                  (Finset.le_sup' (s := activeSet) (f := fun q => boundHiRat q i) hq)
+              exact (Rat.cast_le (K := Real)).2 hhiRat
+            exact ⟨le_trans hlo hlower, le_trans hupper hhi⟩
+          have hbounds : Circuit.ResidualIntervalBounds { lo := loOut, hi := hiOut } := by
+            refine { lo_le_hi := ?_ }
+            intro i
+            by_cases hactive : activeSet.Nonempty
+            · rcases hactive with ⟨q, hq⟩
+              have hout_i := hout q hq i
+              have hleReal : (loOut i : Real) ≤ (hiOut i : Real) :=
+                le_trans hout_i.1 hout_i.2
+              exact (Rat.cast_le (K := Real)).1 hleReal
+            · simp [loOut, hiOut, hactive]
+          let certOut : Circuit.ResidualIntervalCert dModel := { lo := loOut, hi := hiOut }
+          exact some
+            { scores := scores
+              active := activeSet
+              cert := certOut
+              sound :=
+                { bounds := hbounds
+                  output_mem := by
+                    intro q hq i
+                    exact hout q hq i } }
+
+end
+
+end HeadOutputInterval
 
 end Sound
 
