@@ -131,15 +131,18 @@ lake exe nfp induction certify_end_to_end_matrix \
 ```
 
 Or derive the downstream matrix directly from an `NFP_BINARY_V1` model file
-(currently uses the unembedding direction only):
+(currently uses the unembedding direction only). If `--residual-interval` is omitted,
+the tool derives a conservative residual interval from the model:
 
 ```bash
 lake exe nfp induction certify_end_to_end_model \
   --scores reports/gpt2_induction.cert \
   --values reports/gpt2_induction.values \
-  --model models/gpt2_rigorous.nfpt \
-  --residual-interval reports/gpt2_residual.interval
+  --model models/gpt2_rigorous.nfpt
 ```
+
+To use an external residual-interval certificate instead, include
+`--residual-interval reports/gpt2_residual.interval`.
 
 ## File formats
 

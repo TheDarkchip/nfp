@@ -8,6 +8,7 @@ import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Cert.ResidualBound
 import Nfp.Circuit.Cert.ResidualInterval
 import Nfp.Sound.Bounds.MatrixNorm
+import Nfp.Sound.Bounds.Transformer
 import Nfp.Sound.Induction
 import Nfp.Sound.Induction.LogitDiff
 
@@ -90,6 +91,36 @@ private def emitResidualIntervalCert {n : Nat} (c : ResidualIntervalCert n)
   match outPath? with
   | some path => IO.FS.writeFile path (payload ++ "\n")
   | none => IO.println payload
+
+/-! Derived residual intervals from model binaries. -/
+
+/-- Derive residual-interval bounds from a model binary via interval propagation. -/
+private def deriveResidualIntervalFromModel (data : ByteArray) (start : Nat)
+    (header : NfptPure.NfptHeader) :
+    Except String (ResidualIntervalCert header.modelDim) := do
+  if hseq : header.seqLen = 0 then
+    throw "seq must be positive"
+  else
+    have _ : NeZero header.seqLen := ⟨hseq⟩
+    if header.modelDim = 0 then
+      throw "model dim must be positive"
+    else if 0 < header.layerNormEps then
+      let embed ← NfptPure.readEmbeddings data start header
+      let layerSlices ← NfptPure.readLayerSlices data start header
+      let headLayers ← NfptPure.readLayerHeads data start header
+      let finalLn ← NfptPure.readFinalLayerNorm data start header
+      let layers : Fin header.numLayers → Model.Gpt2LayerSlice header.modelDim header.hiddenDim :=
+        fun l => NfptPure.SizedArray.get layerSlices l
+      let heads :
+          Fin header.numLayers → Fin header.numHeads →
+            Model.Gpt2HeadWeights header.modelDim header.headDim := fun l h =>
+        NfptPure.SizedArray.get (NfptPure.SizedArray.get headLayers l) h
+      let bounds :=
+        Sound.Bounds.gpt2ResidualIntervalBounds (eps := header.layerNormEps)
+          layers heads finalLn embed
+      return { lo := bounds.1, hi := bounds.2 }
+    else
+      throw s!"layer norm epsilon {header.layerNormEps} must be positive"
 
 private def buildHeadOutputIntervalFromInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -608,10 +639,11 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
                                         finalLB={finalLB})"
                                       return 0
 
-/-- Check end-to-end induction certificates using a model file and residual bounds. -/
+/-- Check end-to-end induction certificates using a model file and residual bounds
+    (loaded from disk or derived from the model). -/
 def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (modelPath : System.FilePath)
-    (residualIntervalPath : System.FilePath) (minActive? : Option Nat)
+    (residualIntervalPath? : Option System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
@@ -703,17 +735,32 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                     IO.eprintln s!"error: {msg}"
                                     return 1
                                 | Except.ok ⟨header, start⟩ =>
-                                    let parsedResidual ←
-                                      loadResidualIntervalCert residualIntervalPath
-                                    match parsedResidual with
-                                    | Except.error msg =>
-                                        IO.eprintln s!"error: {msg}"
-                                        return 1
-                                    | Except.ok ⟨dim, residualCert⟩ =>
-                                        if hdim : dim = header.modelDim then
-                                          let residualCert' :
-                                              ResidualIntervalCert header.modelDim := by
-                                            simpa [hdim] using residualCert
+                                    if header.seqLen = seq then
+                                      let residualCertE : Except String
+                                          (ResidualIntervalCert header.modelDim) ←
+                                        match residualIntervalPath? with
+                                        | some residualIntervalPath => do
+                                            let parsedResidual ←
+                                              loadResidualIntervalCert residualIntervalPath
+                                            match parsedResidual with
+                                            | Except.error msg => pure (Except.error msg)
+                                            | Except.ok ⟨dim, residualCert⟩ =>
+                                                if hdim : dim = header.modelDim then
+                                                  let residualCert' :
+                                                      ResidualIntervalCert header.modelDim := by
+                                                    simpa [hdim] using residualCert
+                                                  pure (Except.ok residualCert')
+                                                else
+                                                  pure (Except.error
+                                                    s!"residual interval dim {dim} \
+                                                    does not match model dim {header.modelDim}")
+                                        | none =>
+                                            pure (deriveResidualIntervalFromModel data start header)
+                                      match residualCertE with
+                                      | Except.error msg =>
+                                          IO.eprintln s!"error: {msg}"
+                                          return 1
+                                      | Except.ok residualCert' =>
                                           let residualOk :=
                                             Circuit.checkResidualIntervalCert residualCert'
                                           if residualOk then
@@ -769,11 +816,11 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                             IO.eprintln
                                               "error: residual-interval certificate rejected"
                                             return 2
-                                        else
-                                          IO.eprintln
-                                            s!"error: residual interval dim {dim} \
-                                            does not match model dim {header.modelDim}"
-                                          return 2
+                                    else
+                                      IO.eprintln
+                                        s!"error: model seq {header.seqLen} \
+                                        does not match cert seq {seq}"
+                                      return 2
 
 private def checkInductionHeadInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)

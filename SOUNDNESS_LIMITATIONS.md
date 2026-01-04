@@ -9,8 +9,9 @@ It is intentionally brief and focused on the soundness boundary.
 - Induction certificates are **head-level** (softmax-margin + value-range + logit-diff lower bound).
   They do **not** yet imply end-to-end model behavior.
 - Downstream error bounds can be computed from a **matrix payload** inside Lean. A model-based
-  path exists, but it currently uses only the unembedding direction and relies on an external
-  **residual-interval certificate** (per-coordinate lower/upper bounds).
+  path exists, but it currently uses only the unembedding direction and derives residual
+  intervals via conservative interval propagation (ignoring attention-score structure),
+  which can be loose.
 - The `certify_head` path uses a **head-input file** extracted by an untrusted script; the extractor
   now includes attention projection biases and LayerNorm metadata, but the Lean-side computation
   still ignores LayerNorm and the shared attention output bias.
@@ -24,9 +25,8 @@ It is intentionally brief and focused on the soundness boundary.
 
 ## Remaining work
 
-- Compute the downstream bound **inside Lean** from model weights and certified residual
-  bounds (not just matrix payloads), and wire this into `certify_end_to_end`.
-- Replace untrusted residual-interval generation with a verified derivation from upstream bounds.
+- Tighten model-derived residual intervals (e.g., use attention-weight certificates or
+  score-aware bounds) to avoid vacuity.
 - Replace untrusted extraction with a verified parser for model weight slices.
 - Add a formal bridge from certificates to circuit semantics and (eventually) to end-to-end
   transformer claims.

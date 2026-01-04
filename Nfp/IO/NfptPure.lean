@@ -2,6 +2,7 @@
 
 import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.List.Range
+import Nfp.Model.Gpt2
 import Nfp.Model.InductionHead
 import Nfp.Model.InductionPrompt
 
@@ -35,6 +36,17 @@ structure NfptHeader where
   seqLen : Nat
   /-- LayerNorm epsilon parameter. -/
   layerNormEps : Rat
+
+/-- Array with a fixed size proof. -/
+structure SizedArray (n : Nat) (α : Type) where
+  /-- Underlying array data. -/
+  data : Array α
+  /-- Size proof for the array. -/
+  size_eq : data.size = n
+
+/-- Index into a `SizedArray` using a `Fin`. -/
+def SizedArray.get {n : Nat} {α : Type} (arr : SizedArray n α) (i : Fin n) : α :=
+  arr.data[i.val]'(by simp [arr.size_eq])
 
 private def parseNat (s : String) : Except String Nat :=
   match s.toNat? with
@@ -337,6 +349,10 @@ private def f64CountBeforeHeads (h : NfptHeader) : Nat :=
 def unembedOffset (h : NfptHeader) : Nat :=
   bytesI32 h.seqLen + bytesF64 (f64CountBeforeUnembed h)
 
+private def finalLayerNormOffset (h : NfptHeader) : Nat :=
+  bytesI32 h.seqLen +
+    bytesF64 (f64CountBeforeHeads h + h.numLayers * f64CountPerLayer h)
+
 /-- Read input embeddings stored in the binary. -/
 def readEmbeddings (data : ByteArray) (start : Nat) (h : NfptHeader) :
     Except String (Fin h.seqLen → Fin h.modelDim → Rat) := do
@@ -368,19 +384,10 @@ private def layerExtrasOffset (h : NfptHeader) (layer : Nat) : Nat :=
       layer * f64CountPerLayer h +
       h.numHeads * f64CountPerHead h)
 
-/-- Head weights plus biases for a single attention head. -/
-private structure HeadWeights (dModel dHead : Nat) where
-  wq : Fin dModel → Fin dHead → Rat
-  bq : Fin dHead → Rat
-  wk : Fin dModel → Fin dHead → Rat
-  bk : Fin dHead → Rat
-  wv : Fin dModel → Fin dHead → Rat
-  bv : Fin dHead → Rat
-  wo : Fin dModel → Fin dHead → Rat
-
-private def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
+/-- Read attention head weights and biases for a specific layer/head. -/
+def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
     (layer head : Nat) :
-    Except String (HeadWeights h.modelDim h.headDim) := do
+    Except String (Model.Gpt2HeadWeights h.modelDim h.headDim) := do
   if layer < h.numLayers then
     if head < h.numHeads then
       let base := start + headOffset h layer head
@@ -422,6 +429,88 @@ private def readLayerAttnBiasLn1 (data : ByteArray) (start : Nat) (h : NfptHeade
     return (attnBias, ln1Gamma, ln1Beta)
   else
     throw s!"layer index out of range: {layer}"
+
+/-- Read GPT-2 layer parameters (MLP + LayerNorm) from the model binary. -/
+def readLayerSlice (data : ByteArray) (start : Nat) (h : NfptHeader)
+    (layer : Nat) : Except String (Model.Gpt2LayerSlice h.modelDim h.hiddenDim) := do
+  if layer < h.numLayers then
+    let base := start + layerExtrasOffset h layer
+    let attnBias ← readF64Vec data base h.modelDim
+    let offWIn := base + bytesF64 h.modelDim
+    let mlpWIn ← readF64Matrix data offWIn h.modelDim h.hiddenDim
+    let offBIn := offWIn + bytesF64 (h.modelDim * h.hiddenDim)
+    let mlpBIn ← readF64Vec data offBIn h.hiddenDim
+    let offWOut := offBIn + bytesF64 h.hiddenDim
+    let mlpWOut ← readF64Matrix data offWOut h.hiddenDim h.modelDim
+    let offBOut := offWOut + bytesF64 (h.hiddenDim * h.modelDim)
+    let mlpBOut ← readF64Vec data offBOut h.modelDim
+    let offLn1Gamma := offBOut + bytesF64 h.modelDim
+    let ln1Gamma ← readF64Vec data offLn1Gamma h.modelDim
+    let offLn1Beta := offLn1Gamma + bytesF64 h.modelDim
+    let ln1Beta ← readF64Vec data offLn1Beta h.modelDim
+    let offLn2Gamma := offLn1Beta + bytesF64 h.modelDim
+    let ln2Gamma ← readF64Vec data offLn2Gamma h.modelDim
+    let offLn2Beta := offLn2Gamma + bytesF64 h.modelDim
+    let ln2Beta ← readF64Vec data offLn2Beta h.modelDim
+    return { attnBias := attnBias
+             mlpWIn := mlpWIn
+             mlpBIn := mlpBIn
+             mlpWOut := mlpWOut
+             mlpBOut := mlpBOut
+             ln1Gamma := ln1Gamma
+             ln1Beta := ln1Beta
+             ln2Gamma := ln2Gamma
+             ln2Beta := ln2Beta }
+  else
+    throw s!"layer index out of range: {layer}"
+
+/-- Read all GPT-2 layer slices from the model binary. -/
+def readLayerSlices (data : ByteArray) (start : Nat) (h : NfptHeader) :
+    Except String (SizedArray h.numLayers (Model.Gpt2LayerSlice h.modelDim h.hiddenDim)) := do
+  let slices ← (List.finRange h.numLayers).foldlM
+    (fun (acc : Array (Model.Gpt2LayerSlice h.modelDim h.hiddenDim)) layer => do
+      let slice ← readLayerSlice data start h layer.val
+      pure (acc.push slice))
+    (#[] : Array (Model.Gpt2LayerSlice h.modelDim h.hiddenDim))
+  if hlen : slices.size = h.numLayers then
+    return { data := slices, size_eq := hlen }
+  else
+    throw "internal error: layer slice count mismatch"
+
+/-- Read all attention head weights from the model binary. -/
+def readLayerHeads (data : ByteArray) (start : Nat) (h : NfptHeader) :
+    Except String
+      (SizedArray h.numLayers
+        (SizedArray h.numHeads (Model.Gpt2HeadWeights h.modelDim h.headDim))) := do
+  let layers ← (List.finRange h.numLayers).foldlM
+    (fun (acc : Array
+        (SizedArray h.numHeads (Model.Gpt2HeadWeights h.modelDim h.headDim))) layer => do
+      let heads ← (List.finRange h.numHeads).foldlM
+        (fun (accHead : Array (Model.Gpt2HeadWeights h.modelDim h.headDim)) head => do
+          let weights ← readHeadWeights data start h layer.val head.val
+          pure (accHead.push weights))
+        (#[] : Array (Model.Gpt2HeadWeights h.modelDim h.headDim))
+      if hlen : heads.size = h.numHeads then
+        let headArray : SizedArray h.numHeads (Model.Gpt2HeadWeights h.modelDim h.headDim) :=
+          { data := heads, size_eq := hlen }
+        pure (acc.push headArray)
+      else
+        throw "internal error: head count mismatch")
+    (#[] : Array
+      (SizedArray h.numHeads (Model.Gpt2HeadWeights h.modelDim h.headDim)))
+  if hlen : layers.size = h.numLayers then
+    return { data := layers, size_eq := hlen }
+  else
+    throw "internal error: layer head count mismatch"
+
+/-- Read the final LayerNorm parameters from the model binary. -/
+def readFinalLayerNorm (data : ByteArray) (start : Nat) (h : NfptHeader) :
+    Except String (Model.Gpt2FinalLayerNorm h.modelDim) := do
+  let base := start + finalLayerNormOffset h
+  let gamma ← readF64Vec data base h.modelDim
+  let offBeta := base + bytesF64 h.modelDim
+  let beta ← readF64Vec data offBeta h.modelDim
+  return { gamma := gamma, beta := beta }
 
 /-- Read a single unembedding column as exact rationals. -/
 def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : Nat) :

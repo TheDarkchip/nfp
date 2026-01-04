@@ -4,10 +4,11 @@ import Mathlib.Algebra.Order.Ring.Rat
 import Nfp.Circuit.Cert.ValueRange
 
 /-!
-Exact GPT-2 head-slice data for induction certification.
+Exact GPT-2 slices for induction certification and downstream bounds.
 
-This module holds the precise token embeddings, position embeddings, and head
-projection weights needed to build `InductionHeadInputs` for a single head.
+This module holds token embeddings, head projection weights, and per-layer
+MLP/LayerNorm parameters needed to build `InductionHeadInputs` and downstream
+bound computations.
 -/
 
 namespace Nfp
@@ -61,6 +62,51 @@ structure Gpt2HeadSlice (seq dModel dHead vocab : Nat) where
   ln1Beta : Fin dModel → Rat
   /-- Direction tokens for logit-diff certification. -/
   direction : DirectionTokens vocab
+
+/-- Exact per-head attention weights and biases. -/
+structure Gpt2HeadWeights (dModel dHead : Nat) where
+  /-- Query projection weights. -/
+  wq : Fin dModel → Fin dHead → Rat
+  /-- Query projection bias. -/
+  bq : Fin dHead → Rat
+  /-- Key projection weights. -/
+  wk : Fin dModel → Fin dHead → Rat
+  /-- Key projection bias. -/
+  bk : Fin dHead → Rat
+  /-- Value projection weights. -/
+  wv : Fin dModel → Fin dHead → Rat
+  /-- Value projection bias. -/
+  bv : Fin dHead → Rat
+  /-- Output projection weights for this head slice. -/
+  wo : Fin dModel → Fin dHead → Rat
+
+/-- Exact GPT-2 layer slice with MLP and LayerNorm parameters. -/
+structure Gpt2LayerSlice (dModel hidden : Nat) where
+  /-- Attention output bias (shared across heads). -/
+  attnBias : Fin dModel → Rat
+  /-- MLP input projection weights. -/
+  mlpWIn : Fin dModel → Fin hidden → Rat
+  /-- MLP input projection bias. -/
+  mlpBIn : Fin hidden → Rat
+  /-- MLP output projection weights. -/
+  mlpWOut : Fin hidden → Fin dModel → Rat
+  /-- MLP output projection bias. -/
+  mlpBOut : Fin dModel → Rat
+  /-- LayerNorm scale for the attention input. -/
+  ln1Gamma : Fin dModel → Rat
+  /-- LayerNorm bias for the attention input. -/
+  ln1Beta : Fin dModel → Rat
+  /-- LayerNorm scale for the MLP input. -/
+  ln2Gamma : Fin dModel → Rat
+  /-- LayerNorm bias for the MLP input. -/
+  ln2Beta : Fin dModel → Rat
+
+/-- Final LayerNorm parameters applied before unembedding. -/
+structure Gpt2FinalLayerNorm (dModel : Nat) where
+  /-- LayerNorm scale. -/
+  gamma : Fin dModel → Rat
+  /-- LayerNorm bias. -/
+  beta : Fin dModel → Rat
 
 /-- Token-plus-position embeddings for a GPT-2 head slice. -/
 def Gpt2HeadSlice.embed {seq dModel dHead vocab : Nat}

@@ -203,6 +203,33 @@ theorem abs_le_max_abs_abs_of_interval {a b x : Rat} (hlo : a ≤ x) (hhi : x �
       _ = |a| := by simp [haabs]
       _ ≤ max |a| |b| := le_max_left _ _
 
+/-- Global absolute bound from interval endpoints. -/
+def intervalAbsBound {n : Nat} (lo hi : Fin n → Rat) : Rat :=
+  if h : (Finset.univ : Finset (Fin n)).Nonempty then
+    (Finset.univ).sup' h (fun i => max |lo i| |hi i|)
+  else
+    0
+
+/-- `intervalAbsBound` bounds any element inside the interval. -/
+theorem abs_le_intervalAbsBound {n : Nat} (lo hi x : Fin n → Rat)
+    (hlo : ∀ i, lo i ≤ x i) (hhi : ∀ i, x i ≤ hi i) (i : Fin n) :
+    |x i| ≤ intervalAbsBound lo hi := by
+  classical
+  have hbound : |x i| ≤ max |lo i| |hi i| :=
+    abs_le_max_abs_abs_of_interval (hlo i) (hhi i)
+  have hnonempty : (Finset.univ : Finset (Fin n)).Nonempty := ⟨i, by simp⟩
+  have hsup :
+      max |lo i| |hi i| ≤
+        (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) := by
+    simpa using
+      (Finset.le_sup'
+        (s := (Finset.univ : Finset (Fin n)))
+        (f := fun j => max |lo j| |hi j|)
+        (by simp : i ∈ (Finset.univ : Finset (Fin n))))
+  have hfinal : |x i| ≤ (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) :=
+    le_trans hbound hsup
+  simpa [intervalAbsBound, hnonempty] using hfinal
+
 theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → Rat)
     (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     |dotProduct v x| ≤ dotIntervalAbsBound v lo hi := by
@@ -298,6 +325,29 @@ theorem abs_le_max_abs_abs_of_interval_real {a b x : Real} (hlo : a ≤ x) (hhi 
       _ ≤ -a := neg_le_neg hlo
       _ = |a| := by simp [haabs]
       _ ≤ max |a| |b| := le_max_left _ _
+
+/-- `intervalAbsBound` controls real-valued coordinates inside a rational interval. -/
+theorem abs_le_intervalAbsBound_real {n : Nat} (lo hi : Fin n → Rat) (x : Fin n → Real)
+    (hlo : ∀ i, (lo i : Real) ≤ x i) (hhi : ∀ i, x i ≤ (hi i : Real)) (i : Fin n) :
+    |x i| ≤ (intervalAbsBound lo hi : Real) := by
+  classical
+  have hbound : |x i| ≤ max |(lo i : Real)| |(hi i : Real)| :=
+    abs_le_max_abs_abs_of_interval_real (hlo i) (hhi i)
+  have hnonempty : (Finset.univ : Finset (Fin n)).Nonempty := ⟨i, by simp⟩
+  have hsup :
+      max |lo i| |hi i| ≤
+        (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) := by
+    simpa using
+      (Finset.le_sup'
+        (s := (Finset.univ : Finset (Fin n)))
+        (f := fun j => max |lo j| |hi j|)
+        (by simp : i ∈ (Finset.univ : Finset (Fin n))))
+  have hsup' : max |lo i| |hi i| ≤ intervalAbsBound lo hi := by
+    simpa [intervalAbsBound, hnonempty] using hsup
+  have hsup_real :
+      max |(lo i : Real)| |(hi i : Real)| ≤ (intervalAbsBound lo hi : Real) := by
+    exact_mod_cast hsup'
+  exact le_trans hbound hsup_real
 
 theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n → Rat)
     (x : Fin n → Real)

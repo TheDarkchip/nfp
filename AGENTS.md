@@ -347,6 +347,14 @@ but you **must** update this list in the same commit.
   - Sound builders for induction certificates from exact inputs.
 - `Nfp/Sound/Bounds/MatrixNorm.lean`
   - Row-sum matrix norms and downstream linear certificate builders.
+- `Nfp/Sound/Bounds/Gelu.lean`
+  - Tanh-GELU bounds for interval propagation through MLPs.
+- `Nfp/Sound/Bounds/Mlp.lean`
+  - Interval bounds for GPT-2 MLP blocks and LayerNorm composition.
+- `Nfp/Sound/Bounds/Attention.lean`
+  - Interval bounds for multi-head attention and transformer layers.
+- `Nfp/Sound/Bounds/Transformer.lean`
+  - Interval bounds for transformer stacks and final LayerNorm outputs.
 - `Nfp/Sound/Linear/FinFold.lean`
   - Tail-recursive folds and sums for sound linear computations.
 - `Nfp/Sound/Gpt2/HeadInputs.lean`
@@ -360,7 +368,7 @@ but you **must** update this list in the same commit.
 - `Nfp/Model/InductionPrompt.lean`
   - Prompt utilities (`prev` map and active set for periodic prompts).
 - `Nfp/Model/Gpt2.lean`
-  - Exact GPT-2 head-slice data and embedding helpers.
+  - Exact GPT-2 head-slice data, layer/MLP/LayerNorm parameters, and embedding helpers.
 - `Nfp/Model.lean`
   - Aggregator for model input modules.
 

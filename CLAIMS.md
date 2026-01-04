@@ -15,6 +15,9 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 - Residual-interval certificate soundness: `checkResidualIntervalCert` implies
   `ResidualIntervalBounds`.
 - Row-sum matrix norm bounds for `mulVec` under uniform input magnitude.
+- Tanh-GELU bounds and interval propagation through MLP layers.
+- Interval bounds for multi-head attention and full transformer-layer residual blocks.
+- Interval bounds for transformer stacks and final LayerNorm outputs.
 
 ## Soundly checked by the trusted CLI
 
@@ -31,9 +34,10 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   downstream error certificate (arithmetic consistency only).
 - `nfp induction certify_end_to_end_matrix` computes a downstream bound from a matrix payload
   using verified row-sum norms, then composes it with the head-level logit-diff lower bound.
-- `nfp induction certify_end_to_end_model` derives a downstream matrix from an `NFP_BINARY_V1`
-  model file (unembedding direction only), computes a downstream error bound from a
-  residual-interval certificate, and composes it with the head-level logit-diff lower bound.
+- `nfp induction certify_end_to_end_model` derives the unembedding direction from an
+  `NFP_BINARY_V1` model file, computes a downstream error bound from either a supplied
+  residual-interval certificate or a verified model-derived interval, and composes it with
+  the head-level logit-diff lower bound.
 
 ## Untrusted / heuristic
 
@@ -42,7 +46,7 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `scripts/build_downstream_linear_cert.py`.
 - The head-input extractor now emits attention projection biases and LayerNorm metadata, but
   the Lean-side computation still ignores LayerNorm and the shared attention output bias.
-- Residual-interval certificates are generated externally (unchecked beyond consistency).
+- External residual-interval scripts remain untrusted; model-derived bounds are now available.
 - Any downstream error bound provided externally (outside the matrix-payload path).
 
 ## Not yet proven

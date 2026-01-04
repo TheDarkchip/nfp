@@ -142,12 +142,12 @@ def runInductionCertifyEndToEndModel (p : Parsed) : IO UInt32 := do
   let scoresPath := p.flag! "scores" |>.as! String
   let valuesPath := p.flag! "values" |>.as! String
   let modelPath := p.flag! "model" |>.as! String
-  let residualIntervalPath := p.flag! "residual-interval" |>.as! String
+  let residualIntervalPath? := (p.flag? "residual-interval").map (·.as! String)
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
-  IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath residualIntervalPath
+  IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath residualIntervalPath?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
 
 /-- `nfp induction certify_end_to_end_model` subcommand. -/
@@ -158,7 +158,8 @@ def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
     scores : String; "Path to the softmax-margin certificate file."
     values : String; "Path to the value-range certificate file."
     model : String; "Path to the NFP_BINARY_V1 model file."
-    "residual-interval" : String; "Path to the residual-interval certificate file."
+    "residual-interval" : String; "Optional path to a residual-interval certificate file \
+                                    (defaults to deriving from the model)."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \

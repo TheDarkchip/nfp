@@ -1,6 +1,8 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Mathlib.Algebra.Order.BigOperators.Group.Finset
+import Mathlib.Algebra.Order.Field.Basic
 import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.Nat.Sqrt
 import Mathlib.Data.Real.Sqrt
@@ -61,6 +63,107 @@ theorem variance_nonneg {n : Nat} (x : Fin n → Rat) (h : n ≠ 0) :
   have hdiv : 0 ≤ (∑ i, (x i - mean x) ^ 2) / n :=
     div_nonneg hsum hden
   simpa [variance_def x h] using hdiv
+
+/-- Absolute mean bound from per-coordinate bounds. -/
+theorem mean_abs_le_bound {n : Nat} (x : Fin n → Rat) (bound : Rat)
+    (hne : n ≠ 0) (hbound : ∀ i, |x i| ≤ bound) :
+    |mean x| ≤ bound := by
+  classical
+  have hsum_abs :
+      |∑ i : Fin n, x i| ≤ ∑ i : Fin n, |x i| := by
+    simpa using
+      (Finset.abs_sum_le_sum_abs
+        (f := fun i : Fin n => x i)
+        (s := (Finset.univ : Finset (Fin n))))
+  have hsum_bound : ∑ i : Fin n, |x i| ≤ ∑ i : Fin n, bound := by
+    refine Finset.sum_le_sum ?_
+    intro i _
+    exact hbound i
+  have hsum_le : |∑ i : Fin n, x i| ≤ (n : Rat) * bound := by
+    have hsum := le_trans hsum_abs hsum_bound
+    simpa [Finset.sum_const, Finset.card_univ] using hsum
+  have hpos : 0 < (n : Rat) := by
+    exact_mod_cast Nat.pos_of_ne_zero hne
+  have hsum_le' : |∑ i : Fin n, x i| ≤ bound * (n : Rat) := by
+    simpa [mul_comm] using hsum_le
+  have hdiv : |∑ i : Fin n, x i| / (n : Rat) ≤ bound := by
+    exact (div_le_iff₀ hpos).2 hsum_le'
+  have habs_mean :
+      |(∑ i : Fin n, x i) / (n : Rat)| ≤ bound := by
+    simpa [abs_div, abs_of_nonneg (le_of_lt hpos)] using hdiv
+  simpa [mean_def x hne] using habs_mean
+
+/-! Real-valued mean and variance. -/
+
+/-- Mean of a real vector (defaults to `0` when `n = 0`). -/
+noncomputable def meanReal {n : Nat} (x : Fin n → Real) : Real :=
+  if n = 0 then
+    0
+  else
+    (∑ i, x i) / n
+
+/-- Unfold `meanReal` when `n ≠ 0`. -/
+theorem meanReal_def {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
+    meanReal x = (∑ i, x i) / n := by
+  simp [meanReal, h]
+
+/-- Variance of a real vector (defaults to `0` when `n = 0`). -/
+noncomputable def varianceReal {n : Nat} (x : Fin n → Real) : Real :=
+  if n = 0 then
+    0
+  else
+    let μ := meanReal x
+    (∑ i, (x i - μ) ^ 2) / n
+
+/-- Unfold `varianceReal` when `n ≠ 0`. -/
+theorem varianceReal_def {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
+    varianceReal x =
+      let μ := meanReal x
+      (∑ i, (x i - μ) ^ 2) / n := by
+  simp [varianceReal, h]
+
+/-- Variance is nonnegative when `n ≠ 0`. -/
+theorem varianceReal_nonneg {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
+    0 ≤ varianceReal x := by
+  classical
+  have hsum : 0 ≤ ∑ i, (x i - meanReal x) ^ 2 := by
+    refine Finset.sum_nonneg ?_
+    intro i _
+    exact sq_nonneg (x i - meanReal x)
+  have hden : 0 ≤ (n : Real) := by
+    exact_mod_cast (Nat.zero_le n)
+  have hdiv : 0 ≤ (∑ i, (x i - meanReal x) ^ 2) / n :=
+    div_nonneg hsum hden
+  simpa [varianceReal_def x h] using hdiv
+
+/-- Absolute mean bound from per-coordinate bounds (real inputs). -/
+theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Rat)
+    (hne : n ≠ 0) (hbound : ∀ i, |x i| ≤ (bound : Real)) :
+    |meanReal x| ≤ (bound : Real) := by
+  classical
+  have hsum_abs :
+      |∑ i : Fin n, x i| ≤ ∑ i : Fin n, |x i| := by
+    simpa using
+      (Finset.abs_sum_le_sum_abs
+        (f := fun i : Fin n => x i)
+        (s := (Finset.univ : Finset (Fin n))))
+  have hsum_bound : ∑ i : Fin n, |x i| ≤ ∑ i : Fin n, (bound : Real) := by
+    refine Finset.sum_le_sum ?_
+    intro i _
+    exact hbound i
+  have hsum_le : |∑ i : Fin n, x i| ≤ (n : Real) * (bound : Real) := by
+    have hsum := le_trans hsum_abs hsum_bound
+    simpa [Finset.sum_const, Finset.card_univ, mul_comm] using hsum
+  have hpos : 0 < (n : Real) := by
+    exact_mod_cast Nat.pos_of_ne_zero hne
+  have hsum_le' : |∑ i : Fin n, x i| ≤ (bound : Real) * (n : Real) := by
+    simpa [mul_comm] using hsum_le
+  have hdiv : |∑ i : Fin n, x i| / (n : Real) ≤ (bound : Real) := by
+    exact (div_le_iff₀ hpos).2 hsum_le'
+  have habs_mean :
+      |(∑ i : Fin n, x i) / (n : Real)| ≤ (bound : Real) := by
+    simpa [abs_div, abs_of_nonneg (le_of_lt hpos)] using hdiv
+  simpa [meanReal_def x hne] using habs_mean
 
 /-! Square-root bounds. -/
 
@@ -490,6 +593,17 @@ noncomputable def layerNormReal {n : Nat}
     let invStd : Real := (Real.sqrt varEps)⁻¹
     fun i => (gamma i : Real) * ((x i : Real) - μ) * invStd + (beta i : Real)
 
+/-- Real-valued LayerNorm output for a real vector. -/
+noncomputable def layerNormRealOfReal {n : Nat}
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Real) : Fin n → Real :=
+  if n = 0 then
+    fun _ => 0
+  else
+    let μ : Real := meanReal x
+    let varEps : Real := varianceReal x + (eps : Real)
+    let invStd : Real := (Real.sqrt varEps)⁻¹
+    fun i => (gamma i : Real) * (x i - μ) * invStd + (beta i : Real)
+
 /-- Interval bounds for LayerNorm outputs. -/
 def layerNormBounds {n : Nat}
     (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Rat) :
@@ -610,6 +724,227 @@ theorem layerNormBounds_spec {n : Nat}
     simpa [hreal] using hhi''
   simpa [bounds, layerNormBounds, hne, μ, varEps, invLo, invHi, centered, nb, sb, lo, hi] using
     And.intro hlo hhi
+
+/-- Interval bounds for LayerNorm outputs from an absolute input bound. -/
+def layerNormAbsBounds {n : Nat}
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := (sqrtLower eps)⁻¹
+  let radius : Fin n → Rat := fun i => |gamma i| * centeredBound * invStdBound
+  (fun i => beta i - radius i, fun i => beta i + radius i)
+
+/-- `layerNormAbsBounds` soundness for real LayerNorm outputs under absolute input bounds. -/
+theorem layerNormAbsBounds_spec {n : Nat}
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) (x : Fin n → Rat)
+    (hne : n ≠ 0) (heps : 0 < eps) (habs : ∀ i, |x i| ≤ absBound) :
+    let bounds := layerNormAbsBounds eps gamma beta absBound
+    ∀ i,
+      (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i ∧
+        layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+  classical
+  intro bounds i
+  have hmean_abs : |mean x| ≤ absBound :=
+    mean_abs_le_bound x absBound hne habs
+  have hmean_abs_real : |(mean x : Real)| ≤ (absBound : Real) := by
+    exact_mod_cast hmean_abs
+  have hbound_nonneg : 0 ≤ absBound := by
+    have hposn : 0 < n := Nat.pos_of_ne_zero hne
+    let i0 : Fin n := ⟨0, hposn⟩
+    have h0 : 0 ≤ |x i0| := abs_nonneg _
+    exact le_trans h0 (habs i0)
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := (sqrtLower eps)⁻¹
+  let varEps : Rat := variance x + eps
+  let μ : Real := mean x
+  let invStd : Real := (Real.sqrt (varEps : Real))⁻¹
+  have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound : Real) := by
+    have h1 : |(x i : Real) - μ| ≤ |(x i : Real)| + |μ| := by
+      simpa [sub_eq_add_neg, abs_neg] using abs_add_le (x i : Real) (-μ)
+    have hx : |(x i : Real)| ≤ (absBound : Real) := by
+      exact_mod_cast (habs i)
+    have hmu : |μ| ≤ (absBound : Real) := by
+      simpa using hmean_abs_real
+    have h2 : |(x i : Real)| + |μ| ≤ (absBound : Real) + (absBound : Real) :=
+      add_le_add hx hmu
+    have h12 : |(x i : Real) - μ| ≤ (absBound : Real) + (absBound : Real) :=
+      le_trans h1 h2
+    simpa [centeredBound, two_mul] using h12
+  have hbound_nonneg_real : 0 ≤ (absBound : Real) := by
+    exact_mod_cast hbound_nonneg
+  have hcentered_nonneg : 0 ≤ (centeredBound : Real) := by
+    have hsum := add_nonneg hbound_nonneg_real hbound_nonneg_real
+    simpa [centeredBound, two_mul] using hsum
+  have hvar_nonneg : 0 ≤ variance x := variance_nonneg x hne
+  have hsqrt_lower :
+      (sqrtLower eps : Real) ≤ Real.sqrt (varEps : Real) := by
+    have hsqrt_eps :
+        (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
+      have h := sqrtLower_le_real_sqrt (q := eps) (by exact le_of_lt heps)
+      simpa using h
+    have hle : (eps : Real) ≤ (varEps : Real) := by
+      have hle' : eps ≤ varEps := le_add_of_nonneg_left hvar_nonneg
+      exact_mod_cast hle'
+    have hsqrt_eps' : Real.sqrt (eps : Real) ≤ Real.sqrt (varEps : Real) := by
+      exact Real.sqrt_le_sqrt hle
+    exact le_trans hsqrt_eps hsqrt_eps'
+  have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
+    exact_mod_cast (sqrtLower_pos (q := eps) heps)
+  have hinv : invStd ≤ (invStdBound : Real) := by
+    have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
+    simpa [invStd, invStdBound] using h
+  have hinv_nonneg : 0 ≤ invStd := by
+    have hsqrt_nonneg : 0 ≤ Real.sqrt (varEps : Real) := by
+      exact Real.sqrt_nonneg _
+    exact inv_nonneg.2 hsqrt_nonneg
+  have hmul1 : |(x i : Real) - μ| * invStd ≤
+      (centeredBound : Real) * (invStdBound : Real) := by
+    have hleft :
+        |(x i : Real) - μ| * invStd ≤ (centeredBound : Real) * invStd := by
+      exact mul_le_mul_of_nonneg_right hcentered_abs hinv_nonneg
+    have hright :
+        (centeredBound : Real) * invStd ≤ (centeredBound : Real) * (invStdBound : Real) := by
+      exact mul_le_mul_of_nonneg_left hinv hcentered_nonneg
+    exact le_trans hleft hright
+  have hmul2 : |(gamma i : Real)| * |(x i : Real) - μ| * invStd ≤
+      |(gamma i : Real)| * (centeredBound : Real) * (invStdBound : Real) := by
+    have hgamma_nonneg : 0 ≤ |(gamma i : Real)| := abs_nonneg _
+    have hmul2' : |(gamma i : Real)| * (|(x i : Real) - μ| * invStd) ≤
+        |(gamma i : Real)| * ((centeredBound : Real) * (invStdBound : Real)) := by
+      exact mul_le_mul_of_nonneg_left hmul1 hgamma_nonneg
+    simpa [mul_assoc] using hmul2'
+  let t : Real := (gamma i : Real) * ((x i : Real) - μ) * invStd
+  have ht_abs :
+      |t| ≤ |(gamma i : Real)| * (centeredBound : Real) * (invStdBound : Real) := by
+    have ht : |t| = |(gamma i : Real)| * |(x i : Real) - μ| * invStd := by
+      have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
+      simp [t, abs_mul, hinv_abs, mul_assoc]
+    simpa [ht] using hmul2
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound * invStdBound
+  have ht_abs' : |t| ≤ (radius i : Real) := by
+    simpa [radius, centeredBound, invStdBound] using ht_abs
+  have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
+    exact abs_le.mp ht_abs'
+  have hlow :
+      (beta i : Real) - (radius i : Real) ≤ t + (beta i : Real) := by
+    have h := add_le_add_left hbounds.1 (beta i : Real)
+    simpa [sub_eq_add_neg, add_comm, add_left_comm, add_assoc] using h
+  have hhigh :
+      t + (beta i : Real) ≤ (beta i : Real) + (radius i : Real) := by
+    have h := add_le_add_left hbounds.2 (beta i : Real)
+    simpa [add_comm, add_left_comm, add_assoc] using h
+  have hreal :
+      layerNormReal eps gamma beta x i = t + (beta i : Real) := by
+    simp [layerNormReal, hne, μ, invStd, varEps, t, add_comm]
+  have hlo : (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i := by
+    simpa [bounds, layerNormAbsBounds, radius, centeredBound, invStdBound, hreal] using hlow
+  have hhi : layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+    simpa [bounds, layerNormAbsBounds, radius, centeredBound, invStdBound, hreal] using hhigh
+  exact And.intro hlo hhi
+
+/-- `layerNormAbsBounds` soundness for real LayerNorm outputs on real inputs. -/
+theorem layerNormAbsBounds_spec_real {n : Nat}
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) (x : Fin n → Real)
+    (hne : n ≠ 0) (heps : 0 < eps) (habs : ∀ i, |x i| ≤ (absBound : Real)) :
+    let bounds := layerNormAbsBounds eps gamma beta absBound
+    ∀ i,
+      (bounds.1 i : Real) ≤ layerNormRealOfReal eps gamma beta x i ∧
+        layerNormRealOfReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+  classical
+  intro bounds i
+  have hmean_abs : |meanReal x| ≤ (absBound : Real) :=
+    meanReal_abs_le_bound x absBound hne habs
+  have hbound_nonneg_real : 0 ≤ (absBound : Real) := by
+    have hposn : 0 < n := Nat.pos_of_ne_zero hne
+    let i0 : Fin n := ⟨0, hposn⟩
+    have h0 : 0 ≤ |x i0| := abs_nonneg _
+    exact le_trans h0 (habs i0)
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := (sqrtLower eps)⁻¹
+  let varEps : Real := varianceReal x + (eps : Real)
+  let μ : Real := meanReal x
+  let invStd : Real := (Real.sqrt varEps)⁻¹
+  have hcentered_abs : |x i - μ| ≤ (centeredBound : Real) := by
+    have h1 : |x i - μ| ≤ |x i| + |μ| := by
+      simpa [sub_eq_add_neg, abs_neg] using abs_add_le (x i) (-μ)
+    have hx : |x i| ≤ (absBound : Real) := habs i
+    have hmu : |μ| ≤ (absBound : Real) := by
+      simpa using hmean_abs
+    have h2 : |x i| + |μ| ≤ (absBound : Real) + (absBound : Real) :=
+      add_le_add hx hmu
+    have h12 : |x i - μ| ≤ (absBound : Real) + (absBound : Real) :=
+      le_trans h1 h2
+    simpa [centeredBound, two_mul] using h12
+  have hcentered_nonneg : 0 ≤ (centeredBound : Real) := by
+    have hsum := add_nonneg hbound_nonneg_real hbound_nonneg_real
+    simpa [centeredBound, two_mul] using hsum
+  have hvar_nonneg : 0 ≤ varianceReal x := varianceReal_nonneg x hne
+  have hsqrt_lower :
+      (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
+    have hsqrt_eps :
+        (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
+      have h := sqrtLower_le_real_sqrt (q := eps) (by exact le_of_lt heps)
+      simpa using h
+    have hle : (eps : Real) ≤ varEps := by
+      have hle' : (eps : Real) ≤ varianceReal x + (eps : Real) := by
+        exact le_add_of_nonneg_left hvar_nonneg
+      simpa [varEps] using hle'
+    have hsqrt_eps' : Real.sqrt (eps : Real) ≤ Real.sqrt varEps := by
+      exact Real.sqrt_le_sqrt hle
+    exact le_trans hsqrt_eps hsqrt_eps'
+  have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
+    exact_mod_cast (sqrtLower_pos (q := eps) heps)
+  have hinv : invStd ≤ (invStdBound : Real) := by
+    have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
+    simpa [invStd, invStdBound] using h
+  have hinv_nonneg : 0 ≤ invStd := by
+    have hsqrt_nonneg : 0 ≤ Real.sqrt varEps := by
+      exact Real.sqrt_nonneg _
+    exact inv_nonneg.2 hsqrt_nonneg
+  have hmul1 : |x i - μ| * invStd ≤
+      (centeredBound : Real) * (invStdBound : Real) := by
+    have hleft :
+        |x i - μ| * invStd ≤ (centeredBound : Real) * invStd := by
+      exact mul_le_mul_of_nonneg_right hcentered_abs hinv_nonneg
+    have hright :
+        (centeredBound : Real) * invStd ≤ (centeredBound : Real) * (invStdBound : Real) := by
+      exact mul_le_mul_of_nonneg_left hinv hcentered_nonneg
+    exact le_trans hleft hright
+  have hmul2 : |(gamma i : Real)| * |x i - μ| * invStd ≤
+      |(gamma i : Real)| * (centeredBound : Real) * (invStdBound : Real) := by
+    have hgamma_nonneg : 0 ≤ |(gamma i : Real)| := abs_nonneg _
+    have hmul2' : |(gamma i : Real)| * (|x i - μ| * invStd) ≤
+        |(gamma i : Real)| * ((centeredBound : Real) * (invStdBound : Real)) := by
+      exact mul_le_mul_of_nonneg_left hmul1 hgamma_nonneg
+    simpa [mul_assoc] using hmul2'
+  let t : Real := (gamma i : Real) * (x i - μ) * invStd
+  have ht_abs :
+      |t| ≤ |(gamma i : Real)| * (centeredBound : Real) * (invStdBound : Real) := by
+    have ht : |t| = |(gamma i : Real)| * |x i - μ| * invStd := by
+      have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
+      simp [t, abs_mul, hinv_abs, mul_assoc]
+    simpa [ht] using hmul2
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound * invStdBound
+  have ht_abs' : |t| ≤ (radius i : Real) := by
+    simpa [radius, centeredBound, invStdBound] using ht_abs
+  have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
+    exact abs_le.mp ht_abs'
+  have hlow :
+      (beta i : Real) - (radius i : Real) ≤ t + (beta i : Real) := by
+    have h := add_le_add_left hbounds.1 (beta i : Real)
+    simpa [sub_eq_add_neg, add_comm, add_left_comm, add_assoc] using h
+  have hhigh :
+      t + (beta i : Real) ≤ (beta i : Real) + (radius i : Real) := by
+    have h := add_le_add_left hbounds.2 (beta i : Real)
+    simpa [add_comm, add_left_comm, add_assoc] using h
+  have hreal :
+      layerNormRealOfReal eps gamma beta x i = t + (beta i : Real) := by
+    simp [layerNormRealOfReal, hne, μ, invStd, varEps, t, add_comm]
+  have hlo : (bounds.1 i : Real) ≤ layerNormRealOfReal eps gamma beta x i := by
+    simpa [bounds, layerNormAbsBounds, radius, centeredBound, invStdBound, hreal] using hlow
+  have hhi : layerNormRealOfReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+    simpa [bounds, layerNormAbsBounds, radius, centeredBound, invStdBound, hreal] using hhigh
+  exact And.intro hlo hhi
 
 end Bounds
 
