@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Mathlib.Algebra.BigOperators.Fin
 import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Algebra.Order.Ring.Abs
 import Mathlib.Algebra.Order.Ring.Rat
@@ -9,6 +10,7 @@ import Mathlib.Data.Rat.Cast.Order
 import Mathlib.Data.Real.Basic
 import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Cert.ResidualInterval
+import Nfp.Sound.Linear.FinFold
 
 /-!
 Row-sum matrix norms for downstream linear certificates.
@@ -25,14 +27,64 @@ namespace Bounds
 
 open scoped BigOperators
 
+private theorem sumFin_eq_sum_univ {n : Nat} (f : Fin n → Rat) :
+    Linear.sumFin n f = ∑ i, f i := by
+  classical
+  have hfold :
+      Linear.sumFin n f = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
+    simpa using Linear.sumFin_eq_list_foldl n f
+  have hmap :
+      ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 =
+        (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
+    have hmap' :
+        ∀ l : List (Fin n), ∀ init : Rat,
+          (l.map f).foldl (fun acc x : Rat => acc + x) init =
+            l.foldl (fun acc i => acc + f i) init := by
+      intro l
+      induction l with
+      | nil =>
+          intro init
+          simp
+      | cons a l ih =>
+          intro init
+          simp [ih]
+    exact hmap' (List.finRange n) 0
+  let _ : Std.Commutative (fun a b : Rat => a + b) :=
+    ⟨by intro a b; exact add_comm _ _⟩
+  let _ : Std.Associative (fun a b : Rat => a + b) :=
+    ⟨by intro a b c; exact add_assoc _ _ _⟩
+  have hfoldr :
+      ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 =
+        ((List.finRange n).map f).foldr (fun x acc => x + acc) 0 := by
+    simpa using
+      (List.foldl_eq_foldr (f := fun acc x : Rat => acc + x)
+        (a := 0) (l := (List.finRange n).map f))
+  have hsum_list :
+      ((List.finRange n).map f).sum = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
+    calc
+      ((List.finRange n).map f).sum
+          = ((List.finRange n).map f).foldr (fun x acc => x + acc) 0 := by
+            rfl
+      _ = ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 := by
+            exact hfoldr.symm
+      _ = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
+            exact hmap
+  have hsum_univ : ((List.finRange n).map f).sum = ∑ i, f i := by
+    exact (Fin.sum_univ_def f).symm
+  calc
+    Linear.sumFin n f
+        = (List.finRange n).foldl (fun acc i => acc + f i) 0 := hfold
+    _ = ((List.finRange n).map f).sum := hsum_list.symm
+    _ = ∑ i, f i := hsum_univ
+
 /-- Row-sum of absolute values for a matrix row. -/
 def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) : Rat :=
-  ∑ j, |W i j|
+  Linear.sumFin n (fun j => |W i j|)
 
 /-- Weighted row-sum using per-coordinate bounds. -/
 def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (bound : Fin n → Rat) (i : Fin m) : Rat :=
-  ∑ j, |W i j| * bound j
+  Linear.sumFin n (fun j => |W i j| * bound j)
 
 /-- Maximum row-sum norm (defaults to `0` on empty matrices). -/
 def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) : Rat :=
@@ -52,17 +104,25 @@ def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
 /-- Row-sums are nonnegative. -/
 theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
     0 ≤ rowSum W i := by
-  refine Finset.sum_nonneg ?_
-  intro j _
-  exact abs_nonneg (W i j)
+  have hsum : rowSum W i = ∑ j, |W i j| := by
+    simp [rowSum, sumFin_eq_sum_univ]
+  have hnonneg : 0 ≤ ∑ j, |W i j| := by
+    refine Finset.sum_nonneg ?_
+    intro j _
+    exact abs_nonneg (W i j)
+  simpa [hsum] using hnonneg
 
 /-- Weighted row-sums are nonnegative under nonnegative bounds. -/
 theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (bound : Fin n → Rat) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
     0 ≤ rowSumWeighted W bound i := by
-  refine Finset.sum_nonneg ?_
-  intro j _
-  exact mul_nonneg (abs_nonneg (W i j)) (hbound j)
+  have hsum : rowSumWeighted W bound i = ∑ j, |W i j| * bound j := by
+    simp [rowSumWeighted, sumFin_eq_sum_univ]
+  have hnonneg : 0 ≤ ∑ j, |W i j| * bound j := by
+    refine Finset.sum_nonneg ?_
+    intro j _
+    exact mul_nonneg (abs_nonneg (W i j)) (hbound j)
+  simpa [hsum] using hnonneg
 
 /-- Each row-sum is bounded by the row-sum norm. -/
 theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
@@ -132,11 +192,11 @@ theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n)
 
 /-- Lower interval endpoint for a dot product with per-coordinate bounds. -/
 def dotIntervalLower {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
-  ∑ j, if 0 ≤ v j then v j * lo j else v j * hi j
+  Linear.sumFin n (fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
 
 /-- Upper interval endpoint for a dot product with per-coordinate bounds. -/
 def dotIntervalUpper {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
-  ∑ j, if 0 ≤ v j then v j * hi j else v j * lo j
+  Linear.sumFin n (fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
 
 /-- Absolute bound from interval endpoints for a dot product. -/
 def dotIntervalAbsBound {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
@@ -156,6 +216,7 @@ theorem dotIntervalLower_le_dotProduct {n : Nat} (v lo hi x : Fin n → Rat)
     (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     dotIntervalLower v lo hi ≤ dotProduct v x := by
   classical
+  simp only [dotIntervalLower, sumFin_eq_sum_univ, dotProduct]
   refine Finset.sum_le_sum ?_
   intro j _
   by_cases hv : 0 ≤ v j
@@ -171,6 +232,7 @@ theorem dotProduct_le_dotIntervalUpper {n : Nat} (v lo hi x : Fin n → Rat)
     (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     dotProduct v x ≤ dotIntervalUpper v lo hi := by
   classical
+  simp only [dotIntervalUpper, sumFin_eq_sum_univ, dotProduct]
   refine Finset.sum_le_sum ?_
   intro j _
   by_cases hv : 0 ≤ v j
@@ -253,7 +315,7 @@ theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
   have hcast :
       (dotIntervalLower v lo hi : Real) =
         ∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real) := by
-    conv_lhs => simp [dotIntervalLower]
+    conv_lhs => simp [dotIntervalLower, sumFin_eq_sum_univ]
     refine Finset.sum_congr rfl ?_
     intro j _
     by_cases hv : 0 ≤ v j
@@ -283,7 +345,7 @@ theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
   have hcast :
       (dotIntervalUpper v lo hi : Real) =
         ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
-    conv_lhs => simp [dotIntervalUpper]
+    conv_lhs => simp [dotIntervalUpper, sumFin_eq_sum_univ]
     refine Finset.sum_congr rfl ?_
     intro j _
     by_cases hv : 0 ≤ v j
@@ -443,7 +505,7 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
             (s := (Finset.univ : Finset (Fin n)))
             (f := fun j => |W i j|)
             (a := inputBound))
-      simpa [rowSum] using hsum.symm
+      simpa [rowSum, sumFin_eq_sum_univ] using hsum.symm
     have hmul : |Matrix.mulVec W x i| ≤ rowSum W i * inputBound := by
       simpa [Matrix.mulVec, dotProduct] using h1.trans (h2.trans_eq h3)
     exact hmul

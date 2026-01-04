@@ -7,7 +7,7 @@ import Mathlib.Data.Real.Basic
 import Nfp.Model.Gpt2
 import Nfp.Sound.Bounds.Attention
 import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
+import Nfp.Sound.Linear.FinFold
 
 /-!
 Interval bounds for transformer stacks and final LayerNorm outputs.
@@ -105,7 +105,7 @@ noncomputable def transformerStackReal
     (x : Fin seq → Fin dModel → Real) : Fin seq → Fin dModel → Real :=
   let step := fun x layerIdx =>
     transformerLayerReal eps (layers layerIdx) (heads layerIdx) (scores layerIdx) x
-  (List.finRange numLayers).foldl step x
+  Linear.foldlFin numLayers step x
 
 /-- Interval bounds for a transformer stack (folded left over layers). -/
 def transformerStackBounds {dModel dHead numHeads hidden numLayers : Nat}
@@ -118,7 +118,7 @@ def transformerStackBounds {dModel dHead numHeads hidden numLayers : Nat}
       (layers layerIdx).ln2Gamma (layers layerIdx).ln2Beta (heads layerIdx)
       (layers layerIdx).attnBias (layers layerIdx).mlpWIn (layers layerIdx).mlpBIn
       (layers layerIdx).mlpWOut (layers layerIdx).mlpBOut bounds.1 bounds.2
-  (List.finRange numLayers).foldl step (lo, hi)
+  Linear.foldlFin numLayers step (lo, hi)
 
 private theorem transformerStackBounds_spec_list
     {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
@@ -177,7 +177,8 @@ theorem transformerStackBounds_spec {seq dModel dHead numHeads hidden numLayers 
       (bounds.1 i : Real) ≤ transformerStackReal eps layers heads scores x q i ∧
         transformerStackReal eps layers heads scores x q i ≤ (bounds.2 i : Real) := by
   classical
-  simpa [transformerStackBounds, transformerStackReal] using
+  simpa [transformerStackBounds, transformerStackReal, Linear.foldlFin_eq_foldl,
+    Fin.foldl_eq_foldl_finRange] using
     transformerStackBounds_spec_list eps layers heads scores hne heps
       (List.finRange numLayers) lo hi x hlo hhi
 
@@ -198,8 +199,7 @@ def transformerStackFinalBounds {dModel dHead numHeads hidden numLayers : Nat}
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (lo hi : Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let stack := transformerStackBounds eps layers heads lo hi
-  let absBound := intervalAbsBound stack.1 stack.2
-  layerNormAbsBounds eps finalLn.gamma finalLn.beta absBound
+  layerNormIntervalBounds eps finalLn.gamma finalLn.beta stack.1 stack.2
 
 /-- `transformerStackFinalBounds` soundness for real outputs. -/
 theorem transformerStackFinalBounds_spec {seq dModel dHead numHeads hidden numLayers : Nat}
@@ -217,25 +217,16 @@ theorem transformerStackFinalBounds_spec {seq dModel dHead numHeads hidden numLa
   classical
   intro bounds q i
   let stack := transformerStackBounds eps layers heads lo hi
-  let absBound := intervalAbsBound stack.1 stack.2
   have hstack :=
     transformerStackBounds_spec eps layers heads scores lo hi x hne heps hlo hhi q
-  have habs :
-      ∀ j, |transformerStackReal eps layers heads scores x q j| ≤ (absBound : Real) := by
-    intro j
-    have hlo' : ∀ k, (stack.1 k : Real) ≤ transformerStackReal eps layers heads scores x q k :=
-      fun k => (hstack k).1
-    have hhi' : ∀ k, transformerStackReal eps layers heads scores x q k ≤ (stack.2 k : Real) :=
-      fun k => (hstack k).2
-    have hbound :=
-      abs_le_intervalAbsBound_real (lo := stack.1) (hi := stack.2)
-        (x := fun k => transformerStackReal eps layers heads scores x q k) hlo' hhi' j
-    simpa [absBound] using hbound
+  have hlo' : ∀ k, (stack.1 k : Real) ≤ transformerStackReal eps layers heads scores x q k :=
+    fun k => (hstack k).1
+  have hhi' : ∀ k, transformerStackReal eps layers heads scores x q k ≤ (stack.2 k : Real) :=
+    fun k => (hstack k).2
   have hln :=
-    layerNormAbsBounds_spec_real eps finalLn.gamma finalLn.beta absBound
-      (fun j => transformerStackReal eps layers heads scores x q j) hne heps habs
-  simpa [bounds, transformerStackFinalBounds, absBound, stack, transformerStackFinalReal] using
-    hln i
+    layerNormIntervalBounds_spec_real eps finalLn.gamma finalLn.beta stack.1 stack.2
+      (fun j => transformerStackReal eps layers heads scores x q j) hne heps hlo' hhi'
+  simpa [bounds, transformerStackFinalBounds, stack, transformerStackFinalReal] using hln i
 
 /-- Residual interval bounds for a GPT-2 stack from exact embeddings. -/
 def gpt2ResidualIntervalBounds
