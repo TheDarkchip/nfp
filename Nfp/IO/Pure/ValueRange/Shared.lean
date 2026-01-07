@@ -17,14 +17,21 @@ namespace ValueRange
 
 open Nfp.Circuit
 
+/-- State for parsing value-range payloads. -/
 structure ParseState (seq : Nat) where
+  /-- Optional lower bound. -/
   lo : Option Dyadic
+  /-- Optional upper bound. -/
   hi : Option Dyadic
+  /-- Optional per-position values. -/
   vals : Fin seq → Option Dyadic
+  /-- Optional direction target index. -/
   directionTarget : Option Nat
+  /-- Optional direction negative index. -/
   directionNegative : Option Nat
 
 
+/-- Initialize a value-range parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   { lo := none
     hi := none
@@ -33,6 +40,7 @@ def initState (seq : Nat) : ParseState seq :=
     directionNegative := none }
 
 
+/-- Set a value entry from `(k, v)` tokens. -/
 def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Dyadic) :
     Except String (ParseState seq) := do
   if hk : k < seq then
@@ -51,6 +59,7 @@ def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Dyadic) :
     throw s!"value index out of range: k={k}"
 
 
+/-- Parse a tokenized line into the value-range parse state. -/
 def parseLine {seq : Nat} (st : ParseState seq)
     (tokens : List String) : Except String (ParseState seq) := do
   match tokens with
@@ -80,6 +89,7 @@ def parseLine {seq : Nat} (st : ParseState seq)
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
 
+/-- Extract the `seq` header from tokenized lines. -/
 def parseSeq (tokens : List (List String)) : Except String Nat := do
   let mut seq? : Option Nat := none
   for t in tokens do

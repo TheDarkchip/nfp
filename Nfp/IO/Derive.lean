@@ -20,6 +20,7 @@ namespace IO
 
 open Nfp.Circuit
 
+/-- Build a residual-interval certificate from an on-disk model payload. -/
 def deriveResidualIntervalFromModel (data : ByteArray) (start : Nat)
     (header : NfptPure.NfptHeader) (active? : Option (Finset (Fin header.seqLen))) :
     IO (Except String (ResidualIntervalCert header.modelDim)) := do

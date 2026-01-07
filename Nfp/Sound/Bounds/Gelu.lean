@@ -141,7 +141,7 @@ theorem geluInterval_bounds {lo hi : Dyadic} {x : Real}
     · simpa [geluInterval, hlo0] using hlo'
     · by_cases hhi0 : 0 ≤ hi
       · have hhi0r : 0 ≤ (hi : Real) := by
-          exact (dyadicToReal_nonneg_iff (x := hi)).2 hhi0
+          exact dyadicToReal_nonneg_of_nonneg hhi0
         have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
         simpa [geluInterval, hhi0, hmax'] using hhi'
       · have hhi0r : (hi : Real) ≤ 0 := by
@@ -152,7 +152,7 @@ theorem geluInterval_bounds {lo hi : Dyadic} {x : Real}
           simpa [hmax'] using hgelu.2
         simpa [geluInterval, hhi0, dyadicToReal_zero] using hhi''
   · have hlo0r : 0 ≤ (lo : Real) := by
-      exact (dyadicToReal_nonneg_iff (x := lo)).2 (le_of_not_ge hlo0)
+      exact dyadicToReal_nonneg_of_nonneg (le_of_not_ge hlo0)
     have hx0 : 0 ≤ x := le_trans hlo0r hlo
     have hmin' : min x 0 = 0 := min_eq_right hx0
     have hlo' : (0 : Real) ≤ geluTanh x := by
@@ -163,7 +163,7 @@ theorem geluInterval_bounds {lo hi : Dyadic} {x : Real}
     · simpa [geluInterval, hlo0, dyadicToReal_zero] using hlo'
     · by_cases hhi0 : 0 ≤ hi
       · have hhi0r : 0 ≤ (hi : Real) := by
-          exact (dyadicToReal_nonneg_iff (x := hi)).2 hhi0
+          exact dyadicToReal_nonneg_of_nonneg hhi0
         have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
         simpa [geluInterval, hhi0, hmax'] using hhi'
       · have hhi0r : (hi : Real) ≤ 0 := by

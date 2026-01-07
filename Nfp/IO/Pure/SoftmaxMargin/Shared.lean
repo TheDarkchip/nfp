@@ -15,17 +15,24 @@ namespace Pure
 
 namespace SoftmaxMargin
 
-open Nfp.Circuit
-
+/-- State for parsing softmax-margin payloads. -/
 structure ParseState (seq : Nat) where
+  /-- Optional epsilon bound. -/
   eps : Option Dyadic
+  /-- Optional margin bound. -/
   margin : Option Dyadic
+  /-- Active query set. -/
   active : Finset (Fin seq)
+  /-- Whether any active entries were parsed. -/
   activeSeen : Bool
+  /-- Optional predecessor pointer per query. -/
   prev : Fin seq → Option (Fin seq)
+  /-- Optional score matrix entries. -/
   scores : Fin seq → Fin seq → Option Dyadic
+  /-- Optional weight matrix entries. -/
   weights : Fin seq → Fin seq → Option Dyadic
 
+/-- Initialize a softmax-margin parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   { eps := none
     margin := none
@@ -35,6 +42,7 @@ def initState (seq : Nat) : ParseState seq :=
     scores := fun _ _ => none
     weights := fun _ _ => none }
 
+/-- Set a predecessor entry from `(q, k)` tokens. -/
 def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) : Except String (ParseState seq) := do
   if hq : q < seq then
     if hk : k < seq then
@@ -55,6 +63,7 @@ def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) : Except String (Parse
   else
     throw s!"prev index out of range: q={q}"
 
+/-- Mark an active query index. -/
 def setActive {seq : Nat} (st : ParseState seq) (q : Nat) : Except String (ParseState seq) := do
   if hq : q < seq then
     let qFin : Fin seq := ⟨q, hq⟩
@@ -65,6 +74,7 @@ def setActive {seq : Nat} (st : ParseState seq) (q : Nat) : Except String (Parse
   else
     throw s!"active index out of range: q={q}"
 
+/-- Insert a matrix entry for scores/weights. -/
 def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Dyadic)
     (q k : Nat) (v : Dyadic) : Except String (Fin seq → Fin seq → Option Dyadic) := do
   if hq : q < seq then
@@ -89,6 +99,7 @@ def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Dyadic)
   else
     throw s!"index out of range: q={q}"
 
+/-- Parse a tokenized line into the softmax-margin parse state. -/
 def parseLine {seq : Nat} (st : ParseState seq)
     (tokens : List String) : Except String (ParseState seq) := do
   match tokens with
@@ -115,6 +126,7 @@ def parseLine {seq : Nat} (st : ParseState seq)
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
+/-- Extract the `seq` header from tokenized lines. -/
 def parseSeq (tokens : List (List String)) : Except String Nat := do
   let mut seq? : Option Nat := none
   for t in tokens do

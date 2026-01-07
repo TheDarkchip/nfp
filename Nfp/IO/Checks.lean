@@ -13,6 +13,7 @@ namespace IO
 
 open Nfp.Circuit
 
+/-- Check a softmax-margin certificate for a positive sequence length. -/
 def checkSoftmaxMargin (seq : Nat) (cert : SoftmaxMarginCert seq) :
     IO (Except String Unit) :=
   match seq with
@@ -26,6 +27,7 @@ def checkSoftmaxMargin (seq : Nat) (cert : SoftmaxMarginCert seq) :
       else
         return Except.error "softmax-margin certificate rejected"
 
+/-- Check a value-range certificate for a positive sequence length. -/
 def checkValueRange (seq : Nat) (cert : ValueRangeCert seq) :
     IO (Except String Unit) :=
   match seq with
