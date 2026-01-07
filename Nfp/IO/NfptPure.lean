@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Ring.Rat
 import Mathlib.Data.List.Range
+import Nfp.Core.Basic
 import Nfp.Model.Gpt2
 import Nfp.Model.InductionHead
 import Nfp.Model.InductionPrompt
@@ -9,7 +9,7 @@ import Nfp.Model.InductionPrompt
 /-!
 Pure parsing utilities for `NFP_BINARY_V1` model files.
 
-These helpers parse headers and extract selected weight slices as exact rationals.
+These helpers parse headers and extract selected weight slices as dyadic values.
 -/
 
 namespace Nfp
@@ -35,7 +35,7 @@ structure NfptHeader where
   /-- Sequence length used in the binary. -/
   seqLen : Nat
   /-- LayerNorm epsilon parameter. -/
-  layerNormEps : Rat
+  layerNormEps : Dyadic
 
 /-- Array with a fixed size proof. -/
 structure SizedArray (n : Nat) (α : Type) where
@@ -72,7 +72,7 @@ private def parseInt (s : String) : Except String Int :=
 private def pow10 (k : Nat) : Nat :=
   Nat.pow 10 k
 
-private def parseRatScientific (s : String) : Except String Rat := do
+private def parseDyadicScientific (s : String) : Except String Dyadic := do
   let s := s.trim
   let (sign, rest) :=
     if s.startsWith "-" then
@@ -105,13 +105,13 @@ private def parseRatScientific (s : String) : Except String Rat := do
     | some e => parseInt e
   if exp ≥ 0 then
     let k := Int.toNat exp
-    pure (base * Rat.ofInt (Int.ofNat (pow10 k)))
+    pure (dyadicOfRatDown (base * Rat.ofInt (Int.ofNat (pow10 k))))
   else
     let k := Int.toNat (-exp)
-    pure (base / Rat.ofInt (Int.ofNat (pow10 k)))
+    pure (dyadicOfRatDown (base / Rat.ofInt (Int.ofNat (pow10 k))))
 
-private def readHeaderFieldRat (names : List String) (fields : List (String × String)) :
-    Except String Rat := do
+private def readHeaderFieldDyadic (names : List String) (fields : List (String × String)) :
+    Except String Dyadic := do
   let rec loop : List String → Option String
     | [] => none
     | name :: rest =>
@@ -119,7 +119,7 @@ private def readHeaderFieldRat (names : List String) (fields : List (String × S
         | some kv => some kv.2
         | none => loop rest
   match loop names with
-  | some raw => parseRatScientific raw
+  | some raw => parseDyadicScientific raw
   | none => throw s!"missing header field '{String.intercalate "|" names}'"
 
 private def sentinelBytes : ByteArray :=
@@ -169,7 +169,7 @@ def parseHeader (data : ByteArray) : Except String (NfptHeader × Nat) := do
       let hiddenDim ← readHeaderField "hidden_dim" fields
       let vocabSize ← readHeaderField "vocab_size" fields
       let seqLen ← readHeaderField "seq_len" fields
-      let layerNormEps ← readHeaderFieldRat ["layer_norm_eps", "eps"] fields
+      let layerNormEps ← readHeaderFieldDyadic ["layer_norm_eps", "eps"] fields
       if numLayers = 0 then
         throw "num_layers must be positive"
       if numHeads = 0 then
@@ -200,7 +200,7 @@ private def pow2 (k : Nat) : Nat :=
 private def getBits (n hi lo : Nat) : Nat :=
   (n / pow2 lo) % pow2 (hi - lo + 1)
 
-private def ratOfFloatBits (bits : Nat) : Option Rat :=
+private def dyadicOfFloatBits (bits : Nat) : Option Dyadic :=
   let signBit := getBits bits 63 63
   let expBits := getBits bits 62 52
   let mantBits := getBits bits 51 0
@@ -212,19 +212,13 @@ private def ratOfFloatBits (bits : Nat) : Option Rat :=
       some 0
     else
       let num : Int := sign * Int.ofNat mantBits
-      let denom : Int := Int.ofNat (pow2 1074)
-      some (Rat.ofInt num / Rat.ofInt denom)
+      some (Dyadic.ofIntWithPrec num 1074)
   else
     let mant := mantBits + pow2 52
     let exp := expBits - 1023
     let shift : Int := Int.ofNat exp - 52
-    let base : Rat := Rat.ofInt (sign * Int.ofNat mant)
-    if 0 ≤ shift then
-      let k : Nat := Int.toNat shift
-      some (base * Rat.ofInt (Int.ofNat (pow2 k)))
-    else
-      let k : Nat := Int.toNat (-shift)
-      some (base / Rat.ofInt (Int.ofNat (pow2 k)))
+    let prec : Int := -shift
+    some (Dyadic.ofIntWithPrec (sign * Int.ofNat mant) prec)
 
 private def readNatLE (data : ByteArray) (off : Nat) (count : Nat) : Option Nat :=
   if off + count ≤ data.size then
@@ -247,9 +241,9 @@ private def readI32 (data : ByteArray) (off : Nat) : Option Int := do
   else
     some (Int.ofNat bits - Int.ofNat two32)
 
-private def readF64Rat (data : ByteArray) (off : Nat) : Option Rat := do
+private def readF64Dyadic (data : ByteArray) (off : Nat) : Option Dyadic := do
   let bits ← readNatLE data off 8
-  ratOfFloatBits bits
+  dyadicOfFloatBits bits
 
 private def bytesI32 (n : Nat) : Nat :=
   n * 4
@@ -264,13 +258,13 @@ private def sqrtNat? (n : Nat) : Option Nat :=
   else
     none
 
-private def scaleOfHeadDim (dHead : Nat) : Except String Rat := do
+private def scaleOfHeadDim (dHead : Nat) : Except String Dyadic := do
   match sqrtNat? dHead with
   | some k =>
       if k = 0 then
         throw "head_dim must be positive"
       else
-        pure (Rat.ofInt 1 / Rat.ofInt (Int.ofNat k))
+        pure (dyadicOfRatDown (Rat.ofInt 1 / Rat.ofInt (Int.ofNat k)))
   | none =>
       throw "head_dim must be a perfect square to compute scale"
 
@@ -286,46 +280,108 @@ private def matrixIndex {rows cols : Nat} (i : Fin rows) (j : Fin cols) : Fin (r
     Nat.mul_le_mul_right cols (Nat.succ_le_iff.mpr i.isLt)
   ⟨idx, lt_of_lt_of_le hstep hle⟩
 
-private def readF64List (data : ByteArray) (off : Nat) (count : Nat) :
-    Except String {xs : List Rat // xs.length = count} := do
-  match count with
-  | 0 => return ⟨[], rfl⟩
-  | Nat.succ n =>
-      match readF64Rat data off with
+private def readF64ListAux (data : ByteArray) (off : Nat) :
+    Nat → List Dyadic → Except String (List Dyadic)
+  | 0, acc => Except.ok acc.reverse
+  | Nat.succ n, acc =>
+      match readF64Dyadic data off with
+      | some v => readF64ListAux data (off + bytesF64 1) n (v :: acc)
+      | none => Except.error s!"invalid f64 at offset {off}"
+
+private theorem readF64ListAux_length (data : ByteArray) :
+    ∀ (off n : Nat) (acc xs : List Dyadic),
+      readF64ListAux data off n acc = Except.ok xs →
+      xs.length = acc.length + n := by
+  intro off n acc xs h
+  induction n generalizing off acc xs with
+  | zero =>
+      have h' := h
+      simp only [readF64ListAux] at h'
+      cases h'
+      simp
+  | succ n ih =>
+      cases hread : readF64Dyadic data off with
+      | none =>
+          have h' := h
+          simp only [readF64ListAux, hread] at h'
+          cases h'
       | some v =>
-        let rest ← readF64List data (off + bytesF64 1) n
-        return ⟨v :: rest.1, by simp [rest.2]⟩
-      | none => throw s!"invalid f64 at offset {off}"
+          have h' := h
+          simp only [readF64ListAux, hread] at h'
+          have hlen := ih (off := off + bytesF64 1) (acc := v :: acc) (xs := xs) h'
+          simpa [List.length, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using hlen
+
+private def readF64List (data : ByteArray) (off : Nat) (count : Nat) :
+    Except String {xs : List Dyadic // xs.length = count} :=
+  match h : readF64ListAux data off count [] with
+  | Except.error msg => Except.error msg
+  | Except.ok xs =>
+      have hlen :
+          xs.length = count := by
+        simpa using readF64ListAux_length (data := data) (off := off)
+          (n := count) (acc := []) (xs := xs) h
+      Except.ok ⟨xs, hlen⟩
+
+private def readI32ListAux (data : ByteArray) (off : Nat) :
+    Nat → List Int → Except String (List Int)
+  | 0, acc => Except.ok acc.reverse
+  | Nat.succ n, acc =>
+      match readI32 data off with
+      | some v => readI32ListAux data (off + bytesI32 1) n (v :: acc)
+      | none => Except.error s!"invalid i32 at offset {off}"
+
+private theorem readI32ListAux_length (data : ByteArray) :
+    ∀ (off n : Nat) (acc xs : List Int),
+      readI32ListAux data off n acc = Except.ok xs →
+      xs.length = acc.length + n := by
+  intro off n acc xs h
+  induction n generalizing off acc xs with
+  | zero =>
+      have h' := h
+      simp only [readI32ListAux] at h'
+      cases h'
+      simp
+  | succ n ih =>
+      cases hread : readI32 data off with
+      | none =>
+          have h' := h
+          simp only [readI32ListAux, hread] at h'
+          cases h'
+      | some v =>
+          have h' := h
+          simp only [readI32ListAux, hread] at h'
+          have hlen := ih (off := off + bytesI32 1) (acc := v :: acc) (xs := xs) h'
+          simpa [List.length, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using hlen
 
 private def readI32List (data : ByteArray) (off : Nat) (count : Nat) :
-    Except String {xs : List Int // xs.length = count} := do
-  match count with
-  | 0 => return ⟨[], rfl⟩
-  | Nat.succ n =>
-      match readI32 data off with
-      | some v =>
-        let rest ← readI32List data (off + bytesI32 1) n
-        return ⟨v :: rest.1, by simp [rest.2]⟩
-      | none => throw s!"invalid i32 at offset {off}"
+    Except String {xs : List Int // xs.length = count} :=
+  match h : readI32ListAux data off count [] with
+  | Except.error msg => Except.error msg
+  | Except.ok xs =>
+      have hlen :
+          xs.length = count := by
+        simpa using readI32ListAux_length (data := data) (off := off)
+          (n := count) (acc := []) (xs := xs) h
+      Except.ok ⟨xs, hlen⟩
 
 private def readF64Matrix (data : ByteArray) (off : Nat) (rows cols : Nat) :
-    Except String (Fin rows → Fin cols → Rat) := do
+    Except String (Fin rows → Fin cols → Dyadic) := do
   let count := rows * cols
   let ⟨vals, hlen⟩ ← readF64List data off count
   let hlen' : vals.length = rows * cols := by
     simpa using hlen
-  let mat : Fin rows → Fin cols → Rat := fun i j =>
+  let mat : Fin rows → Fin cols → Dyadic := fun i j =>
     let idx := matrixIndex i j
     let hidx : idx.val < vals.length := lt_of_lt_of_eq idx.isLt hlen'.symm
     vals.get ⟨idx.val, hidx⟩
   return mat
 
 private def readF64Vec (data : ByteArray) (off : Nat) (count : Nat) :
-    Except String (Fin count → Rat) := do
+    Except String (Fin count → Dyadic) := do
   let ⟨vals, hlen⟩ ← readF64List data off count
   let hlen' : vals.length = count := by
     simpa using hlen
-  let vec : Fin count → Rat := fun i =>
+  let vec : Fin count → Dyadic := fun i =>
     vals.get ⟨i.val, lt_of_lt_of_eq i.isLt hlen'.symm⟩
   return vec
 
@@ -355,7 +411,7 @@ private def finalLayerNormOffset (h : NfptHeader) : Nat :=
 
 /-- Read input embeddings stored in the binary. -/
 def readEmbeddings (data : ByteArray) (start : Nat) (h : NfptHeader) :
-    Except String (Fin h.seqLen → Fin h.modelDim → Rat) := do
+    Except String (Fin h.seqLen → Fin h.modelDim → Dyadic) := do
   let base := start + bytesI32 h.seqLen
   readF64Matrix data base h.seqLen h.modelDim
 
@@ -404,7 +460,7 @@ def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
       let bv ← readF64Vec data offbv h.headDim
       let offwo := offbv + bytesF64 h.headDim
       let woRaw ← readF64Matrix data offwo h.headDim h.modelDim
-      let wo : Fin h.modelDim → Fin h.headDim → Rat := fun i j => woRaw j i
+      let wo : Fin h.modelDim → Fin h.headDim → Dyadic := fun i j => woRaw j i
       return { wq := wq, bq := bq, wk := wk, bk := bk, wv := wv, bv := bv, wo := wo }
     else
       throw s!"head index out of range: {head}"
@@ -413,8 +469,8 @@ def readHeadWeights (data : ByteArray) (start : Nat) (h : NfptHeader)
 
 private def readLayerAttnBiasLn1 (data : ByteArray) (start : Nat) (h : NfptHeader)
     (layer : Nat) :
-    Except String ((Fin h.modelDim → Rat) × (Fin h.modelDim → Rat) ×
-      (Fin h.modelDim → Rat)) := do
+    Except String ((Fin h.modelDim → Dyadic) × (Fin h.modelDim → Dyadic) ×
+      (Fin h.modelDim → Dyadic)) := do
   if layer < h.numLayers then
     let base := start + layerExtrasOffset h layer
     let attnBias ← readF64Vec data base h.modelDim
@@ -514,17 +570,17 @@ def readFinalLayerNorm (data : ByteArray) (start : Nat) (h : NfptHeader) :
 
 /-- Read a single unembedding column as exact rationals. -/
 def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : Nat) :
-    Except String (Fin h.modelDim → Rat) := do
+    Except String (Fin h.modelDim → Dyadic) := do
   if col < h.vocabSize then
     let base := start + unembedOffset h
     let rows := List.range h.modelDim
     let vals ← rows.mapM (fun row => do
       let off := base + bytesF64 (row * h.vocabSize + col)
-      match readF64Rat data off with
+      match readF64Dyadic data off with
       | some v => pure v
       | none => throw s!"invalid f64 at offset {off}")
     if hlen : vals.length = h.modelDim then
-      let vec : Fin h.modelDim → Rat := fun i =>
+      let vec : Fin h.modelDim → Dyadic := fun i =>
         vals.get ⟨i.val, by simp [hlen]⟩
       return vec
     else
@@ -543,7 +599,7 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
   let (attnBias, ln1Gamma, ln1Beta) ← readLayerAttnBiasLn1 data start h layer
   let colTarget ← readUnembedColumn data start h dirTarget
   let colNegative ← readUnembedColumn data start h dirNegative
-  let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
+  let direction : Fin h.modelDim → Dyadic := fun i => colTarget i - colNegative i
   let directionSpec : Circuit.DirectionSpec :=
     { target := dirTarget, negative := dirNegative }
   let active :=
@@ -571,7 +627,7 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
       wo := weights.wo
       attnBias := attnBias
       maskCausal := true
-      maskValue := (-10000 : Rat)
+      maskValue := (-10000 : Dyadic)
       directionSpec := directionSpec
       direction := direction }
 

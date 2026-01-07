@@ -16,6 +16,13 @@ universe u
 
 variable {ι : Type u} [Fintype ι]
 
+/-- Factor a constant out of a sum. -/
+private lemma sum_mul_const (a : Mass) (p : ι → Mass) :
+    (∑ i, a * p i) = a * ∑ i, p i := by
+  simpa using
+    (Finset.mul_sum (a := a) (s := (Finset.univ : Finset ι))
+      (f := fun i => p i)).symm
+
 /-- The pure distribution at a single point. -/
 def pure (i0 : ι) [DecidableEq ι] : ProbVec ι := by
   refine
@@ -40,15 +47,7 @@ def mix (a b : Mass) (h : a + b = 1) (p q : ProbVec ι) : ProbVec ι :=
             = (∑ i, a * p.mass i) + (∑ i, b * q.mass i) := by
                 simp [Finset.sum_add_distrib]
         _ = a * ∑ i, p.mass i + b * ∑ i, q.mass i := by
-              have ha : (∑ i, a * p.mass i) = a * ∑ i, p.mass i := by
-                simpa using
-                  (Finset.mul_sum (a := a) (s := (Finset.univ : Finset ι))
-                    (f := fun i => p.mass i)).symm
-              have hb : (∑ i, b * q.mass i) = b * ∑ i, q.mass i := by
-                simpa using
-                  (Finset.mul_sum (a := b) (s := (Finset.univ : Finset ι))
-                    (f := fun i => q.mass i)).symm
-              simp [ha, hb]
+              simp [sum_mul_const]
         _ = a * 1 + b * 1 := by simp
         _ = 1 := by simp [h] }
 

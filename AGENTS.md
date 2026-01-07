@@ -17,10 +17,10 @@ but keep the core invariants and the “no fake proofs” ethos.
 ## 0. Quick Start (What to run)
 
 ### Build (warnings are errors)
-- `lake build -q --wfail`
+- `lake build --wfail`
 
 ### Build the CLI
-- `lake build nfp -q --wfail`
+- `lake build nfp --wfail`
 
 ### Run the CLI (preferred integration path)
 One of these typically works (depending on your Lake setup):
@@ -33,8 +33,8 @@ If you add or change CLI behavior, validate at least:
 - `nfp --version` (if supported)
 
 Before you finish any change:
-- `lake build -q --wfail`
-- `lake build nfp -q --wfail`
+- `lake build --wfail`
+- `lake build nfp --wfail`
 
 Note: `models/` is gitignored, so `rg` will skip it unless you pass `--no-ignore`
 or `-uuu` (or equivalent) when searching.
@@ -330,23 +330,84 @@ but you **must** update this list in the same commit.
 
 ### 5.6 CLI surface
 - `Nfp/IO/Pure.lean`
-  - Pure parsing helpers for CLI inputs.
+  - Aggregator for pure parsing helpers.
+- `Nfp/IO/Pure/Basic.lean`
+  - Shared parsing helpers (`Nat`/`Int`/`Rat`, token cleanup).
+- `Nfp/IO/Pure/InductionHead.lean`
+  - Induction-head input payload parsing from text/bytes.
+- `Nfp/IO/Pure/InductionHead/Bytes.lean`
+  - Byte-level parser for induction-head input payloads.
+- `Nfp/IO/Pure/SoftmaxMargin.lean`
+  - Aggregator for softmax-margin parsing helpers.
+- `Nfp/IO/Pure/SoftmaxMargin/Shared.lean`
+  - Shared parsing helpers for softmax-margin payloads.
+- `Nfp/IO/Pure/SoftmaxMargin/Cert.lean`
+  - Softmax-margin certificate parser.
+- `Nfp/IO/Pure/SoftmaxMargin/Raw.lean`
+  - Softmax-margin raw-input parser.
+- `Nfp/IO/Pure/ValueRange.lean`
+  - Aggregator for value-range parsing helpers.
+- `Nfp/IO/Pure/ValueRange/Shared.lean`
+  - Shared parsing helpers for value-range payloads.
+- `Nfp/IO/Pure/ValueRange/Cert.lean`
+  - Value-range certificate parser.
+- `Nfp/IO/Pure/ValueRange/Raw.lean`
+  - Value-range raw-input parser.
+- `Nfp/IO/Pure/Downstream.lean`
+  - Downstream linear and matrix payload parsers.
+- `Nfp/IO/Pure/Residual.lean`
+  - Residual-bound and residual-interval payload parsers.
 - `Nfp/IO/NfptPure.lean`
   - Pure parsing helpers for `NFP_BINARY_V1` model slices.
+- `Nfp/IO/HeadScore.lean`
+  - Pure task-based cache builder for head score dot-abs bounds.
+- `Nfp/IO/Loaders.lean`
+  - IO loaders for certificates and raw inputs.
+- `Nfp/IO/Checks.lean`
+  - IO checks for certificate validity.
+- `Nfp/IO/Derive.lean`
+  - IO derivations building certificates from model binaries.
+- `Nfp/IO/Timing.lean`
+  - IO timing helpers with microsecond reporting and phase wrappers.
+- `Nfp/IO/Util.lean`
+  - Small CLI parsing utilities shared across IO entrypoints.
+- `Nfp/IO/InductionHead.lean`
+  - Induction-head IO pipeline with timing instrumentation.
+- `Nfp/IO/Bench/Rational.lean`
+  - Microbenchmarks for rational arithmetic and caching.
 - `Nfp/IO.lean`
   - IO-only wrappers for loading inputs and running checks.
 - `Nfp/Cli.lean`
   - CLI commands and `main` implementation.
 - `Main.lean`
   - Thin entrypoint delegating to `Nfp.Cli.main`.
+  - Benchmark entrypoint for rational microbenchmarks.
 - `Nfp.lean`
-  - Top-level reexports and axioms dashboard (`#print axioms`).
+  - Top-level reexports.
+- `TheoremAxioms.lean`
+  - Axiom dashboard for `theorem-axioms` build target (`#print axioms`).
 
 ### 5.7 Sound certification
 - `Nfp/Sound/Induction.lean`
-  - Sound builders for induction certificates from exact inputs.
+  - Aggregator for induction soundness modules.
+- `Nfp/Sound/Induction/Core.lean`
+  - Sound builders and core proofs for induction certificates from exact inputs.
+- `Nfp/Sound/Induction/CoreDefs.lean`
+  - Core definitions and soundness predicates for induction certificates.
+- `Nfp/Sound/Induction/HeadOutput.lean`
+  - Head-output interval certificates built from induction head inputs.
+- `Nfp/Sound/Induction/HeadBounds.lean`
+  - Helper bounds used to stage head-induction certificate construction.
 - `Nfp/Sound/Bounds/MatrixNorm.lean`
   - Row-sum matrix norms and downstream linear certificate builders.
+- `Nfp/Sound/Bounds/MatrixNorm/Interval.lean`
+  - Dot-product and matrix-vector interval bounds (dyadic and real).
+- `Nfp/Sound/Bounds/LayerNorm.lean`
+  - LayerNorm interval bounds and end-to-end soundness lemmas.
+- `Nfp/Sound/Bounds/LayerNorm/MeanVariance.lean`
+  - Mean/variance helpers for LayerNorm bounds.
+- `Nfp/Sound/Bounds/UnnormRat.lean`
+  - Unnormalized rational helpers for deferred normalization in bounds kernels.
 - `Nfp/Sound/Bounds/Gelu.lean`
   - Tanh-GELU bounds for interval propagation through MLPs.
 - `Nfp/Sound/Bounds/Mlp.lean`
@@ -355,6 +416,8 @@ but you **must** update this list in the same commit.
   - Interval bounds for multi-head attention and transformer layers.
 - `Nfp/Sound/Bounds/Transformer.lean`
   - Interval bounds for transformer stacks and final LayerNorm outputs.
+- `Nfp/Sound/Bounds/Transformer/Embedding.lean`
+  - Embedding interval bounds and position-restricted bounds.
 - `Nfp/Sound/Linear/FinFold.lean`
   - Tail-recursive folds and sums for sound linear computations.
 - `Nfp/Sound/Gpt2/HeadInputs.lean`
@@ -385,7 +448,8 @@ This repo treats “axioms creep” as a serious regression.
 
 - Do not add axioms.
 - Keep an eye on classical assumptions; they may be unavoidable, but should be explicit.
-- Use `Nfp.lean` as the “trust dashboard” for `#print axioms` / dependency visibility.
+- Use `TheoremAxioms.lean` / `lake build theorem-axioms --wfail` as the trust dashboard for
+  `#print axioms` / dependency visibility.
 
 ---
 

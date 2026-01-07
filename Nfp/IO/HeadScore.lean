@@ -1,0 +1,56 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+
+import Nfp.Core.Basic
+import Nfp.Sound.Linear.FinFold
+
+/-!
+Pure helpers for building cached dot-abs functions for head scoring.
+-/
+
+namespace Nfp
+
+namespace IO
+
+/-- Build a cached dot-abs function from Q/K absolute bounds using tasks. -/
+def dotAbsFromQKV {seq dHead : Nat}
+    (qAbs kAbs : Fin seq → Fin dHead → Dyadic) : Fin seq → Fin seq → Dyadic :=
+  let rowTasks : Array (Task (Array Dyadic)) :=
+    Array.ofFn (fun q : Fin seq =>
+      Task.spawn (fun _ =>
+        Array.ofFn (fun k : Fin seq =>
+          Sound.Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))))
+  let cache : Array (Array Dyadic) :=
+    Array.ofFn (fun q : Fin seq =>
+      (rowTasks[q.1]'(by
+        simp [rowTasks, q.isLt])).get)
+  fun q k =>
+    let row := cache[q.1]'(by
+      simp [cache, q.isLt])
+    row[k.1]'(by
+      have hrow : row.size = seq := by
+        simp [row, cache, rowTasks, Task.spawn]
+      simp [hrow, k.isLt])
+
+theorem dotAbsFromQKV_spec {seq dHead : Nat}
+    (qAbs kAbs : Fin seq → Fin dHead → Dyadic) :
+    dotAbsFromQKV qAbs kAbs =
+      let rowTasks : Array (Task (Array Dyadic)) :=
+        Array.ofFn (fun q : Fin seq =>
+          Task.spawn (fun _ =>
+            Array.ofFn (fun k : Fin seq =>
+              Sound.Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))))
+      let cache : Array (Array Dyadic) :=
+        Array.ofFn (fun q : Fin seq =>
+          (rowTasks[q.1]'(by
+            simp [rowTasks, q.isLt])).get)
+      fun q k =>
+        let row := cache[q.1]'(by
+          simp [cache, q.isLt])
+        row[k.1]'(by
+          have hrow : row.size = seq := by
+            simp [row, cache, rowTasks, Task.spawn]
+          simp [hrow, k.isLt]) := rfl
+
+end IO
+
+end Nfp

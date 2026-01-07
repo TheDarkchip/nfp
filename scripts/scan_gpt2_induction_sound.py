@@ -6,15 +6,15 @@ Scan GPT-2 induction head candidates with SOUND logit-diff bounds.
 
 This script:
 1) Ensures a GPT-2 "rigorous induction" binary model exists.
-2) Uses the heuristic `induction` command to list candidate head pairs.
-3) Runs `induction_cert` for each pair and ranks by logitDiffLB.
+2) Uses the untrusted discovery helper to propose head/direction candidates.
+3) Runs `nfp induction certify_head_model_nonvacuous` to check each candidate.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
-import re
 import shutil
 import struct
 import subprocess
@@ -22,9 +22,6 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from fractions import Fraction
 from pathlib import Path
-
-
-PAIR_RE = re.compile(r"L(\d+)H(\d+)\s+->\s+L(\d+)H(\d+)")
 
 
 def run_cmd(cmd: list[str]) -> str:
@@ -97,31 +94,17 @@ def derive_target_negative(tokens: list[int]) -> tuple[int, int]:
     return target, negative
 
 
-def parse_candidates(output: str, top: int) -> list[tuple[int, int, int, int]]:
-    pairs: list[tuple[int, int, int, int]] = []
-    seen: set[tuple[int, int, int, int]] = set()
-    for line in output.splitlines():
-        match = PAIR_RE.search(line)
-        if match is None:
-            continue
-        pair = tuple(int(x) for x in match.groups())
-        if pair in seen:
-            continue
-        seen.add(pair)
-        pairs.append(pair)
-        if len(pairs) >= top:
-            break
-    return pairs
-
-
 def parse_logit_lb(output: str) -> Fraction | None:
     for line in output.splitlines():
-        if line.startswith("logitDiffLB="):
-            token = line.split("=", 1)[1].split()[0]
-            try:
-                return Fraction(token)
-            except ValueError:
-                return None
+        if "logitDiffLB=" not in line:
+            continue
+        for token in line.split():
+            if token.startswith("logitDiffLB="):
+                value = token.split("=", 1)[1].strip("),")
+                try:
+                    return Fraction(value)
+                except ValueError:
+                    return None
     return None
 
 
@@ -129,21 +112,16 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", default="models/gpt2_rigorous.nfpt")
     parser.add_argument("--top", type=int, default=8)
-    parser.add_argument("--delta", default="0.01")
-    parser.add_argument("--coord", type=int, default=0)
-    parser.add_argument("--offset1", type=int, default=-1)
-    parser.add_argument("--offset2", type=int, default=0)
-    parser.add_argument("--keyOffset1", type=int, default=0)
-    parser.add_argument("--keyOffset2", type=int, default=-1)
     parser.add_argument("--maxSeqLen", type=int, default=256)
     parser.add_argument("--jobs", type=int, default=1)
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--nfp-bin", help="Path to nfp binary (defaults to .lake/build/bin/nfp)")
-    parser.add_argument("--tightPattern", action="store_true")
-    parser.add_argument("--tightPatternLayers", type=int)
-    parser.add_argument("--perRowPatternLayers", type=int)
-    parser.add_argument("--bestMatch", action="store_true")
-    parser.add_argument("--queryPos", type=int)
+    parser.add_argument("--min-eps", type=float, default=0.5)
+    parser.add_argument("--min-margin", type=float, default=0.0)
+    parser.add_argument("--min-logit-lb", type=float, default=0.0)
+    parser.add_argument("--layers", help="Comma-separated layer list or 'all'")
+    parser.add_argument("--heads", help="Comma-separated head list or 'all'")
+    parser.add_argument("--period", type=int)
     parser.add_argument("--output", default="reports/gpt2_induction_sound_scan.txt")
     args = parser.parse_args()
     args.jobs = max(1, args.jobs)
@@ -169,84 +147,82 @@ def main() -> int:
         return 1
     target, negative = derive_target_negative(tokens)
 
-    induction_out = run_cmd(
-        nfp_cmd
-        + [
-            "induction",
-            str(model_path),
-            "--threshold",
-            "0.0",
-        ]
-    )
-    pairs = parse_candidates(induction_out, args.top)
-    if not pairs:
+    discover_json = Path(args.output).with_suffix(".json")
+    discover_txt = Path(args.output).with_suffix(".discover.txt")
+    discover_cmd = [
+        sys.executable,
+        "scripts/discover_gpt2_induction_targets.py",
+        "--model",
+        str(model_path),
+        "--top",
+        str(args.top),
+        "--min-eps",
+        str(args.min_eps),
+        "--min-margin",
+        str(args.min_margin),
+        "--min-logit-lb",
+        str(args.min_logit_lb),
+        "--output",
+        str(discover_txt),
+        "--json-out",
+        str(discover_json),
+    ]
+    if args.layers is not None:
+        discover_cmd += ["--layers", args.layers]
+    if args.heads is not None:
+        discover_cmd += ["--heads", args.heads]
+    if args.period is not None:
+        discover_cmd += ["--period", str(args.period)]
+    run_cmd(discover_cmd)
+    payload = json.loads(discover_json.read_text(encoding="ascii"))
+    candidates = payload.get("results", [])
+    if not candidates:
         print("No induction candidates found.", file=sys.stderr)
         return 1
 
-    results: list[tuple[Fraction, tuple[int, int, int, int]]] = []
+    results: list[tuple[Fraction, dict[str, int]]] = []
 
-    def run_cert(pair: tuple[int, int, int, int]) -> tuple[tuple[int, int, int, int], Fraction | None]:
-        l1, h1, l2, h2 = pair
+    def run_cert(candidate: dict[str, int]) -> tuple[dict[str, int], Fraction | None]:
+        layer = int(candidate["layer"])
+        head = int(candidate["head"])
+        target_id = int(candidate.get("target", target))
+        negative_id = int(candidate.get("negative", negative))
         cmd = nfp_cmd + [
-            "induction_cert",
+            "induction",
+            "certify_head_model_nonvacuous",
+            "--model",
             str(model_path),
-            "--layer1",
-            str(l1),
-            "--head1",
-            str(h1),
-            "--layer2",
-            str(l2),
-            "--head2",
-            str(h2),
-            "--coord",
-            str(args.coord),
-            "--offset1",
-            str(args.offset1),
-            "--offset2",
-            str(args.offset2),
-            "--keyOffset1",
-            str(args.keyOffset1),
-            "--keyOffset2",
-            str(args.keyOffset2),
-            "--delta",
-            args.delta,
-            "--maxSeqLen",
-            str(args.maxSeqLen),
-            "--target",
-            str(target),
-            "--negative",
-            str(negative),
+            "--layer",
+            str(layer),
+            "--head",
+            str(head),
+            "--direction-target",
+            str(target_id),
+            "--direction-negative",
+            str(negative_id),
         ]
-        if args.tightPattern:
-            cmd.append("--tightPattern")
-        if args.tightPatternLayers is not None:
-            cmd.extend(["--tightPatternLayers", str(args.tightPatternLayers)])
-        if args.perRowPatternLayers is not None:
-            cmd.extend(["--perRowPatternLayers", str(args.perRowPatternLayers)])
-        if args.bestMatch:
-            cmd.append("--bestMatch")
-        if args.queryPos is not None:
-            cmd.extend(["--queryPos", str(args.queryPos)])
+        if args.period is not None:
+            cmd += ["--period", str(args.period)]
         try:
             cert_out = run_cmd(cmd)
         except subprocess.CalledProcessError:
-            return pair, None
-        return pair, parse_logit_lb(cert_out)
+            return candidate, None
+        return candidate, parse_logit_lb(cert_out)
 
     if args.jobs == 1:
-        for pair in pairs:
-            pair_out, logit_lb = run_cert(pair)
+        for candidate in candidates:
+            candidate_out, logit_lb = run_cert(candidate)
             if logit_lb is None:
                 continue
-            results.append((logit_lb, pair_out))
+            results.append((logit_lb, candidate_out))
     else:
         with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-            futures = {executor.submit(run_cert, pair): pair for pair in pairs}
+            futures = {executor.submit(run_cert, candidate): candidate for candidate in candidates}
             for future in as_completed(futures):
-                pair_out, logit_lb = future.result()
+                candidate_out, logit_lb = future.result()
                 if logit_lb is None:
                     continue
-                results.append((logit_lb, pair_out))
+                results.append((logit_lb, candidate_out))
 
     if not results:
         print("No sound logit bounds produced.", file=sys.stderr)
@@ -259,16 +235,16 @@ def main() -> int:
         f.write("SOUND induction scan (logitDiffLB ranking)\n")
         f.write(f"model={model_path}\n")
         f.write(f"target={target} negative={negative}\n")
-        f.write(
-            f"bestMatch={args.bestMatch} queryPos={args.queryPos} "
-            f"tightPatternLayers={args.tightPatternLayers} "
-            f"perRowPatternLayers={args.perRowPatternLayers}\n"
-        )
         eps_header = header.get("layer_norm_eps") or header.get("eps") or "unknown"
-        f.write(f"top={args.top} delta={args.delta} eps={eps_header}\n")
-        for rank, (lb, (l1, h1, l2, h2)) in enumerate(results, start=1):
+        f.write(f"top={args.top} eps={eps_header}\n")
+        for rank, (lb, candidate) in enumerate(results, start=1):
+            layer = int(candidate["layer"])
+            head = int(candidate["head"])
+            target_id = int(candidate.get("target", target))
+            negative_id = int(candidate.get("negative", negative))
             f.write(
-                f"{rank:02d} L{l1}H{h1} -> L{l2}H{h2} logitDiffLB={lb}\n"
+                f"{rank:02d} L{layer}H{head} "
+                f"target={target_id} negative={negative_id} logitDiffLB={lb}\n"
             )
 
     print(f"Report written to {out_path}")

@@ -2,8 +2,7 @@
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Ring.Rat
-import Mathlib.Data.Rat.Cast.Order
+import Nfp.Core.Basic
 import Nfp.Circuit.Layers.Induction
 import Nfp.Circuit.Layers.Softmax
 
@@ -26,11 +25,12 @@ theorem oneHot_bounds_at_of_marginAt
     (active : Finset (Fin seq))
     (prev : Fin seq → Fin seq)
     (scoresReal : Fin seq → Fin seq → Real)
-    (marginAt : Fin seq → Rat)
-    (epsAt : Fin seq → Rat)
+    (marginAt : Fin seq → Dyadic)
+    (epsAt : Fin seq → Dyadic)
     (hepsAt :
       ∀ q, epsAt q =
-        if marginAt q < 0 then (1 : Rat) else (seq - 1 : Rat) / (1 + marginAt q))
+        if marginAt q < 0 then (1 : Dyadic) else
+          dyadicDivUp (seq - 1) (1 + marginAt q))
     (hseq : (1 : Nat) ≤ seq)
     (hscore_margin_real_at :
       ∀ q, q ∈ active → ∀ k, k ≠ prev q →
@@ -63,7 +63,7 @@ theorem oneHot_bounds_at_of_marginAt
     have hsum_others_le : (∑ k ∈ others q, weights q k) ≤ (epsAt q : Real) := by
       by_cases hneg : marginAt q < 0
       · have heps : (epsAt q : Real) = 1 := by
-          simp [hepsAt, hneg]
+          simp [hepsAt, hneg, dyadicToReal_one]
         have hsubset : others q ⊆ (Finset.univ : Finset (Fin seq)) := by
           intro k hk
           simp
@@ -85,7 +85,7 @@ theorem oneHot_bounds_at_of_marginAt
         simpa [heps] using hsum_le'
       · have hnonneg : 0 ≤ marginAt q := le_of_not_gt hneg
         have hnonneg_real : 0 ≤ (marginAt q : Real) := by
-          exact (Rat.cast_nonneg (K := Real)).2 hnonneg
+          exact dyadicToReal_nonneg_of_nonneg hnonneg
         have hbound :
             ∀ k ∈ others q,
               weights q k ≤ (1 + (marginAt q : Real))⁻¹ := by
@@ -114,9 +114,23 @@ theorem oneHot_bounds_at_of_marginAt
           simp only [hcard, Nat.cast_sub hseq, Nat.cast_one] at hsum_le'''
           exact hsum_le'''
         have heps :
-            (epsAt q : Real) = (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ := by
-          simp [hepsAt, hneg, Rat.cast_add, div_eq_mul_inv]
-        simpa [heps] using hsum_le'
+            (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ ≤ (epsAt q : Real) := by
+          have hden : (1 + marginAt q) ≠ 0 := by
+            intro hzero
+            have hrat : (1 : Rat) + (marginAt q).toRat = 0 := by
+              have := congrArg Dyadic.toRat hzero
+              simpa [Dyadic.toRat_add, Dyadic.toRat_natCast] using this
+            have hnonneg_rat : (0 : Rat) ≤ (marginAt q).toRat :=
+              (Dyadic.toRat_le_toRat_iff (x := 0) (y := marginAt q)).2 hnonneg
+            linarith
+          have hrat :
+              (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ ≤
+                (dyadicDivUp (seq - 1) (1 + marginAt q) : Real) := by
+            have hrat' := dyadicDivUp_ge_real (seq - 1) (1 + marginAt q) hden
+            simpa [dyadicToReal, Dyadic.toRat_add, Dyadic.toRat_natCast,
+              Rat.cast_div, Rat.cast_add, Rat.cast_natCast, div_eq_mul_inv] using hrat'
+          simpa [hepsAt, hneg] using hrat
+        exact le_trans hsum_le' heps
     have hsum_eq :
         weights q (prev q) + ∑ k ∈ others q, weights q k = 1 := by
       have hsum' :
@@ -166,7 +180,7 @@ theorem oneHot_bounds_at_of_marginAt
         simpa [heps] using hsum_le'
       · have hnonneg : 0 ≤ marginAt q := le_of_not_gt hneg
         have hnonneg_real : 0 ≤ (marginAt q : Real) := by
-          exact (Rat.cast_nonneg (K := Real)).2 hnonneg
+          exact dyadicToReal_nonneg_of_nonneg hnonneg
         have hbound :
             ∀ j ∈ others q,
               weights q j ≤ (1 + (marginAt q : Real))⁻¹ := by
@@ -195,9 +209,23 @@ theorem oneHot_bounds_at_of_marginAt
           simp only [hcard, Nat.cast_sub hseq, Nat.cast_one] at hsum_le'''
           exact hsum_le'''
         have heps :
-            (epsAt q : Real) = (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ := by
-          simp [hepsAt, hneg, Rat.cast_add, div_eq_mul_inv]
-        simpa [heps] using hsum_le'
+            (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ ≤ (epsAt q : Real) := by
+          have hden : (1 + marginAt q) ≠ 0 := by
+            intro hzero
+            have hrat : (1 : Rat) + (marginAt q).toRat = 0 := by
+              have := congrArg Dyadic.toRat hzero
+              simpa [Dyadic.toRat_add, Dyadic.toRat_natCast] using this
+            have hnonneg_rat : (0 : Rat) ≤ (marginAt q).toRat :=
+              (Dyadic.toRat_le_toRat_iff (x := 0) (y := marginAt q)).2 hnonneg
+            linarith
+          have hrat :
+              (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ ≤
+                (dyadicDivUp (seq - 1) (1 + marginAt q) : Real) := by
+            have hrat' := dyadicDivUp_ge_real (seq - 1) (1 + marginAt q) hden
+            simpa [dyadicToReal, Dyadic.toRat_add, Dyadic.toRat_natCast,
+              Rat.cast_div, Rat.cast_add, Rat.cast_natCast, div_eq_mul_inv] using hrat'
+          simpa [hepsAt, hneg] using hrat
+        exact le_trans hsum_le' heps
     have hk' : k ∈ others q := by
       simp [others, hk]
     have hnonneg :

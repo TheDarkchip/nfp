@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.Ring.Rat
+import Nfp.Core.Basic
 import Nfp.Circuit.Cert
 import Nfp.Circuit.Layers.Induction
 
@@ -17,20 +17,20 @@ open scoped BigOperators
 
 variable {seq : Nat}
 
-/-- Certificate payload for softmax-margin bounds (Rat-valued). -/
+/-- Certificate payload for softmax-margin bounds (Dyadic-valued). -/
 structure SoftmaxMarginCert (seq : Nat) where
   /-- Weight tolerance. -/
-  eps : Rat
+  eps : Dyadic
   /-- Score margin used to justify weight bounds. -/
-  margin : Rat
+  margin : Dyadic
   /-- Active queries for which bounds are checked. -/
   active : Finset (Fin seq)
   /-- `prev` selector for induction-style attention. -/
   prev : Fin seq → Fin seq
   /-- Score matrix entries. -/
-  scores : Fin seq → Fin seq → Rat
+  scores : Fin seq → Fin seq → Dyadic
   /-- Attention weight entries. -/
-  weights : Fin seq → Fin seq → Rat
+  weights : Fin seq → Fin seq → Dyadic
 
 /-- Boolean checker for softmax-margin certificates. -/
 def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
@@ -55,7 +55,7 @@ def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
 /-- `checkSoftmaxMarginCert` is sound for `SoftmaxMarginBoundsOn`. -/
 theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
     checkSoftmaxMarginCert c = true →
-      Layers.SoftmaxMarginBoundsOn (Val := Rat) c.eps c.margin (fun q => q ∈ c.active)
+      Layers.SoftmaxMarginBoundsOn (Val := Dyadic) c.eps c.margin (fun q => q ∈ c.active)
         c.prev c.scores c.weights := by
   classical
   intro hcheck

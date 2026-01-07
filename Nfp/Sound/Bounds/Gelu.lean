@@ -3,7 +3,7 @@
 import Mathlib.Algebra.Order.Ring.Abs
 import Mathlib.Analysis.Complex.Trigonometric
 import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
-import Mathlib.Data.Rat.Cast.Order
+import Nfp.Core.Basic
 
 /-!
 Tanh-based GELU bounds for GPT-2 style MLPs.
@@ -118,22 +118,61 @@ theorem geluTanh_bounds (x : Real) :
     simpa [min_eq_left hx', max_eq_right hx'] using And.intro h1 h0
 
 /-- Interval bounds for GELU given input bounds. -/
-def geluInterval (lo hi : Rat) : Rat × Rat :=
-  (min lo 0, max hi 0)
+def geluInterval (lo hi : Dyadic) : Dyadic × Dyadic :=
+  (if lo ≤ 0 then lo else 0, if 0 ≤ hi then hi else 0)
 
 /-- `geluInterval` soundly bounds `geluTanh` on a real interval. -/
-theorem geluInterval_bounds {lo hi : Rat} {x : Real}
+theorem geluInterval_bounds {lo hi : Dyadic} {x : Real}
     (hlo : (lo : Real) ≤ x) (hhi : x ≤ (hi : Real)) :
     (geluInterval lo hi).1 ≤ (geluTanh x : Real) ∧
       (geluTanh x : Real) ≤ (geluInterval lo hi).2 := by
   have hgelu := geluTanh_bounds x
-  have hmin : min (lo : Real) 0 ≤ min x 0 := min_le_min hlo le_rfl
-  have hmax : max x 0 ≤ max (hi : Real) 0 := max_le_max hhi le_rfl
-  have hlo' : min (lo : Real) 0 ≤ geluTanh x := le_trans hmin hgelu.1
-  have hhi' : geluTanh x ≤ max (hi : Real) 0 := le_trans hgelu.2 hmax
-  constructor
-  · simpa [geluInterval, Rat.cast_min] using hlo'
-  · simpa [geluInterval, Rat.cast_max] using hhi'
+  by_cases hlo0 : lo ≤ 0
+  · have hlo0r : (lo : Real) ≤ 0 := by
+      exact (dyadicToReal_nonpos_iff (x := lo)).2 hlo0
+    have hmin : min (lo : Real) 0 ≤ min x 0 := min_le_min hlo le_rfl
+    have hlo' : (lo : Real) ≤ geluTanh x := by
+      have hmin' : (lo : Real) ≤ min x 0 := by
+        simpa [min_eq_left hlo0r] using hmin
+      exact le_trans hmin' hgelu.1
+    have hmax : max x 0 ≤ max (hi : Real) 0 := max_le_max hhi le_rfl
+    have hhi' : geluTanh x ≤ max (hi : Real) 0 := le_trans hgelu.2 hmax
+    constructor
+    · simpa [geluInterval, hlo0] using hlo'
+    · by_cases hhi0 : 0 ≤ hi
+      · have hhi0r : 0 ≤ (hi : Real) := by
+          exact (dyadicToReal_nonneg_iff (x := hi)).2 hhi0
+        have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
+        simpa [geluInterval, hhi0, hmax'] using hhi'
+      · have hhi0r : (hi : Real) ≤ 0 := by
+          exact (dyadicToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
+        have hx0 : x ≤ 0 := le_trans hhi hhi0r
+        have hmax' : max x 0 = 0 := max_eq_right hx0
+        have hhi'' : geluTanh x ≤ (0 : Real) := by
+          simpa [hmax'] using hgelu.2
+        simpa [geluInterval, hhi0, dyadicToReal_zero] using hhi''
+  · have hlo0r : 0 ≤ (lo : Real) := by
+      exact (dyadicToReal_nonneg_iff (x := lo)).2 (le_of_not_ge hlo0)
+    have hx0 : 0 ≤ x := le_trans hlo0r hlo
+    have hmin' : min x 0 = 0 := min_eq_right hx0
+    have hlo' : (0 : Real) ≤ geluTanh x := by
+      simpa [hmin'] using hgelu.1
+    have hmax : max x 0 ≤ max (hi : Real) 0 := max_le_max hhi le_rfl
+    have hhi' : geluTanh x ≤ max (hi : Real) 0 := le_trans hgelu.2 hmax
+    constructor
+    · simpa [geluInterval, hlo0, dyadicToReal_zero] using hlo'
+    · by_cases hhi0 : 0 ≤ hi
+      · have hhi0r : 0 ≤ (hi : Real) := by
+          exact (dyadicToReal_nonneg_iff (x := hi)).2 hhi0
+        have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
+        simpa [geluInterval, hhi0, hmax'] using hhi'
+      · have hhi0r : (hi : Real) ≤ 0 := by
+          exact (dyadicToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
+        have hx0' : x ≤ 0 := le_trans hhi hhi0r
+        have hmax' : max x 0 = 0 := max_eq_right hx0'
+        have hhi'' : geluTanh x ≤ (0 : Real) := by
+          simpa [hmax'] using hgelu.2
+        simpa [geluInterval, hhi0, dyadicToReal_zero] using hhi''
 
 end Bounds
 

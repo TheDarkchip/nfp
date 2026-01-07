@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Ring.Rat
+import Nfp.Core.Basic
 import Nfp.Circuit.Cert
 
 /-!
@@ -16,7 +16,7 @@ namespace Circuit
 /-- Certificate payload for per-coordinate residual absolute bounds. -/
 structure ResidualBoundCert (n : Nat) where
   /-- Absolute bound per coordinate. -/
-  bound : Fin n → Rat
+  bound : Fin n → Dyadic
 
 /-- Properties enforced by `checkResidualBoundCert`. -/
 structure ResidualBoundBounds {n : Nat} (c : ResidualBoundCert n) : Prop where

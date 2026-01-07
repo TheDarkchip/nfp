@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Ring.Rat
+import Nfp.Core.Basic
 import Nfp.Circuit.Cert
 
 /-!
@@ -16,9 +16,9 @@ namespace Circuit
 /-- Certificate payload for per-coordinate residual intervals. -/
 structure ResidualIntervalCert (n : Nat) where
   /-- Lower bound per coordinate. -/
-  lo : Fin n → Rat
+  lo : Fin n → Dyadic
   /-- Upper bound per coordinate. -/
-  hi : Fin n → Rat
+  hi : Fin n → Dyadic
 
 /-- Properties enforced by `checkResidualIntervalCert`. -/
 structure ResidualIntervalBounds {n : Nat} (c : ResidualIntervalCert n) : Prop where

@@ -18,6 +18,7 @@ Usage:
 
 Optional:
   --tokens tokens.txt    # whitespace-separated token ids
+  --nfpt model.nfpt      # read tokens from binary model
   --random-pattern --seed 0
   --decimals 6 --safety 1e-6
 """
@@ -60,6 +61,32 @@ def parse_tokens(path: Path) -> np.ndarray:
     if not tokens:
         raise SystemExit(f"no tokens found in {path}")
     return np.array(tokens, dtype=np.int64)
+
+
+def parse_tokens_from_nfpt(path: Path) -> np.ndarray:
+    header: dict[str, str] = {}
+    with path.open("rb") as f:
+        while True:
+            line = f.readline()
+            if not line:
+                raise SystemExit("unexpected EOF while reading header")
+            text = line.decode("ascii").strip()
+            if text == "BINARY_START":
+                break
+            if "=" in text:
+                key, value = text.split("=", 1)
+                header[key.strip()] = value.strip()
+        seq_len_raw = header.get("seq_len")
+        if seq_len_raw is None:
+            raise SystemExit("header missing seq_len")
+        seq_len = int(seq_len_raw)
+        token_bytes = f.read(seq_len * 4)
+        if len(token_bytes) != seq_len * 4:
+            raise SystemExit("unexpected EOF while reading tokens")
+        tokens = np.frombuffer(token_bytes, dtype="<i4").astype(np.int64, copy=False)
+    if tokens.size == 0:
+        raise SystemExit(f"no tokens found in {path}")
+    return tokens
 
 
 def parse_active_positions(path: Path) -> tuple[int | None, list[int]]:
@@ -106,6 +133,7 @@ def main() -> None:
                         help="Use random token pattern")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for random pattern")
     parser.add_argument("--tokens", help="Optional path to whitespace-separated tokens")
+    parser.add_argument("--nfpt", help="Optional .nfpt file to read tokens from")
     parser.add_argument("--scores", help="Optional softmax-margin certificate for active queries")
     parser.add_argument("--model", default="gpt2", help="HuggingFace model name")
     parser.add_argument("--device", default="cpu", help="Torch device")
@@ -122,7 +150,10 @@ def main() -> None:
     if args.safety < 0:
         raise SystemExit("safety must be nonnegative")
 
-    if args.tokens:
+    if args.nfpt:
+        tokens = parse_tokens_from_nfpt(Path(args.nfpt))
+        seq = len(tokens)
+    elif args.tokens:
         tokens = parse_tokens(Path(args.tokens))
         seq = len(tokens)
     else:

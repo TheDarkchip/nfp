@@ -36,3 +36,19 @@ roots = ["Nfp"]
 [[lean_exe]]
 name = "nfp"
 root = "Main"
+
+[[lean_exe]]
+name = "bench-rational"
+root = "BenchRational"
+
+[[lean_exe]]
+name = "bench-induction-core"
+root = "BenchInductionCore"
+
+[[lean_exe]]
+name = "bench-induction-counts"
+root = "BenchInductionCounts"
+
+[[lean_exe]]
+name = "theorem-axioms"
+root = "TheoremAxioms"

@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.Ring.Rat
+import Nfp.Core.Basic
 import Nfp.Circuit.Cert
 import Nfp.Circuit.Layers.Induction
 
@@ -24,14 +24,14 @@ structure DirectionSpec where
   /-- Negative token id for the logit-diff direction. -/
   negative : Nat
 
-/-- Certificate payload for value-range bounds (Rat-valued). -/
+/-- Certificate payload for value-range bounds (Dyadic-valued). -/
 structure ValueRangeCert (seq : Nat) where
   /-- Lower bound for values. -/
-  lo : Rat
+  lo : Dyadic
   /-- Upper bound for values. -/
-  hi : Rat
+  hi : Dyadic
   /-- Value entries. -/
-  vals : Fin seq → Rat
+  vals : Fin seq → Dyadic
   /-- Optional logit-diff direction metadata (ignored by the checker). -/
   direction : Option DirectionSpec
 
@@ -44,7 +44,7 @@ def checkValueRangeCert [NeZero seq] (c : ValueRangeCert seq) : Bool :=
 /-- `checkValueRangeCert` is sound for `ValueRangeBounds`. -/
 theorem checkValueRangeCert_sound [NeZero seq] (c : ValueRangeCert seq) :
     checkValueRangeCert c = true →
-      Layers.ValueRangeBounds (Val := Rat) c.lo c.hi c.vals := by
+      Layers.ValueRangeBounds (Val := Dyadic) c.lo c.hi c.vals := by
   classical
   intro hcheck
   have hcheck' :

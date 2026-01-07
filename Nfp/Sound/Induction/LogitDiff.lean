@@ -25,14 +25,14 @@ noncomputable def headLogitDiff (inputs : Model.InductionHeadInputs seq dModel d
   dotProduct (weights q) (valsRealOfInputs inputs)
 
 /-- Lower bound computed from the per-key lower bounds in an induction certificate. -/
-def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Rat :=
+def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Dyadic :=
   Circuit.logitDiffLowerBoundAt c.active c.prev c.epsAt
     c.values.lo c.values.hi c.values.valsLo
 
 theorem logitDiffLowerBoundFromCert_le
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (c : InductionHeadCert seq) (hsound : InductionHeadCertSound inputs c)
-    {lb : Rat} (hbound : logitDiffLowerBoundFromCert c = some lb)
+    {lb : Dyadic} (hbound : logitDiffLowerBoundFromCert c = some lb)
     {q : Fin seq} (hq : q ∈ c.active) :
     (lb : Real) ≤ headLogitDiff inputs q := by
   classical
@@ -50,7 +50,7 @@ theorem logitDiffLowerBoundFromCert_le
           Layers.ValueRangeBounds (Val := Real) (c.values.lo : Real) (c.values.hi : Real)
             (valsRealOfInputs inputs) := by
         refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
-        · exact (Rat.cast_le (K := Real)).2 hsound.value_bounds.lo_le_hi
+        · exact dyadicToReal_le_of_le hsound.value_bounds.lo_le_hi
         · intro k
           exact
             le_trans (hsound.value_bounds.lo_le_valsLo k)
@@ -71,7 +71,7 @@ theorem logitDiffLowerBoundFromCert_le
           (weights := weights)
           (vals := valsRealOfInputs inputs)
           hweights hvalsRange
-      have hboundRat :
+      have hboundDyadic :
           lb ≤ c.values.valsLo (c.prev q) -
             c.epsAt q * (c.values.hi - c.values.lo) := by
         refine
@@ -90,9 +90,9 @@ theorem logitDiffLowerBoundFromCert_le
               (c.epsAt q : Real) * ((c.values.hi : Real) - (c.values.lo : Real)) := by
         have hboundReal' :
             (lb : Real) ≤
-              (c.values.valsLo (c.prev q) - c.epsAt q * (c.values.hi - c.values.lo) : Rat) := by
-          exact (Rat.cast_le (K := Real)).2 hboundRat
-        simpa [Rat.cast_sub, Rat.cast_mul] using hboundReal'
+              (c.values.valsLo (c.prev q) - c.epsAt q * (c.values.hi - c.values.lo) : Dyadic) := by
+          exact dyadicToReal_le_of_le hboundDyadic
+        simpa [dyadicToReal_sub, dyadicToReal_mul] using hboundReal'
       have hvalsLo :
           (c.values.valsLo (c.prev q) : Real) ≤
             valsRealOfInputs inputs (c.prev q) := by
@@ -123,7 +123,7 @@ structure InductionLogitLowerBoundResult
   /-- Soundness proof for the induction certificate. -/
   sound : InductionHeadCertSound inputs cert
   /-- Reported lower bound on logit diff. -/
-  lb : Rat
+  lb : Dyadic
   /-- `lb` is computed from `logitDiffLowerBoundFromCert`. -/
   lb_def : logitDiffLowerBoundFromCert cert = some lb
   /-- The lower bound is sound on active queries. -/

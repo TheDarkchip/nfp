@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Ring.Rat
+import Nfp.Core.Basic
 import Nfp.Circuit.Cert
 
 /-!
@@ -18,11 +18,11 @@ namespace Circuit
 /-- Certificate payload for downstream linear error bounds. -/
 structure DownstreamLinearCert where
   /-- Upper bound on the downstream logit-diff error. -/
-  error : Rat
+  error : Dyadic
   /-- Operator gain bound used to justify the error. -/
-  gain : Rat
+  gain : Dyadic
   /-- Input magnitude bound used to justify the error. -/
-  inputBound : Rat
+  inputBound : Dyadic
 
 /-- Arithmetic properties enforced by `checkDownstreamLinearCert`. -/
 structure DownstreamLinearBounds (c : DownstreamLinearCert) : Prop where

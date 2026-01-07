@@ -3,20 +3,20 @@
 import Mathlib.Algebra.BigOperators.Fin
 import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Algebra.Order.Ring.Abs
-import Mathlib.Algebra.Order.Ring.Rat
+import Mathlib.Data.Fintype.Basic
 import Mathlib.Data.Matrix.Mul
-import Mathlib.Data.Rat.BigOperators
-import Mathlib.Data.Rat.Cast.Order
 import Mathlib.Data.Real.Basic
 import Nfp.Circuit.Cert.DownstreamLinear
 import Nfp.Circuit.Cert.ResidualInterval
+import Nfp.Core.Basic
+import Nfp.Sound.Bounds.MatrixNorm.Interval
 import Nfp.Sound.Linear.FinFold
 
 /-!
 Row-sum matrix norms for downstream linear certificates.
 
 These bounds are used to compute verified downstream error certificates
-from explicit Rat matrices.
+from explicit Dyadic matrices.
 -/
 
 namespace Nfp
@@ -27,85 +27,29 @@ namespace Bounds
 
 open scoped BigOperators
 
-private theorem sumFin_eq_sum_univ {n : Nat} (f : Fin n → Rat) :
-    Linear.sumFin n f = ∑ i, f i := by
-  classical
-  have hfold :
-      Linear.sumFin n f = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
-    simpa using Linear.sumFin_eq_list_foldl n f
-  have hmap :
-      ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 =
-        (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
-    have hmap' :
-        ∀ l : List (Fin n), ∀ init : Rat,
-          (l.map f).foldl (fun acc x : Rat => acc + x) init =
-            l.foldl (fun acc i => acc + f i) init := by
-      intro l
-      induction l with
-      | nil =>
-          intro init
-          simp
-      | cons a l ih =>
-          intro init
-          simp [ih]
-    exact hmap' (List.finRange n) 0
-  let _ : Std.Commutative (fun a b : Rat => a + b) :=
-    ⟨by intro a b; exact add_comm _ _⟩
-  let _ : Std.Associative (fun a b : Rat => a + b) :=
-    ⟨by intro a b c; exact add_assoc _ _ _⟩
-  have hfoldr :
-      ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 =
-        ((List.finRange n).map f).foldr (fun x acc => x + acc) 0 := by
-    simpa using
-      (List.foldl_eq_foldr (f := fun acc x : Rat => acc + x)
-        (a := 0) (l := (List.finRange n).map f))
-  have hsum_list :
-      ((List.finRange n).map f).sum = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
-    calc
-      ((List.finRange n).map f).sum
-          = ((List.finRange n).map f).foldr (fun x acc => x + acc) 0 := by
-            rfl
-      _ = ((List.finRange n).map f).foldl (fun acc x : Rat => acc + x) 0 := by
-            exact hfoldr.symm
-      _ = (List.finRange n).foldl (fun acc i => acc + f i) 0 := by
-            exact hmap
-  have hsum_univ : ((List.finRange n).map f).sum = ∑ i, f i := by
-    exact (Fin.sum_univ_def f).symm
-  calc
-    Linear.sumFin n f
-        = (List.finRange n).foldl (fun acc i => acc + f i) 0 := hfold
-    _ = ((List.finRange n).map f).sum := hsum_list.symm
-    _ = ∑ i, f i := hsum_univ
-
 /-- Row-sum of absolute values for a matrix row. -/
-def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) : Rat :=
+def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) : Dyadic :=
   Linear.sumFin n (fun j => |W i j|)
 
 /-- Weighted row-sum using per-coordinate bounds. -/
-def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) (i : Fin m) : Rat :=
+def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) (i : Fin m) : Dyadic :=
   Linear.sumFin n (fun j => |W i j| * bound j)
 
 /-- Maximum row-sum norm (defaults to `0` on empty matrices). -/
-def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) : Rat :=
-  if h : (Finset.univ : Finset (Fin m)).Nonempty then
-    (Finset.univ).sup' h (fun i => rowSum W i)
-  else
-    0
+def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) : Dyadic :=
+  Linear.foldlFin m (fun acc i => max acc (rowSum W i)) 0
 
 /-- Maximum weighted row-sum (defaults to `0` on empty matrices). -/
-def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) : Rat :=
-  if h : (Finset.univ : Finset (Fin m)).Nonempty then
-    (Finset.univ).sup' h (fun i => rowSumWeighted W bound i)
-  else
-    0
+def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) : Dyadic :=
+  Linear.foldlFin m (fun acc i => max acc (rowSumWeighted W bound i)) 0
 
 /-- Row-sums are nonnegative. -/
-theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
+theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) :
     0 ≤ rowSum W i := by
   have hsum : rowSum W i = ∑ j, |W i j| := by
-    simp [rowSum, sumFin_eq_sum_univ]
+    simp [rowSum, Linear.sumFin_eq_sum_univ]
   have hnonneg : 0 ≤ ∑ j, |W i j| := by
     refine Finset.sum_nonneg ?_
     intro j _
@@ -113,11 +57,11 @@ theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
   simpa [hsum] using hnonneg
 
 /-- Weighted row-sums are nonnegative under nonnegative bounds. -/
-theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
+theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
     0 ≤ rowSumWeighted W bound i := by
   have hsum : rowSumWeighted W bound i = ∑ j, |W i j| * bound j := by
-    simp [rowSumWeighted, sumFin_eq_sum_univ]
+    simp [rowSumWeighted, Linear.sumFin_eq_sum_univ]
   have hnonneg : 0 ≤ ∑ j, |W i j| * bound j := by
     refine Finset.sum_nonneg ?_
     intro j _
@@ -125,348 +69,45 @@ theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
   simpa [hsum] using hnonneg
 
 /-- Each row-sum is bounded by the row-sum norm. -/
-theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
+theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) :
     rowSum W i ≤ rowSumNorm W := by
-  classical
-  have h : (Finset.univ : Finset (Fin m)).Nonempty := ⟨i, by simp⟩
-  have hle :
-      rowSum W i ≤ (Finset.univ).sup' h (fun i => rowSum W i) := by
-    simpa using
-      (Finset.le_sup'
-        (s := (Finset.univ : Finset (Fin m)))
-        (f := fun i => rowSum W i)
-        (by simp : i ∈ (Finset.univ : Finset (Fin m))))
-  simpa [rowSumNorm, h] using hle
+  simpa [rowSumNorm] using
+    (foldlFin_max_ge (f := fun j => rowSum W j) i)
 
 /-- Each weighted row-sum is bounded by the weighted row-sum norm. -/
-theorem rowSumWeighted_le_rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) (i : Fin m) :
+theorem rowSumWeighted_le_rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) (i : Fin m) :
     rowSumWeighted W bound i ≤ rowSumWeightedNorm W bound := by
-  classical
-  have h : (Finset.univ : Finset (Fin m)).Nonempty := ⟨i, by simp⟩
-  have hle :
-      rowSumWeighted W bound i ≤
-        (Finset.univ).sup' h (fun i => rowSumWeighted W bound i) := by
-    simpa using
-      (Finset.le_sup'
-        (s := (Finset.univ : Finset (Fin m)))
-        (f := fun i => rowSumWeighted W bound i)
-        (by simp : i ∈ (Finset.univ : Finset (Fin m))))
-  simpa [rowSumWeightedNorm, h] using hle
+  simpa [rowSumWeightedNorm] using
+    (foldlFin_max_ge (f := fun j => rowSumWeighted W bound j) i)
 
 /-- The row-sum norm is nonnegative. -/
-theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) :
+theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) :
     0 ≤ rowSumNorm W := by
-  classical
-  by_cases h : (Finset.univ : Finset (Fin m)).Nonempty
-  · rcases h with ⟨i, hi⟩
-    have hrow : 0 ≤ rowSum W i := rowSum_nonneg W i
-    have hle : rowSum W i ≤ rowSumNorm W := rowSum_le_rowSumNorm W i
-    exact le_trans hrow hle
-  · simp [rowSumNorm, h]
+  simpa [rowSumNorm] using
+    (foldlFin_max_ge_init (f := fun i => rowSum W i) (init := (0 : Dyadic)))
 
-/-- Weighted row-sum norm is nonnegative under nonnegative bounds. -/
-theorem rowSumWeightedNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) (hbound : ∀ j, 0 ≤ bound j) :
+/-- Weighted row-sum norm is nonnegative. -/
+theorem rowSumWeightedNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) :
     0 ≤ rowSumWeightedNorm W bound := by
-  classical
-  by_cases h : (Finset.univ : Finset (Fin m)).Nonempty
-  · rcases h with ⟨i, hi⟩
-    have hrow : 0 ≤ rowSumWeighted W bound i :=
-      rowSumWeighted_nonneg W bound i hbound
-    have hle : rowSumWeighted W bound i ≤ rowSumWeightedNorm W bound :=
-      rowSumWeighted_le_rowSumWeightedNorm W bound i
-    exact le_trans hrow hle
-  · simp [rowSumWeightedNorm, h]
+  simpa [rowSumWeightedNorm] using
+    (foldlFin_max_ge_init (f := fun i => rowSumWeighted W bound i) (init := (0 : Dyadic)))
 
 /-- Downstream error from per-coordinate residual bounds. -/
-def downstreamErrorFromBounds {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) : Rat :=
+def downstreamErrorFromBounds {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) : Dyadic :=
   rowSumWeightedNorm W bound
 
 /-- `downstreamErrorFromBounds` is nonnegative. -/
-theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (bound : Fin n → Rat) (hbound : ∀ j, 0 ≤ bound j) :
+theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (bound : Fin n → Dyadic) :
     0 ≤ downstreamErrorFromBounds W bound := by
-  simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound hbound
-
-/-- Lower interval endpoint for a dot product with per-coordinate bounds. -/
-def dotIntervalLower {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
-  Linear.sumFin n (fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
-
-/-- Upper interval endpoint for a dot product with per-coordinate bounds. -/
-def dotIntervalUpper {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
-  Linear.sumFin n (fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
-
-/-- Absolute bound from interval endpoints for a dot product. -/
-def dotIntervalAbsBound {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
-  max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi|
-
-/-- Lower interval endpoint for a matrix-vector product under input intervals. -/
-def mulVecIntervalLower {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi : Fin n → Rat) : Fin m → Rat :=
-  fun i => dotIntervalLower (fun j => W i j) lo hi
-
-/-- Upper interval endpoint for a matrix-vector product under input intervals. -/
-def mulVecIntervalUpper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi : Fin n → Rat) : Fin m → Rat :=
-  fun i => dotIntervalUpper (fun j => W i j) lo hi
-
-theorem dotIntervalLower_le_dotProduct {n : Nat} (v lo hi x : Fin n → Rat)
-    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
-    dotIntervalLower v lo hi ≤ dotProduct v x := by
-  classical
-  simp only [dotIntervalLower, sumFin_eq_sum_univ, dotProduct]
-  refine Finset.sum_le_sum ?_
-  intro j _
-  by_cases hv : 0 ≤ v j
-  · have h1 : v j * lo j ≤ v j * x j :=
-      mul_le_mul_of_nonneg_left (hlo j) hv
-    simpa [hv] using h1
-  · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
-    have h1 : v j * hi j ≤ v j * x j :=
-      mul_le_mul_of_nonpos_left (hhi j) hv'
-    simpa [hv] using h1
-
-theorem dotProduct_le_dotIntervalUpper {n : Nat} (v lo hi x : Fin n → Rat)
-    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
-    dotProduct v x ≤ dotIntervalUpper v lo hi := by
-  classical
-  simp only [dotIntervalUpper, sumFin_eq_sum_univ, dotProduct]
-  refine Finset.sum_le_sum ?_
-  intro j _
-  by_cases hv : 0 ≤ v j
-  · have h1 : v j * x j ≤ v j * hi j :=
-      mul_le_mul_of_nonneg_left (hhi j) hv
-    simpa [hv] using h1
-  · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
-    have h1 : v j * x j ≤ v j * lo j :=
-      mul_le_mul_of_nonpos_left (hlo j) hv'
-    simpa [hv] using h1
-
-theorem abs_le_max_abs_abs_of_interval {a b x : Rat} (hlo : a ≤ x) (hhi : x ≤ b) :
-    |x| ≤ max |a| |b| := by
-  by_cases hx : 0 ≤ x
-  · have hb : 0 ≤ b := le_trans hx hhi
-    have hx' : |x| = x := abs_of_nonneg hx
-    have hb' : |b| = b := abs_of_nonneg hb
-    calc
-      |x| = x := hx'
-      _ ≤ b := hhi
-      _ = |b| := hb'.symm
-      _ ≤ max |a| |b| := le_max_right _ _
-  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have ha : a ≤ 0 := le_trans hlo hx'
-    have hxabs : |x| = -x := abs_of_nonpos hx'
-    have haabs : |a| = -a := abs_of_nonpos ha
-    calc
-      |x| = -x := hxabs
-      _ ≤ -a := neg_le_neg hlo
-      _ = |a| := by simp [haabs]
-      _ ≤ max |a| |b| := le_max_left _ _
-
-/-- Global absolute bound from interval endpoints. -/
-def intervalAbsBound {n : Nat} (lo hi : Fin n → Rat) : Rat :=
-  if h : (Finset.univ : Finset (Fin n)).Nonempty then
-    (Finset.univ).sup' h (fun i => max |lo i| |hi i|)
-  else
-    0
-
-/-- `intervalAbsBound` bounds any element inside the interval. -/
-theorem abs_le_intervalAbsBound {n : Nat} (lo hi x : Fin n → Rat)
-    (hlo : ∀ i, lo i ≤ x i) (hhi : ∀ i, x i ≤ hi i) (i : Fin n) :
-    |x i| ≤ intervalAbsBound lo hi := by
-  classical
-  have hbound : |x i| ≤ max |lo i| |hi i| :=
-    abs_le_max_abs_abs_of_interval (hlo i) (hhi i)
-  have hnonempty : (Finset.univ : Finset (Fin n)).Nonempty := ⟨i, by simp⟩
-  have hsup :
-      max |lo i| |hi i| ≤
-        (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) := by
-    simpa using
-      (Finset.le_sup'
-        (s := (Finset.univ : Finset (Fin n)))
-        (f := fun j => max |lo j| |hi j|)
-        (by simp : i ∈ (Finset.univ : Finset (Fin n))))
-  have hfinal : |x i| ≤ (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) :=
-    le_trans hbound hsup
-  simpa [intervalAbsBound, hnonempty] using hfinal
-
-theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → Rat)
-    (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
-    |dotProduct v x| ≤ dotIntervalAbsBound v lo hi := by
-  have hlow : dotIntervalLower v lo hi ≤ dotProduct v x :=
-    dotIntervalLower_le_dotProduct v lo hi x hlo hhi
-  have hhigh : dotProduct v x ≤ dotIntervalUpper v lo hi :=
-    dotProduct_le_dotIntervalUpper v lo hi x hlo hhi
-  have habs : |dotProduct v x| ≤
-      max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi| :=
-    abs_le_max_abs_abs_of_interval hlow hhigh
-  unfold dotIntervalAbsBound
-  exact habs
-
-/-! Real-valued bounds from rational intervals. -/
-
-theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
-    (x : Fin n → Real)
-    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
-    (dotIntervalLower v lo hi : Real) ≤ dotProduct (fun j => (v j : Real)) x := by
-  classical
-  have hcast :
-      (dotIntervalLower v lo hi : Real) =
-        ∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real) := by
-    conv_lhs => simp [dotIntervalLower, sumFin_eq_sum_univ]
-    refine Finset.sum_congr rfl ?_
-    intro j _
-    by_cases hv : 0 ≤ v j
-    · simp [hv]
-    · simp [hv]
-  have hsum :
-      (∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real)) ≤
-        ∑ j, (v j : Real) * x j := by
-    refine Finset.sum_le_sum ?_
-    intro j _
-    by_cases hv : 0 ≤ v j
-    · have h1 : (v j : Real) * (lo j : Real) ≤ (v j : Real) * x j := by
-        exact mul_le_mul_of_nonneg_left (hlo j) (by exact_mod_cast hv)
-      simpa [hv] using h1
-    · have hv' : (v j : Real) ≤ 0 := by
-        exact_mod_cast (le_of_lt (lt_of_not_ge hv))
-      have h1 : (v j : Real) * (hi j : Real) ≤ (v j : Real) * x j := by
-        exact mul_le_mul_of_nonpos_left (hhi j) hv'
-      simpa [hv] using h1
-  simpa [hcast, dotProduct] using hsum
-
-theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
-    (x : Fin n → Real)
-    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
-    dotProduct (fun j => (v j : Real)) x ≤ (dotIntervalUpper v lo hi : Real) := by
-  classical
-  have hcast :
-      (dotIntervalUpper v lo hi : Real) =
-        ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
-    conv_lhs => simp [dotIntervalUpper, sumFin_eq_sum_univ]
-    refine Finset.sum_congr rfl ?_
-    intro j _
-    by_cases hv : 0 ≤ v j
-    · simp [hv]
-    · simp [hv]
-  have hsum :
-      ∑ j, (v j : Real) * x j ≤
-        ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
-    refine Finset.sum_le_sum ?_
-    intro j _
-    by_cases hv : 0 ≤ v j
-    · have h1 : (v j : Real) * x j ≤ (v j : Real) * (hi j : Real) := by
-        exact mul_le_mul_of_nonneg_left (hhi j) (by exact_mod_cast hv)
-      simpa [hv] using h1
-    · have hv' : (v j : Real) ≤ 0 := by
-        exact_mod_cast (le_of_lt (lt_of_not_ge hv))
-      have h1 : (v j : Real) * x j ≤ (v j : Real) * (lo j : Real) := by
-        exact mul_le_mul_of_nonpos_left (hlo j) hv'
-      simpa [hv] using h1
-  simpa [hcast, dotProduct] using hsum
-
-theorem abs_le_max_abs_abs_of_interval_real {a b x : Real} (hlo : a ≤ x) (hhi : x ≤ b) :
-    |x| ≤ max |a| |b| := by
-  by_cases hx : 0 ≤ x
-  · have hb : 0 ≤ b := le_trans hx hhi
-    have hx' : |x| = x := abs_of_nonneg hx
-    have hb' : |b| = b := abs_of_nonneg hb
-    calc
-      |x| = x := hx'
-      _ ≤ b := hhi
-      _ = |b| := hb'.symm
-      _ ≤ max |a| |b| := le_max_right _ _
-  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have ha : a ≤ 0 := le_trans hlo hx'
-    have hxabs : |x| = -x := abs_of_nonpos hx'
-    have haabs : |a| = -a := abs_of_nonpos ha
-    calc
-      |x| = -x := hxabs
-      _ ≤ -a := neg_le_neg hlo
-      _ = |a| := by simp [haabs]
-      _ ≤ max |a| |b| := le_max_left _ _
-
-/-- `intervalAbsBound` controls real-valued coordinates inside a rational interval. -/
-theorem abs_le_intervalAbsBound_real {n : Nat} (lo hi : Fin n → Rat) (x : Fin n → Real)
-    (hlo : ∀ i, (lo i : Real) ≤ x i) (hhi : ∀ i, x i ≤ (hi i : Real)) (i : Fin n) :
-    |x i| ≤ (intervalAbsBound lo hi : Real) := by
-  classical
-  have hbound : |x i| ≤ max |(lo i : Real)| |(hi i : Real)| :=
-    abs_le_max_abs_abs_of_interval_real (hlo i) (hhi i)
-  have hnonempty : (Finset.univ : Finset (Fin n)).Nonempty := ⟨i, by simp⟩
-  have hsup :
-      max |lo i| |hi i| ≤
-        (Finset.univ).sup' hnonempty (fun j => max |lo j| |hi j|) := by
-    simpa using
-      (Finset.le_sup'
-        (s := (Finset.univ : Finset (Fin n)))
-        (f := fun j => max |lo j| |hi j|)
-        (by simp : i ∈ (Finset.univ : Finset (Fin n))))
-  have hsup' : max |lo i| |hi i| ≤ intervalAbsBound lo hi := by
-    simpa [intervalAbsBound, hnonempty] using hsup
-  have hsup_real :
-      max |(lo i : Real)| |(hi i : Real)| ≤ (intervalAbsBound lo hi : Real) := by
-    exact_mod_cast hsup'
-  exact le_trans hbound hsup_real
-
-theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n → Rat)
-    (x : Fin n → Real)
-    (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
-    |dotProduct (fun j => (v j : Real)) x| ≤ (dotIntervalAbsBound v lo hi : Real) := by
-  have hlow :
-      (dotIntervalLower v lo hi : Real) ≤ dotProduct (fun j => (v j : Real)) x :=
-    dotIntervalLower_le_dotProduct_real v lo hi x hlo hhi
-  have hhigh :
-      dotProduct (fun j => (v j : Real)) x ≤ (dotIntervalUpper v lo hi : Real) :=
-    dotProduct_le_dotIntervalUpper_real v lo hi x hlo hhi
-  have habs :
-      |dotProduct (fun j => (v j : Real)) x| ≤
-        max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| :=
-    abs_le_max_abs_abs_of_interval_real hlow hhigh
-  have hcast :
-      (dotIntervalAbsBound v lo hi : Real) =
-        max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| := by
-    simp [dotIntervalAbsBound]
-  simpa [hcast] using habs
-
-/-- Matrix-interval lower bounds dominate matrix-vector products. -/
-theorem mulVecIntervalLower_le_mulVec {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
-    ∀ i, mulVecIntervalLower W lo hi i ≤ Matrix.mulVec W x i := by
-  intro i
-  have h :=
-    dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi x hlo hhi
-  simpa [mulVecIntervalLower, Matrix.mulVec, dotProduct] using h
-
-/-- Matrix-interval upper bounds dominate matrix-vector products. -/
-theorem mulVec_le_mulVecIntervalUpper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
-    ∀ i, Matrix.mulVec W x i ≤ mulVecIntervalUpper W lo hi i := by
-  intro i
-  have h :=
-    dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi x hlo hhi
-  simpa [mulVecIntervalUpper, Matrix.mulVec, dotProduct] using h
-
-/-- Interval endpoints for `mulVec` are ordered when the input interval is ordered. -/
-theorem mulVecIntervalLower_le_upper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
-    ∀ i, mulVecIntervalLower W lo hi i ≤ mulVecIntervalUpper W lo hi i := by
-  intro i
-  have hlow :
-      dotIntervalLower (fun j => W i j) lo hi ≤ dotProduct (fun j => W i j) lo :=
-    dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi lo
-      (fun j => le_rfl) hlohi
-  have hhigh :
-      dotProduct (fun j => W i j) lo ≤ dotIntervalUpper (fun j => W i j) lo hi :=
-    dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi lo
-      (fun j => le_rfl) hlohi
-  exact le_trans hlow hhigh
+  simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound
 
 /-- Build a residual-interval certificate by applying a matrix to an input interval. -/
-def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
+def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (lo hi : Fin n → Dyadic) (hlohi : ∀ j, lo j ≤ hi j) :
     {c : Circuit.ResidualIntervalCert m // Circuit.ResidualIntervalBounds c} := by
   let lo' := mulVecIntervalLower W lo hi
   let hi' := mulVecIntervalUpper W lo hi
@@ -476,8 +117,8 @@ def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) 
   exact mulVecIntervalLower_le_upper W lo hi hlohi i
 
 /-- Row-sum norm bounds a matrix-vector product under a uniform input bound. -/
-theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (x : Fin n → Rat) (inputBound : Rat)
+theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (x : Fin n → Dyadic) (inputBound : Dyadic)
     (hx : ∀ j, |x j| ≤ inputBound) (hinput : 0 ≤ inputBound) :
     ∀ i, |Matrix.mulVec W x i| ≤ rowSumNorm W * inputBound := by
   intro i
@@ -505,7 +146,7 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
             (s := (Finset.univ : Finset (Fin n)))
             (f := fun j => |W i j|)
             (a := inputBound))
-      simpa [rowSum, sumFin_eq_sum_univ] using hsum.symm
+      simpa [rowSum, Linear.sumFin_eq_sum_univ] using hsum.symm
     have hmul : |Matrix.mulVec W x i| ≤ rowSum W i * inputBound := by
       simpa [Matrix.mulVec, dotProduct] using h1.trans (h2.trans_eq h3)
     exact hmul
@@ -515,8 +156,8 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
   exact hrow.trans hmul
 
 /-- Build a downstream linear certificate from a matrix and input bound. -/
-def buildDownstreamLinearCert {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (inputBound : Rat) (hinput : 0 ≤ inputBound) :
+def buildDownstreamLinearCert {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
+    (inputBound : Dyadic) (hinput : 0 ≤ inputBound) :
     {c : Circuit.DownstreamLinearCert // Circuit.DownstreamLinearBounds c} := by
   let gain := rowSumNorm W
   let error := gain * inputBound
