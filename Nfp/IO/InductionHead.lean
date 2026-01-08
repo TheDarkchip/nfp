@@ -21,6 +21,11 @@ namespace Nfp
 
 namespace IO
 
+private def unwrapTaskResult {α : Type} (res : Except IO.Error α) : IO α :=
+  match res with
+  | .ok a => pure a
+  | .error e => throw e
+
 open Nfp.Circuit
 
 private def valueBoundsModeFromEnv : IO (Option Bool) := do
@@ -28,6 +33,163 @@ private def valueBoundsModeFromEnv : IO (Option Bool) := do
   | some "common" => return some true
   | some "cached" => return some false
   | _ => return none
+
+/-- Read the heartbeat interval (ms) for long-running induction cert builds. -/
+private def heartbeatMsFromEnv : IO UInt32 := do
+  let defaultMs : Nat := 10000
+  let ms := (← IO.getEnv "NFP_TIMING_HEARTBEAT_MS").bind String.toNat? |>.getD defaultMs
+  return UInt32.ofNat ms
+
+private def timePureWithHeartbeat {α : Type} (label : String) (f : Unit → α) : IO α := do
+  let t0 ← monoUsNow
+  IO.println s!"timing: {label} start"
+  flushStdout
+  let task : Task α := Task.spawn (fun _ => f ())
+  let heartbeatMs ← heartbeatMsFromEnv
+  if heartbeatMs ≠ 0 then
+    let mut finished := (← IO.hasFinished task)
+    while !finished do
+      IO.sleep heartbeatMs
+      finished := (← IO.hasFinished task)
+      if !finished then
+        let now ← monoUsNow
+        IO.println s!"timing: {label} running {now - t0} us"
+        flushStdout
+  let res ← IO.wait task
+  let t1 ← monoUsNow
+  IO.println s!"timing: {label} {t1 - t0} us"
+  return res
+
+private def forceRat (x : Rat) : IO Unit := do
+  if x = x then
+    pure ()
+  else
+    pure ()
+
+/-- Profile the core induction-head bounds used by the sound certificate builder. -/
+private def timeInductionHeadCoreStages {seq dModel dHead : Nat} [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead) : IO Unit := do
+  IO.println "timing: core stages start"
+  flushStdout
+  let lnBounds ← timePureWithHeartbeat "core: ln bounds" (fun () =>
+    Sound.headLnBounds inputs)
+  let lnLo := lnBounds.1
+  let lnHi := lnBounds.2
+  let lnAbsMaxTask : Fin seq → Rat :=
+    Sound.Bounds.cacheBoundTask (fun q =>
+      Sound.Bounds.intervalAbsBound (lnLo q) (lnHi q))
+  let lnAbsMaxArr ← timePureWithHeartbeat "core: lnAbsMax force" (fun () =>
+    Array.ofFn (fun q : Fin seq => lnAbsMaxTask q))
+  let lnAbsMax : Fin seq → Rat := fun q =>
+    lnAbsMaxArr.getD q.1 (0 : Rat)
+  let lnAbsMaxMax : Rat :=
+    let univ : Finset (Fin seq) := Finset.univ
+    have hnonempty : univ.Nonempty := by
+      simp [univ]
+    univ.sup' hnonempty (fun q => lnAbsMax q)
+  let qAbsRowTasks : Array (Task (Array Rat)) :=
+    Array.ofFn (fun q : Fin seq =>
+      Task.spawn (fun _ =>
+        Array.ofFn (fun d : Fin dHead =>
+          Sound.Bounds.dotIntervalAbsBound (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
+            |inputs.bq d|)))
+  let qAbsBaseArr ← timePureWithHeartbeat "core: qAbs base force" (fun () =>
+    let defaultTask : Task (Array Rat) := Task.spawn (fun _ => #[])
+    Array.ofFn (fun q : Fin seq =>
+      (qAbsRowTasks.getD q.1 defaultTask).get))
+  let qAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
+    let row := qAbsBaseArr.getD q.1 #[]
+    row.getD d.1 (0 : Rat)
+  let kAbsRowTasks : Array (Task (Array Rat)) :=
+    Array.ofFn (fun q : Fin seq =>
+      Task.spawn (fun _ =>
+        Array.ofFn (fun d : Fin dHead =>
+          Sound.Bounds.dotIntervalAbsBound (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
+            |inputs.bk d|)))
+  let kAbsBaseArr ← timePureWithHeartbeat "core: kAbs base force" (fun () =>
+    let defaultTask : Task (Array Rat) := Task.spawn (fun _ => #[])
+    Array.ofFn (fun q : Fin seq =>
+      (kAbsRowTasks.getD q.1 defaultTask).get))
+  let kAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
+    let row := kAbsBaseArr.getD q.1 #[]
+    row.getD d.1 (0 : Rat)
+  let dotAbs ← timePureWithHeartbeat "core: dotAbs tasks" (fun () =>
+    dotAbsFromQKV qAbsBase kAbsBase)
+  let _ ← timePureWithHeartbeat "core: dotAbs force" (fun () =>
+    match List.finRange seq with
+    | [] => (0 : Rat)
+    | q :: _ =>
+        match List.finRange seq with
+        | [] => (0 : Rat)
+        | k :: _ => dotAbs q k)
+  let masked : Fin seq → Fin seq → Prop := fun q k =>
+    inputs.maskCausal = true ∧ q < k
+  let scoreBaseAbs : Fin seq → Fin seq → Rat := fun q k =>
+    |inputs.scale| * dotAbs q k
+  let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
+    if masked q k then inputs.maskValue else -scoreBaseAbs q k
+  let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
+    if masked q k then inputs.maskValue else scoreBaseAbs q k
+  let scoreLoPrev : Fin seq → Rat := fun q =>
+    scoreLo q (inputs.prev q)
+  let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
+    (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
+  let marginAt : Fin seq → Rat := fun q =>
+    if hq : q ∈ inputs.active then
+      let other := otherKeys q
+      if h : other.Nonempty then
+        other.inf' h (fun k => scoreLoPrev q - scoreHi q k)
+      else
+        (0 : Rat)
+    else
+      (0 : Rat)
+  let margin ← timePureWithHeartbeat "core: margin" (fun () =>
+    if h : inputs.active.Nonempty then
+      inputs.active.inf' h marginAt
+    else
+      (0 : Rat))
+  let marginNeg ← timePureWithHeartbeat "core: margin < 0" (fun () =>
+    decide (margin < 0))
+  let verboseTiming ← IO.getEnv "NFP_TIMING_VERBOSE"
+  if verboseTiming.isSome then
+    IO.println s!"timing: core: margin neg={marginNeg}"
+  let tEps0 ← monoUsNow
+  IO.println "timing: core: eps start"
+  flushStdout
+  let eps :=
+    if marginNeg then
+      (1 : Rat)
+    else
+      ratDivUp (seq - 1) (1 + margin)
+  let tEps1 ← monoUsNow
+  IO.println s!"timing: core: eps {tEps1 - tEps0} us"
+  flushStdout
+  let _ := marginAt
+  let dirHeadVec ← timePureWithHeartbeat "core: dir head vec" (fun () =>
+    Sound.dirHeadVecOfInputs inputs)
+  let dirHead : Fin dHead → Rat := fun d => dirHeadVec.get d
+  let wvDir : Fin dModel → Rat :=
+    Sound.Bounds.cacheBoundTask (fun j =>
+      Sound.Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
+  let _ ← timePureWithHeartbeat "core: wvDir force" (fun () =>
+    Array.ofFn (fun j : Fin dModel => wvDir j))
+  let bDir ← timePureWithHeartbeat "core: bDir" (fun () =>
+    Sound.Linear.dotFin dHead dirHead (fun d => inputs.bv d))
+  let valsAbsBase ← timePureWithHeartbeat "core: valsAbsBase" (fun () =>
+    Sound.Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMaxMax)
+  let valsLoBase := bDir - valsAbsBase
+  let valsHiBase := bDir + valsAbsBase
+  let valsLo : Fin seq → Rat := fun _ => valsLoBase
+  let valsHi : Fin seq → Rat := fun _ => valsHiBase
+  let _ ← timePureWithHeartbeat "core: value bounds" (fun () =>
+    let univ : Finset (Fin seq) := Finset.univ
+    have hnonempty : univ.Nonempty := by
+      simp [univ]
+    let lo := univ.inf' hnonempty valsLo
+    let hi := univ.sup' hnonempty valsHi
+    (lo, hi))
+  IO.println "timing: core stages done"
+  flushStdout
 
 /-- Load induction head inputs from disk. -/
 def loadInductionHeadInputs (path : System.FilePath) :
@@ -46,15 +208,15 @@ def loadInductionHeadInputs (path : System.FilePath) :
   IO.println s!"timing: parse head input file {t3 - t2} us"
   return parsed
 
-private def dyadicToString (x : Dyadic) : String :=
-  toString x.toRat
+private def ratToString (x : Rat) : String :=
+  toString x
 
 private def renderResidualIntervalCert {n : Nat} (c : Circuit.ResidualIntervalCert n) : String :=
   let header := s!"dim {n}"
   let lines :=
     (List.finRange n).foldr (fun i acc =>
-      s!"lo {i.val} {dyadicToString (c.lo i)}" ::
-        s!"hi {i.val} {dyadicToString (c.hi i)}" :: acc) []
+      s!"lo {i.val} {ratToString (c.lo i)}" ::
+        s!"hi {i.val} {ratToString (c.hi i)}" :: acc) []
   String.intercalate "\n" (header :: lines)
 
 private def emitResidualIntervalCert {n : Nat} (c : Circuit.ResidualIntervalCert n)
@@ -88,205 +250,65 @@ private def buildHeadOutputIntervalFromInputs {seq dModel dHead : Nat}
 
 private def headScoreBoundsFromDotAbsTimed {seq dModel dHead : Nat} [NeZero seq]
     (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (dotAbs : Fin seq → Fin seq → Dyadic) :
+    (dotAbs : Fin seq → Fin seq → Rat) :
     IO (Sound.HeadScoreBounds seq dModel dHead) := do
-  let headScoreBoundsFromCachesTimed
-      (scoreLo scoreHi : Fin seq → Fin seq → Dyadic) :
-      IO (Sound.HeadScoreBounds seq dModel dHead) := do
-    let masked : Fin seq → Fin seq → Prop := fun q k =>
-      inputs.maskCausal = true ∧ q < k
-    let scoreBaseAbs : Fin seq → Fin seq → Dyadic := fun q k =>
-      |inputs.scale| * dotAbs q k
-    let scoreAbs : Fin seq → Fin seq → Dyadic := fun q k =>
-      if masked q k then |inputs.maskValue| else scoreBaseAbs q k
-    let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
-      (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
-    let maskedKeys : Fin seq → Finset (Fin seq) := fun q =>
-      if inputs.maskCausal = true then
-        (otherKeys q).filter (fun k => q < k)
-      else
-        (∅ : Finset (Fin seq))
-    let unmaskedKeys : Fin seq → Finset (Fin seq) := fun q =>
-      (otherKeys q) \ (maskedKeys q)
-    let maskedGap : Fin seq → Dyadic := fun q =>
-      scoreLo q (inputs.prev q) - inputs.maskValue
-    let marginTasks : { arr : Array (Task Dyadic) // arr.size = seq } ←
-      timePhase "head: score margin tasks" <| do
-        let arr : Array (Task Dyadic) :=
-          Array.ofFn (fun q : Fin seq =>
-            Task.spawn (fun _ =>
-              if q ∈ inputs.active then
-                let other := unmaskedKeys q
-                let masked := maskedKeys q
-                let prev := inputs.prev q
-                let gapTasks : Array (Task Dyadic) :=
-                  Array.ofFn (fun k : Fin seq =>
-                    Task.spawn (fun _ => scoreLo q prev - scoreHi q k))
-                let gap : Fin seq → Dyadic := fun k =>
-                  let row := gapTasks[k.1]'(by
-                    simp [gapTasks, k.isLt])
-                  row.get
-                if hunmasked : other.Nonempty then
-                  let unmaskedMin := other.inf' hunmasked gap
-                  if hmasked : masked.Nonempty then
-                    min unmaskedMin (maskedGap q)
-                  else
-                    unmaskedMin
-                else
-                  if hmasked : masked.Nonempty then
-                    maskedGap q
-                  else
-                    (0 : Dyadic)
-              else
-                (0 : Dyadic)))
-        let hsize : arr.size = seq := by simp [arr]
-        pure ⟨arr, hsize⟩
-    have hmargin : marginTasks.1.size = seq := marginTasks.2
-    let marginAt : Fin seq → Dyadic := fun q =>
-      let q' : Fin marginTasks.1.size := Fin.cast hmargin.symm q
-      (marginTasks.1[q'.1]'(by exact q'.isLt)).get
-    let epsTasks : { arr : Array (Task Dyadic) // arr.size = seq } ←
-      timePhase "head: score eps tasks" <| do
-        let arr : Array (Task Dyadic) :=
-          Array.ofFn (fun q : Fin seq =>
-            let q' : Fin marginTasks.1.size := Fin.cast hmargin.symm q
-            (marginTasks.1[q'.1]'(by exact q'.isLt)).map (fun m =>
-              if m < 0 then
-                (1 : Dyadic)
-              else
-                dyadicDivUp (seq - 1) (1 + m)))
-        let hsize : arr.size = seq := by simp [arr]
-        pure ⟨arr, hsize⟩
-    have heps : epsTasks.1.size = seq := epsTasks.2
-    let epsAt : Fin seq → Dyadic := fun q =>
-      let q' : Fin epsTasks.1.size := Fin.cast heps.symm q
-      (epsTasks.1[q'.1]'(by exact q'.isLt)).get
-    let margin ← timePhase "head: score margin reduction" <|
-      pure (if h : inputs.active.Nonempty then
-        inputs.active.inf' h marginAt
-      else
-        (0 : Dyadic))
-    let eps ← timePhase "head: score eps reduction" <|
-      pure (if margin < 0 then
-        (1 : Dyadic)
-      else
-        dyadicDivUp (seq - 1) (1 + margin))
-    let result : Sound.HeadScoreBounds seq dModel dHead :=
-      { dotAbs := dotAbs
-        scoreBaseAbs := scoreBaseAbs
-        scoreAbs := scoreAbs
-        scoreLo := scoreLo
-        scoreHi := scoreHi
-        marginAt := marginAt
-        epsAt := epsAt
-        margin := margin
-        eps := eps }
-    return result
-  let masked : Fin seq → Fin seq → Prop := fun q k =>
-    inputs.maskCausal = true ∧ q < k
-  let scoreBaseAbs : Fin seq → Fin seq → Dyadic := fun q k =>
-    |inputs.scale| * dotAbs q k
-  let scoreLoRaw : Fin seq → Fin seq → Dyadic := fun q k =>
-    if masked q k then
-      inputs.maskValue
-    else
-      -scoreBaseAbs q k
-  let scoreHiRaw : Fin seq → Fin seq → Dyadic := fun q k =>
-    if masked q k then
-      inputs.maskValue
-    else
-      scoreBaseAbs q k
-  IO.println "timing: head score caches skipped (direct score functions)"
-  flushStdout
-  let scoreLo : Fin seq → Fin seq → Dyadic := fun q k =>
-    if masked q k then inputs.maskValue else -(|inputs.scale| * dotAbs q k)
-  let scoreHi : Fin seq → Fin seq → Dyadic := fun q k =>
-    if masked q k then inputs.maskValue else |inputs.scale| * dotAbs q k
-  headScoreBoundsFromCachesTimed scoreLo scoreHi
+  timePure "head: score bounds" (fun () =>
+    Sound.headScoreBoundsFromDotAbs inputs dotAbs)
 
 private def headScoreBoundsFromQAbsKAbsTimed {seq dModel dHead : Nat} [NeZero seq]
     (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (qAbs kAbs : Fin seq → Fin dHead → Dyadic)
-    (dotAbs : Fin seq → Fin seq → Dyadic) :
+    (qAbs kAbs : Fin seq → Fin dHead → Rat)
+    (dotAbs : Fin seq → Fin seq → Rat) :
     IO (Sound.HeadScoreBounds seq dModel dHead) := do
   let masked : Fin seq → Fin seq → Prop := fun q k =>
     inputs.maskCausal = true ∧ q < k
-  let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
-    (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
-  let maskedKeys : Fin seq → Finset (Fin seq) := fun q =>
-    if inputs.maskCausal = true then
-      (otherKeys q).filter (fun k => q < k)
-    else
-      (∅ : Finset (Fin seq))
-  let unmaskedKeys : Fin seq → Finset (Fin seq) := fun q =>
-    (otherKeys q) \ (maskedKeys q)
-  let scoreBaseAbs : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreBaseAbs : Fin seq → Fin seq → Rat := fun q k =>
     |inputs.scale| * dotAbs q k
-  let scoreLo : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
     if masked q k then inputs.maskValue else -scoreBaseAbs q k
-  let scoreHi : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
     if masked q k then inputs.maskValue else scoreBaseAbs q k
-  let kAbsMax : Fin dHead → Dyadic := fun d =>
+  let kAbsMax : Fin dHead → Rat := fun d =>
     let univ : Finset (Fin seq) := Finset.univ
     have hnonempty : univ.Nonempty := Finset.univ_nonempty
     univ.sup' hnonempty (fun k => kAbs k d)
-  let dotAbsUpper : Fin seq → Dyadic := fun q =>
+  let dotAbsUpper : Fin seq → Rat := fun q =>
     Sound.Linear.dotFin dHead (fun d => qAbs q d) kAbsMax
-  let scoreHiUpper : Fin seq → Dyadic := fun q =>
+  let scoreHiUpper : Fin seq → Rat := fun q =>
     max inputs.maskValue (|inputs.scale| * dotAbsUpper q)
-  let fastGap : Fin seq → Dyadic := fun q =>
-    let prev := inputs.prev q
-    scoreLo q prev - scoreHiUpper q
-  let marginTasks : Array (Task Dyadic) :=
+  let marginTasks : Array (Task Rat) :=
     Array.ofFn (fun q : Fin seq =>
       Task.spawn (fun _ =>
         if q ∈ inputs.active then
-          let fast := fastGap q
-          if fast < 0 then
-            let other := unmaskedKeys q
-            let maskedSet := maskedKeys q
-            let exact :=
-              if hunmasked : other.Nonempty then
-                let unmaskedMin :=
-                  other.inf' hunmasked (fun k => scoreLo q (inputs.prev q) - scoreHi q k)
-                if maskedSet.Nonempty then
-                  min unmaskedMin (scoreLo q (inputs.prev q) - inputs.maskValue)
-                else
-                  unmaskedMin
-              else
-                if maskedSet.Nonempty then
-                  scoreLo q (inputs.prev q) - inputs.maskValue
-                else
-                  (0 : Dyadic)
-            exact
-          else
-            fast
+          let prev := inputs.prev q
+          let scoreLoPrev := scoreLo q prev
+          scoreLoPrev - scoreHiUpper q
         else
-          (0 : Dyadic)))
-  let marginAt : Fin seq → Dyadic := fun q =>
+          (0 : Rat)))
+  let marginAt : Fin seq → Rat := fun q =>
     (marginTasks[q.1]'(by
       simp [marginTasks, q.isLt])).get
-  let epsTasks : Array (Task Dyadic) :=
+  let epsTasks : Array (Task Rat) :=
     Array.ofFn (fun q : Fin seq =>
       (marginTasks[q.1]'(by
         simp [marginTasks, q.isLt])).map (fun m =>
           if m < 0 then
-            (1 : Dyadic)
+            (1 : Rat)
           else
-            dyadicDivUp (seq - 1) (1 + m)))
-  let epsAt : Fin seq → Dyadic := fun q =>
+            ratDivUp (seq - 1) (1 + m)))
+  let epsAt : Fin seq → Rat := fun q =>
     (epsTasks[q.1]'(by
       simp [epsTasks, q.isLt])).get
-  let margin : Dyadic :=
+  let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
     else
-      (0 : Dyadic)
-  let eps : Dyadic :=
+      (0 : Rat)
+  let eps : Rat :=
     if margin < 0 then
-      (1 : Dyadic)
+      (1 : Rat)
     else
-      dyadicDivUp (seq - 1) (1 + margin)
+      ratDivUp (seq - 1) (1 + margin)
   let result : Sound.HeadScoreBounds seq dModel dHead :=
     { dotAbs := dotAbs
       scoreBaseAbs := scoreBaseAbs
@@ -301,8 +323,8 @@ private def headScoreBoundsFromQAbsKAbsTimed {seq dModel dHead : Nat} [NeZero se
 
 private def checkInductionHeadInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (minActive? : Option Nat) (minLogitDiff? : Option Dyadic)
-    (minMargin maxEps : Dyadic) : IO UInt32 := do
+    (minActive? : Option Nat) (minLogitDiff? : Option Rat)
+    (minMargin maxEps : Rat) : IO UInt32 := do
   match seq with
   | 0 =>
       IO.eprintln "error: seq must be positive"
@@ -390,11 +412,11 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 Sound.headValueBounds inputs qkv.vLo qkv.vHi
             (some vals, none)
           else
-            let task := Task.spawn (fun _ =>
+            let task :=
               if useCommon then
-                Sound.headValueBoundsCommonDen inputs qkv.vLo qkv.vHi
+                Sound.headValueBoundsCommonDenTask inputs qkv.vLo qkv.vHi
               else
-                Sound.headValueBounds inputs qkv.vLo qkv.vHi)
+                Sound.headValueBoundsTask inputs qkv.vLo qkv.vHi
             (none, some task)
         let activeList := (List.finRange seq).filter (fun q => q ∈ inputs.active)
         if verboseTiming.isSome then
@@ -403,40 +425,21 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         IO.println s!"timing: head score/value bounds spawn {tSpawn1 - tSpawn0} us"
         flushStdout
         let skipScoreBounds := (← IO.getEnv "NFP_TIMING_SKIP_SCORE_BOUNDS").isSome
-        let scoreOpt ←
+        let scoreTaskOpt ←
           if skipScoreBounds then
             IO.println "timing: head score bounds skipped"
             pure none
           else
             IO.println "timing: head score bounds from dotAbs start"
             flushStdout
-            let fastMargin := (← IO.getEnv "NFP_TIMING_FAST_MARGIN").isSome
-            let score ←
-              if fastMargin then
-                headScoreBoundsFromQAbsKAbsTimed inputs qkv.qAbs qkv.kAbs dotAbs
-              else
+            let exactMargin := (← IO.getEnv "NFP_TIMING_EXACT_MARGIN").isSome
+            let action :=
+              if exactMargin then
                 headScoreBoundsFromDotAbsTimed inputs dotAbs
-            IO.println "timing: head score bounds from dotAbs done"
-            flushStdout
-            pure (some score)
-        match scoreOpt with
-        | none => pure ()
-        | some score =>
-            if verboseTiming.isSome then
-              timeHeadScoreSampleGap inputs score
-            if verboseTiming.isSome then
-              timeHeadScoreMarginList activeList score
-            if verboseTiming.isSome then
-              timeHeadScoreFieldForces score
-            if verboseTiming.isSome then
-              IO.println "timing: head score bounds force start"
-              flushStdout
-              let tScore0 ← monoUsNow
-              let _ := score.margin
-              let _ := score.eps
-              let tScore1 ← monoUsNow
-              IO.println s!"timing: head score bounds force {tScore1 - tScore0} us"
-              flushStdout
+              else
+                headScoreBoundsFromQAbsKAbsTimed inputs qkv.qAbs qkv.kAbs dotAbs
+            let t ← action.asTask
+            pure (some t)
         if verboseTiming.isSome then
           IO.println "timing: head value parts start"
           flushStdout
@@ -510,17 +513,366 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         let tVals1 ← monoUsNow
         IO.println s!"timing: head value bounds {tVals1 - tVals0} us"
         flushStdout
-      let certOpt :
-          Option { c : Sound.InductionHeadCert seq // Sound.InductionHeadCertSound inputs c } ←
-        timePure "head: build induction cert" (fun () =>
+        let scoreOpt ←
+          match scoreTaskOpt with
+          | none => pure none
+          | some scoreTask => do
+              let res ← IO.wait scoreTask
+              let score ← unwrapTaskResult res
+              IO.println "timing: head score bounds from dotAbs done"
+              flushStdout
+              pure (some score)
+        match scoreOpt with
+        | none => pure ()
+        | some score =>
+            if verboseTiming.isSome then
+              timeHeadScoreSampleGap inputs score
+            if verboseTiming.isSome then
+              timeHeadScoreMarginList activeList score
+            if verboseTiming.isSome then
+              timeHeadScoreFieldForces score
+            if verboseTiming.isSome then
+              IO.println "timing: head score bounds force start"
+              flushStdout
+              let tScore0 ← monoUsNow
+              let _ := score.margin
+              let _ := score.eps
+              let tScore1 ← monoUsNow
+              IO.println s!"timing: head score bounds force {tScore1 - tScore0} us"
+              flushStdout
+      let coreStages := (← IO.getEnv "NFP_TIMING_CORE_STAGES").isSome
+      let coreStagesOnly := (← IO.getEnv "NFP_TIMING_CORE_STAGES_ONLY").isSome
+      if coreStages then
+        timeInductionHeadCoreStages inputs
+        if coreStagesOnly then
+          return 0
+      let breakdown := (← IO.getEnv "NFP_TIMING_BREAKDOWN").isSome
+      if breakdown then
+        let lnBounds ← timePureWithHeartbeat "breakdown: ln bounds" (fun () =>
+          Sound.headLnBounds inputs)
+        IO.println "timing: breakdown ln bounds force start"
+        flushStdout
+        let tLn0 ← monoUsNow
+        for q in List.finRange seq do
+          for i in List.finRange dModel do
+            let _ := lnBounds.1 q i
+            let _ := lnBounds.2 q i
+            pure ()
+        let tLn1 ← monoUsNow
+        IO.println s!"timing: breakdown ln bounds force {tLn1 - tLn0} us"
+        flushStdout
+        let qkv ← timePureWithHeartbeat "breakdown: qkv bounds" (fun () =>
+          Sound.headQKVBounds inputs lnBounds.1 lnBounds.2)
+        IO.println "timing: breakdown qkv bounds force start"
+        flushStdout
+        let tQkv0 ← monoUsNow
+        for q in List.finRange seq do
+          for d in List.finRange dHead do
+            let _ := qkv.qLo q d
+            let _ := qkv.qHi q d
+            let _ := qkv.kLo q d
+            let _ := qkv.kHi q d
+            let _ := qkv.vLo q d
+            let _ := qkv.vHi q d
+            let _ := qkv.qAbs q d
+            let _ := qkv.kAbs q d
+            pure ()
+        let tQkv1 ← monoUsNow
+        IO.println s!"timing: breakdown qkv bounds force {tQkv1 - tQkv0} us"
+        flushStdout
+        let dotAbs : Fin seq → Fin seq → Rat := fun q k =>
+          Sound.Linear.dotFin dHead (fun d => qkv.qAbs q d) (fun d => qkv.kAbs k d)
+        let dotAbsRowTasks :
+            Array (Task { row : Array Rat // row.size = seq }) ←
+          timePureWithHeartbeat "breakdown: score dotAbs rows" (fun () =>
+            Array.ofFn (fun q : Fin seq =>
+              Task.spawn (fun _ =>
+                ⟨Array.ofFn (fun k : Fin seq => dotAbs q k), by simp⟩)))
+        let dotAbsRowDefault : Task { row : Array Rat // row.size = seq } :=
+          Task.spawn (fun _ => ⟨Array.ofFn (fun _ : Fin seq => (0 : Rat)), by simp⟩)
+        IO.println "timing: breakdown score dotAbs force start"
+        flushStdout
+        let tDot0 ← monoUsNow
+        for q in List.finRange seq do
+          let row := (dotAbsRowTasks.getD q.1 dotAbsRowDefault).get
+          let _ := row
+          pure ()
+        let tDot1 ← monoUsNow
+        IO.println s!"timing: breakdown score dotAbs force {tDot1 - tDot0} us"
+        flushStdout
+        let masked : Fin seq → Fin seq → Prop := fun q k =>
+          inputs.maskCausal = true ∧ q < k
+        let scaleAbs : Rat := |inputs.scale|
+        let marginAtRaw : Fin seq → Rat := fun q =>
+          let row := (dotAbsRowTasks.getD q.1 dotAbsRowDefault).get
+          if q ∈ inputs.active then
+            let rowArr := row.1
+            let prev := inputs.prev q
+            let dotAbsPrev := rowArr.getD prev.1 0
+            if masked q prev then
+              let scoreLoPrev := inputs.maskValue
+              let scoreHiAt : Fin seq → Rat := fun k =>
+                if masked q k then inputs.maskValue else scaleAbs * rowArr.getD k.1 0
+              let maskedGap := scoreLoPrev - inputs.maskValue
+              let step :
+                  (Option Rat × Bool) → Fin seq → (Option Rat × Bool) :=
+                fun acc k =>
+                  if k = prev then
+                    acc
+                  else if masked q k then
+                    (acc.1, true)
+                  else
+                    let v := scoreLoPrev - scoreHiAt k
+                    match acc.1 with
+                    | none => (some v, acc.2)
+                    | some cur => (some (min cur v), acc.2)
+              let acc := Sound.Linear.foldlFin seq step (none, false)
+              match acc.1, acc.2 with
+              | some unmaskedMin, true => min unmaskedMin maskedGap
+              | some unmaskedMin, false => unmaskedMin
+              | none, true => maskedGap
+              | none, false => (0 : Rat)
+            else
+              let scoreLoPrev := -(scaleAbs * dotAbsPrev)
+              let maskedGap := scoreLoPrev - inputs.maskValue
+              let step :
+                  (Option Rat × Bool) → Fin seq → (Option Rat × Bool) :=
+                fun acc k =>
+                  if k = prev then
+                    acc
+                  else if masked q k then
+                    (acc.1, true)
+                  else
+                    let raw := -(dotAbsPrev + rowArr.getD k.1 0)
+                    match acc.1 with
+                    | none => (some raw, acc.2)
+                    | some cur => (some (min cur raw), acc.2)
+              let acc := Sound.Linear.foldlFin seq step (none, false)
+              match acc.1, acc.2 with
+              | some unmaskedMin, true => min (scaleAbs * unmaskedMin) maskedGap
+              | some unmaskedMin, false => scaleAbs * unmaskedMin
+              | none, true => maskedGap
+              | none, false => (0 : Rat)
+          else
+            (0 : Rat)
+        let marginAtCached : Fin seq → Rat ←
+          timePureWithHeartbeat "breakdown: score margin cache" (fun () =>
+            Sound.Bounds.cacheBoundThunk marginAtRaw)
+        IO.println "timing: breakdown score margin force start"
+        flushStdout
+        let tMargin0 ← monoUsNow
+        for q in List.finRange seq do
+          let m := marginAtCached q
+          forceRat m
+          pure ()
+        let tMargin1 ← monoUsNow
+        IO.println s!"timing: breakdown score margin force {tMargin1 - tMargin0} us"
+        flushStdout
+        let epsAtRaw : Fin seq → Rat := fun q =>
+          let m := marginAtCached q
+          if m < 0 then
+            (1 : Rat)
+          else
+            ratDivUp (seq - 1) (1 + m)
+        let epsAtCached : Fin seq → Rat ←
+          timePureWithHeartbeat "breakdown: score eps cache" (fun () =>
+            Sound.Bounds.cacheBoundThunk epsAtRaw)
+        IO.println "timing: breakdown score eps force start"
+        flushStdout
+        let tEps0 ← monoUsNow
+        for q in List.finRange seq do
+          let e := epsAtCached q
+          forceRat e
+          pure ()
+        let tEps1 ← monoUsNow
+        IO.println s!"timing: breakdown score eps force {tEps1 - tEps0} us"
+        flushStdout
+        let valsLo ← timePureWithHeartbeat "breakdown: value valsLo" (fun () =>
+          Sound.headValueValsLo inputs qkv.vLo qkv.vHi)
+        IO.println "timing: breakdown value valsLo force start"
+        flushStdout
+        let tValsLo0 ← monoUsNow
+        for k in List.finRange seq do
+          let v := valsLo k
+          forceRat v
+          pure ()
+        let tValsLo1 ← monoUsNow
+        IO.println s!"timing: breakdown value valsLo force {tValsLo1 - tValsLo0} us"
+        flushStdout
+        let valsHi ← timePureWithHeartbeat "breakdown: value valsHi" (fun () =>
+          Sound.headValueValsHi inputs qkv.vLo qkv.vHi)
+        IO.println "timing: breakdown value valsHi force start"
+        flushStdout
+        let tValsHi0 ← monoUsNow
+        for k in List.finRange seq do
+          let v := valsHi k
+          forceRat v
+          pure ()
+        let tValsHi1 ← monoUsNow
+        IO.println s!"timing: breakdown value valsHi force {tValsHi1 - tValsHi0} us"
+        flushStdout
+        let heartbeatMs ← heartbeatMsFromEnv
+        let taskMin (t1 t2 : Task Rat) : Task Rat :=
+          Task.bind t1 (fun v1 => Task.map (fun v2 => min v1 v2) t2)
+        let taskMax (t1 t2 : Task Rat) : Task Rat :=
+          Task.bind t1 (fun v1 => Task.map (fun v2 => max v1 v2) t2)
+        let reduceMinTasksWithProgress (tasks : Array (Task Rat)) :
+            IO Rat := do
+          let n := tasks.size
+          if n = 0 then
+            pure (0 : Rat)
+          else
+            let chunkSize : Nat := 16
+            let chunks : Nat := (n + chunkSize - 1) / chunkSize
+            let defaultTask : Task Rat := Task.pure (0 : Rat)
+            let chunkTasks : Array (Task Rat) :=
+              Array.ofFn (fun c : Fin chunks =>
+                let start := c.val * chunkSize
+                let stop := Nat.min n (start + chunkSize)
+                let init := tasks.getD start defaultTask
+                if stop ≤ start + 1 then
+                  init
+                else
+                  let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
+                  rest.foldl (fun acc i => taskMin acc (tasks.getD i defaultTask)) init)
+            if heartbeatMs ≠ 0 then
+              let mut finished := 0
+              let mut remaining := chunkTasks.size
+              while finished < remaining do
+                IO.sleep heartbeatMs
+                let mut count := 0
+                for t in chunkTasks do
+                  if (← IO.hasFinished t) then
+                    count := count + 1
+                finished := count
+                remaining := chunkTasks.size
+                if finished < remaining then
+                  IO.println s!"timing: breakdown value lo progress {finished}/{remaining}"
+                  flushStdout
+            let init := chunkTasks.getD 0 defaultTask
+            let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
+            pure ((rest.foldl (fun acc i => taskMin acc (chunkTasks.getD i defaultTask)) init).get)
+        let reduceMaxTasksWithProgress (tasks : Array (Task Rat)) :
+            IO Rat := do
+          let n := tasks.size
+          if n = 0 then
+            pure (0 : Rat)
+          else
+            let chunkSize : Nat := 16
+            let chunks : Nat := (n + chunkSize - 1) / chunkSize
+            let defaultTask : Task Rat := Task.pure (0 : Rat)
+            let chunkTasks : Array (Task Rat) :=
+              Array.ofFn (fun c : Fin chunks =>
+                let start := c.val * chunkSize
+                let stop := Nat.min n (start + chunkSize)
+                let init := tasks.getD start defaultTask
+                if stop ≤ start + 1 then
+                  init
+                else
+                  let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
+                  rest.foldl (fun acc i => taskMax acc (tasks.getD i defaultTask)) init)
+            if heartbeatMs ≠ 0 then
+              let mut finished := 0
+              let mut remaining := chunkTasks.size
+              while finished < remaining do
+                IO.sleep heartbeatMs
+                let mut count := 0
+                for t in chunkTasks do
+                  if (← IO.hasFinished t) then
+                    count := count + 1
+                finished := count
+                remaining := chunkTasks.size
+                if finished < remaining then
+                  IO.println s!"timing: breakdown value hi progress {finished}/{remaining}"
+                  flushStdout
+            let init := chunkTasks.getD 0 defaultTask
+            let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
+            pure ((rest.foldl (fun acc i => taskMax acc (chunkTasks.getD i defaultTask)) init).get)
+        if (← IO.getEnv "NFP_TIMING_TASK_PROGRESS").isSome then
+          let tasksLo :=
+            (List.finRange seq).map (fun k => Task.spawn (fun _ => valsLo k))
+          let tasksHi :=
+            (List.finRange seq).map (fun k => Task.spawn (fun _ => valsHi k))
+          let _ ← timePureWithHeartbeat "breakdown: value lo progress" (fun () =>
+            reduceMinTasksWithProgress tasksLo.toArray)
+          let _ ← timePureWithHeartbeat "breakdown: value hi progress" (fun () =>
+            reduceMaxTasksWithProgress tasksHi.toArray)
+        else
+          let loTask := Sound.headValueLoTask valsLo
+          let hiTask := Sound.headValueHiTask valsHi
+          let heartbeatMs ← heartbeatMsFromEnv
+          let tLo0 ← monoUsNow
+          if heartbeatMs ≠ 0 then
+            let mut finished := (← IO.hasFinished loTask)
+            while !finished do
+              IO.sleep heartbeatMs
+              finished := (← IO.hasFinished loTask)
+              if !finished then
+                let now ← monoUsNow
+                IO.println s!"timing: breakdown: value lo running {now - tLo0} us"
+                flushStdout
+          let lo := loTask.get
+          let tLo1 ← monoUsNow
+          IO.println s!"timing: breakdown: value lo {tLo1 - tLo0} us"
+          flushStdout
+          let tHi0 ← monoUsNow
+          if heartbeatMs ≠ 0 then
+            let mut finished := (← IO.hasFinished hiTask)
+            while !finished do
+              IO.sleep heartbeatMs
+              finished := (← IO.hasFinished hiTask)
+              if !finished then
+                let now ← monoUsNow
+                IO.println s!"timing: breakdown: value hi running {now - tHi0} us"
+                flushStdout
+          let hi := hiTask.get
+          let tHi1 ← monoUsNow
+          IO.println s!"timing: breakdown: value hi {tHi1 - tHi0} us"
+          flushStdout
+          let _ := lo
+          let _ := hi
+        if (← IO.getEnv "NFP_TIMING_SEQ_REDUCE").isSome then
+          let loSeq ← timePureWithHeartbeat "breakdown: value lo seq" (fun () =>
+            match List.finRange seq with
+            | [] => (0 : Rat)
+            | k :: ks =>
+                let init := valsLo k
+                ks.foldl (fun acc k => min acc (valsLo k)) init)
+          let hiSeq ← timePureWithHeartbeat "breakdown: value hi seq" (fun () =>
+            match List.finRange seq with
+            | [] => (0 : Rat)
+            | k :: ks =>
+                let init := valsHi k
+                ks.foldl (fun acc k => max acc (valsHi k)) init)
+          let _ := loSeq
+          let _ := hiSeq
+      let tCert0 ← monoUsNow
+      let certTask :
+          Task
+            (Option { c : Sound.InductionHeadCert seq //
+              Sound.InductionHeadCertSound inputs c }) :=
+        Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
           match Sound.buildInductionCertFromHead? inputs with
           | none => none
           | some ⟨cert, hcert⟩ =>
               let _ := cert.active.card
               some ⟨cert, hcert⟩)
+      let heartbeatMs ← heartbeatMsFromEnv
+      if heartbeatMs ≠ 0 then
+        let mut finished := (← IO.hasFinished certTask)
+        while !finished do
+          IO.sleep heartbeatMs
+          finished := (← IO.hasFinished certTask)
+          if !finished then
+            let now ← monoUsNow
+            IO.println s!"timing: head build induction cert running {now - tCert0} us"
+            flushStdout
+      let certOpt ← IO.wait certTask
+      let tCert1 ← monoUsNow
+      logTiming s!"done: head build induction cert {tCert1 - tCert0} us"
+      IO.println s!"timing: head build induction cert {tCert1 - tCert0} us"
       IO.println "timing: head build induction cert returned"
       flushStdout
-      logTiming "done: head build induction cert"
       match certOpt with
       | none =>
           IO.eprintln "error: head inputs rejected"
@@ -539,13 +891,13 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             return 2
           if cert.margin < minMargin then
             IO.eprintln
-              s!"error: margin {dyadicToString cert.margin} \
-              below minimum {dyadicToString minMargin}"
+              s!"error: margin {ratToString cert.margin} \
+              below minimum {ratToString minMargin}"
             return 2
           if maxEps < cert.eps then
             IO.eprintln
-              s!"error: eps {dyadicToString cert.eps} \
-              above maximum {dyadicToString maxEps}"
+              s!"error: eps {ratToString cert.eps} \
+              above maximum {ratToString maxEps}"
             return 2
           IO.println "timing: head tol start"
           flushStdout
@@ -562,13 +914,13 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           let effectiveMinLogitDiff :=
             match minLogitDiff? with
             | some v => some v
-            | none => some (0 : Dyadic)
+            | none => some (0 : Rat)
           match logitDiffLB? with
           | none =>
               IO.eprintln "error: empty active set for logit-diff bound"
               return 2
           | some logitDiffLB =>
-              let violation? : Option Dyadic :=
+              let violation? : Option Rat :=
                 match effectiveMinLogitDiff with
                 | none => none
                 | some minLogitDiff =>
@@ -579,20 +931,20 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               match violation? with
               | some minLogitDiff =>
                   IO.eprintln
-                    s!"error: logitDiffLB {dyadicToString logitDiffLB} \
-                    below minimum {dyadicToString minLogitDiff}"
+                    s!"error: logitDiffLB {ratToString logitDiffLB} \
+                    below minimum {ratToString minLogitDiff}"
                   return 2
               | none =>
                   IO.println
                     s!"ok: induction bound certified \
                     (seq={seq}, active={activeCount}, \
-                    tol={dyadicToString tol}, logitDiffLB={dyadicToString logitDiffLB})"
+                    tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB})"
                   return 0
 
 private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (minActive? : Option Nat) (minLogitDiff? : Option Dyadic)
-    (minMargin maxEps : Dyadic) : IO UInt32 := do
+    (minActive? : Option Nat) (minLogitDiff? : Option Rat)
+    (minMargin maxEps : Rat) : IO UInt32 := do
   match seq with
   | 0 =>
       IO.eprintln "error: seq must be positive"
@@ -621,35 +973,35 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             return 2
           if cert.margin < minMargin then
             IO.eprintln
-              s!"error: margin {dyadicToString cert.margin} \
-              below minimum {dyadicToString minMargin}"
+              s!"error: margin {ratToString cert.margin} \
+              below minimum {ratToString minMargin}"
             return 2
           if maxEps < cert.eps then
             IO.eprintln
-              s!"error: eps {dyadicToString cert.eps} above maximum {dyadicToString maxEps}"
+              s!"error: eps {ratToString cert.eps} above maximum {ratToString maxEps}"
             return 2
           match minLogitDiff? with
           | some minLogitDiff =>
               if logitDiffLB < minLogitDiff then
                 IO.eprintln
-                  s!"error: logitDiffLB {dyadicToString logitDiffLB} \
-                  below minimum {dyadicToString minLogitDiff}"
+                  s!"error: logitDiffLB {ratToString logitDiffLB} \
+                  below minimum {ratToString minLogitDiff}"
                 return 2
           | none => pure ()
           let tol := cert.eps * (cert.values.hi - cert.values.lo)
           IO.println
             s!"ok: nonvacuous induction bound certified \
             (seq={seq}, active={activeCount}, \
-            tol={dyadicToString tol}, logitDiffLB={dyadicToString logitDiffLB})"
+            tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB})"
           return 0
 
 /-- Build and check induction certificates from exact head inputs. -/
 def runInductionCertifyHead (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -661,8 +1013,8 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedInputs ← timePhase "load head inputs" <|
         loadInductionHeadInputs inputsPath
       match parsedInputs with
@@ -676,9 +1028,9 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
 def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -690,8 +1042,8 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedInputs ← timePhase "load head inputs" <|
         loadInductionHeadInputs inputsPath
       match parsedInputs with
@@ -706,9 +1058,9 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -720,8 +1072,8 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
       IO.println "timing: read model file start"
       flushStdout
@@ -748,9 +1100,9 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -762,8 +1114,8 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
       IO.println "timing: read model file start"
       flushStdout
