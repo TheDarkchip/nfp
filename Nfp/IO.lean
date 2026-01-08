@@ -26,9 +26,9 @@ def runInductionCertify (scoresPath : System.FilePath)
     (valuesPath? : Option System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -40,8 +40,8 @@ def runInductionCertify (scoresPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       if minLogitDiff?.isSome && valuesPath?.isNone then
         IO.eprintln "error: min-logit-diff requires --values"
         return 2
@@ -108,14 +108,14 @@ def runInductionCertify (scoresPath : System.FilePath)
                             let effectiveMinLogitDiff :=
                               match minLogitDiff?, certVals'.direction with
                               | some v, _ => some v
-                              | none, some _ => some (0 : Dyadic)
+                              | none, some _ => some (0 : Rat)
                               | none, none => none
                             match logitDiffLB? with
                             | none =>
                                 IO.eprintln "error: empty active set for logit-diff bound"
                                 return (2 : UInt32)
                             | some logitDiffLB =>
-                                let violation? : Option Dyadic :=
+                                let violation? : Option Rat :=
                                   match effectiveMinLogitDiff with
                                   | none => none
                                   | some minLogitDiff =>
@@ -140,9 +140,9 @@ def runInductionCertifySound (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -154,8 +154,8 @@ def runInductionCertifySound (scoresPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedScores ← loadSoftmaxMarginRaw scoresPath
       match parsedScores with
       | Except.error msg =>
@@ -216,14 +216,14 @@ def runInductionCertifySound (scoresPath : System.FilePath)
                             let effectiveMinLogitDiff :=
                               match minLogitDiff?, certVals.direction with
                               | some v, _ => some v
-                              | none, some _ => some (0 : Dyadic)
+                              | none, some _ => some (0 : Rat)
                               | none, none => none
                             match logitDiffLB? with
                             | none =>
                                 IO.eprintln "error: empty active set for logit-diff bound"
                                 return 2
                             | some logitDiffLB =>
-                                let violation? : Option Dyadic :=
+                                let violation? : Option Rat :=
                                   match effectiveMinLogitDiff with
                                   | none => none
                                   | some minLogitDiff =>
@@ -248,9 +248,9 @@ def runInductionCertifyEndToEnd (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (downstreamPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -262,8 +262,8 @@ def runInductionCertifyEndToEnd (scoresPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedScores ← timePhase "load softmax cert" <|
         loadSoftmaxMarginCert scoresPath
       match parsedScores with
@@ -321,7 +321,7 @@ def runInductionCertifyEndToEnd (scoresPath : System.FilePath)
                         let effectiveMinLogitDiff :=
                           match minLogitDiff?, certVals'.direction with
                           | some v, _ => some v
-                          | none, some _ => some (0 : Dyadic)
+                          | none, some _ => some (0 : Rat)
                           | none, none => none
                         match logitDiffLB? with
                         | none =>
@@ -337,7 +337,7 @@ def runInductionCertifyEndToEnd (scoresPath : System.FilePath)
                                 let downstreamOk := Circuit.checkDownstreamLinearCert downstream
                                 if downstreamOk then
                                   let finalLB := logitDiffLB - downstream.error
-                                  let violation? : Option Dyadic :=
+                                  let violation? : Option Rat :=
                                     match effectiveMinLogitDiff with
                                     | none => none
                                     | some minLogitDiff =>
@@ -367,9 +367,9 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (matrixPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -381,8 +381,8 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedScores ← timePhase "load softmax cert" <|
         loadSoftmaxMarginCert scoresPath
       match parsedScores with
@@ -440,7 +440,7 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
                         let effectiveMinLogitDiff :=
                           match minLogitDiff?, certVals'.direction with
                           | some v, _ => some v
-                          | none, some _ => some (0 : Dyadic)
+                          | none, some _ => some (0 : Rat)
                           | none, none => none
                         match logitDiffLB? with
                         | none =>
@@ -461,11 +461,11 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
                                 else
                                   have hinput : 0 ≤ inputBound := by
                                     exact le_of_not_gt hneg
-                                  let W : Matrix (Fin rows) (Fin cols) Dyadic := raw.entries
+                                  let W : Matrix (Fin rows) (Fin cols) Rat := raw.entries
                                   let downstream :=
                                     (Sound.Bounds.buildDownstreamLinearCert W inputBound hinput).1
                                   let finalLB := logitDiffLB - downstream.error
-                                  let violation? : Option Dyadic :=
+                                  let violation? : Option Rat :=
                                     match effectiveMinLogitDiff with
                                     | none => none
                                     | some minLogitDiff =>
@@ -494,9 +494,9 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
     (residualIntervalPath? : Option System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
-  let minLogitDiff?E := parseDyadicOpt "min-logit-diff" minLogitDiffStr?
-  let minMargin?E := parseDyadicOpt "min-margin" minMarginStr?
-  let maxEps?E := parseDyadicOpt "max-eps" maxEpsStr?
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   match minLogitDiff?E, minMargin?E, maxEps?E with
   | Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
@@ -508,8 +508,8 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Dyadic)
-      let maxEps := maxEps?.getD (dyadicOfRatDown (Rat.divInt 1 2))
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedScores ← timePhase "load softmax cert" <|
         loadSoftmaxMarginCert scoresPath
       match parsedScores with
@@ -567,7 +567,7 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                         let effectiveMinLogitDiff :=
                           match minLogitDiff?, certVals'.direction with
                           | some v, _ => some v
-                          | none, some _ => some (0 : Dyadic)
+                          | none, some _ => some (0 : Rat)
                           | none, none => none
                         match logitDiffLB? with
                         | none =>
@@ -648,7 +648,7 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                     return 1
                                                 | Except.ok colNeg =>
                                                     let dirVec :
-                                                        Fin header.modelDim → Dyadic :=
+                                                        Fin header.modelDim → Rat :=
                                                       fun i => colTarget i - colNeg i
                                                     let downstreamError ←
                                                       timePure "downstream error" (fun () =>
@@ -657,7 +657,7 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                           residualCert'.lo
                                                           residualCert'.hi)
                                                     let finalLB := logitDiffLB - downstreamError
-                                                    let violation? : Option Dyadic :=
+                                                    let violation? : Option Rat :=
                                                       match effectiveMinLogitDiff with
                                                       | none => none
                                                       | some minLogitDiff =>

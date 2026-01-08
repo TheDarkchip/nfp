@@ -24,7 +24,7 @@ open scoped BigOperators
 
 /-- Real-valued output of a transformer layer. -/
 noncomputable def transformerLayerReal {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
-    (eps : Dyadic) (layer : Model.Gpt2LayerSlice dModel hidden)
+    (eps : Rat) (layer : Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
     (x : Fin seq → Fin dModel → Real) (q : Fin seq) (i : Fin dModel) : Real :=
@@ -38,10 +38,10 @@ noncomputable def transformerLayerReal {seq dModel dHead numHeads hidden : Nat} 
 
 /-- `transformerLayerBounds` soundness for `transformerLayerReal`. -/
 theorem transformerLayerBounds_spec_real {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
-    (eps : Dyadic) (layer : Model.Gpt2LayerSlice dModel hidden)
+    (eps : Rat) (layer : Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := transformerLayerBounds eps layer.ln1Gamma layer.ln1Beta layer.ln2Gamma
@@ -63,10 +63,10 @@ theorem transformerLayerBounds_spec_real {seq dModel dHead numHeads hidden : Nat
 
 /-- Interval bounds for a transformer layer from per-position bounds. -/
 def transformerLayerBoundsPos {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
-    (eps : Dyadic) (layer : Model.Gpt2LayerSlice dModel hidden)
+    (eps : Rat) (layer : Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (lo hi : Fin seq → Fin dModel → Dyadic) :
-    (Fin seq → Fin dModel → Dyadic) × (Fin seq → Fin dModel → Dyadic) :=
+    (lo hi : Fin seq → Fin dModel → Rat) :
+    (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
   let positions := (Finset.univ : Finset (Fin seq))
   let hpos : positions.Nonempty := by
     classical
@@ -82,8 +82,8 @@ def transformerLayerBoundsPos {seq dModel dHead numHeads hidden : Nat} [NeZero s
     baseLo baseHi
   let attnLo := cacheBound attn.1
   let attnHi := cacheBound attn.2
-  let yLo : Fin seq → Fin dModel → Dyadic := fun q i => loCached q i + attnLo i
-  let yHi : Fin seq → Fin dModel → Dyadic := fun q i => hiCached q i + attnHi i
+  let yLo : Fin seq → Fin dModel → Rat := fun q i => loCached q i + attnLo i
+  let yHi : Fin seq → Fin dModel → Rat := fun q i => hiCached q i + attnHi i
   let yLoCached := cacheBound2 yLo
   let yHiCached := cacheBound2 yHi
   let out := cacheBoundPair2 (fun q =>
@@ -94,10 +94,10 @@ def transformerLayerBoundsPos {seq dModel dHead numHeads hidden : Nat} [NeZero s
 
 /-- `transformerLayerBoundsPos` soundness for `transformerLayerReal`. -/
 theorem transformerLayerBoundsPos_spec {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
-    (eps : Dyadic) (layer : Model.Gpt2LayerSlice dModel hidden)
+    (eps : Rat) (layer : Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin seq → Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin seq → Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo q i : Real) ≤ x q i)
     (hhi : ∀ q i, x q i ≤ (hi q i : Real)) :
@@ -172,7 +172,7 @@ theorem transformerLayerBoundsPos_spec {seq dModel dHead numHeads hidden : Nat} 
 
 /-- Real-valued transformer stack output (folded left over layers). -/
 noncomputable def transformerStackReal
-    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Dyadic)
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
@@ -183,10 +183,10 @@ noncomputable def transformerStackReal
 
 /-- Interval bounds for a transformer stack (folded left over layers). -/
 def transformerStackBounds {dModel dHead numHeads hidden numLayers : Nat}
-    (eps : Dyadic)
+    (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (lo hi : Fin dModel → Dyadic) : (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (lo hi : Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let step := fun bounds layerIdx =>
     transformerLayerBounds eps (layers layerIdx).ln1Gamma (layers layerIdx).ln1Beta
       (layers layerIdx).ln2Gamma (layers layerIdx).ln2Beta (heads layerIdx)
@@ -196,23 +196,23 @@ def transformerStackBounds {dModel dHead numHeads hidden numLayers : Nat}
 
 /-- Interval bounds for a transformer stack from per-position bounds. -/
 def transformerStackBoundsPos {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (eps : Dyadic)
+    (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (lo hi : Fin seq → Fin dModel → Dyadic) :
-    (Fin seq → Fin dModel → Dyadic) × (Fin seq → Fin dModel → Dyadic) :=
+    (lo hi : Fin seq → Fin dModel → Rat) :
+    (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
   let step := fun bounds layerIdx =>
     transformerLayerBoundsPos eps (layers layerIdx) (heads layerIdx) bounds.1 bounds.2
   Linear.foldlFin numLayers step (lo, hi)
 
 private theorem transformerStackBoundsPos_spec_list
     {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (eps : Dyadic)
+    (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
-    ∀ (ls : List (Fin numLayers)) (lo hi : Fin seq → Fin dModel → Dyadic)
+    ∀ (ls : List (Fin numLayers)) (lo hi : Fin seq → Fin dModel → Rat)
       (x : Fin seq → Fin dModel → Real),
       (∀ q i, (lo q i : Real) ≤ x q i) →
       (∀ q i, x q i ≤ (hi q i : Real)) →
@@ -244,11 +244,11 @@ private theorem transformerStackBoundsPos_spec_list
 
 /-- `transformerStackBoundsPos` soundness for real transformer-stack outputs. -/
 theorem transformerStackBoundsPos_spec {seq dModel dHead numHeads hidden numLayers : Nat}
-    [NeZero seq] (eps : Dyadic)
+    [NeZero seq] (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin seq → Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin seq → Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo q i : Real) ≤ x q i)
     (hhi : ∀ q i, x q i ≤ (hi q i : Real)) :
@@ -264,12 +264,12 @@ theorem transformerStackBoundsPos_spec {seq dModel dHead numHeads hidden numLaye
 
 private theorem transformerStackBounds_spec_list
     {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (eps : Dyadic)
+    (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
-    ∀ (ls : List (Fin numLayers)) (lo hi : Fin dModel → Dyadic)
+    ∀ (ls : List (Fin numLayers)) (lo hi : Fin dModel → Rat)
       (x : Fin seq → Fin dModel → Real),
       (∀ q i, (lo i : Real) ≤ x q i) →
       (∀ q i, x q i ≤ (hi i : Real)) →
@@ -307,11 +307,11 @@ private theorem transformerStackBounds_spec_list
 
 /-- `transformerStackBounds` soundness for real transformer-stack outputs. -/
 theorem transformerStackBounds_spec {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (eps : Dyadic)
+    (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := transformerStackBounds eps layers heads lo hi
@@ -326,7 +326,7 @@ theorem transformerStackBounds_spec {seq dModel dHead numHeads hidden numLayers 
 
 /-- Real-valued transformer stack output after the final LayerNorm. -/
 noncomputable def transformerStackFinalReal {seq dModel dHead numHeads hidden numLayers : Nat}
-    [NeZero seq] (eps : Dyadic) (finalLn : Model.Gpt2FinalLayerNorm dModel)
+    [NeZero seq] (eps : Rat) (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
@@ -336,20 +336,20 @@ noncomputable def transformerStackFinalReal {seq dModel dHead numHeads hidden nu
 
 /-- Interval bounds for transformer stack outputs after the final LayerNorm. -/
 def transformerStackFinalBounds {dModel dHead numHeads hidden numLayers : Nat}
-    (eps : Dyadic) (finalLn : Model.Gpt2FinalLayerNorm dModel)
+    (eps : Rat) (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (lo hi : Fin dModel → Dyadic) : (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (lo hi : Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let stack := transformerStackBounds eps layers heads lo hi
   layerNormIntervalBounds eps finalLn.gamma finalLn.beta stack.1 stack.2
 
 /-- `transformerStackFinalBounds` soundness for real outputs. -/
 theorem transformerStackFinalBounds_spec {seq dModel dHead numHeads hidden numLayers : Nat}
-    [NeZero seq] (eps : Dyadic) (finalLn : Model.Gpt2FinalLayerNorm dModel)
+    [NeZero seq] (eps : Rat) (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := transformerStackFinalBounds eps finalLn layers heads lo hi
@@ -372,12 +372,12 @@ theorem transformerStackFinalBounds_spec {seq dModel dHead numHeads hidden numLa
 
 /-- Interval bounds for transformer stack outputs after the final LayerNorm (per-position). -/
 def transformerStackFinalBoundsPos
-    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Dyadic)
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Rat)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (lo hi : Fin seq → Fin dModel → Dyadic) :
-    (Fin seq → Fin dModel → Dyadic) × (Fin seq → Fin dModel → Dyadic) :=
+    (lo hi : Fin seq → Fin dModel → Rat) :
+    (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
   let stack := transformerStackBoundsPos eps layers heads lo hi
   let ln := fun q =>
     layerNormIntervalBounds eps finalLn.gamma finalLn.beta (stack.1 q) (stack.2 q)
@@ -385,12 +385,12 @@ def transformerStackFinalBoundsPos
 
 /-- `transformerStackFinalBoundsPos` soundness for real outputs. -/
 theorem transformerStackFinalBoundsPos_spec
-    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Dyadic)
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Rat)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin seq → Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin seq → Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo q i : Real) ≤ x q i)
     (hhi : ∀ q i, x q i ≤ (hi q i : Real)) :
@@ -416,22 +416,22 @@ theorem transformerStackFinalBoundsPos_spec
 
 /-- Residual interval bounds for a GPT-2 stack from exact embeddings. -/
 def gpt2ResidualIntervalBounds
-    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Dyadic)
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
-    (embed : Fin seq → Fin dModel → Dyadic) : (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (embed : Fin seq → Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let base := embeddingIntervalBounds embed
   transformerStackFinalBounds eps finalLn layers heads base.1 base.2
 
 /-- `gpt2ResidualIntervalBounds` soundness for real GPT-2 outputs. -/
 theorem gpt2ResidualIntervalBounds_spec
-    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Dyadic)
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq] (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (embed : Fin seq → Fin dModel → Dyadic)
+    (embed : Fin seq → Fin dModel → Rat)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
     let bounds := gpt2ResidualIntervalBounds eps layers heads finalLn embed
     ∀ q i,
@@ -454,25 +454,25 @@ theorem gpt2ResidualIntervalBounds_spec
 /-- Residual interval bounds over an active set from exact embeddings. -/
 def gpt2ResidualIntervalBoundsActive
     {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (active : Finset (Fin seq)) (hactive : active.Nonempty) (eps : Dyadic)
+    (active : Finset (Fin seq)) (hactive : active.Nonempty) (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
-    (embed : Fin seq → Fin dModel → Dyadic) : (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
-  let baseLo : Fin seq → Fin dModel → Dyadic := embed
-  let baseHi : Fin seq → Fin dModel → Dyadic := embed
+    (embed : Fin seq → Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
+  let baseLo : Fin seq → Fin dModel → Rat := embed
+  let baseHi : Fin seq → Fin dModel → Rat := embed
   let final := transformerStackFinalBoundsPos eps finalLn layers heads baseLo baseHi
   intervalBoundsOn active hactive final.1 final.2
 
 /-- `gpt2ResidualIntervalBoundsActive` soundness for real GPT-2 outputs. -/
 theorem gpt2ResidualIntervalBoundsActive_spec
     {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
-    (active : Finset (Fin seq)) (hactive : active.Nonempty) (eps : Dyadic)
+    (active : Finset (Fin seq)) (hactive : active.Nonempty) (eps : Rat)
     (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
     (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (finalLn : Model.Gpt2FinalLayerNorm dModel)
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
-    (embed : Fin seq → Fin dModel → Dyadic)
+    (embed : Fin seq → Fin dModel → Rat)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
     let bounds := gpt2ResidualIntervalBoundsActive active hactive eps layers heads finalLn embed
     ∀ q, q ∈ active → ∀ i,
@@ -483,8 +483,8 @@ theorem gpt2ResidualIntervalBoundsActive_spec
             (fun q i => (embed q i : Real)) q i ≤ (bounds.2 i : Real) := by
   classical
   intro bounds q hq i
-  let baseLo : Fin seq → Fin dModel → Dyadic := embed
-  let baseHi : Fin seq → Fin dModel → Dyadic := embed
+  let baseLo : Fin seq → Fin dModel → Rat := embed
+  let baseHi : Fin seq → Fin dModel → Rat := embed
   let final := transformerStackFinalBoundsPos eps finalLn layers heads baseLo baseHi
   have hfinal :=
     transformerStackFinalBoundsPos_spec eps finalLn layers heads scores baseLo baseHi

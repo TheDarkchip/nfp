@@ -40,7 +40,7 @@ def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
     wo := slice.wo
     attnBias := slice.attnBias
     maskCausal := true
-    maskValue := (-10000 : Dyadic)
+    maskValue := (-10000 : Rat)
     directionSpec := slice.direction.spec
     direction := slice.directionVec }
 
@@ -64,7 +64,7 @@ theorem buildInductionHeadInputs_def {seq dModel dHead vocab : Nat}
         wo := slice.wo
         attnBias := slice.attnBias
         maskCausal := true
-        maskValue := (-10000 : Dyadic)
+        maskValue := (-10000 : Rat)
         directionSpec := slice.direction.spec
         direction := slice.directionVec } := rfl
 

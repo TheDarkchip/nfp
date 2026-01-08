@@ -27,7 +27,7 @@ private def finalizeValueState {seq : Nat} (st : ValueRange.ParseState seq) :
     | none => throw "missing hi entry"
   if !finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.vals k).isSome) then
     throw "missing value entries"
-  let valsFun : Fin seq → Dyadic := fun k =>
+  let valsFun : Fin seq → Rat := fun k =>
     (st.vals k).getD 0
   let direction ←
     match st.directionTarget, st.directionNegative with

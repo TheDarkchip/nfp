@@ -24,14 +24,14 @@ structure DirectionSpec where
   /-- Negative token id for the logit-diff direction. -/
   negative : Nat
 
-/-- Certificate payload for value-range bounds (Dyadic-valued). -/
+/-- Certificate payload for value-range bounds (Rat-valued). -/
 structure ValueRangeCert (seq : Nat) where
   /-- Lower bound for values. -/
-  lo : Dyadic
+  lo : Rat
   /-- Upper bound for values. -/
-  hi : Dyadic
+  hi : Rat
   /-- Value entries. -/
-  vals : Fin seq → Dyadic
+  vals : Fin seq → Rat
   /-- Optional logit-diff direction metadata (ignored by the checker). -/
   direction : Option DirectionSpec
 
@@ -44,7 +44,7 @@ def checkValueRangeCert [NeZero seq] (c : ValueRangeCert seq) : Bool :=
 /-- `checkValueRangeCert` is sound for `ValueRangeBounds`. -/
 theorem checkValueRangeCert_sound [NeZero seq] (c : ValueRangeCert seq) :
     checkValueRangeCert c = true →
-      Layers.ValueRangeBounds (Val := Dyadic) c.lo c.hi c.vals := by
+      Layers.ValueRangeBounds (Val := Rat) c.lo c.hi c.vals := by
   classical
   intro hcheck
   have hcheck' :

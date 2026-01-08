@@ -77,7 +77,7 @@ def deriveResidualIntervalFromModel (data : ByteArray) (start : Nat)
                               | some _ =>
                                   let forced :=
                                     (List.finRange header.modelDim).foldl
-                                      (fun acc i => acc + bounds.1 i + bounds.2 i) (0 : Dyadic)
+                                      (fun acc i => acc + bounds.1 i + bounds.2 i) (0 : Rat)
                                   logTiming s!"forced transformer stack sum {forced}"
                               | none => pure ()
                               return bounds)
@@ -95,7 +95,7 @@ def deriveResidualIntervalFromModel (data : ByteArray) (start : Nat)
                               | some _ =>
                                   let forced :=
                                     (List.finRange header.modelDim).foldl
-                                      (fun acc i => acc + stack.1 i + stack.2 i) (0 : Dyadic)
+                                      (fun acc i => acc + stack.1 i + stack.2 i) (0 : Rat)
                                   logTiming s!"forced transformer stack sum {forced}"
                               | none => pure ()
                               return stack)
@@ -117,7 +117,7 @@ def deriveResidualIntervalFromModel (data : ByteArray) (start : Nat)
                             | some _ =>
                                 let forced :=
                                   (List.finRange header.modelDim).foldl
-                                    (fun acc i => acc + stack.1 i + stack.2 i) (0 : Dyadic)
+                                    (fun acc i => acc + stack.1 i + stack.2 i) (0 : Rat)
                                 logTiming s!"forced transformer stack sum {forced}"
                             | none => pure ()
                             return stack)

@@ -20,11 +20,11 @@ open Nfp.Circuit
 /-- State for parsing value-range payloads. -/
 structure ParseState (seq : Nat) where
   /-- Optional lower bound. -/
-  lo : Option Dyadic
+  lo : Option Rat
   /-- Optional upper bound. -/
-  hi : Option Dyadic
+  hi : Option Rat
   /-- Optional per-position values. -/
-  vals : Fin seq → Option Dyadic
+  vals : Fin seq → Option Rat
   /-- Optional direction target index. -/
   directionTarget : Option Nat
   /-- Optional direction negative index. -/
@@ -41,7 +41,7 @@ def initState (seq : Nat) : ParseState seq :=
 
 
 /-- Set a value entry from `(k, v)` tokens. -/
-def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Dyadic) :
+def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Rat) :
     Except String (ParseState seq) := do
   if hk : k < seq then
     let kFin : Fin seq := ⟨k, hk⟩
@@ -49,7 +49,7 @@ def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Dyadic) :
     | some _ =>
         throw s!"duplicate value entry for k={k}"
     | none =>
-        let vals' : Fin seq → Option Dyadic := fun k' =>
+        let vals' : Fin seq → Option Rat := fun k' =>
           if k' = kFin then
             some v
           else
@@ -67,14 +67,14 @@ def parseLine {seq : Nat} (st : ParseState seq)
       if st.lo.isSome then
         throw "duplicate lo entry"
       else
-        return { st with lo := some (← parseDyadic val) }
+        return { st with lo := some (← parseRat val) }
   | ["hi", val] =>
       if st.hi.isSome then
         throw "duplicate hi entry"
       else
-        return { st with hi := some (← parseDyadic val) }
+        return { st with hi := some (← parseRat val) }
   | ["val", k, val] =>
-      setVal st (← parseNat k) (← parseDyadic val)
+      setVal st (← parseNat k) (← parseRat val)
   | ["direction-target", tok] =>
       if st.directionTarget.isSome then
         throw "duplicate direction-target entry"

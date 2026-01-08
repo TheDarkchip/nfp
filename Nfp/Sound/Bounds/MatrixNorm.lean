@@ -16,7 +16,7 @@ import Nfp.Sound.Linear.FinFold
 Row-sum matrix norms for downstream linear certificates.
 
 These bounds are used to compute verified downstream error certificates
-from explicit Dyadic matrices.
+from explicit Rat matrices.
 -/
 
 namespace Nfp
@@ -28,25 +28,25 @@ namespace Bounds
 open scoped BigOperators
 
 /-- Row-sum of absolute values for a matrix row. -/
-def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) : Dyadic :=
+def rowSum {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) : Rat :=
   Linear.sumFin n (fun j => |W i j|)
 
 /-- Weighted row-sum using per-coordinate bounds. -/
-def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) (i : Fin m) : Dyadic :=
+def rowSumWeighted {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) : Rat :=
   Linear.sumFin n (fun j => |W i j| * bound j)
 
 /-- Maximum row-sum norm (defaults to `0` on empty matrices). -/
-def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) : Dyadic :=
+def rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) : Rat :=
   Linear.foldlFin m (fun acc i => max acc (rowSum W i)) 0
 
 /-- Maximum weighted row-sum (defaults to `0` on empty matrices). -/
-def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) : Dyadic :=
+def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) : Rat :=
   Linear.foldlFin m (fun acc i => max acc (rowSumWeighted W bound i)) 0
 
 /-- Row-sums are nonnegative. -/
-theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) :
+theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
     0 ≤ rowSum W i := by
   have hsum : rowSum W i = ∑ j, |W i j| := by
     simp [rowSum, Linear.sumFin_eq_sum_univ]
@@ -57,8 +57,8 @@ theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m
   simpa [hsum] using hnonneg
 
 /-- Weighted row-sums are nonnegative under nonnegative bounds. -/
-theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
+theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
     0 ≤ rowSumWeighted W bound i := by
   have hsum : rowSumWeighted W bound i = ∑ j, |W i j| * bound j := by
     simp [rowSumWeighted, Linear.sumFin_eq_sum_univ]
@@ -69,45 +69,45 @@ theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
   simpa [hsum] using hnonneg
 
 /-- Each row-sum is bounded by the row-sum norm. -/
-theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) (i : Fin m) :
+theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
     rowSum W i ≤ rowSumNorm W := by
   simpa [rowSumNorm] using
     (foldlFin_max_ge (f := fun j => rowSum W j) i)
 
 /-- Each weighted row-sum is bounded by the weighted row-sum norm. -/
-theorem rowSumWeighted_le_rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) (i : Fin m) :
+theorem rowSumWeighted_le_rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) (i : Fin m) :
     rowSumWeighted W bound i ≤ rowSumWeightedNorm W bound := by
   simpa [rowSumWeightedNorm] using
     (foldlFin_max_ge (f := fun j => rowSumWeighted W bound j) i)
 
 /-- The row-sum norm is nonnegative. -/
-theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic) :
+theorem rowSumNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) :
     0 ≤ rowSumNorm W := by
   simpa [rowSumNorm] using
-    (foldlFin_max_ge_init (f := fun i => rowSum W i) (init := (0 : Dyadic)))
+    (foldlFin_max_ge_init (f := fun i => rowSum W i) (init := (0 : Rat)))
 
 /-- Weighted row-sum norm is nonnegative. -/
-theorem rowSumWeightedNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) :
+theorem rowSumWeightedNorm_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) :
     0 ≤ rowSumWeightedNorm W bound := by
   simpa [rowSumWeightedNorm] using
-    (foldlFin_max_ge_init (f := fun i => rowSumWeighted W bound i) (init := (0 : Dyadic)))
+    (foldlFin_max_ge_init (f := fun i => rowSumWeighted W bound i) (init := (0 : Rat)))
 
 /-- Downstream error from per-coordinate residual bounds. -/
-def downstreamErrorFromBounds {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) : Dyadic :=
+def downstreamErrorFromBounds {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) : Rat :=
   rowSumWeightedNorm W bound
 
 /-- `downstreamErrorFromBounds` is nonnegative. -/
-theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (bound : Fin n → Dyadic) :
+theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (bound : Fin n → Rat) :
     0 ≤ downstreamErrorFromBounds W bound := by
   simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound
 
 /-- Build a residual-interval certificate by applying a matrix to an input interval. -/
-def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (lo hi : Fin n → Dyadic) (hlohi : ∀ j, lo j ≤ hi j) :
+def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
     {c : Circuit.ResidualIntervalCert m // Circuit.ResidualIntervalBounds c} := by
   let lo' := mulVecIntervalLower W lo hi
   let hi' := mulVecIntervalUpper W lo hi
@@ -117,8 +117,8 @@ def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) 
   exact mulVecIntervalLower_le_upper W lo hi hlohi i
 
 /-- Row-sum norm bounds a matrix-vector product under a uniform input bound. -/
-theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (x : Fin n → Dyadic) (inputBound : Dyadic)
+theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (x : Fin n → Rat) (inputBound : Rat)
     (hx : ∀ j, |x j| ≤ inputBound) (hinput : 0 ≤ inputBound) :
     ∀ i, |Matrix.mulVec W x i| ≤ rowSumNorm W * inputBound := by
   intro i
@@ -156,8 +156,8 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
   exact hrow.trans hmul
 
 /-- Build a downstream linear certificate from a matrix and input bound. -/
-def buildDownstreamLinearCert {m n : Nat} (W : Matrix (Fin m) (Fin n) Dyadic)
-    (inputBound : Dyadic) (hinput : 0 ≤ inputBound) :
+def buildDownstreamLinearCert {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
+    (inputBound : Rat) (hinput : 0 ≤ inputBound) :
     {c : Circuit.DownstreamLinearCert // Circuit.DownstreamLinearBounds c} := by
   let gain := rowSumNorm W
   let error := gain * inputBound

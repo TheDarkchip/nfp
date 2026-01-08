@@ -20,8 +20,8 @@ open scoped BigOperators
 
 /-- Real-valued MLP with tanh-based GELU activations. -/
 noncomputable def mlpReal {dModel hidden : Nat}
-    (wIn : Fin dModel → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin dModel → Dyadic) (bOut : Fin dModel → Dyadic)
+    (wIn : Fin dModel → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin dModel → Rat) (bOut : Fin dModel → Rat)
     (x : Fin dModel → Real) : Fin dModel → Real :=
   fun i =>
     let hidden : Fin hidden → Real := fun h =>
@@ -30,36 +30,36 @@ noncomputable def mlpReal {dModel hidden : Nat}
 
 /-- Interval bounds for a tanh-GELU MLP given input intervals. -/
 def mlpBounds {dModel hidden : Nat}
-    (wIn : Fin dModel → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin dModel → Dyadic) (bOut : Fin dModel → Dyadic)
-    (lo hi : Fin dModel → Dyadic) : (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
-  let preLo : Fin hidden → Dyadic := fun h =>
+    (wIn : Fin dModel → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin dModel → Rat) (bOut : Fin dModel → Rat)
+    (lo hi : Fin dModel → Rat) : (Fin dModel → Rat) × (Fin dModel → Rat) :=
+  let preLo : Fin hidden → Rat := fun h =>
     dotIntervalLower (fun j => wIn j h) lo hi + bIn h
-  let preHi : Fin hidden → Dyadic := fun h =>
+  let preHi : Fin hidden → Rat := fun h =>
     dotIntervalUpper (fun j => wIn j h) lo hi + bIn h
-  let geluBounds : Fin hidden → Dyadic × Dyadic := fun h => geluInterval (preLo h) (preHi h)
-  let geluLo : Fin hidden → Dyadic := fun h => (geluBounds h).1
-  let geluHi : Fin hidden → Dyadic := fun h => (geluBounds h).2
-  let outLo : Fin dModel → Dyadic := fun i =>
+  let geluBounds : Fin hidden → Rat × Rat := fun h => geluInterval (preLo h) (preHi h)
+  let geluLo : Fin hidden → Rat := fun h => (geluBounds h).1
+  let geluHi : Fin hidden → Rat := fun h => (geluBounds h).2
+  let outLo : Fin dModel → Rat := fun i =>
     dotIntervalLower (fun h => wOut h i) geluLo geluHi + bOut i
-  let outHi : Fin dModel → Dyadic := fun i =>
+  let outHi : Fin dModel → Rat := fun i =>
     dotIntervalUpper (fun h => wOut h i) geluLo geluHi + bOut i
   (outLo, outHi)
 
 /-- `mlpBounds` soundness for real MLP outputs. -/
 theorem mlpBounds_spec {dModel hidden : Nat}
-    (wIn : Fin dModel → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin dModel → Dyadic) (bOut : Fin dModel → Dyadic)
-    (lo hi : Fin dModel → Dyadic) (x : Fin dModel → Real)
+    (wIn : Fin dModel → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin dModel → Rat) (bOut : Fin dModel → Rat)
+    (lo hi : Fin dModel → Rat) (x : Fin dModel → Real)
     (hlo : ∀ j, (lo j : Real) ≤ x j) (hhi : ∀ j, x j ≤ (hi j : Real)) :
     let bounds := mlpBounds wIn bIn wOut bOut lo hi
     ∀ i, (bounds.1 i : Real) ≤ mlpReal wIn bIn wOut bOut x i ∧
       mlpReal wIn bIn wOut bOut x i ≤ (bounds.2 i : Real) := by
   classical
   intro bounds i
-  let preLo : Fin hidden → Dyadic := fun h =>
+  let preLo : Fin hidden → Rat := fun h =>
     dotIntervalLower (fun j => wIn j h) lo hi + bIn h
-  let preHi : Fin hidden → Dyadic := fun h =>
+  let preHi : Fin hidden → Rat := fun h =>
     dotIntervalUpper (fun j => wIn j h) lo hi + bIn h
   let pre : Fin hidden → Real := fun h =>
     dotProduct (fun j => (wIn j h : Real)) x + (bIn h : Real)
@@ -75,18 +75,18 @@ theorem mlpBounds_spec {dModel hidden : Nat}
       add_le_add_right
         (dotProduct_le_dotIntervalUpper_real (v := fun j => wIn j h) lo hi x hlo hhi)
         (bIn h : Real)
-  let geluBounds : Fin hidden → Dyadic × Dyadic := fun h => geluInterval (preLo h) (preHi h)
-  let geluLo : Fin hidden → Dyadic := fun h => (geluBounds h).1
-  let geluHi : Fin hidden → Dyadic := fun h => (geluBounds h).2
+  let geluBounds : Fin hidden → Rat × Rat := fun h => geluInterval (preLo h) (preHi h)
+  let geluLo : Fin hidden → Rat := fun h => (geluBounds h).1
+  let geluHi : Fin hidden → Rat := fun h => (geluBounds h).2
   let hidden : Fin hidden → Real := fun h => geluTanh (pre h)
   have hgelu : ∀ h, (geluLo h : Real) ≤ hidden h ∧ hidden h ≤ (geluHi h : Real) := by
     intro h
     have hbounds := geluInterval_bounds (lo := preLo h) (hi := preHi h)
       (hpre_lower h) (hpre_upper h)
     simpa [geluLo, geluHi, geluBounds, hidden] using hbounds
-  let outLo : Fin dModel → Dyadic := fun i =>
+  let outLo : Fin dModel → Rat := fun i =>
     dotIntervalLower (fun h => wOut h i) geluLo geluHi + bOut i
-  let outHi : Fin dModel → Dyadic := fun i =>
+  let outHi : Fin dModel → Rat := fun i =>
     dotIntervalUpper (fun h => wOut h i) geluLo geluHi + bOut i
   have hout_lower :
       (outLo i : Real) ≤ dotProduct (fun h => (wOut h i : Real)) hidden + (bOut i : Real) := by
@@ -111,19 +111,19 @@ theorem mlpBounds_spec {dModel hidden : Nat}
 
 /-- Interval bounds for a LayerNorm + MLP sublayer from exact inputs. -/
 def layerNormMlpBounds {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (x : Fin n → Dyadic) : (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (x : Fin n → Rat) : (Fin n → Rat) × (Fin n → Rat) :=
   let ln := layerNormBounds eps gamma beta x
   mlpBounds wIn bIn wOut bOut ln.1 ln.2
 
 /-- `layerNormMlpBounds` soundness for real LayerNorm + MLP outputs. -/
 theorem layerNormMlpBounds_spec {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (x : Fin n → Dyadic) (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (x : Fin n → Rat) (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
     let bounds := layerNormMlpBounds eps gamma beta wIn bIn wOut bOut x
     ∀ i, (bounds.1 i : Real) ≤
         mlpReal wIn bIn wOut bOut (layerNormReal eps gamma beta x) i ∧
@@ -140,20 +140,20 @@ theorem layerNormMlpBounds_spec {n hidden : Nat}
 
 /-- Interval bounds for LayerNorm + MLP sublayer from interval inputs. -/
 def layerNormAbsMlpBounds {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (lo hi : Fin n → Dyadic) : (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (lo hi : Fin n → Rat) : (Fin n → Rat) × (Fin n → Rat) :=
   let absBound := intervalAbsBound lo hi
   let ln := layerNormAbsBounds eps gamma beta absBound
   mlpBounds wIn bIn wOut bOut ln.1 ln.2
 
 /-- `layerNormAbsMlpBounds` soundness for real LayerNorm + MLP outputs. -/
 theorem layerNormAbsMlpBounds_spec {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (lo hi : Fin n → Dyadic) (x : Fin n → Real)
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (lo hi : Fin n → Rat) (x : Fin n → Real)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ i, (lo i : Real) ≤ x i) (hhi : ∀ i, x i ≤ (hi i : Real)) :
     let bounds := layerNormAbsMlpBounds eps gamma beta wIn bIn wOut bOut lo hi
@@ -174,9 +174,9 @@ theorem layerNormAbsMlpBounds_spec {n hidden : Nat}
     have hsup_real :
         max |(lo j : Real)| |(hi j : Real)| ≤ (absBound : Real) := by
       have hsup' :
-          dyadicToReal (max |lo j| |hi j|) ≤ dyadicToReal absBound :=
-        dyadicToReal_le_of_le hsup
-      simpa [dyadicToReal_abs, dyadicToReal_max] using hsup'
+          ratToReal (max |lo j| |hi j|) ≤ ratToReal absBound :=
+        ratToReal_le_of_le hsup
+      simpa [ratToReal_abs, ratToReal_max] using hsup'
     exact le_trans hbound hsup_real
   have hln :=
     layerNormAbsBounds_spec_real eps gamma beta absBound x hne heps hsqrt habs
@@ -187,13 +187,13 @@ theorem layerNormAbsMlpBounds_spec {n hidden : Nat}
   simpa [bounds, layerNormAbsMlpBounds, absBound, ln] using hmlp i
 
 /-- Add residual inputs to interval bounds. -/
-def residualAddBounds {n : Nat} (x : Fin n → Dyadic) (lo hi : Fin n → Dyadic) :
-    (Fin n → Dyadic) × (Fin n → Dyadic) :=
+def residualAddBounds {n : Nat} (x : Fin n → Rat) (lo hi : Fin n → Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
   (fun i => x i + lo i, fun i => x i + hi i)
 
 /-- `residualAddBounds` soundness for residual addition. -/
-theorem residualAddBounds_spec {n : Nat} (x : Fin n → Dyadic)
-    (lo hi : Fin n → Dyadic) (y : Fin n → Real)
+theorem residualAddBounds_spec {n : Nat} (x : Fin n → Rat)
+    (lo hi : Fin n → Rat) (y : Fin n → Real)
     (hlo : ∀ i, (lo i : Real) ≤ y i) (hhi : ∀ i, y i ≤ (hi i : Real)) :
     let bounds := residualAddBounds x lo hi
     ∀ i, (bounds.1 i : Real) ≤ (x i : Real) + y i ∧
@@ -207,19 +207,19 @@ theorem residualAddBounds_spec {n : Nat} (x : Fin n → Dyadic)
 
 /-- Interval bounds for a full MLP residual path (LayerNorm + MLP + residual add). -/
 def layerNormMlpResidualBounds {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (x : Fin n → Dyadic) : (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (x : Fin n → Rat) : (Fin n → Rat) × (Fin n → Rat) :=
   let mlp := layerNormMlpBounds eps gamma beta wIn bIn wOut bOut x
   residualAddBounds x mlp.1 mlp.2
 
 /-- `layerNormMlpResidualBounds` soundness for the MLP residual path. -/
 theorem layerNormMlpResidualBounds_spec {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (x : Fin n → Dyadic) (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (x : Fin n → Rat) (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
     let bounds := layerNormMlpResidualBounds eps gamma beta wIn bIn wOut bOut x
     ∀ i,
       (bounds.1 i : Real) ≤
@@ -239,19 +239,19 @@ theorem layerNormMlpResidualBounds_spec {n hidden : Nat}
 
 /-- Interval bounds for a full MLP residual path (LayerNorm + MLP + residual add) from intervals. -/
 def layerNormAbsMlpResidualBounds {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (lo hi : Fin n → Dyadic) : (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (lo hi : Fin n → Rat) : (Fin n → Rat) × (Fin n → Rat) :=
   let mlp := layerNormAbsMlpBounds eps gamma beta wIn bIn wOut bOut lo hi
   (fun i => lo i + mlp.1 i, fun i => hi i + mlp.2 i)
 
 /-- `layerNormAbsMlpResidualBounds` soundness for the MLP residual path. -/
 theorem layerNormAbsMlpResidualBounds_spec {n hidden : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic)
-    (wIn : Fin n → Fin hidden → Dyadic) (bIn : Fin hidden → Dyadic)
-    (wOut : Fin hidden → Fin n → Dyadic) (bOut : Fin n → Dyadic)
-    (lo hi : Fin n → Dyadic) (x : Fin n → Real)
+    (eps : Rat) (gamma beta : Fin n → Rat)
+    (wIn : Fin n → Fin hidden → Rat) (bIn : Fin hidden → Rat)
+    (wOut : Fin hidden → Fin n → Rat) (bOut : Fin n → Rat)
+    (lo hi : Fin n → Rat) (x : Fin n → Real)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ i, (lo i : Real) ≤ x i) (hhi : ∀ i, x i ≤ (hi i : Real)) :
     let bounds := layerNormAbsMlpResidualBounds eps gamma beta wIn bIn wOut bOut lo hi

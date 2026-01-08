@@ -103,19 +103,19 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
             | none => exact none
             | some certWithProof =>
                 rcases certWithProof with ⟨cert, hcert⟩
-                let lnBounds : Fin (Nat.succ n) → (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+                let lnBounds : Fin (Nat.succ n) → (Fin dModel → Rat) × (Fin dModel → Rat) :=
                   fun q =>
                     Bounds.layerNormBounds inputs.lnEps inputs.ln1Gamma inputs.ln1Beta
                       (inputs.embed q)
-                let lnLo : Fin (Nat.succ n) → Fin dModel → Dyadic := fun q => (lnBounds q).1
-                let lnHi : Fin (Nat.succ n) → Fin dModel → Dyadic := fun q => (lnBounds q).2
-                let vLo : Fin (Nat.succ n) → Fin dHead → Dyadic := fun q d =>
+                let lnLo : Fin (Nat.succ n) → Fin dModel → Rat := fun q => (lnBounds q).1
+                let lnHi : Fin (Nat.succ n) → Fin dModel → Rat := fun q => (lnBounds q).2
+                let vLo : Fin (Nat.succ n) → Fin dHead → Rat := fun q d =>
                   dotIntervalLower (fun j => inputs.wv j d) (lnLo q) (lnHi q) + inputs.bv d
-                let vHi : Fin (Nat.succ n) → Fin dHead → Dyadic := fun q d =>
+                let vHi : Fin (Nat.succ n) → Fin dHead → Rat := fun q d =>
                   dotIntervalUpper (fun j => inputs.wv j d) (lnLo q) (lnHi q) + inputs.bv d
-                let headValueLo : Fin (Nat.succ n) → Fin dModel → Dyadic := fun k i =>
+                let headValueLo : Fin (Nat.succ n) → Fin dModel → Rat := fun k i =>
                   dotIntervalLower (fun d => inputs.wo i d) (vLo k) (vHi k)
-                let headValueHi : Fin (Nat.succ n) → Fin dModel → Dyadic := fun k i =>
+                let headValueHi : Fin (Nat.succ n) → Fin dModel → Rat := fun k i =>
                   dotIntervalUpper (fun d => inputs.wo i d) (vLo k) (vHi k)
                 have hln_bounds :
                     ∀ q i, (lnLo q i : Real) ≤ lnRealOfInputs inputs q i ∧
@@ -143,10 +143,10 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       (lo := lnLo q) (hi := lnHi q) (x := lnRealOfInputs inputs q) hlo hhi
                   constructor
                   · simpa [vLo, vRealOfInputs, Bounds.cacheBound2_apply,
-                      Bounds.dotIntervalLowerCachedRat_eq, dyadicToReal_add] using
+                      Bounds.dotIntervalLowerCachedRat_eq, ratToReal_add] using
                       add_le_add_right hlow (inputs.bv d : Real)
                   · simpa [vHi, vRealOfInputs, Bounds.cacheBound2_apply,
-                      Bounds.dotIntervalUpperCachedRat_eq, dyadicToReal_add] using
+                      Bounds.dotIntervalUpperCachedRat_eq, ratToReal_add] using
                       add_le_add_right hhigh (inputs.bv d : Real)
                 have hhead_bounds :
                     ∀ k i, (headValueLo k i : Real) ≤ headValueRealOfInputs inputs k i ∧
@@ -173,9 +173,9 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                 let activeSet : Finset (Fin (Nat.succ n)) := cert.active
                 let univ : Finset (Fin (Nat.succ n)) := Finset.univ
                 have huniv : univ.Nonempty := by simp [univ]
-                let loVal : Fin dModel → Dyadic := fun i =>
+                let loVal : Fin dModel → Rat := fun i =>
                   univ.inf' huniv (fun k => headValueLo k i)
-                let hiVal : Fin dModel → Dyadic := fun i =>
+                let hiVal : Fin dModel → Rat := fun i =>
                   univ.sup' huniv (fun k => headValueHi k i)
                 have hvalsBoundsReal :
                     ∀ i, Layers.ValueRangeBounds (Val := Real)
@@ -185,14 +185,14 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                   refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
                   · rcases (Finset.univ_nonempty : univ.Nonempty) with ⟨k0, hk0⟩
                     have hmem0 : k0 ∈ univ := hk0
-                    have hloDyadic : loVal i ≤ headValueLo k0 i := by
+                    have hloRat : loVal i ≤ headValueLo k0 i := by
                       change loVal i ≤ headValueLo k0 i
                       dsimp [loVal]
                       refine (Finset.inf'_le_iff (s := univ) (H := huniv)
                         (f := fun k => headValueLo k i) (a := headValueLo k0 i)).2 ?_
                       refine ⟨k0, hmem0, ?_⟩
                       exact le_rfl
-                    have hhiDyadic : headValueHi k0 i ≤ hiVal i := by
+                    have hhiRat : headValueHi k0 i ≤ hiVal i := by
                       change headValueHi k0 i ≤ hiVal i
                       dsimp [hiVal]
                       refine (Finset.le_sup'_iff (s := univ) (H := huniv)
@@ -200,13 +200,13 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       exact ⟨k0, ⟨hmem0, le_rfl⟩⟩
                     have hbounds := hhead_bounds k0 i
                     have hreal : (loVal i : Real) ≤ (hiVal i : Real) := by
-                      refine le_trans (dyadicToReal_le_of_le hloDyadic) ?_
+                      refine le_trans (ratToReal_le_of_le hloRat) ?_
                       refine le_trans hbounds.1 ?_
-                      exact le_trans hbounds.2 (dyadicToReal_le_of_le hhiDyadic)
+                      exact le_trans hbounds.2 (ratToReal_le_of_le hhiRat)
                     exact hreal
                   · intro k
                     have hmem : k ∈ univ := by simp [univ]
-                    have hloDyadic : loVal i ≤ headValueLo k i := by
+                    have hloRat : loVal i ≤ headValueLo k i := by
                       change loVal i ≤ headValueLo k i
                       dsimp [loVal]
                       refine (Finset.inf'_le_iff (s := univ) (H := huniv)
@@ -214,10 +214,10 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       refine ⟨k, hmem, ?_⟩
                       exact le_rfl
                     have hbounds := hhead_bounds k i
-                    exact (dyadicToReal_le_of_le hloDyadic) |>.trans hbounds.1
+                    exact (ratToReal_le_of_le hloRat) |>.trans hbounds.1
                   · intro k
                     have hmem : k ∈ univ := by simp [univ]
-                    have hhiDyadic : headValueHi k i ≤ hiVal i := by
+                    have hhiRat : headValueHi k i ≤ hiVal i := by
                       change headValueHi k i ≤ hiVal i
                       dsimp [hiVal]
                       refine (Finset.le_sup'_iff (s := univ) (H := huniv)
@@ -225,7 +225,7 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       exact ⟨k, ⟨hmem, le_rfl⟩⟩
                     have hbounds := hhead_bounds k i
                     exact hbounds.2.trans
-                      (dyadicToReal_le_of_le hhiDyadic)
+                      (ratToReal_le_of_le hhiRat)
                 have hsoftmax :
                     Layers.SoftmaxMarginBoundsOn (Val := Real)
                       (cert.eps : Real) (cert.margin : Real)
@@ -263,19 +263,19 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       (vals := fun k => headValueRealOfInputs inputs k i)
                       (hweights := hweights)
                       (hvals := hvalsBoundsReal i)
-                let delta : Fin dModel → Dyadic := fun i => hiVal i - loVal i
-                let boundLoDyadic : Fin (Nat.succ n) → Fin dModel → Dyadic := fun q i =>
+                let delta : Fin dModel → Rat := fun i => hiVal i - loVal i
+                let boundLoRat : Fin (Nat.succ n) → Fin dModel → Rat := fun q i =>
                   headValueLo (cert.prev q) i - cert.eps * delta i
-                let boundHiDyadic : Fin (Nat.succ n) → Fin dModel → Dyadic := fun q i =>
+                let boundHiRat : Fin (Nat.succ n) → Fin dModel → Rat := fun q i =>
                   headValueHi (cert.prev q) i + cert.eps * delta i
-                let loOut : Fin dModel → Dyadic := fun i =>
+                let loOut : Fin dModel → Rat := fun i =>
                   if h : activeSet.Nonempty then
-                    activeSet.inf' h (fun q => boundLoDyadic q i)
+                    activeSet.inf' h (fun q => boundLoRat q i)
                   else
                     0
-                let hiOut : Fin dModel → Dyadic := fun i =>
+                let hiOut : Fin dModel → Rat := fun i =>
                   if h : activeSet.Nonempty then
-                    activeSet.sup' h (fun q => boundHiDyadic q i)
+                    activeSet.sup' h (fun q => boundHiRat q i)
                   else
                     0
                 have hout :
@@ -291,7 +291,7 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                     simp [headOutput, headOutputWithScores, scoresReal, weights]
                   have hprev_bounds := hhead_bounds (cert.prev q) i
                   have hupper :
-                      headOutput inputs q i ≤ (boundHiDyadic q i : Real) := by
+                      headOutput inputs q i ≤ (boundHiRat q i : Real) := by
                     have hupper' :
                         dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) ≤
                           headValueRealOfInputs inputs (cert.prev q) i +
@@ -307,11 +307,11 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                           hprev_bounds.2
                       exact le_trans hupper' hprev_bounds'
                     simpa
-                    [hout_def, boundHiDyadic, delta, dyadicToReal_add, dyadicToReal_mul,
-                      dyadicToReal_sub] using
+                    [hout_def, boundHiRat, delta, ratToReal_add, ratToReal_mul,
+                      ratToReal_sub] using
                       hupper''
                   have hlower :
-                      (boundLoDyadic q i : Real) ≤ headOutput inputs q i := by
+                      (boundLoRat q i : Real) ≤ headOutput inputs q i := by
                     have hlower' :
                         (headValueRealOfInputs inputs (cert.prev q) i : Real) -
                             (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) ≤
@@ -324,26 +324,26 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       refine le_trans (sub_le_sub_right hprev_bounds.1
                         ((cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)))) ?_
                       exact hlower'
-                    simpa [hout_def, boundLoDyadic, delta, dyadicToReal_mul, dyadicToReal_sub] using
+                    simpa [hout_def, boundLoRat, delta, ratToReal_mul, ratToReal_sub] using
                       hlower''
                   have hlo :
-                      (loOut i : Real) ≤ (boundLoDyadic q i : Real) := by
-                    have hloDyadic : loOut i ≤ boundLoDyadic q i := by
+                      (loOut i : Real) ≤ (boundLoRat q i : Real) := by
+                    have hloRat : loOut i ≤ boundLoRat q i := by
                       simpa [loOut, hactive] using
                         (Finset.inf'_le
                           (s := activeSet)
-                          (f := fun q => boundLoDyadic q i)
+                          (f := fun q => boundLoRat q i)
                           (b := q) hq)
-                    exact dyadicToReal_le_of_le hloDyadic
+                    exact ratToReal_le_of_le hloRat
                   have hhi :
-                      (boundHiDyadic q i : Real) ≤ (hiOut i : Real) := by
-                    have hhiDyadic : boundHiDyadic q i ≤ hiOut i := by
+                      (boundHiRat q i : Real) ≤ (hiOut i : Real) := by
+                    have hhiRat : boundHiRat q i ≤ hiOut i := by
                       simpa [hiOut, hactive] using
                         (Finset.le_sup'
                           (s := activeSet)
-                          (f := fun q => boundHiDyadic q i)
+                          (f := fun q => boundHiRat q i)
                           (b := q) hq)
-                    exact dyadicToReal_le_of_le hhiDyadic
+                    exact ratToReal_le_of_le hhiRat
                   exact ⟨le_trans hlo hlower, le_trans hupper hhi⟩
                 have hbounds : Circuit.ResidualIntervalBounds { lo := loOut, hi := hiOut } := by
                   refine { lo_le_hi := ?_ }
@@ -353,7 +353,7 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                     have hout_i := hout q hq i
                     have hleReal : (loOut i : Real) ≤ (hiOut i : Real) :=
                       le_trans hout_i.1 hout_i.2
-                    exact (dyadicToReal_le_iff (x := loOut i) (y := hiOut i)).1 hleReal
+                    exact (ratToReal_le_iff (x := loOut i) (y := hiOut i)).1 hleReal
                   · simp [loOut, hiOut, hactive]
                 let certOut : Circuit.ResidualIntervalCert dModel := { lo := loOut, hi := hiOut }
                 exact some

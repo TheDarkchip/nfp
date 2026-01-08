@@ -36,9 +36,9 @@ private def finalizeState {seq : Nat} (hpos : 0 < seq)
   let defaultPrev : Fin seq := ⟨0, hpos⟩
   let prevFun : Fin seq → Fin seq := fun q =>
     (st.prev q).getD defaultPrev
-  let scoresFun : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
     (st.scores q k).getD 0
-  let weightsFun : Fin seq → Fin seq → Dyadic := fun q k =>
+  let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
     (st.weights q k).getD 0
   let active :=
     if st.activeSeen then

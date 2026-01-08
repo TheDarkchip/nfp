@@ -13,13 +13,13 @@ namespace IO
 
 /-- Build a cached dot-abs function from Q/K absolute bounds using tasks. -/
 def dotAbsFromQKV {seq dHead : Nat}
-    (qAbs kAbs : Fin seq → Fin dHead → Dyadic) : Fin seq → Fin seq → Dyadic :=
-  let rowTasks : Array (Task (Array Dyadic)) :=
+    (qAbs kAbs : Fin seq → Fin dHead → Rat) : Fin seq → Fin seq → Rat :=
+  let rowTasks : Array (Task (Array Rat)) :=
     Array.ofFn (fun q : Fin seq =>
       Task.spawn (fun _ =>
         Array.ofFn (fun k : Fin seq =>
           Sound.Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))))
-  let cache : Array (Array Dyadic) :=
+  let cache : Array (Array Rat) :=
     Array.ofFn (fun q : Fin seq =>
       (rowTasks[q.1]'(by
         simp [rowTasks, q.isLt])).get)
@@ -32,14 +32,14 @@ def dotAbsFromQKV {seq dHead : Nat}
       simp [hrow, k.isLt])
 
 theorem dotAbsFromQKV_spec {seq dHead : Nat}
-    (qAbs kAbs : Fin seq → Fin dHead → Dyadic) :
+    (qAbs kAbs : Fin seq → Fin dHead → Rat) :
     dotAbsFromQKV qAbs kAbs =
-      let rowTasks : Array (Task (Array Dyadic)) :=
+      let rowTasks : Array (Task (Array Rat)) :=
         Array.ofFn (fun q : Fin seq =>
           Task.spawn (fun _ =>
             Array.ofFn (fun k : Fin seq =>
               Sound.Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))))
-      let cache : Array (Array Dyadic) :=
+      let cache : Array (Array Rat) :=
         Array.ofFn (fun q : Fin seq =>
           (rowTasks[q.1]'(by
             simp [rowTasks, q.isLt])).get)

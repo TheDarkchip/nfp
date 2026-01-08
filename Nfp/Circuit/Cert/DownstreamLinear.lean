@@ -18,11 +18,11 @@ namespace Circuit
 /-- Certificate payload for downstream linear error bounds. -/
 structure DownstreamLinearCert where
   /-- Upper bound on the downstream logit-diff error. -/
-  error : Dyadic
+  error : Rat
   /-- Operator gain bound used to justify the error. -/
-  gain : Dyadic
+  gain : Rat
   /-- Input magnitude bound used to justify the error. -/
-  inputBound : Dyadic
+  inputBound : Rat
 
 /-- Arithmetic properties enforced by `checkDownstreamLinearCert`. -/
 structure DownstreamLinearBounds (c : DownstreamLinearCert) : Prop where

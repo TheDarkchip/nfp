@@ -17,20 +17,20 @@ open scoped BigOperators
 
 variable {seq : Nat}
 
-/-- Certificate payload for softmax-margin bounds (Dyadic-valued). -/
+/-- Certificate payload for softmax-margin bounds (Rat-valued). -/
 structure SoftmaxMarginCert (seq : Nat) where
   /-- Weight tolerance. -/
-  eps : Dyadic
+  eps : Rat
   /-- Score margin used to justify weight bounds. -/
-  margin : Dyadic
+  margin : Rat
   /-- Active queries for which bounds are checked. -/
   active : Finset (Fin seq)
   /-- `prev` selector for induction-style attention. -/
   prev : Fin seq → Fin seq
   /-- Score matrix entries. -/
-  scores : Fin seq → Fin seq → Dyadic
+  scores : Fin seq → Fin seq → Rat
   /-- Attention weight entries. -/
-  weights : Fin seq → Fin seq → Dyadic
+  weights : Fin seq → Fin seq → Rat
 
 /-- Boolean checker for softmax-margin certificates. -/
 def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
@@ -55,7 +55,7 @@ def checkSoftmaxMarginCert [NeZero seq] (c : SoftmaxMarginCert seq) : Bool :=
 /-- `checkSoftmaxMarginCert` is sound for `SoftmaxMarginBoundsOn`. -/
 theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
     checkSoftmaxMarginCert c = true →
-      Layers.SoftmaxMarginBoundsOn (Val := Dyadic) c.eps c.margin (fun q => q ∈ c.active)
+      Layers.SoftmaxMarginBoundsOn (Val := Rat) c.eps c.margin (fun q => q ∈ c.active)
         c.prev c.scores c.weights := by
   classical
   intro hcheck

@@ -3,10 +3,11 @@
 import Mathlib.Algebra.BigOperators.Field
 import Mathlib.Algebra.BigOperators.Ring.Finset
 import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Nfp.Core.Basic
 import Mathlib.Data.Real.Basic
 import Nfp.Circuit.Layers.Softmax
+import Nfp.Core.Basic
 import Nfp.Model.Gpt2
+import Nfp.Sound.Bounds.Cache
 import Nfp.Sound.Bounds.LayerNorm
 import Nfp.Sound.Bounds.MatrixNorm
 import Nfp.Sound.Bounds.Mlp
@@ -23,134 +24,11 @@ namespace Bounds
 
 open scoped BigOperators
 
-/-!
-Caching helpers for interval bounds.
--/
-
-/-- Cache a bound function in an array-backed lookup to avoid repeated evaluation. -/
-def cacheBound {n : Nat} (f : Fin n → Dyadic) : Fin n → Dyadic :=
-  let data : Thunk (Array Dyadic) := Thunk.mk (fun _ => Array.ofFn f)
-  fun i => (Thunk.get data)[i.1]'(by
-    have hsize : (Thunk.get data).size = n := by
-      simp [Thunk.get, data]
-    simp [hsize])
-
-/-- `cacheBound` preserves pointwise values. -/
-theorem cacheBound_apply {n : Nat} (f : Fin n → Dyadic) (i : Fin n) :
-    cacheBound f i = f i := by
-  simp [cacheBound, Thunk.get, Array.getElem_ofFn]
-
-/-- Cache a bound function on two indices. -/
-def cacheBound2 {m n : Nat} (f : Fin m → Fin n → Dyadic) : Fin m → Fin n → Dyadic :=
-  let data : Thunk (Array (Thunk (Array Dyadic))) := Thunk.mk (fun _ =>
-    Array.ofFn (fun q => Thunk.mk (fun _ => Array.ofFn (f q))))
-  fun q i =>
-    let rowThunk := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
-    let row := Thunk.get rowThunk
-    row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowThunk, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
-
-/-- `cacheBound2` preserves pointwise values. -/
-theorem cacheBound2_apply {m n : Nat} (f : Fin m → Fin n → Dyadic) (q : Fin m) (i : Fin n) :
-    cacheBound2 f q i = f q i := by
-  simp [cacheBound2, Thunk.get, Array.getElem_ofFn]
-
-/-- Cache a bound function on two indices using row tasks for parallel evaluation. -/
-def cacheBound2Task {m n : Nat} (f : Fin m → Fin n → Dyadic) : Fin m → Fin n → Dyadic :=
-  let rowTasks : Array (Task { row : Array Dyadic // row.size = n }) :=
-    Array.ofFn (fun q : Fin m =>
-      Task.spawn (fun _ => ⟨Array.ofFn (f q), by simp⟩))
-  fun q i =>
-    let row := (rowTasks[q.1]'(by
-      simp [rowTasks, q.isLt])).get
-    row.1[i.1]'(by
-      simp [row.2])
-
-/-- `cacheBound2Task` preserves pointwise values. -/
-theorem cacheBound2Task_apply {m n : Nat} (f : Fin m → Fin n → Dyadic) (q : Fin m) (i : Fin n) :
-    cacheBound2Task f q i = f q i := by
-  classical
-  simp [cacheBound2Task, Task.spawn, Array.getElem_ofFn]
-
-/-- Cache a bound function on two indices using per-element tasks for parallel evaluation. -/
-def cacheBound2TaskElem {m n : Nat} (f : Fin m → Fin n → Dyadic) : Fin m → Fin n → Dyadic :=
-  let rowTasks : Array (Array (Task Dyadic)) :=
-    Array.ofFn (fun q : Fin m =>
-      Array.ofFn (fun i : Fin n =>
-        Task.spawn (fun _ => f q i)))
-  fun q i =>
-    let row := (rowTasks[q.1]'(by
-      simp [rowTasks, q.isLt]))
-    let t := row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowTasks]
-      simp [hsize, i.isLt])
-    t.get
-
-/-- `cacheBound2TaskElem` preserves pointwise values. -/
-theorem cacheBound2TaskElem_apply {m n : Nat} (f : Fin m → Fin n → Dyadic) (q : Fin m) (i : Fin n) :
-    cacheBound2TaskElem f q i = f q i := by
-  classical
-  simp [cacheBound2TaskElem, Task.spawn, Array.getElem_ofFn]
-
-/-- Cache a pair of bound functions on two indices. -/
-def cacheBoundPair2 {m n : Nat}
-    (f : Fin m → (Fin n → Dyadic) × (Fin n → Dyadic)) :
-    (Fin m → Fin n → Dyadic) × (Fin m → Fin n → Dyadic) :=
-  let data : Thunk (Array (Array Dyadic × Array Dyadic)) := Thunk.mk (fun _ =>
-    Array.ofFn (fun q =>
-      let row := f q
-      (Array.ofFn row.1, Array.ofFn row.2)))
-  let lo : Fin m → Fin n → Dyadic := fun q i =>
-    let row := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
-    let loRow := row.1
-    loRow[i.1]'(by
-      have hsize : loRow.size = n := by
-        simp [loRow, row, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
-  let hi : Fin m → Fin n → Dyadic := fun q i =>
-    let row := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
-    let hiRow := row.2
-    hiRow[i.1]'(by
-      have hsize : hiRow.size = n := by
-        simp [hiRow, row, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
-  (lo, hi)
-
-/-- `cacheBoundPair2` preserves pointwise values (first component). -/
-theorem cacheBoundPair2_apply_left {m n : Nat}
-    (f : Fin m → (Fin n → Dyadic) × (Fin n → Dyadic)) (q : Fin m) (i : Fin n) :
-    (cacheBoundPair2 f).1 q i = (f q).1 i := by
-  simp [cacheBoundPair2, Thunk.get, Array.getElem_ofFn]
-
-/-- `cacheBoundPair2` preserves pointwise values (second component). -/
-theorem cacheBoundPair2_apply_right {m n : Nat}
-    (f : Fin m → (Fin n → Dyadic) × (Fin n → Dyadic)) (q : Fin m) (i : Fin n) :
-    (cacheBoundPair2 f).2 q i = (f q).2 i := by
-  simp [cacheBoundPair2, Thunk.get, Array.getElem_ofFn]
-
 /-- Real-valued attention output for a query token and model coordinate. -/
 noncomputable def attentionOutputReal {seq dModel dHead numHeads : Nat} [NeZero seq]
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
+    (attnBias : Fin dModel → Rat)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
     (x : Fin seq → Fin dModel → Real)
     (q : Fin seq) (i : Fin dModel) : Real :=
@@ -168,9 +46,9 @@ noncomputable def attentionOutputReal {seq dModel dHead numHeads : Nat} [NeZero 
 
 /-- Unfolding lemma for `attentionOutputReal`. -/
 theorem attentionOutputReal_def {seq dModel dHead numHeads : Nat} [NeZero seq]
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
+    (attnBias : Fin dModel → Rat)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
     (x : Fin seq → Fin dModel → Real)
     (q : Fin seq) (i : Fin dModel) :
@@ -189,34 +67,34 @@ theorem attentionOutputReal_def {seq dModel dHead numHeads : Nat} [NeZero seq]
 
 /-- Interval bounds for multi-head attention outputs from interval inputs. -/
 def attentionOutputBounds {dModel dHead numHeads : Nat}
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
-    (lo hi : Fin dModel → Dyadic) :
-    (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (attnBias : Fin dModel → Rat)
+    (lo hi : Fin dModel → Rat) :
+    (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let absBound := intervalAbsBound lo hi
   let ln := layerNormAbsBounds eps ln1Gamma ln1Beta absBound
   let lnLo := ln.1
   let lnHi := ln.2
-  let vLo : Fin numHeads → Fin dHead → Dyadic := fun h d =>
+  let vLo : Fin numHeads → Fin dHead → Rat := fun h d =>
     dotIntervalLower (fun j => (heads h).wv j d) lnLo lnHi + (heads h).bv d
-  let vHi : Fin numHeads → Fin dHead → Dyadic := fun h d =>
+  let vHi : Fin numHeads → Fin dHead → Rat := fun h d =>
     dotIntervalUpper (fun j => (heads h).wv j d) lnLo lnHi + (heads h).bv d
-  let headLo : Fin numHeads → Fin dModel → Dyadic := fun h i =>
+  let headLo : Fin numHeads → Fin dModel → Rat := fun h i =>
     dotIntervalLower (fun d => (heads h).wo i d) (vLo h) (vHi h)
-  let headHi : Fin numHeads → Fin dModel → Dyadic := fun h i =>
+  let headHi : Fin numHeads → Fin dModel → Rat := fun h i =>
     dotIntervalUpper (fun d => (heads h).wo i d) (vLo h) (vHi h)
-  let sumLo : Fin dModel → Dyadic := fun i => ∑ h, headLo h i
-  let sumHi : Fin dModel → Dyadic := fun i => ∑ h, headHi h i
+  let sumLo : Fin dModel → Rat := fun i => ∑ h, headLo h i
+  let sumHi : Fin dModel → Rat := fun i => ∑ h, headHi h i
   (fun i => sumLo i + attnBias i, fun i => sumHi i + attnBias i)
 
 /-- `attentionOutputBounds` soundness for real attention outputs. -/
 theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq]
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
+    (attnBias : Fin dModel → Rat)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := attentionOutputBounds eps ln1Gamma ln1Beta heads attnBias lo hi
@@ -233,16 +111,16 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
   let lnHi := lnBounds.2
   let lnOut : Fin seq → Fin dModel → Real := fun k j =>
     layerNormRealOfReal eps ln1Gamma ln1Beta (x k) j
-  let vLo : Fin numHeads → Fin dHead → Dyadic := fun h d =>
+  let vLo : Fin numHeads → Fin dHead → Rat := fun h d =>
     dotIntervalLower (fun j => (heads h).wv j d) lnLo lnHi + (heads h).bv d
-  let vHi : Fin numHeads → Fin dHead → Dyadic := fun h d =>
+  let vHi : Fin numHeads → Fin dHead → Rat := fun h d =>
     dotIntervalUpper (fun j => (heads h).wv j d) lnLo lnHi + (heads h).bv d
-  let headLo : Fin numHeads → Fin dModel → Dyadic := fun h j =>
+  let headLo : Fin numHeads → Fin dModel → Rat := fun h j =>
     dotIntervalLower (fun d => (heads h).wo j d) (vLo h) (vHi h)
-  let headHi : Fin numHeads → Fin dModel → Dyadic := fun h j =>
+  let headHi : Fin numHeads → Fin dModel → Rat := fun h j =>
     dotIntervalUpper (fun d => (heads h).wo j d) (vLo h) (vHi h)
-  let sumLo : Fin dModel → Dyadic := fun j => ∑ h, headLo h j
-  let sumHi : Fin dModel → Dyadic := fun j => ∑ h, headHi h j
+  let sumLo : Fin dModel → Rat := fun j => ∑ h, headLo h j
+  let sumHi : Fin dModel → Rat := fun j => ∑ h, headHi h j
   let headValue : Fin numHeads → Fin seq → Fin dHead → Real := fun h k d =>
     dotProduct (fun j => ((heads h).wv j d : Real)) (lnOut k) + (heads h).bv d
   let headWeights : Fin numHeads → Fin seq → Fin seq → Real := fun h q k =>
@@ -260,9 +138,9 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
       max_abs_le_intervalAbsBound lo hi i
     have hsup_real :
         max |(lo i : Real)| |(hi i : Real)| ≤ (absBound : Real) := by
-      have hsup' : dyadicToReal (max |lo i| |hi i|) ≤ dyadicToReal absBound :=
-        dyadicToReal_le_of_le hsup
-      simpa [dyadicToReal_abs, dyadicToReal_max] using hsup'
+      have hsup' : ratToReal (max |lo i| |hi i|) ≤ ratToReal absBound :=
+        ratToReal_le_of_le hsup
+      simpa [ratToReal_abs, ratToReal_max] using hsup'
     exact le_trans hbound hsup_real
   have hln_bounds : ∀ q i, (lnLo i : Real) ≤ lnOut q i ∧ lnOut q i ≤ (lnHi i : Real) := by
     intro q i
@@ -369,12 +247,12 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
       have hsum :=
         Finset.sum_le_sum (s := (Finset.univ : Finset (Fin numHeads)))
           (fun h _ => (hproj_bounds h q i).1)
-      simpa [sumLo, Linear.dyadicToReal_sum_univ] using hsum
+      simpa [sumLo, Linear.ratToReal_sum_univ] using hsum
     have hhigh : ∑ h, headProj h q i ≤ (sumHi i : Real) := by
       have hsum :=
         Finset.sum_le_sum (s := (Finset.univ : Finset (Fin numHeads)))
           (fun h _ => (hproj_bounds h q i).2)
-      simpa [sumHi, Linear.dyadicToReal_sum_univ] using hsum
+      simpa [sumHi, Linear.ratToReal_sum_univ] using hsum
     exact ⟨hlow, hhigh⟩
   have hlow :
       (sumLo i : Real) + (attnBias i : Real) ≤
@@ -404,21 +282,21 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
 
 /-- Interval bounds for the attention residual path. -/
 def attentionResidualBounds {dModel dHead numHeads : Nat}
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
-    (lo hi : Fin dModel → Dyadic) :
-    (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (attnBias : Fin dModel → Rat)
+    (lo hi : Fin dModel → Rat) :
+    (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let attn := attentionOutputBounds eps ln1Gamma ln1Beta heads attnBias lo hi
   (fun i => lo i + attn.1 i, fun i => hi i + attn.2 i)
 
 /-- `attentionResidualBounds` soundness for attention residual outputs. -/
 theorem attentionResidualBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq]
-    (eps : Dyadic) (ln1Gamma ln1Beta : Fin dModel → Dyadic)
+    (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
+    (attnBias : Fin dModel → Rat)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := attentionResidualBounds eps ln1Gamma ln1Beta heads attnBias lo hi
@@ -441,14 +319,14 @@ theorem attentionResidualBounds_spec {seq dModel dHead numHeads : Nat} [NeZero s
 
 /-- Interval bounds for a full transformer layer (attention + MLP). -/
 def transformerLayerBounds {dModel dHead numHeads hidden : Nat}
-    (eps : Dyadic)
-    (ln1Gamma ln1Beta ln2Gamma ln2Beta : Fin dModel → Dyadic)
+    (eps : Rat)
+    (ln1Gamma ln1Beta ln2Gamma ln2Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
-    (mlpWIn : Fin dModel → Fin hidden → Dyadic) (mlpBIn : Fin hidden → Dyadic)
-    (mlpWOut : Fin hidden → Fin dModel → Dyadic) (mlpBOut : Fin dModel → Dyadic)
-    (lo hi : Fin dModel → Dyadic) :
-    (Fin dModel → Dyadic) × (Fin dModel → Dyadic) :=
+    (attnBias : Fin dModel → Rat)
+    (mlpWIn : Fin dModel → Fin hidden → Rat) (mlpBIn : Fin hidden → Rat)
+    (mlpWOut : Fin hidden → Fin dModel → Rat) (mlpBOut : Fin dModel → Rat)
+    (lo hi : Fin dModel → Rat) :
+    (Fin dModel → Rat) × (Fin dModel → Rat) :=
   let loCached := cacheBound lo
   let hiCached := cacheBound hi
   let attn := attentionResidualBounds eps ln1Gamma ln1Beta heads attnBias loCached hiCached
@@ -462,14 +340,14 @@ def transformerLayerBounds {dModel dHead numHeads hidden : Nat}
 
 /-- `transformerLayerBounds` soundness for full transformer-layer outputs. -/
 theorem transformerLayerBounds_spec {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
-    (eps : Dyadic)
-    (ln1Gamma ln1Beta ln2Gamma ln2Beta : Fin dModel → Dyadic)
+    (eps : Rat)
+    (ln1Gamma ln1Beta ln2Gamma ln2Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
-    (attnBias : Fin dModel → Dyadic)
-    (mlpWIn : Fin dModel → Fin hidden → Dyadic) (mlpBIn : Fin hidden → Dyadic)
-    (mlpWOut : Fin hidden → Fin dModel → Dyadic) (mlpBOut : Fin dModel → Dyadic)
+    (attnBias : Fin dModel → Rat)
+    (mlpWIn : Fin dModel → Fin hidden → Rat) (mlpBIn : Fin hidden → Rat)
+    (mlpWOut : Fin hidden → Fin dModel → Rat) (mlpBOut : Fin dModel → Rat)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
-    (lo hi : Fin dModel → Dyadic) (x : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
     let bounds := transformerLayerBounds eps ln1Gamma ln1Beta ln2Gamma ln2Beta heads attnBias

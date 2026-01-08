@@ -16,9 +16,9 @@ namespace Pure
 open Nfp.Circuit
 
 private structure DownstreamLinearParseState where
-  error : Option Dyadic
-  gain : Option Dyadic
-  inputBound : Option Dyadic
+  error : Option Rat
+  gain : Option Rat
+  inputBound : Option Rat
 
 private def initDownstreamLinearState : DownstreamLinearParseState :=
   { error := none, gain := none, inputBound := none }
@@ -30,17 +30,17 @@ private def parseDownstreamLinearLine (st : DownstreamLinearParseState)
       if st.error.isSome then
         throw "duplicate error entry"
       else
-        return { st with error := some (← parseDyadic val) }
+        return { st with error := some (← parseRat val) }
   | ["gain", val] =>
       if st.gain.isSome then
         throw "duplicate gain entry"
       else
-        return { st with gain := some (← parseDyadic val) }
+        return { st with gain := some (← parseRat val) }
   | ["input-bound", val] =>
       if st.inputBound.isSome then
         throw "duplicate input-bound entry"
       else
-        return { st with inputBound := some (← parseDyadic val) }
+        return { st with inputBound := some (← parseRat val) }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
@@ -87,20 +87,20 @@ private def matAllSome {α : Type} (mat : Array (Array (Option α))) : Bool :=
 /-- Raw downstream matrix payload with an input bound. -/
 structure DownstreamMatrixRaw (rows cols : Nat) where
   /-- Input magnitude bound. -/
-  inputBound : Dyadic
+  inputBound : Rat
   /-- Matrix entries. -/
-  entries : Fin rows → Fin cols → Dyadic
+  entries : Fin rows → Fin cols → Rat
 
 private structure DownstreamMatrixParseState (rows cols : Nat) where
-  inputBound : Option Dyadic
-  entries : Fin rows → Fin cols → Option Dyadic
+  inputBound : Option Rat
+  entries : Fin rows → Fin cols → Option Rat
 
 private def initDownstreamMatrixState (rows cols : Nat) :
     DownstreamMatrixParseState rows cols :=
   { inputBound := none, entries := fun _ _ => none }
 
-private def setRectEntry {rows cols : Nat} (mat : Fin rows → Fin cols → Option Dyadic)
-    (i j : Nat) (v : Dyadic) : Except String (Fin rows → Fin cols → Option Dyadic) := do
+private def setRectEntry {rows cols : Nat} (mat : Fin rows → Fin cols → Option Rat)
+    (i j : Nat) (v : Rat) : Except String (Fin rows → Fin cols → Option Rat) := do
   if hi : i < rows then
     if hj : j < cols then
       let iFin : Fin rows := ⟨i, hi⟩
@@ -109,7 +109,7 @@ private def setRectEntry {rows cols : Nat} (mat : Fin rows → Fin cols → Opti
       | some _ =>
           throw s!"duplicate matrix entry at ({i}, {j})"
       | none =>
-          let mat' : Fin rows → Fin cols → Option Dyadic := fun i' j' =>
+          let mat' : Fin rows → Fin cols → Option Rat := fun i' j' =>
             if i' = iFin then
               if j' = jFin then
                 some v
@@ -131,9 +131,9 @@ private def parseDownstreamMatrixLine {rows cols : Nat}
       if st.inputBound.isSome then
         throw "duplicate input-bound entry"
       else
-        return { st with inputBound := some (← parseDyadic val) }
+        return { st with inputBound := some (← parseRat val) }
   | ["w", i, j, val] =>
-      let mat ← setRectEntry st.entries (← parseNat i) (← parseNat j) (← parseDyadic val)
+      let mat ← setRectEntry st.entries (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with entries := mat }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
@@ -148,7 +148,7 @@ private def finalizeDownstreamMatrixState {rows cols : Nat}
   if !finsetAll (Finset.univ : Finset (Fin rows)) (fun i =>
       finsetAll (Finset.univ : Finset (Fin cols)) (fun j => (st.entries i j).isSome)) then
     throw "missing matrix entries"
-  let entries : Fin rows → Fin cols → Dyadic := fun i j =>
+  let entries : Fin rows → Fin cols → Rat := fun i j =>
     (st.entries i j).getD 0
   return { inputBound := inputBound, entries := entries }
 

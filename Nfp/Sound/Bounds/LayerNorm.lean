@@ -14,9 +14,9 @@ import Nfp.Sound.Bounds.LayerNorm.MeanVariance
 import Nfp.Sound.Linear.FinFold
 
 /-!
-LayerNorm interval bounds for dyadic inputs.
+LayerNorm interval bounds for rational inputs.
 
-This module computes dyadic interval bounds for LayerNorm outputs and proves
+This module computes rational interval bounds for LayerNorm outputs and proves
 those bounds sound for real-valued LayerNorm semantics.
 -/
 
@@ -30,61 +30,61 @@ open scoped BigOperators
 
 /-! Square-root bounds. -/
 
-lemma dyadic_nat_cast_nonneg (n : Nat) : (0 : Dyadic) ≤ (n : Dyadic) := by
+lemma rat_nat_cast_nonneg (n : Nat) : (0 : Rat) ≤ (n : Rat) := by
   simp
 
-lemma dyadic_nat_cast_pos {n : Nat} (h : 0 < n) : (0 : Dyadic) < (n : Dyadic) := by
-  exact (Nat.cast_pos (α := Dyadic)).2 h
+lemma rat_nat_cast_pos {n : Nat} (h : 0 < n) : (0 : Rat) < (n : Rat) := by
+  exact (Nat.cast_pos (α := Rat)).2 h
 
 /-- Base rational lower bound for a square root. -/
-def sqrtLowerBase (q : Dyadic) : Dyadic :=
-  let num := q.toRat.num.natAbs
-  let den := q.toRat.den
+def sqrtLowerBase (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
   let a := Nat.sqrt num
   let b := Nat.sqrt den
-  dyadicOfRatDown ((a : Rat) / (b + 1))
+  ratRoundDown ((a : Rat) / (b + 1))
 
 /-- Base rational upper bound for a square root. -/
-def sqrtUpperBase (q : Dyadic) : Dyadic :=
-  let num := q.toRat.num.natAbs
-  let den := q.toRat.den
+def sqrtUpperBase (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
   let a := Nat.sqrt num
   let b := Nat.sqrt den
-  dyadicOfRatUp ((a + 1 : Rat) / b)
+  ratRoundUp ((a + 1 : Rat) / b)
 
 /-- Alternate rational lower bound for a square root. -/
-def sqrtLowerAlt (q : Dyadic) : Dyadic :=
-  let num := q.toRat.num.natAbs
-  let den := q.toRat.den
+def sqrtLowerAlt (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
   let a := Nat.sqrt (num * den)
-  dyadicOfRatDown ((a : Rat) / den)
+  ratRoundDown ((a : Rat) / den)
 
 /-- Alternate rational upper bound for a square root. -/
-def sqrtUpperAlt (q : Dyadic) : Dyadic :=
-  let num := q.toRat.num.natAbs
-  let den := q.toRat.den
+def sqrtUpperAlt (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
   let a := Nat.sqrt (num * den)
-  dyadicOfRatUp ((a + 1 : Rat) / den)
+  ratRoundUp ((a + 1 : Rat) / den)
 
-/-- Dyadicional lower bound for a square root (tighter of two bounds). -/
-def sqrtLower (q : Dyadic) : Dyadic :=
+/-- Rational lower bound for a square root (tighter of two bounds). -/
+def sqrtLower (q : Rat) : Rat :=
   max (sqrtLowerBase q) (sqrtLowerAlt q)
 
-/-- Dyadicional upper bound for a square root (tighter of two bounds). -/
-def sqrtUpper (q : Dyadic) : Dyadic :=
+/-- Rational upper bound for a square root (tighter of two bounds). -/
+def sqrtUpper (q : Rat) : Rat :=
   min (sqrtUpperBase q) (sqrtUpperAlt q)
 
 /-- `sqrtLowerBase` is nonnegative. -/
-theorem sqrtLowerBase_nonneg (q : Dyadic) : 0 ≤ sqrtLowerBase q := by
+theorem sqrtLowerBase_nonneg (q : Rat) : 0 ≤ sqrtLowerBase q := by
   classical
   unfold sqrtLowerBase
-  have hnum : 0 ≤ (Nat.sqrt q.toRat.num.natAbs : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt q.toRat.num.natAbs))
-  have hden : 0 ≤ (Nat.sqrt q.toRat.den + 1 : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt q.toRat.den + 1))
-  have hrat : 0 ≤ (Nat.sqrt q.toRat.num.natAbs : Rat) / (Nat.sqrt q.toRat.den + 1) := by
+  have hnum : 0 ≤ (Nat.sqrt q.num.natAbs : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt q.num.natAbs))
+  have hden : 0 ≤ (Nat.sqrt q.den + 1 : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt q.den + 1))
+  have hrat : 0 ≤ (Nat.sqrt q.num.natAbs : Rat) / (Nat.sqrt q.den + 1) := by
     exact div_nonneg hnum hden
-  exact dyadicOfRatDown_nonneg hrat
+  exact ratRoundDown_nonneg hrat
 
 /-! Strict positivity helpers. -/
 
@@ -92,107 +92,107 @@ theorem sqrtLowerBase_nonneg (q : Dyadic) : 0 ≤ sqrtLowerBase q := by
 
 
 /-- `sqrtUpperBase` is nonnegative. -/
-theorem sqrtUpperBase_nonneg (q : Dyadic) : 0 ≤ sqrtUpperBase q := by
+theorem sqrtUpperBase_nonneg (q : Rat) : 0 ≤ sqrtUpperBase q := by
   classical
   unfold sqrtUpperBase
-  have hnum : 0 ≤ (Nat.sqrt q.toRat.num.natAbs + 1 : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt q.toRat.num.natAbs + 1))
-  have hden : 0 ≤ (Nat.sqrt q.toRat.den : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt q.toRat.den))
+  have hnum : 0 ≤ (Nat.sqrt q.num.natAbs + 1 : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt q.num.natAbs + 1))
+  have hden : 0 ≤ (Nat.sqrt q.den : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt q.den))
   have hrat :
-      0 ≤ (Nat.sqrt q.toRat.num.natAbs + 1 : Rat) / (Nat.sqrt q.toRat.den) := by
+      0 ≤ (Nat.sqrt q.num.natAbs + 1 : Rat) / (Nat.sqrt q.den) := by
     exact div_nonneg hnum hden
-  exact dyadicOfRatUp_nonneg hrat
+  exact ratRoundUp_nonneg hrat
 
 /-- `sqrtUpperBase` is always positive. -/
-theorem sqrtUpperBase_pos (q : Dyadic) : 0 < sqrtUpperBase q := by
+theorem sqrtUpperBase_pos (q : Rat) : 0 < sqrtUpperBase q := by
   classical
   unfold sqrtUpperBase
-  have hnum_pos : (0 : Rat) < (Nat.sqrt q.toRat.num.natAbs + 1 : Rat) := by
-    exact_mod_cast (Nat.succ_pos (Nat.sqrt q.toRat.num.natAbs))
-  have hden_pos : (0 : Rat) < (Nat.sqrt q.toRat.den : Rat) := by
-    have hden : 0 < q.toRat.den := q.toRat.den_pos
+  have hnum_pos : (0 : Rat) < (Nat.sqrt q.num.natAbs + 1 : Rat) := by
+    exact_mod_cast (Nat.succ_pos (Nat.sqrt q.num.natAbs))
+  have hden_pos : (0 : Rat) < (Nat.sqrt q.den : Rat) := by
+    have hden : 0 < q.den := q.den_pos
     exact_mod_cast (Nat.sqrt_pos.2 hden)
   have hrat_pos :
-      (0 : Rat) < (Nat.sqrt q.toRat.num.natAbs + 1 : Rat) / (Nat.sqrt q.toRat.den) := by
+      (0 : Rat) < (Nat.sqrt q.num.natAbs + 1 : Rat) / (Nat.sqrt q.den) := by
     exact div_pos hnum_pos hden_pos
-  exact dyadicOfRatUp_pos hrat_pos
+  exact ratRoundUp_pos hrat_pos
 
 /-! Alternate bounds. -/
 
 /-- `sqrtLowerAlt` is nonnegative. -/
-theorem sqrtLowerAlt_nonneg (q : Dyadic) : 0 ≤ sqrtLowerAlt q := by
+theorem sqrtLowerAlt_nonneg (q : Rat) : 0 ≤ sqrtLowerAlt q := by
   classical
   unfold sqrtLowerAlt
-  have hnum : 0 ≤ (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den)))
-  have hden : 0 ≤ (q.toRat.den : Rat) := by
-    exact_mod_cast (Nat.zero_le q.toRat.den)
+  have hnum : 0 ≤ (Nat.sqrt (q.num.natAbs * q.den) : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt (q.num.natAbs * q.den)))
+  have hden : 0 ≤ (q.den : Rat) := by
+    exact_mod_cast (Nat.zero_le q.den)
   have hrat :
-      0 ≤ (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) : Rat) / q.toRat.den := by
+      0 ≤ (Nat.sqrt (q.num.natAbs * q.den) : Rat) / q.den := by
     exact div_nonneg hnum hden
-  exact dyadicOfRatDown_nonneg hrat
+  exact ratRoundDown_nonneg hrat
 
 
 /-- `sqrtUpperAlt` is nonnegative. -/
-theorem sqrtUpperAlt_nonneg (q : Dyadic) : 0 ≤ sqrtUpperAlt q := by
+theorem sqrtUpperAlt_nonneg (q : Rat) : 0 ≤ sqrtUpperAlt q := by
   classical
   unfold sqrtUpperAlt
-  have hnum : 0 ≤ (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) + 1 : Rat) := by
-    exact_mod_cast (Nat.zero_le (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) + 1))
-  have hden : 0 ≤ (q.toRat.den : Rat) := by
-    exact_mod_cast (Nat.zero_le q.toRat.den)
+  have hnum : 0 ≤ (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) := by
+    exact_mod_cast (Nat.zero_le (Nat.sqrt (q.num.natAbs * q.den) + 1))
+  have hden : 0 ≤ (q.den : Rat) := by
+    exact_mod_cast (Nat.zero_le q.den)
   have hrat :
-      0 ≤ (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) + 1 : Rat) / q.toRat.den := by
+      0 ≤ (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) / q.den := by
     exact div_nonneg hnum hden
-  exact dyadicOfRatUp_nonneg hrat
+  exact ratRoundUp_nonneg hrat
 
 /-- `sqrtUpperAlt` is always positive. -/
-theorem sqrtUpperAlt_pos (q : Dyadic) : 0 < sqrtUpperAlt q := by
+theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
   classical
   unfold sqrtUpperAlt
   have hnum_pos :
-      (0 : Rat) < (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) + 1 : Rat) := by
-    exact_mod_cast (Nat.succ_pos (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den)))
-  have hden_pos : (0 : Rat) < (q.toRat.den : Rat) := by
-    exact_mod_cast q.toRat.den_pos
+      (0 : Rat) < (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) := by
+    exact_mod_cast (Nat.succ_pos (Nat.sqrt (q.num.natAbs * q.den)))
+  have hden_pos : (0 : Rat) < (q.den : Rat) := by
+    exact_mod_cast q.den_pos
   have hrat_pos :
       (0 : Rat) <
-        (Nat.sqrt (q.toRat.num.natAbs * q.toRat.den) + 1 : Rat) / q.toRat.den := by
+        (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) / q.den := by
     exact div_pos hnum_pos hden_pos
-  exact dyadicOfRatUp_pos hrat_pos
+  exact ratRoundUp_pos hrat_pos
 
 /-! Combined bounds. -/
 
 /-- `sqrtLower` is nonnegative. -/
-theorem sqrtLower_nonneg (q : Dyadic) : 0 ≤ sqrtLower q := by
+theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
   have hbase : 0 ≤ sqrtLowerBase q := sqrtLowerBase_nonneg q
   exact le_trans hbase (le_max_left _ _)
 
 
 /-- `sqrtUpper` is nonnegative. -/
-theorem sqrtUpper_nonneg (q : Dyadic) : 0 ≤ sqrtUpper q := by
+theorem sqrtUpper_nonneg (q : Rat) : 0 ≤ sqrtUpper q := by
   have hbase : 0 ≤ sqrtUpperBase q := sqrtUpperBase_nonneg q
   have halt : 0 ≤ sqrtUpperAlt q := sqrtUpperAlt_nonneg q
   exact le_min hbase halt
 
 /-- `sqrtUpper` is always positive. -/
-theorem sqrtUpper_pos (q : Dyadic) : 0 < sqrtUpper q := by
+theorem sqrtUpper_pos (q : Rat) : 0 < sqrtUpper q := by
   have hbase : 0 < sqrtUpperBase q := sqrtUpperBase_pos q
   have halt : 0 < sqrtUpperAlt q := sqrtUpperAlt_pos q
   exact lt_min hbase halt
 
 /-- Square-root lower bound in reals. -/
-theorem sqrtLowerBase_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
+theorem sqrtLowerBase_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     (sqrtLowerBase q : Real) ≤ Real.sqrt (q : Real) := by
   classical
   -- Set up numerator/denominator witnesses.
-  set num : Nat := q.toRat.num.natAbs
-  set den : Nat := q.toRat.den
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
   set a : Nat := Nat.sqrt num
   set b : Nat := Nat.sqrt den
   have hden_pos : 0 < (den : Real) := by
-    exact_mod_cast q.toRat.den_pos
+    exact_mod_cast q.den_pos
   have hbpos : 0 < (b + 1 : Real) := by
     exact_mod_cast (Nat.succ_pos b)
   have hnum_le : (a ^ 2 : Real) ≤ num := by
@@ -210,16 +210,14 @@ theorem sqrtLowerBase_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
   have hpow : ((a : Real) / (b + 1 : Real)) ^ 2 = (a ^ 2 : Real) / (b + 1) ^ 2 := by
     simp [pow_two, div_mul_div_comm]
   have hq_cast : (q : Real) = (num : Real) / den := by
-    have hnum_nonneg : 0 ≤ q.toRat.num := by
-      have hq' : (0 : Rat) ≤ q.toRat :=
-        (Dyadic.toRat_le_toRat_iff (x := 0) (y := q)).2 hq
-      exact (Rat.num_nonneg (q := q.toRat)).2 hq'
-    have hnum_eq : (num : Int) = q.toRat.num := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
       simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
-    have hnum_cast : (q.toRat.num : Real) = (num : Real) := by
+    have hnum_cast : (q.num : Real) = (num : Real) := by
       exact_mod_cast hnum_eq.symm
-    have hq_rat : (q : Real) = (q.toRat.num : Real) / q.toRat.den := by
-      simp [dyadicToReal, Rat.cast_def]
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
     simpa [hnum_cast, den] using hq_rat
   have hsq : ((a : Real) / (b + 1 : Real)) ^ 2 ≤ (q : Real) := by
     simpa [hpow, hq_cast, den, num] using hdiv
@@ -228,31 +226,31 @@ theorem sqrtLowerBase_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
     have hden_nonneg : 0 ≤ (b + 1 : Real) := by exact_mod_cast (Nat.zero_le (b + 1))
     exact div_nonneg hnum_nonneg hden_nonneg
   have hq_nonneg : 0 ≤ (q : Real) := by
-    exact dyadicToReal_nonneg_of_nonneg hq
+    exact ratToReal_nonneg_of_nonneg hq
   have hle : (a : Real) / (b + 1 : Real) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
   have hdown :
       (sqrtLowerBase q : Real) ≤ (a : Real) / (b + 1 : Real) := by
     have hdown' :
-        dyadicToReal (dyadicOfRatDown ((a : Rat) / (b + 1))) ≤
+        ratToReal (ratRoundDown ((a : Rat) / (b + 1))) ≤
           (a : Real) / (b + 1 : Real) := by
-      simpa using dyadicOfRatDown_le_real ((a : Rat) / (b + 1))
+      simpa using ratRoundDown_le_real ((a : Rat) / (b + 1))
     simpa [sqrtLowerBase, num, den, a, b] using hdown'
   exact le_trans hdown hle
 
 /-- Square-root upper bound in reals. -/
-theorem real_sqrt_le_sqrtUpperBase {q : Dyadic} (hq : 0 ≤ q) :
+theorem real_sqrt_le_sqrtUpperBase {q : Rat} (hq : 0 ≤ q) :
     Real.sqrt (q : Real) ≤ (sqrtUpperBase q : Real) := by
   classical
-  set num : Nat := q.toRat.num.natAbs
-  set den : Nat := q.toRat.den
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
   set a : Nat := Nat.sqrt num
   set b : Nat := Nat.sqrt den
   have hden_pos : 0 < (den : Real) := by
-    exact_mod_cast q.toRat.den_pos
+    exact_mod_cast q.den_pos
   have hbpos : 0 < (b : Real) := by
     have hb : 0 < b := by
-      have hden : 0 < den := q.toRat.den_pos
+      have hden : 0 < den := q.den_pos
       exact (Nat.sqrt_pos).2 hden
     exact_mod_cast hb
   have hnum_lt : (num : Real) < (a + 1) ^ 2 := by
@@ -272,16 +270,14 @@ theorem real_sqrt_le_sqrtUpperBase {q : Dyadic} (hq : 0 ≤ q) :
   have hpow : ((a + 1 : Real) / (b : Real)) ^ 2 = (a + 1) ^ 2 / (b : Real) ^ 2 := by
     simp [pow_two, div_mul_div_comm]
   have hq_cast : (q : Real) = (num : Real) / den := by
-    have hnum_nonneg : 0 ≤ q.toRat.num := by
-      have hq' : (0 : Rat) ≤ q.toRat :=
-        (Dyadic.toRat_le_toRat_iff (x := 0) (y := q)).2 hq
-      exact (Rat.num_nonneg (q := q.toRat)).2 hq'
-    have hnum_eq : (num : Int) = q.toRat.num := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
       simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
-    have hnum_cast : (q.toRat.num : Real) = (num : Real) := by
+    have hnum_cast : (q.num : Real) = (num : Real) := by
       exact_mod_cast hnum_eq.symm
-    have hq_rat : (q : Real) = (q.toRat.num : Real) / q.toRat.den := by
-      simp [dyadicToReal, Rat.cast_def]
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
     simpa [hnum_cast, den] using hq_rat
   have hsq : (q : Real) ≤ ((a + 1 : Real) / (b : Real)) ^ 2 := by
     simpa [hpow, hq_cast, den, num] using hdiv
@@ -295,20 +291,20 @@ theorem real_sqrt_le_sqrtUpperBase {q : Dyadic} (hq : 0 ≤ q) :
       (a + 1 : Real) / (b : Real) ≤ (sqrtUpperBase q : Real) := by
     have hup' :
         (a + 1 : Real) / (b : Real) ≤
-          dyadicToReal (dyadicOfRatUp ((a + 1 : Rat) / b)) := by
-      simpa using real_le_dyadicOfRatUp ((a + 1 : Rat) / b)
+          ratToReal (ratRoundUp ((a + 1 : Rat) / b)) := by
+      simpa using real_le_ratRoundUp ((a + 1 : Rat) / b)
     simpa [sqrtUpperBase, num, den, a, b] using hup'
   exact le_trans hle hup
 
 /-- Alternate square-root lower bound in reals. -/
-theorem sqrtLowerAlt_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
+theorem sqrtLowerAlt_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     (sqrtLowerAlt q : Real) ≤ Real.sqrt (q : Real) := by
   classical
-  set num : Nat := q.toRat.num.natAbs
-  set den : Nat := q.toRat.den
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
   set a : Nat := Nat.sqrt (num * den)
   have hden_pos : 0 < (den : Real) := by
-    exact_mod_cast q.toRat.den_pos
+    exact_mod_cast q.den_pos
   have hnumden_le : (a ^ 2 : Real) ≤ (num * den : Nat) := by
     exact_mod_cast (Nat.sqrt_le' (num * den))
   have hmul : (a ^ 2 : Real) ≤ (num : Real) * den := by
@@ -324,18 +320,16 @@ theorem sqrtLowerAlt_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
       exact mul_le_mul_of_nonneg_right hmul hden_sq_nonneg
     exact (div_le_div_iff₀ hden_pos2 hden_pos2).2 hmul'
   have hden_ne : (den : Real) ≠ 0 := by
-    exact_mod_cast q.toRat.den_pos.ne'
+    exact_mod_cast q.den_pos.ne'
   have hq_cast : (q : Real) = (num : Real) * den / (den : Real) ^ 2 := by
-    have hnum_nonneg : 0 ≤ q.toRat.num := by
-      have hq' : (0 : Rat) ≤ q.toRat :=
-        (Dyadic.toRat_le_toRat_iff (x := 0) (y := q)).2 hq
-      exact (Rat.num_nonneg (q := q.toRat)).2 hq'
-    have hnum_eq : (num : Int) = q.toRat.num := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
       simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
-    have hnum_cast : (q.toRat.num : Real) = (num : Real) := by
+    have hnum_cast : (q.num : Real) = (num : Real) := by
       exact_mod_cast hnum_eq.symm
-    have hq_rat : (q : Real) = (q.toRat.num : Real) / q.toRat.den := by
-      simp [dyadicToReal, Rat.cast_def]
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
     have hq_eq :
         (num : Real) / den = (num : Real) * den / (den : Real) ^ 2 := by
       field_simp [hden_ne]
@@ -347,27 +341,27 @@ theorem sqrtLowerAlt_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
     have hden_nonneg : 0 ≤ (den : Real) := by exact_mod_cast (Nat.zero_le den)
     exact div_nonneg hnum_nonneg hden_nonneg
   have hq_nonneg : 0 ≤ (q : Real) := by
-    exact dyadicToReal_nonneg_of_nonneg hq
+    exact ratToReal_nonneg_of_nonneg hq
   have hle : (a : Real) / (den : Real) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
   have hdown :
       (sqrtLowerAlt q : Real) ≤ (a : Real) / (den : Real) := by
     have hdown' :
-        dyadicToReal (dyadicOfRatDown ((a : Rat) / den)) ≤
+        ratToReal (ratRoundDown ((a : Rat) / den)) ≤
           (a : Real) / (den : Real) := by
-      simpa using dyadicOfRatDown_le_real ((a : Rat) / den)
+      simpa using ratRoundDown_le_real ((a : Rat) / den)
     simpa [sqrtLowerAlt, num, den, a] using hdown'
   exact le_trans hdown hle
 
 /-- Alternate square-root upper bound in reals. -/
-theorem real_sqrt_le_sqrtUpperAlt {q : Dyadic} (hq : 0 ≤ q) :
+theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
     Real.sqrt (q : Real) ≤ (sqrtUpperAlt q : Real) := by
   classical
-  set num : Nat := q.toRat.num.natAbs
-  set den : Nat := q.toRat.den
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
   set a : Nat := Nat.sqrt (num * den)
   have hden_pos : 0 < (den : Real) := by
-    exact_mod_cast q.toRat.den_pos
+    exact_mod_cast q.den_pos
   have hnumden_lt : (num * den : Real) < (a + 1) ^ 2 := by
     exact_mod_cast (Nat.lt_succ_sqrt' (num * den))
   have hmul : (num : Real) * den ≤ (a + 1 : Real) ^ 2 := by
@@ -383,18 +377,16 @@ theorem real_sqrt_le_sqrtUpperAlt {q : Dyadic} (hq : 0 ≤ q) :
       exact mul_le_mul_of_nonneg_right hmul hden_sq_nonneg
     exact (div_le_div_iff₀ hden_pos2 hden_pos2).2 hmul'
   have hden_ne : (den : Real) ≠ 0 := by
-    exact_mod_cast q.toRat.den_pos.ne'
+    exact_mod_cast q.den_pos.ne'
   have hq_cast : (q : Real) = (num : Real) * den / (den : Real) ^ 2 := by
-    have hnum_nonneg : 0 ≤ q.toRat.num := by
-      have hq' : (0 : Rat) ≤ q.toRat :=
-        (Dyadic.toRat_le_toRat_iff (x := 0) (y := q)).2 hq
-      exact (Rat.num_nonneg (q := q.toRat)).2 hq'
-    have hnum_eq : (num : Int) = q.toRat.num := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
       simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
-    have hnum_cast : (q.toRat.num : Real) = (num : Real) := by
+    have hnum_cast : (q.num : Real) = (num : Real) := by
       exact_mod_cast hnum_eq.symm
-    have hq_rat : (q : Real) = (q.toRat.num : Real) / q.toRat.den := by
-      simp [dyadicToReal, Rat.cast_def]
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
     have hq_eq :
         (num : Real) / den = (num : Real) * den / (den : Real) ^ 2 := by
       field_simp [hden_ne]
@@ -415,34 +407,34 @@ theorem real_sqrt_le_sqrtUpperAlt {q : Dyadic} (hq : 0 ≤ q) :
       (a + 1 : Real) / (den : Real) ≤ (sqrtUpperAlt q : Real) := by
     have hup' :
         (a + 1 : Real) / (den : Real) ≤
-          dyadicToReal (dyadicOfRatUp ((a + 1 : Rat) / den)) := by
-      simpa using real_le_dyadicOfRatUp ((a + 1 : Rat) / den)
+          ratToReal (ratRoundUp ((a + 1 : Rat) / den)) := by
+      simpa using real_le_ratRoundUp ((a + 1 : Rat) / den)
     simpa [sqrtUpperAlt, num, den, a] using hup'
   exact le_trans hle hup
 
 /-- Square-root lower bound in reals (tighter of two bounds). -/
-theorem sqrtLower_le_real_sqrt {q : Dyadic} (hq : 0 ≤ q) :
+theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     (sqrtLower q : Real) ≤ Real.sqrt (q : Real) := by
   have hbase := sqrtLowerBase_le_real_sqrt (q := q) hq
   have halt := sqrtLowerAlt_le_real_sqrt (q := q) hq
   simpa [sqrtLower] using (max_le_iff).2 ⟨hbase, halt⟩
 
 /-- Square-root upper bound in reals (tighter of two bounds). -/
-theorem real_sqrt_le_sqrtUpper {q : Dyadic} (hq : 0 ≤ q) :
+theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
     Real.sqrt (q : Real) ≤ (sqrtUpper q : Real) := by
   have hbase := real_sqrt_le_sqrtUpperBase (q := q) hq
   have halt := real_sqrt_le_sqrtUpperAlt (q := q) hq
   simpa [sqrtUpper] using (le_min_iff).2 ⟨hbase, halt⟩
 
 /-- Bounds for multiplying a scalar by a bounded value. -/
-def scaleInterval (x lo hi : Dyadic) : Dyadic × Dyadic :=
+def scaleInterval (x lo hi : Rat) : Rat × Rat :=
   if 0 ≤ x then
     (x * lo, x * hi)
   else
     (x * hi, x * lo)
 
 /-- `scaleInterval` bounds a product. -/
-theorem scaleInterval_bounds {x lo hi y : Dyadic}
+theorem scaleInterval_bounds {x lo hi y : Rat}
     (hlo : lo ≤ y) (hhi : y ≤ hi) :
     let bounds := scaleInterval x lo hi
     bounds.1 ≤ x * y ∧ x * y ≤ bounds.2 := by
@@ -460,30 +452,30 @@ theorem scaleInterval_bounds {x lo hi y : Dyadic}
     simp [scaleInterval, hx, h1, h2]
 
 /-- `scaleInterval` bounds interpreted in the reals. -/
-theorem scaleInterval_bounds_real {x lo hi : Dyadic} {y : Real}
+theorem scaleInterval_bounds_real {x lo hi : Rat} {y : Real}
     (hlo : (lo : Real) ≤ y) (hhi : y ≤ (hi : Real)) :
     let bounds := scaleInterval x lo hi
     (bounds.1 : Real) ≤ (x : Real) * y ∧ (x : Real) * y ≤ (bounds.2 : Real) := by
   by_cases hx : 0 ≤ x
   · have h1 : (x : Real) * (lo : Real) ≤ (x : Real) * y := by
-      have hx' : 0 ≤ (x : Real) := dyadicToReal_nonneg_of_nonneg hx
+      have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
       exact mul_le_mul_of_nonneg_left hlo hx'
     have h2 : (x : Real) * y ≤ (x : Real) * (hi : Real) := by
-      have hx' : 0 ≤ (x : Real) := dyadicToReal_nonneg_of_nonneg hx
+      have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
       exact mul_le_mul_of_nonneg_left hhi hx'
     simp [scaleInterval, hx, h1, h2]
   · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
     have h1 : (x : Real) * (hi : Real) ≤ (x : Real) * y := by
-      have hx'' : (x : Real) ≤ 0 := (dyadicToReal_nonpos_iff (x := x)).2 hx'
+      have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
       exact mul_le_mul_of_nonpos_left hhi hx''
     have h2 : (x : Real) * y ≤ (x : Real) * (lo : Real) := by
-      have hx'' : (x : Real) ≤ 0 := (dyadicToReal_nonpos_iff (x := x)).2 hx'
+      have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
       exact mul_le_mul_of_nonpos_left hlo hx''
     simp [scaleInterval, hx, h1, h2]
 
 /-- Real-valued LayerNorm output for a vector. -/
 noncomputable def layerNormReal {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (x : Fin n → Dyadic) : Fin n → Real :=
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Rat) : Fin n → Real :=
   if n = 0 then
     fun _ => 0
   else
@@ -494,7 +486,7 @@ noncomputable def layerNormReal {n : Nat}
 
 /-- Real-valued LayerNorm output for a real vector. -/
 noncomputable def layerNormRealOfReal {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (x : Fin n → Real) : Fin n → Real :=
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Real) : Fin n → Real :=
   if n = 0 then
     fun _ => 0
   else
@@ -505,22 +497,22 @@ noncomputable def layerNormRealOfReal {n : Nat}
 
 /-- Interval bounds for LayerNorm outputs. -/
 def layerNormBounds {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (x : Fin n → Dyadic) :
-    (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
   if n = 0 then
     (fun _ => 0, fun _ => 0)
   else
     let μLo := mean x
     let μHi := meanUpper x
-    let centeredBound : Fin n → Dyadic := fun i =>
+    let centeredBound : Fin n → Rat := fun i =>
       max |x i - μHi| |x i - μLo|
-    let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
-    let radius : Fin n → Dyadic := fun i => |gamma i| * centeredBound i * invStdBound
+    let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
+    let radius : Fin n → Rat := fun i => |gamma i| * centeredBound i * invStdBound
     (fun i => beta i - radius i, fun i => beta i + radius i)
 
 /-- `layerNormBounds` soundness for real LayerNorm outputs. -/
 theorem layerNormBounds_spec {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (x : Fin n → Dyadic)
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Rat)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
     let bounds := layerNormBounds eps gamma beta x
     ∀ i,
@@ -528,10 +520,10 @@ theorem layerNormBounds_spec {n : Nat}
         layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
   classical
   intro bounds i
-  let μLo : Dyadic := mean x
-  let μHi : Dyadic := meanUpper x
-  let centeredBound : Fin n → Dyadic := fun j => max |x j - μHi| |x j - μLo|
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
+  let μLo : Rat := mean x
+  let μHi : Rat := meanUpper x
+  let centeredBound : Fin n → Rat := fun j => max |x j - μHi| |x j - μLo|
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let μ : Real := meanRat x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -539,12 +531,12 @@ theorem layerNormBounds_spec {n : Nat}
     have h0 : 0 ≤ centeredBound i := by
       dsimp [centeredBound]
       exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact dyadicToReal_nonneg_of_nonneg h0
+    exact ratToReal_nonneg_of_nonneg h0
   have hmean_lo_real : (μLo : Real) ≤ μ := by
-    have h := dyadicOfRatDown_le_real (meanRat x)
+    have h := ratRoundDown_le_real (meanRat x)
     simpa [μLo, μ, mean_def x hne] using h
   have hmean_hi_real : μ ≤ (μHi : Real) := by
-    have h := real_le_dyadicOfRatUp (meanRat x)
+    have h := real_le_ratRoundUp (meanRat x)
     simpa [μHi, μ, meanUpper_def x hne] using h
   have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound i : Real) := by
     have hlo : (x i : Real) - (μHi : Real) ≤ (x i : Real) - μ := by
@@ -552,8 +544,8 @@ theorem layerNormBounds_spec {n : Nat}
     have hhi : (x i : Real) - μ ≤ (x i : Real) - (μLo : Real) := by
       exact sub_le_sub_left hmean_lo_real (x i : Real)
     have hbound := abs_le_max_of_bounds hlo hhi
-    simpa [centeredBound, μLo, μHi, dyadicToReal_abs, dyadicToReal_sub,
-      dyadicToReal_max] using hbound
+    simpa [centeredBound, μLo, μHi, ratToReal_abs, ratToReal_sub,
+      ratToReal_max] using hbound
   have hvar_nonneg : 0 ≤ (varianceRat x : Real) := varianceRat_nonneg_real x hne
   have hsqrt_lower :
       (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
@@ -569,14 +561,13 @@ theorem layerNormBounds_spec {n : Nat}
       exact Real.sqrt_le_sqrt hle
     exact le_trans hsqrt_eps hsqrt_eps'
   have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    simpa [dyadicToReal_zero] using
-      (dyadicToReal_lt_iff (x := 0) (y := sqrtLower eps)).2 hsqrt
+    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
   have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := dyadicDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -607,7 +598,7 @@ theorem layerNormBounds_spec {n : Nat}
       have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
       simp [t, abs_mul, hinv_abs, mul_assoc]
     simpa [ht] using hmul2
-  let radius : Fin n → Dyadic := fun j => |gamma j| * centeredBound j * invStdBound
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound j * invStdBound
   have ht_abs' : |t| ≤ (radius i : Real) := by
     simpa [radius, centeredBound, invStdBound] using ht_abs
   have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
@@ -633,22 +624,22 @@ theorem layerNormBounds_spec {n : Nat}
 
 /-- Interval bounds for LayerNorm outputs from per-coordinate intervals. -/
 def layerNormIntervalBounds {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (lo hi : Fin n → Dyadic) :
-    (Fin n → Dyadic) × (Fin n → Dyadic) :=
+    (eps : Rat) (gamma beta : Fin n → Rat) (lo hi : Fin n → Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
   if n = 0 then
     (fun _ => 0, fun _ => 0)
   else
     let μLo := mean lo
     let μHi := meanUpper hi
-    let centeredBound : Fin n → Dyadic := fun i =>
+    let centeredBound : Fin n → Rat := fun i =>
       max |lo i - μHi| |hi i - μLo|
-    let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
-    let radius : Fin n → Dyadic := fun i => |gamma i| * centeredBound i * invStdBound
+    let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
+    let radius : Fin n → Rat := fun i => |gamma i| * centeredBound i * invStdBound
     (fun i => beta i - radius i, fun i => beta i + radius i)
 
 /-- `layerNormIntervalBounds` soundness for real LayerNorm outputs. -/
 theorem layerNormIntervalBounds_spec {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (lo hi : Fin n → Dyadic) (x : Fin n → Dyadic)
+    (eps : Rat) (gamma beta : Fin n → Rat) (lo hi : Fin n → Rat) (x : Fin n → Rat)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ i, lo i ≤ x i) (hhi : ∀ i, x i ≤ hi i) :
     let bounds := layerNormIntervalBounds eps gamma beta lo hi
@@ -657,10 +648,10 @@ theorem layerNormIntervalBounds_spec {n : Nat}
         layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
   classical
   intro bounds i
-  let μLo : Dyadic := mean lo
-  let μHi : Dyadic := meanUpper hi
-  let centeredBound : Fin n → Dyadic := fun j => max |lo j - μHi| |hi j - μLo|
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
+  let μLo : Rat := mean lo
+  let μHi : Rat := meanUpper hi
+  let centeredBound : Fin n → Rat := fun j => max |lo j - μHi| |hi j - μLo|
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let μ : Real := meanRat x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -668,19 +659,19 @@ theorem layerNormIntervalBounds_spec {n : Nat}
     have h0 : 0 ≤ centeredBound i := by
       dsimp [centeredBound]
       exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact dyadicToReal_nonneg_of_nonneg h0
+    exact ratToReal_nonneg_of_nonneg h0
   have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound i : Real) := by
     have hmean_lo_real : (μLo : Real) ≤ μ := by
       have hmean_rat : (meanRat lo : Real) ≤ (meanRat x : Real) :=
         meanRat_le_meanRat_real lo x hne hlo
       have hdown : (μLo : Real) ≤ (meanRat lo : Real) := by
-        simpa [μLo, mean_def lo hne] using dyadicOfRatDown_le_real (meanRat lo)
+        simpa [μLo, mean_def lo hne] using ratRoundDown_le_real (meanRat lo)
       exact le_trans hdown hmean_rat
     have hmean_hi_real : μ ≤ (μHi : Real) := by
       have hmean_rat : (meanRat x : Real) ≤ (meanRat hi : Real) :=
         meanRat_le_meanRat_real x hi hne hhi
       have hup : (meanRat hi : Real) ≤ (μHi : Real) := by
-        simpa [μHi, meanUpper_def hi hne] using real_le_dyadicOfRatUp (meanRat hi)
+        simpa [μHi, meanUpper_def hi hne] using real_le_ratRoundUp (meanRat hi)
       exact le_trans hmean_rat hup
     have hlo' : (lo i : Real) - (μHi : Real) ≤ (x i : Real) - μ := by
       have h1 : (lo i : Real) - (μHi : Real) ≤ (lo i : Real) - μ := by
@@ -688,21 +679,21 @@ theorem layerNormIntervalBounds_spec {n : Nat}
       have h2 : (lo i : Real) - μ ≤ (x i : Real) - μ := by
         exact sub_le_sub_right
           (by
-            simpa using dyadicToReal_le_of_le (hlo i))
+            exact ratToReal_le_of_le (hlo i))
           μ
       exact le_trans h1 h2
     have hhi' : (x i : Real) - μ ≤ (hi i : Real) - (μLo : Real) := by
       have h1 : (x i : Real) - μ ≤ (hi i : Real) - μ := by
         exact sub_le_sub_right
           (by
-            simpa using dyadicToReal_le_of_le (hhi i))
+            exact ratToReal_le_of_le (hhi i))
           μ
       have h2 : (hi i : Real) - μ ≤ (hi i : Real) - (μLo : Real) := by
         exact sub_le_sub_left hmean_lo_real (hi i : Real)
       exact le_trans h1 h2
     have hbound := abs_le_max_of_bounds hlo' hhi'
-    simpa [centeredBound, μLo, μHi, dyadicToReal_abs, dyadicToReal_sub,
-      dyadicToReal_max] using hbound
+    simpa [centeredBound, μLo, μHi, ratToReal_abs, ratToReal_sub,
+      ratToReal_max] using hbound
   have hsqrt_lower :
       (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
     have hsqrt_eps :
@@ -718,14 +709,13 @@ theorem layerNormIntervalBounds_spec {n : Nat}
       exact Real.sqrt_le_sqrt hle
     exact le_trans hsqrt_eps hsqrt_eps'
   have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    simpa [dyadicToReal_zero] using
-      (dyadicToReal_lt_iff (x := 0) (y := sqrtLower eps)).2 hsqrt
+    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
   have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := dyadicDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -756,7 +746,7 @@ theorem layerNormIntervalBounds_spec {n : Nat}
       have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
       simp [t, abs_mul, hinv_abs, mul_assoc]
     simpa [ht] using hmul2
-  let radius : Fin n → Dyadic := fun j => |gamma j| * centeredBound j * invStdBound
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound j * invStdBound
   have ht_abs' : |t| ≤ (radius i : Real) := by
     simpa [radius, centeredBound, invStdBound] using ht_abs
   have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
@@ -782,16 +772,16 @@ theorem layerNormIntervalBounds_spec {n : Nat}
 
 /-- Interval bounds for LayerNorm outputs from an absolute input bound. -/
 def layerNormAbsBounds {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (absBound : Dyadic) :
-    (Fin n → Dyadic) × (Fin n → Dyadic) :=
-  let centeredBound : Dyadic := 2 * absBound
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
-  let radius : Fin n → Dyadic := fun i => |gamma i| * centeredBound * invStdBound
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
+  let radius : Fin n → Rat := fun i => |gamma i| * centeredBound * invStdBound
   (fun i => beta i - radius i, fun i => beta i + radius i)
 
 /-- `layerNormAbsBounds` soundness for real LayerNorm outputs under absolute input bounds. -/
 theorem layerNormAbsBounds_spec {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (absBound : Dyadic) (x : Fin n → Dyadic)
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) (x : Fin n → Rat)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (habs : ∀ i, |x i| ≤ absBound) :
     let bounds := layerNormAbsBounds eps gamma beta absBound
@@ -805,15 +795,15 @@ theorem layerNormAbsBounds_spec {n : Nat}
       meanReal_abs_le_bound (x := fun j => (x j : Real)) (bound := absBound) hne
         (by
           intro j
-          exact dyadicToReal_abs_le_of_le (habs j))
+          exact ratToReal_abs_le_of_le (habs j))
     simpa [meanReal_eq_meanRat] using h
   have hbound_nonneg : 0 ≤ absBound := by
     have hposn : 0 < n := Nat.pos_of_ne_zero hne
     let i0 : Fin n := ⟨0, hposn⟩
     have h0 : 0 ≤ |x i0| := abs_nonneg _
     exact le_trans h0 (habs i0)
-  let centeredBound : Dyadic := 2 * absBound
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let μ : Real := meanRat x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -821,7 +811,7 @@ theorem layerNormAbsBounds_spec {n : Nat}
     have h1 : |(x i : Real) - μ| ≤ |(x i : Real)| + |μ| := by
       simpa [sub_eq_add_neg, abs_neg] using abs_add_le (x i : Real) (-μ)
     have hx : |(x i : Real)| ≤ (absBound : Real) := by
-      exact dyadicToReal_abs_le_of_le (habs i)
+      exact ratToReal_abs_le_of_le (habs i)
     have hmu : |μ| ≤ (absBound : Real) := by
       simpa [μ] using hmean_abs_real
     have h2 : |(x i : Real)| + |μ| ≤ (absBound : Real) + (absBound : Real) :=
@@ -830,7 +820,7 @@ theorem layerNormAbsBounds_spec {n : Nat}
       le_trans h1 h2
     simpa [centeredBound, two_mul] using h12
   have hbound_nonneg_real : 0 ≤ (absBound : Real) := by
-    exact dyadicToReal_nonneg_of_nonneg hbound_nonneg
+    exact ratToReal_nonneg_of_nonneg hbound_nonneg
   have hcentered_nonneg : 0 ≤ (centeredBound : Real) := by
     have hsum := add_nonneg hbound_nonneg_real hbound_nonneg_real
     simpa [centeredBound, two_mul] using hsum
@@ -849,14 +839,13 @@ theorem layerNormAbsBounds_spec {n : Nat}
       exact Real.sqrt_le_sqrt hle
     exact le_trans hsqrt_eps hsqrt_eps'
   have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    simpa [dyadicToReal_zero] using
-      (dyadicToReal_lt_iff (x := 0) (y := sqrtLower eps)).2 hsqrt
+    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
   have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := dyadicDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -887,7 +876,7 @@ theorem layerNormAbsBounds_spec {n : Nat}
       have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
       simp [t, abs_mul, hinv_abs, mul_assoc]
     simpa [ht] using hmul2
-  let radius : Fin n → Dyadic := fun j => |gamma j| * centeredBound * invStdBound
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound * invStdBound
   have ht_abs' : |t| ≤ (radius i : Real) := by
     simpa [radius, centeredBound, invStdBound] using ht_abs
   have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
@@ -911,7 +900,7 @@ theorem layerNormAbsBounds_spec {n : Nat}
 
 /-- `layerNormAbsBounds` soundness for real LayerNorm outputs on real inputs. -/
 theorem layerNormAbsBounds_spec_real {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (absBound : Dyadic) (x : Fin n → Real)
+    (eps : Rat) (gamma beta : Fin n → Rat) (absBound : Rat) (x : Fin n → Real)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (habs : ∀ i, |x i| ≤ (absBound : Real)) :
     let bounds := layerNormAbsBounds eps gamma beta absBound
@@ -927,8 +916,8 @@ theorem layerNormAbsBounds_spec_real {n : Nat}
     let i0 : Fin n := ⟨0, hposn⟩
     have h0 : 0 ≤ |x i0| := abs_nonneg _
     exact le_trans h0 (habs i0)
-  let centeredBound : Dyadic := 2 * absBound
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
+  let centeredBound : Rat := 2 * absBound
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
   let varEps : Real := varianceReal x + (eps : Real)
   let μ : Real := meanReal x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -961,14 +950,13 @@ theorem layerNormAbsBounds_spec_real {n : Nat}
       exact Real.sqrt_le_sqrt hle
     exact le_trans hsqrt_eps hsqrt_eps'
   have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    simpa [dyadicToReal_zero] using
-      (dyadicToReal_lt_iff (x := 0) (y := sqrtLower eps)).2 hsqrt
+    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
   have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := dyadicDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -999,7 +987,7 @@ theorem layerNormAbsBounds_spec_real {n : Nat}
       have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
       simp [t, abs_mul, hinv_abs, mul_assoc]
     simpa [ht] using hmul2
-  let radius : Fin n → Dyadic := fun j => |gamma j| * centeredBound * invStdBound
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound * invStdBound
   have ht_abs' : |t| ≤ (radius i : Real) := by
     simpa [radius, centeredBound, invStdBound] using ht_abs
   have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
@@ -1023,7 +1011,7 @@ theorem layerNormAbsBounds_spec_real {n : Nat}
 
 /-- `layerNormIntervalBounds` soundness for real LayerNorm outputs on real inputs. -/
 theorem layerNormIntervalBounds_spec_real {n : Nat}
-    (eps : Dyadic) (gamma beta : Fin n → Dyadic) (lo hi : Fin n → Dyadic) (x : Fin n → Real)
+    (eps : Rat) (gamma beta : Fin n → Rat) (lo hi : Fin n → Rat) (x : Fin n → Real)
     (hne : n ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
     (hlo : ∀ i, (lo i : Real) ≤ x i) (hhi : ∀ i, x i ≤ (hi i : Real)) :
     let bounds := layerNormIntervalBounds eps gamma beta lo hi
@@ -1039,7 +1027,7 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
     have hrat : (meanRat lo : Real) ≤ meanReal x := by
       simpa [meanReal_eq_meanRat] using h
     have hdown : (mean lo : Real) ≤ (meanRat lo : Real) := by
-      simpa [mean_def lo hne] using dyadicOfRatDown_le_real (meanRat lo)
+      simpa [mean_def lo hne] using ratRoundDown_le_real (meanRat lo)
     exact le_trans hdown hrat
   have hmean_hi : meanReal x ≤ (meanUpper hi : Real) := by
     have h :=
@@ -1048,12 +1036,12 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
     have hrat : meanReal x ≤ (meanRat hi : Real) := by
       simpa [meanReal_eq_meanRat] using h
     have hup : (meanRat hi : Real) ≤ (meanUpper hi : Real) := by
-      simpa [meanUpper_def hi hne] using real_le_dyadicOfRatUp (meanRat hi)
+      simpa [meanUpper_def hi hne] using real_le_ratRoundUp (meanRat hi)
     exact le_trans hrat hup
-  let μLo : Dyadic := mean lo
-  let μHi : Dyadic := meanUpper hi
-  let centeredBound : Fin n → Dyadic := fun j => max |lo j - μHi| |hi j - μLo|
-  let invStdBound : Dyadic := dyadicDivUp 1 (sqrtLower eps)
+  let μLo : Rat := mean lo
+  let μHi : Rat := meanUpper hi
+  let centeredBound : Fin n → Rat := fun j => max |lo j - μHi| |hi j - μLo|
+  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
   let varEps : Real := varianceReal x + (eps : Real)
   let μ : Real := meanReal x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -1061,7 +1049,7 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
     have h0 : 0 ≤ centeredBound i := by
       dsimp [centeredBound]
       exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact dyadicToReal_nonneg_of_nonneg h0
+    exact ratToReal_nonneg_of_nonneg h0
   have hcentered_abs : |x i - μ| ≤ (centeredBound i : Real) := by
     have hmean_lo_real : (μLo : Real) ≤ μ := by
       simpa [μLo, μ] using hmean_lo
@@ -1080,8 +1068,8 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
         exact sub_le_sub_left hmean_lo_real (hi i : Real)
       exact le_trans h1 h2
     have hbound := abs_le_max_of_bounds hlo' hhi'
-    simpa [centeredBound, μLo, μHi, dyadicToReal_abs, dyadicToReal_sub,
-      dyadicToReal_max] using hbound
+    simpa [centeredBound, μLo, μHi, ratToReal_abs, ratToReal_sub,
+      ratToReal_max] using hbound
   have hvar_nonneg : 0 ≤ varianceReal x := varianceReal_nonneg x hne
   have hsqrt_lower :
       (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
@@ -1097,14 +1085,13 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
       exact Real.sqrt_le_sqrt hle
     exact le_trans hsqrt_eps hsqrt_eps'
   have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    simpa [dyadicToReal_zero] using
-      (dyadicToReal_lt_iff (x := 0) (y := sqrtLower eps)).2 hsqrt
+    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
   have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := dyadicDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -1134,7 +1121,7 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
       have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
       simp [t, abs_mul, hinv_abs, mul_assoc]
     simpa [ht] using hmul2
-  let radius : Fin n → Dyadic := fun j => |gamma j| * centeredBound j * invStdBound
+  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound j * invStdBound
   have ht_abs' : |t| ≤ (radius i : Real) := by
     simpa [radius, centeredBound, invStdBound] using ht_abs
   have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by

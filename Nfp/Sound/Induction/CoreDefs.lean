@@ -29,7 +29,7 @@ variable {seq : Nat}
 
 /-- Cached direction head for head inputs. -/
 def dirHeadVecOfInputs {seq dModel dHead : Nat}
-    (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector Dyadic dHead :=
+    (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector Rat dHead :=
   Vector.ofFn (fun d : Fin dHead =>
     Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j))
 
@@ -87,13 +87,13 @@ noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
 /-- Interval data for direction values. -/
 structure ValueInterval (seq : Nat) where
   /-- Lower bound for values. -/
-  lo : Dyadic
+  lo : Rat
   /-- Upper bound for values. -/
-  hi : Dyadic
+  hi : Rat
   /-- Lower bounds on per-key values. -/
-  valsLo : Fin seq → Dyadic
+  valsLo : Fin seq → Rat
   /-- Upper bounds on per-key values. -/
-  valsHi : Fin seq → Dyadic
+  valsHi : Fin seq → Rat
   /-- Optional logit-diff direction metadata (ignored by the checker). -/
   direction : Option DirectionSpec
 
@@ -113,11 +113,11 @@ structure ValueIntervalBounds {seq : Nat} (vals : Fin seq → Real)
 /-- Sound induction-certificate payload built from exact head inputs. -/
 structure InductionHeadCert (seq : Nat) where
   /-- Weight tolerance. -/
-  eps : Dyadic
+  eps : Rat
   /-- Per-query weight tolerance derived from local margins. -/
-  epsAt : Fin seq → Dyadic
+  epsAt : Fin seq → Rat
   /-- Score margin used to justify the weight tolerance. -/
-  margin : Dyadic
+  margin : Rat
   /-- Active queries for which bounds are required. -/
   active : Finset (Fin seq)
   /-- `prev` selector for induction-style attention. -/

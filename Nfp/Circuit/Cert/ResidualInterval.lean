@@ -16,9 +16,9 @@ namespace Circuit
 /-- Certificate payload for per-coordinate residual intervals. -/
 structure ResidualIntervalCert (n : Nat) where
   /-- Lower bound per coordinate. -/
-  lo : Fin n → Dyadic
+  lo : Fin n → Rat
   /-- Upper bound per coordinate. -/
-  hi : Fin n → Dyadic
+  hi : Fin n → Rat
 
 /-- Properties enforced by `checkResidualIntervalCert`. -/
 structure ResidualIntervalBounds {n : Nat} (c : ResidualIntervalCert n) : Prop where

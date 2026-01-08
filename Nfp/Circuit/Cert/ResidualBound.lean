@@ -16,7 +16,7 @@ namespace Circuit
 /-- Certificate payload for per-coordinate residual absolute bounds. -/
 structure ResidualBoundCert (n : Nat) where
   /-- Absolute bound per coordinate. -/
-  bound : Fin n → Dyadic
+  bound : Fin n → Rat
 
 /-- Properties enforced by `checkResidualBoundCert`. -/
 structure ResidualBoundBounds {n : Nat} (c : ResidualBoundCert n) : Prop where

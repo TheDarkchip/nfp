@@ -4,9 +4,9 @@ import Nfp.Core.Basic
 import Nfp.Sound.Linear.FinFold
 
 /-!
-Unnormalized dyadic arithmetic.
+Unnormalized rational arithmetic.
 
-Dyadic values already avoid gcd normalization, so this module provides a
+Rat values already avoid gcd normalization, so this module provides a
 lightweight alias and helper API used by older code paths.
 -/
 
@@ -16,42 +16,41 @@ namespace Sound
 
 namespace Bounds
 
-/-- Unnormalized dyadic value (alias). -/
-abbrev UnnormDyadic := Dyadic
+/-- Unnormalized rational value (alias). -/
+abbrev UnnormRat := Rat
 
-/-- Interpret an unnormalized dyadic as a dyadic. -/
-def UnnormDyadic.toDyadic (q : UnnormDyadic) : Dyadic :=
+/-- Interpret an unnormalized rational as a rational. -/
+def UnnormRat.toRat (q : UnnormRat) : Rat :=
   q
 
-/-- Embed a dyadic as an unnormalized dyadic. -/
-def UnnormDyadic.ofDyadic (q : Dyadic) : UnnormDyadic :=
+/-- Embed a rational as an unnormalized rational. -/
+def UnnormRat.ofRat (q : Rat) : UnnormRat :=
   q
 
 /-- Unnormalized zero. -/
-def UnnormDyadic.zero : UnnormDyadic := 0
+def UnnormRat.zero : UnnormRat := 0
 
 /-- Unnormalized addition. -/
-def UnnormDyadic.add (a b : UnnormDyadic) : UnnormDyadic :=
+def UnnormRat.add (a b : UnnormRat) : UnnormRat :=
   a + b
 
 /-- Unnormalized multiplication. -/
-def UnnormDyadic.mul (a b : UnnormDyadic) : UnnormDyadic :=
+def UnnormRat.mul (a b : UnnormRat) : UnnormRat :=
   a * b
 
-/-- `toDyadic` respects multiplication. -/
-theorem UnnormDyadic.toDyadic_mul_ofDyadic (a b : Dyadic) :
-    UnnormDyadic.toDyadic (UnnormDyadic.mul (UnnormDyadic.ofDyadic a)
-      (UnnormDyadic.ofDyadic b)) = a * b := by
+/-- `toRat` respects multiplication. -/
+theorem UnnormRat.toRat_mul_ofRat (a b : Rat) :
+    UnnormRat.toRat (UnnormRat.mul (UnnormRat.ofRat a) (UnnormRat.ofRat b)) = a * b := by
   rfl
 
-/-- Tail-recursive sum of unnormalized dyadics. -/
-def UnnormDyadic.sumFin (n : Nat) (f : Fin n → UnnormDyadic) : UnnormDyadic :=
+/-- Tail-recursive sum of unnormalized rationals. -/
+def UnnormRat.sumFin (n : Nat) (f : Fin n → UnnormRat) : UnnormRat :=
   Linear.sumFin n f
 
-/-- `toDyadic` commutes with `sumFin`. -/
-theorem UnnormDyadic.toDyadic_sumFin (n : Nat) (f : Fin n → UnnormDyadic) :
-    UnnormDyadic.toDyadic (UnnormDyadic.sumFin n f) =
-      Linear.sumFin n (fun i => UnnormDyadic.toDyadic (f i)) := by
+/-- `toRat` commutes with `sumFin`. -/
+theorem UnnormRat.toRat_sumFin (n : Nat) (f : Fin n → UnnormRat) :
+    UnnormRat.toRat (UnnormRat.sumFin n f) =
+      Linear.sumFin n (fun i => UnnormRat.toRat (f i)) := by
   rfl
 
 end Bounds

@@ -22,9 +22,9 @@ structure SoftmaxMarginRaw (seq : Nat) where
   /-- `prev` selector for induction-style attention. -/
   prev : Fin seq → Fin seq
   /-- Score matrix entries. -/
-  scores : Fin seq → Fin seq → Dyadic
+  scores : Fin seq → Fin seq → Rat
   /-- Attention weight entries. -/
-  weights : Fin seq → Fin seq → Dyadic
+  weights : Fin seq → Fin seq → Rat
 
 private def finalizeRawState {seq : Nat} (hpos : 0 < seq)
     (st : SoftmaxMargin.ParseState seq) : Except String (SoftmaxMarginRaw seq) := do
@@ -39,9 +39,9 @@ private def finalizeRawState {seq : Nat} (hpos : 0 < seq)
   let defaultPrev : Fin seq := ⟨0, hpos⟩
   let prevFun : Fin seq → Fin seq := fun q =>
     (st.prev q).getD defaultPrev
-  let scoresFun : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
     (st.scores q k).getD 0
-  let weightsFun : Fin seq → Fin seq → Dyadic := fun q k =>
+  let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
     (st.weights q k).getD 0
   let active :=
     if st.activeSeen then

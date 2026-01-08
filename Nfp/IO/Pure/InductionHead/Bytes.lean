@@ -104,10 +104,10 @@ private def findSlash (data : ByteArray) (i stop : Nat) : Option Nat :=
     none
 termination_by stop - i
 
-private def parseDyadicBytesSpec (data : ByteArray) (t : ByteToken) : Except String Dyadic := do
+private def parseRatBytesSpec (data : ByteArray) (t : ByteToken) : Except String Rat := do
   match findSlash data t.start t.stop with
   | none =>
-      return dyadicOfRatDown (Rat.ofInt (← parseIntBytesSpec data t))
+      return ratRoundDown (Rat.ofInt (← parseIntBytesSpec data t))
   | some s =>
       let numTok : ByteToken := { start := t.start, stop := s }
       let denTok : ByteToken := { start := s + 1, stop := t.stop }
@@ -116,13 +116,13 @@ private def parseDyadicBytesSpec (data : ByteArray) (t : ByteToken) : Except Str
       if d = 0 then
         throw "invalid rational: zero denominator"
       else
-        return dyadicOfRatDown (Rat.divInt n (Int.ofNat d))
+        return ratRoundDown (Rat.divInt n (Int.ofNat d))
 
-private def parseDyadicBytes (data : ByteArray) (t : ByteToken) : Except String Dyadic :=
-  parseDyadicBytesSpec data t
+private def parseRatBytes (data : ByteArray) (t : ByteToken) : Except String Rat :=
+  parseRatBytesSpec data t
 
-theorem parseDyadicBytes_eq_spec (data : ByteArray) (t : ByteToken) :
-    parseDyadicBytes data t = parseDyadicBytesSpec data t := by
+theorem parseRatBytes_eq_spec (data : ByteArray) (t : ByteToken) :
+    parseRatBytes data t = parseRatBytesSpec data t := by
   rfl
 
 private def nextLineBounds (data : ByteArray) (start : Nat) : Nat × Nat × Nat :=
@@ -184,15 +184,15 @@ private def parseNatAt (data : ByteArray) (i lineEnd : Nat) :
   let n ← parseNatBytes data tok
   return (n, i')
 
-private def parseDyadicAt (data : ByteArray) (i lineEnd : Nat) :
-    Except String (Dyadic × Nat) := do
+private def parseRatAt (data : ByteArray) (i lineEnd : Nat) :
+    Except String (Rat × Nat) := do
   let (tok, i') ← expectToken data i lineEnd
-  let r ← parseDyadicBytes data tok
+  let r ← parseRatBytes data tok
   return (r, i')
 
-private def setVecEntry (n : Nat) (vec : Array (Option Dyadic))
-    (i : Nat) (v : Dyadic) :
-    Except String (Array (Option Dyadic)) := do
+private def setVecEntry (n : Nat) (vec : Array (Option Rat))
+    (i : Nat) (v : Rat) :
+    Except String (Array (Option Rat)) := do
   if i < n then
     match vec.getD i none with
     | some _ =>
@@ -203,8 +203,8 @@ private def setVecEntry (n : Nat) (vec : Array (Option Dyadic))
   else
     throw s!"index out of range: i={i}"
 
-private def setMatEntry (rows cols : Nat) (mat : Array (Array (Option Dyadic)))
-    (i j : Nat) (v : Dyadic) : Except String (Array (Array (Option Dyadic))) := do
+private def setMatEntry (rows cols : Nat) (mat : Array (Array (Option Rat)))
+    (i j : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
   if i < rows then
     if j < cols then
       let row := mat.getD i #[]
@@ -220,10 +220,10 @@ private def setMatEntry (rows cols : Nat) (mat : Array (Array (Option Dyadic)))
   else
     throw s!"index out of range: i={i}"
 
-private def initVecOpt (n : Nat) : Array (Option Dyadic) :=
+private def initVecOpt (n : Nat) : Array (Option Rat) :=
   Array.replicate n none
 
-private def initMatOpt (rows cols : Nat) : Array (Array (Option Dyadic)) :=
+private def initMatOpt (rows cols : Nat) : Array (Array (Option Rat)) :=
   Array.replicate rows (initVecOpt cols)
 
 private def initPrevOpt (n : Nat) : Array (Option (Fin n)) :=
@@ -242,27 +242,27 @@ private def matAllSome {α : Type} (mat : Array (Array (Option α))) : Bool :=
   (List.range mat.size).all (fun i => arrayAllSome (mat.getD i #[]))
 
 private structure HeadParseState (seq dModel dHead : Nat) where
-  scale : Option Dyadic
+  scale : Option Rat
   activeBits : Array Bool
   activeSeen : Bool
   prev : Array (Option (Fin seq))
-  embed : Array (Array (Option Dyadic))
-  lnEps : Option Dyadic
-  ln1Gamma : Array (Option Dyadic)
-  ln1Beta : Array (Option Dyadic)
-  wq : Array (Array (Option Dyadic))
-  bq : Array (Option Dyadic)
-  wk : Array (Array (Option Dyadic))
-  bk : Array (Option Dyadic)
-  wv : Array (Array (Option Dyadic))
-  bv : Array (Option Dyadic)
-  wo : Array (Array (Option Dyadic))
-  attnBias : Array (Option Dyadic)
+  embed : Array (Array (Option Rat))
+  lnEps : Option Rat
+  ln1Gamma : Array (Option Rat)
+  ln1Beta : Array (Option Rat)
+  wq : Array (Array (Option Rat))
+  bq : Array (Option Rat)
+  wk : Array (Array (Option Rat))
+  bk : Array (Option Rat)
+  wv : Array (Array (Option Rat))
+  bv : Array (Option Rat)
+  wo : Array (Array (Option Rat))
+  attnBias : Array (Option Rat)
   maskCausal : Option Bool
-  maskValue : Option Dyadic
+  maskValue : Option Rat
   directionTarget : Option Nat
   directionNegative : Option Nat
-  direction : Array (Option Dyadic)
+  direction : Array (Option Rat)
 
 private def initHeadState (seq dModel dHead : Nat) : HeadParseState seq dModel dHead :=
   { scale := none
@@ -318,53 +318,53 @@ private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dMod
       if st.scale.isSome then
         throw "duplicate scale entry"
       else
-        return { st with scale := some (← parseDyadic val) }
+        return { st with scale := some (← parseRat val) }
   | ["active", q] =>
       setHeadActive st (← parseNat q)
   | ["prev", q, k] =>
       setHeadPrev st (← parseNat q) (← parseNat k)
   | ["embed", q, d, val] =>
       let mat ←
-        setMatEntry seq dModel st.embed (← parseNat q) (← parseNat d) (← parseDyadic val)
+        setMatEntry seq dModel st.embed (← parseNat q) (← parseNat d) (← parseRat val)
       return { st with embed := mat }
   | ["ln_eps", val] =>
       if st.lnEps.isSome then
         throw "duplicate ln_eps entry"
       else
-        return { st with lnEps := some (← parseDyadic val) }
+        return { st with lnEps := some (← parseRat val) }
   | ["ln1_gamma", d, val] =>
-      let vec ← setVecEntry dModel st.ln1Gamma (← parseNat d) (← parseDyadic val)
+      let vec ← setVecEntry dModel st.ln1Gamma (← parseNat d) (← parseRat val)
       return { st with ln1Gamma := vec }
   | ["ln1_beta", d, val] =>
-      let vec ← setVecEntry dModel st.ln1Beta (← parseNat d) (← parseDyadic val)
+      let vec ← setVecEntry dModel st.ln1Beta (← parseNat d) (← parseRat val)
       return { st with ln1Beta := vec }
   | ["wq", i, j, val] =>
       let mat ←
-        setMatEntry dModel dHead st.wq (← parseNat i) (← parseNat j) (← parseDyadic val)
+        setMatEntry dModel dHead st.wq (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wq := mat }
   | ["bq", j, val] =>
-      let vec ← setVecEntry dHead st.bq (← parseNat j) (← parseDyadic val)
+      let vec ← setVecEntry dHead st.bq (← parseNat j) (← parseRat val)
       return { st with bq := vec }
   | ["wk", i, j, val] =>
       let mat ←
-        setMatEntry dModel dHead st.wk (← parseNat i) (← parseNat j) (← parseDyadic val)
+        setMatEntry dModel dHead st.wk (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wk := mat }
   | ["bk", j, val] =>
-      let vec ← setVecEntry dHead st.bk (← parseNat j) (← parseDyadic val)
+      let vec ← setVecEntry dHead st.bk (← parseNat j) (← parseRat val)
       return { st with bk := vec }
   | ["wv", i, j, val] =>
       let mat ←
-        setMatEntry dModel dHead st.wv (← parseNat i) (← parseNat j) (← parseDyadic val)
+        setMatEntry dModel dHead st.wv (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wv := mat }
   | ["bv", j, val] =>
-      let vec ← setVecEntry dHead st.bv (← parseNat j) (← parseDyadic val)
+      let vec ← setVecEntry dHead st.bv (← parseNat j) (← parseRat val)
       return { st with bv := vec }
   | ["wo", i, j, val] =>
       let mat ←
-        setMatEntry dModel dHead st.wo (← parseNat i) (← parseNat j) (← parseDyadic val)
+        setMatEntry dModel dHead st.wo (← parseNat i) (← parseNat j) (← parseRat val)
       return { st with wo := mat }
   | ["attn_bias", d, val] =>
-      let vec ← setVecEntry dModel st.attnBias (← parseNat d) (← parseDyadic val)
+      let vec ← setVecEntry dModel st.attnBias (← parseNat d) (← parseRat val)
       return { st with attnBias := vec }
   | ["mask", kind] =>
       if st.maskCausal.isSome then
@@ -378,7 +378,7 @@ private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dMod
       if st.maskValue.isSome then
         throw "duplicate mask_value entry"
       else
-        return { st with maskValue := some (← parseDyadic val) }
+        return { st with maskValue := some (← parseRat val) }
   | ["direction-target", tok] =>
       if st.directionTarget.isSome then
         throw "duplicate direction-target entry"
@@ -390,7 +390,7 @@ private def parseHeadLine {seq dModel dHead : Nat} (st : HeadParseState seq dMod
       else
         return { st with directionNegative := some (← parseNat tok) }
   | ["direction", d, val] =>
-      let vec ← setVecEntry dModel st.direction (← parseNat d) (← parseDyadic val)
+      let vec ← setVecEntry dModel st.direction (← parseNat d) (← parseRat val)
       return { st with direction := vec }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
@@ -418,7 +418,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             else
               let (t1, i2) ← expectToken data i1 lineEnd
               ensureNoMoreTokens data i2 lineEnd
-              return { st with scale := some (← parseDyadicBytes data t1) }
+              return { st with scale := some (← parseRatBytes data t1) }
           else
             throw "unrecognized line"
       | 97 => -- a
@@ -428,7 +428,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             setHeadActive st q
           else if len = kwAttnBias.size && tokenEq data t0 kwAttnBias then
             let (d, i2) ← parseNatAt data i1 lineEnd
-            let (v, i3) ← parseDyadicAt data i2 lineEnd
+            let (v, i3) ← parseRatAt data i2 lineEnd
             ensureNoMoreTokens data i3 lineEnd
             let vec ← setVecEntry dModel st.attnBias d v
             return { st with attnBias := vec }
@@ -446,7 +446,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
           if len = kwEmbed.size && tokenEq data t0 kwEmbed then
             let (q, i2) ← parseNatAt data i1 lineEnd
             let (d, i3) ← parseNatAt data i2 lineEnd
-            let (v, i4) ← parseDyadicAt data i3 lineEnd
+            let (v, i4) ← parseRatAt data i3 lineEnd
             ensureNoMoreTokens data i4 lineEnd
             let mat ← setMatEntry seq dModel st.embed q d v
             return { st with embed := mat }
@@ -457,18 +457,18 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             if st.lnEps.isSome then
               throw "duplicate ln_eps entry"
             else
-              let (v, i2) ← parseDyadicAt data i1 lineEnd
+              let (v, i2) ← parseRatAt data i1 lineEnd
               ensureNoMoreTokens data i2 lineEnd
               return { st with lnEps := some v }
           else if len = kwLn1Gamma.size && tokenEq data t0 kwLn1Gamma then
             let (d, i2) ← parseNatAt data i1 lineEnd
-            let (v, i3) ← parseDyadicAt data i2 lineEnd
+            let (v, i3) ← parseRatAt data i2 lineEnd
             ensureNoMoreTokens data i3 lineEnd
             let vec ← setVecEntry dModel st.ln1Gamma d v
             return { st with ln1Gamma := vec }
           else if len = kwLn1Beta.size && tokenEq data t0 kwLn1Beta then
             let (d, i2) ← parseNatAt data i1 lineEnd
-            let (v, i3) ← parseDyadicAt data i2 lineEnd
+            let (v, i3) ← parseRatAt data i2 lineEnd
             ensureNoMoreTokens data i3 lineEnd
             let vec ← setVecEntry dModel st.ln1Beta d v
             return { st with ln1Beta := vec }
@@ -479,7 +479,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             let b1 := data.get! (t0.start + 1)
             let (i, i2) ← parseNatAt data i1 lineEnd
             let (j, i3) ← parseNatAt data i2 lineEnd
-            let (v, i4) ← parseDyadicAt data i3 lineEnd
+            let (v, i4) ← parseRatAt data i3 lineEnd
             ensureNoMoreTokens data i4 lineEnd
             if b1 = 113 then
               let mat ← setMatEntry dModel dHead st.wq i j v
@@ -501,7 +501,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
           if len = 2 then
             let b1 := data.get! (t0.start + 1)
             let (j, i2) ← parseNatAt data i1 lineEnd
-            let (v, i3) ← parseDyadicAt data i2 lineEnd
+            let (v, i3) ← parseRatAt data i2 lineEnd
             ensureNoMoreTokens data i3 lineEnd
             if b1 = 113 then
               let vec ← setVecEntry dHead st.bq j v
@@ -533,7 +533,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             if st.maskValue.isSome then
               throw "duplicate mask_value entry"
             else
-              let (v, i2) ← parseDyadicAt data i1 lineEnd
+              let (v, i2) ← parseRatAt data i1 lineEnd
               ensureNoMoreTokens data i2 lineEnd
               return { st with maskValue := some v }
           else
@@ -545,7 +545,7 @@ private def parseHeadLineBytes {seq dModel dHead : Nat} (data : ByteArray)
             return st
           else if len = kwDirection.size && tokenEq data t0 kwDirection then
             let (d, i2) ← parseNatAt data i1 lineEnd
-            let (v, i3) ← parseDyadicAt data i2 lineEnd
+            let (v, i3) ← parseRatAt data i2 lineEnd
             ensureNoMoreTokens data i3 lineEnd
             let vec ← setVecEntry dModel st.direction d v
             return { st with direction := vec }
@@ -648,58 +648,58 @@ private def finalizeHeadState {seq dModel dHead : Nat} (hpos : 0 < seq)
   let defaultPrev : Fin seq := ⟨0, hpos⟩
   let prevFun : Fin seq → Fin seq := fun q =>
     (st.prev.getD q.1 none).getD defaultPrev
-  let embedArr : Array (Array Dyadic) :=
+  let embedArr : Array (Array Rat) :=
     st.embed.map (fun row => row.map (fun v => v.getD 0))
-  let ln1GammaArr : Array Dyadic :=
+  let ln1GammaArr : Array Rat :=
     st.ln1Gamma.map (fun v => v.getD 0)
-  let ln1BetaArr : Array Dyadic :=
+  let ln1BetaArr : Array Rat :=
     st.ln1Beta.map (fun v => v.getD 0)
-  let wqArr : Array (Array Dyadic) :=
+  let wqArr : Array (Array Rat) :=
     st.wq.map (fun row => row.map (fun v => v.getD 0))
-  let bqArr : Array Dyadic :=
+  let bqArr : Array Rat :=
     st.bq.map (fun v => v.getD 0)
-  let wkArr : Array (Array Dyadic) :=
+  let wkArr : Array (Array Rat) :=
     st.wk.map (fun row => row.map (fun v => v.getD 0))
-  let bkArr : Array Dyadic :=
+  let bkArr : Array Rat :=
     st.bk.map (fun v => v.getD 0)
-  let wvArr : Array (Array Dyadic) :=
+  let wvArr : Array (Array Rat) :=
     st.wv.map (fun row => row.map (fun v => v.getD 0))
-  let bvArr : Array Dyadic :=
+  let bvArr : Array Rat :=
     st.bv.map (fun v => v.getD 0)
-  let woArr : Array (Array Dyadic) :=
+  let woArr : Array (Array Rat) :=
     st.wo.map (fun row => row.map (fun v => v.getD 0))
-  let attnBiasArr : Array Dyadic :=
+  let attnBiasArr : Array Rat :=
     st.attnBias.map (fun v => v.getD 0)
-  let directionArr : Array Dyadic :=
+  let directionArr : Array Rat :=
     st.direction.map (fun v => v.getD 0)
-  let embedFun : Fin seq → Fin dModel → Dyadic := fun q d =>
+  let embedFun : Fin seq → Fin dModel → Rat := fun q d =>
     (embedArr.getD q.1 #[]).getD d.1 0
-  let ln1GammaFun : Fin dModel → Dyadic := fun d =>
+  let ln1GammaFun : Fin dModel → Rat := fun d =>
     ln1GammaArr.getD d.1 0
-  let ln1BetaFun : Fin dModel → Dyadic := fun d =>
+  let ln1BetaFun : Fin dModel → Rat := fun d =>
     ln1BetaArr.getD d.1 0
-  let wqFun : Fin dModel → Fin dHead → Dyadic := fun i j =>
+  let wqFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (wqArr.getD i.1 #[]).getD j.1 0
-  let bqFun : Fin dHead → Dyadic := fun j =>
+  let bqFun : Fin dHead → Rat := fun j =>
     bqArr.getD j.1 0
-  let wkFun : Fin dModel → Fin dHead → Dyadic := fun i j =>
+  let wkFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (wkArr.getD i.1 #[]).getD j.1 0
-  let bkFun : Fin dHead → Dyadic := fun j =>
+  let bkFun : Fin dHead → Rat := fun j =>
     bkArr.getD j.1 0
-  let wvFun : Fin dModel → Fin dHead → Dyadic := fun i j =>
+  let wvFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (wvArr.getD i.1 #[]).getD j.1 0
-  let bvFun : Fin dHead → Dyadic := fun j =>
+  let bvFun : Fin dHead → Rat := fun j =>
     bvArr.getD j.1 0
-  let woFun : Fin dModel → Fin dHead → Dyadic := fun i j =>
+  let woFun : Fin dModel → Fin dHead → Rat := fun i j =>
     (woArr.getD i.1 #[]).getD j.1 0
-  let attnBiasFun : Fin dModel → Dyadic := fun d =>
+  let attnBiasFun : Fin dModel → Rat := fun d =>
     attnBiasArr.getD d.1 0
   let maskCausal := st.maskCausal.getD false
   let maskValue :=
     match st.maskValue with
     | some v => v
-    | none => if maskCausal then (-10000 : Dyadic) else 0
-  let directionFun : Fin dModel → Dyadic := fun d =>
+    | none => if maskCausal then (-10000 : Rat) else 0
+  let directionFun : Fin dModel → Rat := fun d =>
     directionArr.getD d.1 0
   let active :=
     if st.activeSeen then

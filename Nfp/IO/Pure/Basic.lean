@@ -53,18 +53,18 @@ def parseInt (s : String) : Except String Int := do
         let n ← parseNat s
         return Int.ofNat n
 
-/-- Parse a dyadic literal from `a` or `a/b`, rounding down if needed. -/
-def parseDyadic (s : String) : Except String Dyadic := do
+/-- Parse a rational literal from `a` or `a/b`, rounding down if needed. -/
+def parseRat (s : String) : Except String Rat := do
   match s.splitOn "/" with
   | [num] =>
-      return dyadicOfRatDown (Rat.ofInt (← parseInt num))
+      return ratRoundDown (Rat.ofInt (← parseInt num))
   | [num, den] =>
       let n ← parseInt num
       let d ← parseNat den
       if d = 0 then
         throw s!"invalid rational '{s}': zero denominator"
       else
-        return dyadicOfRatDown (Rat.divInt n (Int.ofNat d))
+        return ratRoundDown (Rat.divInt n (Int.ofNat d))
   | _ =>
       throw s!"invalid rational '{s}'"
 

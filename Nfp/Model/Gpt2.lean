@@ -31,92 +31,92 @@ def DirectionTokens.spec {vocab : Nat} (dir : DirectionTokens vocab) : Direction
 /-- Exact GPT-2 head slice needed to build induction-head inputs. -/
 structure Gpt2HeadSlice (seq dModel dHead vocab : Nat) where
   /-- Softmax scale factor (e.g. `1/8` for head dim 64). -/
-  scale : Dyadic
+  scale : Rat
   /-- Token ids for the prompt. -/
   tokens : Fin seq → Fin vocab
   /-- Token embedding matrix. -/
-  wte : Fin vocab → Fin dModel → Dyadic
+  wte : Fin vocab → Fin dModel → Rat
   /-- Positional embedding matrix. -/
-  wpe : Fin seq → Fin dModel → Dyadic
+  wpe : Fin seq → Fin dModel → Rat
   /-- Query projection weights. -/
-  wq : Fin dModel → Fin dHead → Dyadic
+  wq : Fin dModel → Fin dHead → Rat
   /-- Query projection bias. -/
-  bq : Fin dHead → Dyadic
+  bq : Fin dHead → Rat
   /-- Key projection weights. -/
-  wk : Fin dModel → Fin dHead → Dyadic
+  wk : Fin dModel → Fin dHead → Rat
   /-- Key projection bias. -/
-  bk : Fin dHead → Dyadic
+  bk : Fin dHead → Rat
   /-- Value projection weights. -/
-  wv : Fin dModel → Fin dHead → Dyadic
+  wv : Fin dModel → Fin dHead → Rat
   /-- Value projection bias. -/
-  bv : Fin dHead → Dyadic
+  bv : Fin dHead → Rat
   /-- Output projection weights for this head slice. -/
-  wo : Fin dModel → Fin dHead → Dyadic
+  wo : Fin dModel → Fin dHead → Rat
   /-- Attention output bias (shared across heads). -/
-  attnBias : Fin dModel → Dyadic
+  attnBias : Fin dModel → Rat
   /-- LayerNorm epsilon for the attention input. -/
-  lnEps : Dyadic
+  lnEps : Rat
   /-- LayerNorm scale for the attention input. -/
-  ln1Gamma : Fin dModel → Dyadic
+  ln1Gamma : Fin dModel → Rat
   /-- LayerNorm bias for the attention input. -/
-  ln1Beta : Fin dModel → Dyadic
+  ln1Beta : Fin dModel → Rat
   /-- Direction tokens for logit-diff certification. -/
   direction : DirectionTokens vocab
 
 /-- Exact per-head attention weights and biases. -/
 structure Gpt2HeadWeights (dModel dHead : Nat) where
   /-- Query projection weights. -/
-  wq : Fin dModel → Fin dHead → Dyadic
+  wq : Fin dModel → Fin dHead → Rat
   /-- Query projection bias. -/
-  bq : Fin dHead → Dyadic
+  bq : Fin dHead → Rat
   /-- Key projection weights. -/
-  wk : Fin dModel → Fin dHead → Dyadic
+  wk : Fin dModel → Fin dHead → Rat
   /-- Key projection bias. -/
-  bk : Fin dHead → Dyadic
+  bk : Fin dHead → Rat
   /-- Value projection weights. -/
-  wv : Fin dModel → Fin dHead → Dyadic
+  wv : Fin dModel → Fin dHead → Rat
   /-- Value projection bias. -/
-  bv : Fin dHead → Dyadic
+  bv : Fin dHead → Rat
   /-- Output projection weights for this head slice. -/
-  wo : Fin dModel → Fin dHead → Dyadic
+  wo : Fin dModel → Fin dHead → Rat
 
 /-- Exact GPT-2 layer slice with MLP and LayerNorm parameters. -/
 structure Gpt2LayerSlice (dModel hidden : Nat) where
   /-- Attention output bias (shared across heads). -/
-  attnBias : Fin dModel → Dyadic
+  attnBias : Fin dModel → Rat
   /-- MLP input projection weights. -/
-  mlpWIn : Fin dModel → Fin hidden → Dyadic
+  mlpWIn : Fin dModel → Fin hidden → Rat
   /-- MLP input projection bias. -/
-  mlpBIn : Fin hidden → Dyadic
+  mlpBIn : Fin hidden → Rat
   /-- MLP output projection weights. -/
-  mlpWOut : Fin hidden → Fin dModel → Dyadic
+  mlpWOut : Fin hidden → Fin dModel → Rat
   /-- MLP output projection bias. -/
-  mlpBOut : Fin dModel → Dyadic
+  mlpBOut : Fin dModel → Rat
   /-- LayerNorm scale for the attention input. -/
-  ln1Gamma : Fin dModel → Dyadic
+  ln1Gamma : Fin dModel → Rat
   /-- LayerNorm bias for the attention input. -/
-  ln1Beta : Fin dModel → Dyadic
+  ln1Beta : Fin dModel → Rat
   /-- LayerNorm scale for the MLP input. -/
-  ln2Gamma : Fin dModel → Dyadic
+  ln2Gamma : Fin dModel → Rat
   /-- LayerNorm bias for the MLP input. -/
-  ln2Beta : Fin dModel → Dyadic
+  ln2Beta : Fin dModel → Rat
 
 /-- Final LayerNorm parameters applied before unembedding. -/
 structure Gpt2FinalLayerNorm (dModel : Nat) where
   /-- LayerNorm scale. -/
-  gamma : Fin dModel → Dyadic
+  gamma : Fin dModel → Rat
   /-- LayerNorm bias. -/
-  beta : Fin dModel → Dyadic
+  beta : Fin dModel → Rat
 
 /-- Token-plus-position embeddings for a GPT-2 head slice. -/
 def Gpt2HeadSlice.embed {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) :
-    Fin seq → Fin dModel → Dyadic :=
+    Fin seq → Fin dModel → Rat :=
   fun q d => slice.wte (slice.tokens q) d + slice.wpe q d
 
 /-- Direction vector in model space for a GPT-2 head slice. -/
 def Gpt2HeadSlice.directionVec {seq dModel dHead vocab : Nat}
-    (slice : Gpt2HeadSlice seq dModel dHead vocab) : Fin dModel → Dyadic :=
+    (slice : Gpt2HeadSlice seq dModel dHead vocab) : Fin dModel → Rat :=
   fun d => slice.wte slice.direction.target d - slice.wte slice.direction.negative d
 
 end Model

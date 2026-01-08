@@ -17,20 +17,20 @@ namespace Pure
 open Nfp.Circuit
 
 private structure ResidualBoundParseState (n : Nat) where
-  bounds : Fin n → Option Dyadic
+  bounds : Fin n → Option Rat
 
 private def initResidualBoundState (n : Nat) : ResidualBoundParseState n :=
   { bounds := fun _ => none }
 
-private def setVectorEntry {n : Nat} (bounds : Fin n → Option Dyadic)
-    (i : Nat) (v : Dyadic) : Except String (Fin n → Option Dyadic) := do
+private def setVectorEntry {n : Nat} (bounds : Fin n → Option Rat)
+    (i : Nat) (v : Rat) : Except String (Fin n → Option Rat) := do
   if hi : i < n then
     let iFin : Fin n := ⟨i, hi⟩
     match bounds iFin with
     | some _ =>
         throw s!"duplicate bound entry at index {i}"
     | none =>
-        let bounds' : Fin n → Option Dyadic := fun i' =>
+        let bounds' : Fin n → Option Rat := fun i' =>
           if i' = iFin then
             some v
           else
@@ -43,7 +43,7 @@ private def parseResidualBoundLine {n : Nat} (st : ResidualBoundParseState n)
     (tokens : List String) : Except String (ResidualBoundParseState n) := do
   match tokens with
   | ["bound", i, val] =>
-      let bounds ← setVectorEntry st.bounds (← parseNat i) (← parseDyadic val)
+      let bounds ← setVectorEntry st.bounds (← parseNat i) (← parseRat val)
       return { st with bounds := bounds }
   | ["dim", _] =>
       throw "duplicate dim entry"
@@ -54,7 +54,7 @@ private def finalizeResidualBoundState {n : Nat} (st : ResidualBoundParseState n
     Except String (Circuit.ResidualBoundCert n) := do
   if !finsetAll (Finset.univ : Finset (Fin n)) (fun i => (st.bounds i).isSome) then
     throw "missing bound entries"
-  let bound : Fin n → Dyadic := fun i =>
+  let bound : Fin n → Rat := fun i =>
     (st.bounds i).getD 0
   return { bound := bound }
 
@@ -78,8 +78,8 @@ def parseResidualBoundCert (input : String) :
   | _ => throw "expected header 'dim <n>'"
 
 private structure ResidualIntervalParseState (n : Nat) where
-  lo : Fin n → Option Dyadic
-  hi : Fin n → Option Dyadic
+  lo : Fin n → Option Rat
+  hi : Fin n → Option Rat
 
 private def initResidualIntervalState (n : Nat) : ResidualIntervalParseState n :=
   { lo := fun _ => none, hi := fun _ => none }
@@ -88,10 +88,10 @@ private def parseResidualIntervalLine {n : Nat} (st : ResidualIntervalParseState
     (tokens : List String) : Except String (ResidualIntervalParseState n) := do
   match tokens with
   | ["lo", i, val] =>
-      let lo ← setVectorEntry st.lo (← parseNat i) (← parseDyadic val)
+      let lo ← setVectorEntry st.lo (← parseNat i) (← parseRat val)
       return { st with lo := lo }
   | ["hi", i, val] =>
-      let hi ← setVectorEntry st.hi (← parseNat i) (← parseDyadic val)
+      let hi ← setVectorEntry st.hi (← parseNat i) (← parseRat val)
       return { st with hi := hi }
   | ["dim", _] =>
       throw "duplicate dim entry"
@@ -104,9 +104,9 @@ private def finalizeResidualIntervalState {n : Nat} (st : ResidualIntervalParseS
     throw "missing lo entries"
   if !finsetAll (Finset.univ : Finset (Fin n)) (fun i => (st.hi i).isSome) then
     throw "missing hi entries"
-  let lo : Fin n → Dyadic := fun i =>
+  let lo : Fin n → Rat := fun i =>
     (st.lo i).getD 0
-  let hi : Fin n → Dyadic := fun i =>
+  let hi : Fin n → Rat := fun i =>
     (st.hi i).getD 0
   return { lo := lo, hi := hi }
 

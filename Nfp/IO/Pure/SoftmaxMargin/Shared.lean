@@ -18,9 +18,9 @@ namespace SoftmaxMargin
 /-- State for parsing softmax-margin payloads. -/
 structure ParseState (seq : Nat) where
   /-- Optional epsilon bound. -/
-  eps : Option Dyadic
+  eps : Option Rat
   /-- Optional margin bound. -/
-  margin : Option Dyadic
+  margin : Option Rat
   /-- Active query set. -/
   active : Finset (Fin seq)
   /-- Whether any active entries were parsed. -/
@@ -28,9 +28,9 @@ structure ParseState (seq : Nat) where
   /-- Optional predecessor pointer per query. -/
   prev : Fin seq → Option (Fin seq)
   /-- Optional score matrix entries. -/
-  scores : Fin seq → Fin seq → Option Dyadic
+  scores : Fin seq → Fin seq → Option Rat
   /-- Optional weight matrix entries. -/
-  weights : Fin seq → Fin seq → Option Dyadic
+  weights : Fin seq → Fin seq → Option Rat
 
 /-- Initialize a softmax-margin parse state. -/
 def initState (seq : Nat) : ParseState seq :=
@@ -75,8 +75,8 @@ def setActive {seq : Nat} (st : ParseState seq) (q : Nat) : Except String (Parse
     throw s!"active index out of range: q={q}"
 
 /-- Insert a matrix entry for scores/weights. -/
-def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Dyadic)
-    (q k : Nat) (v : Dyadic) : Except String (Fin seq → Fin seq → Option Dyadic) := do
+def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Rat)
+    (q k : Nat) (v : Rat) : Except String (Fin seq → Fin seq → Option Rat) := do
   if hq : q < seq then
     if hk : k < seq then
       let qFin : Fin seq := ⟨q, hq⟩
@@ -85,7 +85,7 @@ def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Dyadic)
       | some _ =>
           throw s!"duplicate matrix entry at ({q}, {k})"
       | none =>
-          let mat' : Fin seq → Fin seq → Option Dyadic := fun q' k' =>
+          let mat' : Fin seq → Fin seq → Option Rat := fun q' k' =>
             if q' = qFin then
               if k' = kFin then
                 some v
@@ -107,21 +107,21 @@ def parseLine {seq : Nat} (st : ParseState seq)
       if st.eps.isSome then
         throw "duplicate eps entry"
       else
-        return { st with eps := some (← parseDyadic val) }
+        return { st with eps := some (← parseRat val) }
   | ["margin", val] =>
       if st.margin.isSome then
         throw "duplicate margin entry"
       else
-        return { st with margin := some (← parseDyadic val) }
+        return { st with margin := some (← parseRat val) }
   | ["active", q] =>
       setActive st (← parseNat q)
   | ["prev", q, k] =>
       setPrev st (← parseNat q) (← parseNat k)
   | ["score", q, k, val] =>
-      let mat ← setMatrixEntry st.scores (← parseNat q) (← parseNat k) (← parseDyadic val)
+      let mat ← setMatrixEntry st.scores (← parseNat q) (← parseNat k) (← parseRat val)
       return { st with scores := mat }
   | ["weight", q, k, val] =>
-      let mat ← setMatrixEntry st.weights (← parseNat q) (← parseNat k) (← parseDyadic val)
+      let mat ← setMatrixEntry st.weights (← parseNat q) (← parseNat k) (← parseRat val)
       return { st with weights := mat }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"

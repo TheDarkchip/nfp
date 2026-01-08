@@ -114,21 +114,21 @@ def timeHeadScoreMarginList {seq dModel dHead : Nat}
 /-- Force marginAt evaluation without constructing the full score bounds record. -/
 def timeHeadScoreMarginRaw {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (dotAbs : Fin seq → Fin seq → Dyadic)
+    (dotAbs : Fin seq → Fin seq → Rat)
     (activeList : List (Fin seq)) : IO Unit := do
   IO.println "timing: head score marginRaw list start"
   (← IO.getStdout).flush
   let t0 ← monoUsNow
   let masked : Fin seq → Fin seq → Prop := fun q k =>
     inputs.maskCausal = true ∧ q < k
-  let scoreBaseAbs : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreBaseAbs : Fin seq → Fin seq → Rat := fun q k =>
     |inputs.scale| * dotAbs q k
-  let scoreLo : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
     if masked q k then
       inputs.maskValue
     else
       -scoreBaseAbs q k
-  let scoreHi : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
     if masked q k then
       inputs.maskValue
     else
@@ -142,11 +142,11 @@ def timeHeadScoreMarginRaw {seq dModel dHead : Nat}
       (∅ : Finset (Fin seq))
   let unmaskedKeys : Fin seq → Finset (Fin seq) := fun q =>
     (otherKeys q) \ (maskedKeys q)
-  let maskedGap : Fin seq → Dyadic := fun q =>
+  let maskedGap : Fin seq → Rat := fun q =>
     scoreLo q (inputs.prev q) - inputs.maskValue
-  let scoreGap : Fin seq → Fin seq → Dyadic := fun q k =>
+  let scoreGap : Fin seq → Fin seq → Rat := fun q k =>
     scoreLo q (inputs.prev q) - scoreHi q k
-  let marginAtRaw : Fin seq → Dyadic := fun q =>
+  let marginAtRaw : Fin seq → Rat := fun q =>
     let other := unmaskedKeys q
     let maskedSet := maskedKeys q
     if hunmasked : other.Nonempty then
@@ -159,7 +159,7 @@ def timeHeadScoreMarginRaw {seq dModel dHead : Nat}
       if _hmasked : maskedSet.Nonempty then
         maskedGap q
       else
-        (0 : Dyadic)
+        (0 : Rat)
   for q in activeList do
     let _ := marginAtRaw q
     pure ()

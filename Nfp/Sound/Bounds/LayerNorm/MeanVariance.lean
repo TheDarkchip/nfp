@@ -12,7 +12,7 @@ import Nfp.Core.Basic
 /-!
 Mean/variance helpers for LayerNorm bounds.
 
-This module isolates the dyadic and real mean/variance definitions and their
+This module isolates the rational and real mean/variance definitions and their
 basic lemmas to keep `LayerNorm` bounds modular.
 -/
 
@@ -25,65 +25,65 @@ namespace Bounds
 open scoped BigOperators
 
 /-- Sum as a rational, used for exact mean/variance computations. -/
-def sumRat {n : Nat} (x : Fin n → Dyadic) : Rat :=
+def sumRat {n : Nat} (x : Fin n → Rat) : Rat :=
   ∑ i, (x i : Rat)
 
 /-- Exact mean as a rational (defaults to `0` when `n = 0`). -/
-def meanRat {n : Nat} (x : Fin n → Dyadic) : Rat :=
+def meanRat {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
     (sumRat x) / n
 
-/-- Mean rounded down to dyadic precision (defaults to `0` when `n = 0`). -/
-def mean {n : Nat} (x : Fin n → Dyadic) : Dyadic :=
+/-- Mean rounded down (identity in exact-rational mode; defaults to `0` when `n = 0`). -/
+def mean {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
-    dyadicOfRatDown (meanRat x)
+    ratRoundDown (meanRat x)
 
-/-- Mean rounded up to dyadic precision (defaults to `0` when `n = 0`). -/
-def meanUpper {n : Nat} (x : Fin n → Dyadic) : Dyadic :=
+/-- Mean rounded up (identity in exact-rational mode; defaults to `0` when `n = 0`). -/
+def meanUpper {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
-    dyadicOfRatUp (meanRat x)
+    ratRoundUp (meanRat x)
 
 /-- Unfold `mean` when `n ≠ 0`. -/
-theorem mean_def {n : Nat} (x : Fin n → Dyadic) (h : n ≠ 0) :
-    mean x = dyadicOfRatDown (meanRat x) := by
+theorem mean_def {n : Nat} (x : Fin n → Rat) (h : n ≠ 0) :
+    mean x = ratRoundDown (meanRat x) := by
   simp [mean, h]
 
 /-- Unfold `meanUpper` when `n ≠ 0`. -/
-theorem meanUpper_def {n : Nat} (x : Fin n → Dyadic) (h : n ≠ 0) :
-    meanUpper x = dyadicOfRatUp (meanRat x) := by
+theorem meanUpper_def {n : Nat} (x : Fin n → Rat) (h : n ≠ 0) :
+    meanUpper x = ratRoundUp (meanRat x) := by
   simp [meanUpper, h]
 
 /-- Exact variance as a rational (defaults to `0` when `n = 0`). -/
-def varianceRat {n : Nat} (x : Fin n → Dyadic) : Rat :=
+def varianceRat {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
     let μ := meanRat x
     (∑ i, ((x i : Rat) - μ) ^ 2) / n
 
-/-- Variance rounded down to dyadic precision (defaults to `0` when `n = 0`). -/
-def variance {n : Nat} (x : Fin n → Dyadic) : Dyadic :=
+/-- Variance rounded down (identity in exact-rational mode; defaults to `0` when `n = 0`). -/
+def variance {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
-    dyadicOfRatDown (varianceRat x)
+    ratRoundDown (varianceRat x)
 
-/-- Variance rounded up to dyadic precision (defaults to `0` when `n = 0`). -/
-def varianceUpper {n : Nat} (x : Fin n → Dyadic) : Dyadic :=
+/-- Variance rounded up (identity in exact-rational mode; defaults to `0` when `n = 0`). -/
+def varianceUpper {n : Nat} (x : Fin n → Rat) : Rat :=
   if n = 0 then
     0
   else
-    dyadicOfRatUp (varianceRat x)
+    ratRoundUp (varianceRat x)
 
 /-- Unfold `variance` when `n ≠ 0`. -/
-theorem variance_def {n : Nat} (x : Fin n → Dyadic) (h : n ≠ 0) :
-    variance x = dyadicOfRatDown (varianceRat x) := by
+theorem variance_def {n : Nat} (x : Fin n → Rat) (h : n ≠ 0) :
+    variance x = ratRoundDown (varianceRat x) := by
   simp [variance, h]
 
 /-! Interval helpers. -/
@@ -124,7 +124,7 @@ theorem meanReal_def {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
   simp [meanReal, h]
 
 /-- `meanReal` agrees with `mean` after casting. -/
-theorem meanReal_eq_meanRat {n : Nat} (x : Fin n → Dyadic) :
+theorem meanReal_eq_meanRat {n : Nat} (x : Fin n → Rat) :
     meanReal (fun i => (x i : Real)) = (meanRat x : Real) := by
   by_cases h : n = 0
   · simp [meanReal, meanRat, h]
@@ -132,7 +132,7 @@ theorem meanReal_eq_meanRat {n : Nat} (x : Fin n → Dyadic) :
         (sumRat x : Real) = ∑ i, (x i : Real) := by
       classical
       unfold sumRat
-      simp [dyadicToReal, Rat.cast_sum]
+      simp [Rat.cast_sum]
     have hmean : (meanRat x : Real) = (sumRat x : Real) / n := by
       simp [meanRat, h]
     have hreal : meanReal (fun i => (x i : Real)) = (∑ i, (x i : Real)) / n := by
@@ -153,15 +153,15 @@ theorem meanReal_le_meanReal {n : Nat} (x y : Fin n → Real) (hne : n ≠ 0)
     div_le_div_of_nonneg_right hsum hden
   simpa [meanReal, hne] using hdiv
 
-/-- Mean monotonicity for dyadic inputs, interpreted in reals. -/
-theorem meanRat_le_meanRat_real {n : Nat} (x y : Fin n → Dyadic) (hne : n ≠ 0)
+/-- Mean monotonicity for rational inputs, interpreted in reals. -/
+theorem meanRat_le_meanRat_real {n : Nat} (x y : Fin n → Rat) (hne : n ≠ 0)
     (hxy : ∀ i, x i ≤ y i) :
     (meanRat x : Real) ≤ (meanRat y : Real) := by
   have hreal :
       meanReal (fun i => (x i : Real)) ≤ meanReal (fun i => (y i : Real)) := by
     refine meanReal_le_meanReal (x := fun i => (x i : Real)) (y := fun i => (y i : Real)) hne ?_
     intro i
-    exact dyadicToReal_le_of_le (hxy i)
+    exact ratToReal_le_of_le (hxy i)
   simpa [meanReal_eq_meanRat] using hreal
 
 /-- Variance of a real vector (defaults to `0` when `n = 0`). -/
@@ -193,7 +193,7 @@ theorem varianceReal_nonneg {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
     div_nonneg hsum hden
   simpa [varianceReal_def x h] using hdiv
 
-theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Dyadic) :
+theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Rat) :
     varianceReal (fun i => (x i : Real)) = (varianceRat x : Real) := by
   by_cases h : n = 0
   · simp [varianceReal, varianceRat, h]
@@ -202,7 +202,7 @@ theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Dyadic) :
         (∑ i, ((x i : Real) - (meanRat x : Real)) ^ 2) =
           (∑ i, ((x i : Rat) - meanRat x) ^ 2 : Rat) := by
       classical
-      simp [dyadicToReal, Rat.cast_sum]
+      simp [Rat.cast_sum]
     have hreal : varianceReal (fun i => (x i : Real)) =
         (∑ i, ((x i : Real) - meanReal (fun j => (x j : Real))) ^ 2) / n := by
       simp [varianceReal, h]
@@ -215,17 +215,17 @@ theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Dyadic) :
       _ = (∑ i, ((x i : Real) - (meanRat x : Real)) ^ 2) / n := by
             simp [hmean]
       _ = (∑ i, ((x i : Rat) - meanRat x) ^ 2 : Rat) / n := by
-            simp [hsum]
+            rw [hsum]
       _ = (varianceRat x : Real) := hrat.symm
 
 /-- Variance is nonnegative when `n ≠ 0`, interpreted in reals. -/
-theorem varianceRat_nonneg_real {n : Nat} (x : Fin n → Dyadic) (hne : n ≠ 0) :
+theorem varianceRat_nonneg_real {n : Nat} (x : Fin n → Rat) (hne : n ≠ 0) :
     0 ≤ (varianceRat x : Real) := by
   have hreal := varianceReal_nonneg (x := fun i => (x i : Real)) hne
   simpa [varianceReal_eq_varianceRat] using hreal
 
 /-- Absolute mean bound from per-coordinate bounds (real inputs). -/
-theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Dyadic)
+theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Rat)
     (hne : n ≠ 0) (hbound : ∀ i, |x i| ≤ (bound : Real)) :
     |meanReal x| ≤ (bound : Real) := by
   classical
