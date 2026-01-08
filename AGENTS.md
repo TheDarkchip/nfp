@@ -46,15 +46,6 @@ or `-uuu` (or equivalent) when searching.
 ### 1.1 No fake proofs
 - **Forbidden:** `sorry`
 - **Forbidden:** introducing new nontrivial axioms beyond what mathlib already uses.
-- If you can’t prove a lemma as stated:
-  - reconsider the statement (missing assumptions? wrong generality?),
-  - introduce helper lemmas,
-  - or refactor the structure so the proof becomes natural.
-  - Do **not** “paper over” gaps.
-
-> Lean 4.26+ exploration tools (`finish?`, `try?`, `grind => finish?`, etc.) may *suggest* scripts that
-> contain `sorry` (useful for debugging). Treat those suggestions as **scratch** only.
-> **No `sorry` may reach the branch.**
 
 ### 1.2 Linting stays on
 - **Never** disable linters globally or locally.
@@ -62,7 +53,7 @@ or `-uuu` (or equivalent) when searching.
 - Fix the code/proofs instead.
 
 ### 1.3 Clean build
-- `lake build -q --wfail` must succeed.
+- `lake build --wfail` must succeed.
 - Any warning is treated as an error: resolve it, do not ignore it.
 
 ### 1.4 Core invariants must remain true
@@ -93,21 +84,12 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - Prefer `NNReal` for masses/capacities/probabilities.
 - Prefer finite types (`[Fintype ι]`) where possible.
 
-### 2.2 Keep proofs readable and local
-- Prefer: `simp`, `rw`, `linarith`/`nlinarith` when appropriate, small `calc` blocks,
-  and restrained `aesop` usage backed by named helper lemmas.
-- Avoid huge opaque “mega proofs”. If a proof is long, factor it.
-
-> Lean 4.26+ note for agents:
-> - Use stronger automation (`simp?`, `finish?`, `grind`, `try?`) primarily as **proof discovery** tools.
-> - The final committed proof should be **explicit, minimal, and stable** (often: a small lemma + `simp [..]` / `rw [..]`).
-
-### 2.3 Don’t duplicate mathlib
+### 2.2 Don’t duplicate mathlib
 - Search for existing lemmas before inventing new ones.
 - If you introduce a lemma that feels “standard”, consider whether mathlib already has it
   (or whether it belongs in a more general file in this repo).
 
-### 2.4 Verify, Don't Trust
+### 2.3 Verify, Don't Trust
 - Distinguish between **witness generation** (untrusted, can use heuristics) and **verification** (trusted, must contain proofs).
 - The trusted kernel should only check that a candidate witness is valid; it should not be responsible for finding it if the search is complex.
 
@@ -130,7 +112,7 @@ The library’s claims rest on these being preserved (preferably with explicit l
   - small lemmas, smaller proof terms, fewer global simp rules.
 
 ### 3.3 After coding
-- Ensure `lake build -q --wfail` passes.
+- Ensure `lake build --wfail` passes.
 - Ensure no `sorry`.
 - Ensure no linter toggles were introduced.
 - If you changed module responsibilities/structure, update §5 in the same commit.
@@ -151,87 +133,13 @@ The library’s claims rest on these being preserved (preferably with explicit l
   - non-explosive,
   - and broadly safe.
 - Prefer `simp [foo]` over global simp-set growth.
-- Prefer `simp?` **only to discover** what `simp [..]` should be.
 
-### 4.3 Tactic usage
-- `aesop` is allowed, but:
-  - avoid relying on “magic” if it makes failures hard to debug,
-  - extract key steps into named lemmas so proofs stay stable.
-
-### 4.4 Refactors are allowed—but must be principled
+### 4.3 Refactors are allowed—but must be principled
 - You may do nontrivial refactors to improve conceptual cleanliness.
 - If you rename/reshape core APIs:
   - update all call sites,
   - leave a brief comment (or commit message rationale),
   - keep the module map (§5) accurate.
-
-### 4.5 Lean 4.26+ proof exploration toolkit (for LLM agents)
-These tools can dramatically reduce “stuck time” for lemma discovery. Use them like a **search assistant**.
-They are *not* a substitute for readable proofs.
-
-**Allowed for exploration (scratch / development):**
-- `simp?` (optionally with suggestions, if available)
-- `finish?`
-- `grind` / `grind?`, and `grind => finish?`
-- `try?` (as a hint generator)
-
-**Rules for using exploration tools:**
-1. **Never commit generated `sorry`.** If an exploration tactic suggests a script with `sorry`, treat it as debugging output and delete it.
-2. **Never commit giant opaque scripts.** If a generated script is long:
-   - identify the key lemmas it used,
-   - create named helper lemmas,
-   - replace the script with a small proof built from those lemmas.
-3. **Minimize lemma sets.**
-   - If `simp?` / `finish?` / `grind` suggests many lemmas, shrink to the smallest stable subset.
-4. **Prefer stable shapes:**
-   - a short `calc` block,
-   - or a couple of `simp [..]` / `rw [..]` steps,
-   - plus one helper lemma if necessary.
-5. **Keep it local.** Prefer adding lemmas to the local simp set (`simp [foo, bar]`) over tagging globally `[simp]`.
-
-**Agent “proof playbook” (recommended loop):**
-- Step A: Try the obvious: `simp`, `simp [defs]`, `rw [defs]`, `linarith`, `nlinarith`, `ring`, `field_simp` (as appropriate).
-- Step B: If stuck, run `simp?` to discover missing rewrite/simp lemmas.
-- Step C: If still stuck, use `finish?` or `grind => finish?` to learn the *shape* of the proof and which lemmas matter.
-- Step D: Replace the discovered script with:
-  - a helper lemma (named + documented) capturing the crucial step,
-  - and a short final proof using `simp`/`rw`/`calc`.
-- Step E: Re-run `lake build -q --wfail`.
-
----
-
-## Lean 4 performance & scalability (use when justified)
-
-Default: write the simplest correct thing first. Use the levers below only when there is a clear payoff
-(hot path, large workload, or expensive work that’s often unused). Add a short comment explaining the trigger.
-
-### Parallelism: `Task` (opt-in, deterministic-by-construction)
-Use `Task` when work is independent and CPU-heavy (e.g., per-candidate / per-layer computations).
-- Prefer *pure* tasks: `Task.spawn (fun () => ...)` and later `Task.get`.
-  Tasks cache their result; subsequent `get`s do not recompute. (Tasks are like “opportunistic thunks”.)
-- Use `IO.asTask` only when you truly need effects; remember a task is spawned each time the returned `IO` action is executed.
-- Keep results deterministic: never depend on completion order; aggregate by stable keys.
-- Keep granularity coarse enough to amortize scheduling overhead.
-- Cancellation: pure tasks stop when dropped; `IO.asTask` tasks must check for cancellation (`IO.checkCanceled`), and can be canceled via `IO.cancel`.
-- If benchmarking, note that the runtime task thread pool size is controlled by `LEAN_NUM_THREADS` (or defaults to logical CPU count).
-
-### Laziness: `Thunk` / delayed computations (opt-in, for expensive-but-often-unused work)
-Use `Thunk` to defer work that is expensive and frequently unused (debug traces, optional certificates, rare branches).
-- Prefer `Thunk` over “manual caching”: the runtime forces at most once and caches the value.
-- Force explicitly at the boundary (`Thunk.get`), not “deep inside” unrelated logic.
-- If a thunk is forced from multiple threads, other threads will wait while one thread computes it—avoid forcing in places where blocking could deadlock.
-
-### Compile-time / elaboration performance nudge
-When proofs or declarations get large, prefer factoring them into smaller independent theorems/lemmas when it improves clarity.
-Lean can elaborate theorem bodies in parallel, so smaller independent units can help the compiler do more work concurrently.
-
-### Transparency / unfolding control (use sparingly)
-Unfolding choices affect performance of simplification and typeclass search.
-- The simplifier unfolds *reducible* definitions by default; semireducible/irreducible require explicit rewrite rules or different settings.
-- `opaque` definitions are not δ-reduced in the kernel; use them to prevent expensive kernel reduction when unfolding is not needed for reasoning.
-- Avoid cargo-culting reducibility attributes: use `local`/`scoped` when possible, and leave a short comment about why.
-
-Note: Recent Lean versions changed the story around well-founded recursion transparency; don’t rely on old recipes like making well-founded recursion “reducible” via attributes.
 
 ---
 
@@ -398,10 +306,12 @@ but you **must** update this list in the same commit.
   - Head-output interval certificates built from induction head inputs.
 - `Nfp/Sound/Induction/HeadBounds.lean`
   - Helper bounds used to stage head-induction certificate construction.
+- `Nfp/Sound/Bounds/Cache.lean`
+  - Cached bound evaluators (thunk/task backed) for interval computations.
 - `Nfp/Sound/Bounds/MatrixNorm.lean`
   - Row-sum matrix norms and downstream linear certificate builders.
 - `Nfp/Sound/Bounds/MatrixNorm/Interval.lean`
-  - Dot-product and matrix-vector interval bounds (dyadic and real).
+  - Dot-product and matrix-vector interval bounds (rational and real).
 - `Nfp/Sound/Bounds/LayerNorm.lean`
   - LayerNorm interval bounds and end-to-end soundness lemmas.
 - `Nfp/Sound/Bounds/LayerNorm/MeanVariance.lean`
@@ -455,7 +365,7 @@ This repo treats “axioms creep” as a serious regression.
 
 ## 7. Definition of Done (Checklist)
 
-- [ ] `lake build -q --wfail` succeeds.
+- [ ] `lake build --wfail` succeeds.
 - [ ] No `sorry`.
 - [ ] No new axioms were introduced.
 - [ ] **Total Soundness:** Every pure definition in the trusted section is verified/proven.
@@ -463,8 +373,7 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] New nontrivial definitions/theorems have short, accurate docstrings.
 - [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are preserved and, where possible, explicitly proved.
 - [ ] §5 Module Map is accurate (updated in the same commit if needed).
-- [ ] If CLI behavior changed: `lake build nfp -q --wfail` succeeds and basic `nfp ... --help` works.
-- [ ] If you used Lean 4.26+ exploration tools, the final committed proof is short, explicit, and stable (no giant generated scripts).
+- [ ] If CLI behavior changed: `lake build nfp --wfail` succeeds and basic `nfp ... --help` works.
 
 When forced to choose between:
 - “slightly breaking but conceptually clean redesign”
