@@ -133,63 +133,129 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
             let univ : Finset (Fin seq) := Finset.univ
             have hnonempty : univ.Nonempty := Finset.univ_nonempty
             univ.sup' hnonempty (fun q => lnAbsMax q)
-          let qAbsRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+          let qLoRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
                 ⟨Array.ofFn (fun d : Fin dHead =>
-                    Bounds.dotIntervalAbsBound (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
-                      |inputs.bq d|),
+                    Bounds.dotIntervalLowerUnnorm (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
+                      inputs.bq d),
                   by simp⟩))
-          let qAbsBaseArr : Array { row : Array Rat // row.size = dHead } :=
-            Array.ofFn (fun q : Fin seq =>
-              (qAbsRowTasks[q.1]'(by
-                have hsize : qAbsRowTasks.size = seq := by
-                  simp [qAbsRowTasks]
-                simp [hsize])).get)
-          let qAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
-            let row := qAbsBaseArr[q.1]'(by
-              have hsize : qAbsBaseArr.size = seq := by
-                simp [qAbsBaseArr]
-              simp [hsize])
-            row.1[d.1]'(by
-              simp [row.2])
-          let kAbsRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+          let qHiRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
                 ⟨Array.ofFn (fun d : Fin dHead =>
-                    Bounds.dotIntervalAbsBound (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
-                      |inputs.bk d|),
+                    Bounds.dotIntervalUpperUnnorm (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
+                      inputs.bq d),
                   by simp⟩))
-          let kAbsBaseArr : Array { row : Array Rat // row.size = dHead } :=
+          let qLoArr : Array { row : Array Rat // row.size = dHead } :=
             Array.ofFn (fun q : Fin seq =>
-              (kAbsRowTasks[q.1]'(by
-                have hsize : kAbsRowTasks.size = seq := by
-                  simp [kAbsRowTasks]
+              (qLoRowTasks[q.1]'(by
+                have hsize : qLoRowTasks.size = seq := by
+                  simp [qLoRowTasks]
                 simp [hsize])).get)
-          let kAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
-            let row := kAbsBaseArr[q.1]'(by
-              have hsize : kAbsBaseArr.size = seq := by
-                simp [kAbsBaseArr]
+          let qHiArr : Array { row : Array Rat // row.size = dHead } :=
+            Array.ofFn (fun q : Fin seq =>
+              (qHiRowTasks[q.1]'(by
+                have hsize : qHiRowTasks.size = seq := by
+                  simp [qHiRowTasks]
+                simp [hsize])).get)
+          let qLo : Fin seq → Fin dHead → Rat := fun q d =>
+            let row := qLoArr[q.1]'(by
+              have hsize : qLoArr.size = seq := by
+                simp [qLoArr]
               simp [hsize])
             row.1[d.1]'(by
               simp [row.2])
-          let qLo : Fin seq → Fin dHead → Rat := fun q d => -qAbsBase q d
-          let qHi : Fin seq → Fin dHead → Rat := fun q d => qAbsBase q d
-          let kLo : Fin seq → Fin dHead → Rat := fun q d => -kAbsBase q d
-          let kHi : Fin seq → Fin dHead → Rat := fun q d => kAbsBase q d
-          let qAbs : Fin seq → Fin dHead → Rat := qAbsBase
-          let kAbs : Fin seq → Fin dHead → Rat := kAbsBase
+          let qHi : Fin seq → Fin dHead → Rat := fun q d =>
+            let row := qHiArr[q.1]'(by
+              have hsize : qHiArr.size = seq := by
+                simp [qHiArr]
+              simp [hsize])
+            row.1[d.1]'(by
+              simp [row.2])
+          let kLoRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+            Array.ofFn (fun q : Fin seq =>
+              Task.spawn (fun _ =>
+                ⟨Array.ofFn (fun d : Fin dHead =>
+                    Bounds.dotIntervalLowerUnnorm (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
+                      inputs.bk d),
+                  by simp⟩))
+          let kHiRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+            Array.ofFn (fun q : Fin seq =>
+              Task.spawn (fun _ =>
+                ⟨Array.ofFn (fun d : Fin dHead =>
+                    Bounds.dotIntervalUpperUnnorm (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
+                      inputs.bk d),
+                  by simp⟩))
+          let kLoArr : Array { row : Array Rat // row.size = dHead } :=
+            Array.ofFn (fun q : Fin seq =>
+              (kLoRowTasks[q.1]'(by
+                have hsize : kLoRowTasks.size = seq := by
+                  simp [kLoRowTasks]
+                simp [hsize])).get)
+          let kHiArr : Array { row : Array Rat // row.size = dHead } :=
+            Array.ofFn (fun q : Fin seq =>
+              (kHiRowTasks[q.1]'(by
+                have hsize : kHiRowTasks.size = seq := by
+                  simp [kHiRowTasks]
+                simp [hsize])).get)
+          let kLo : Fin seq → Fin dHead → Rat := fun q d =>
+            let row := kLoArr[q.1]'(by
+              have hsize : kLoArr.size = seq := by
+                simp [kLoArr]
+              simp [hsize])
+            row.1[d.1]'(by
+              simp [row.2])
+          let kHi : Fin seq → Fin dHead → Rat := fun q d =>
+            let row := kHiArr[q.1]'(by
+              have hsize : kHiArr.size = seq := by
+                simp [kHiArr]
+              simp [hsize])
+            row.1[d.1]'(by
+              simp [row.2])
+          let qAbs : Fin seq → Fin dHead → Rat := fun q d => max |qLo q d| |qHi q d|
+          let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
           let masked : Fin seq → Fin seq → Prop := fun q k =>
             inputs.maskCausal = true ∧ q < k
-          let dotAbs :=
-            Bounds.cacheBound2Task (fun q k =>
-              Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))
+          let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
+            Array.ofFn (fun q : Fin seq =>
+              Task.spawn (fun _ =>
+                  ⟨Array.ofFn (fun k : Fin seq =>
+                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen
+                      (fun d => qLo q d) (fun d => qHi q d)
+                      (fun d => kLo k d) (fun d => kHi k d)),
+                  by simp⟩))
+          let dotLo : Fin seq → Fin seq → Rat := fun q k =>
+            let row := (dotRowTasks[q.1]'(by
+              simp [dotRowTasks, q.isLt])).get
+            let entry := row.1[k.1]'(by
+              simp [row.2, k.isLt])
+            entry.1
+          let dotHi : Fin seq → Fin seq → Rat := fun q k =>
+            let row := (dotRowTasks[q.1]'(by
+              simp [dotRowTasks, q.isLt])).get
+            let entry := row.1[k.1]'(by
+              simp [row.2, k.isLt])
+            entry.2
+          let dotAbs : Fin seq → Fin seq → Rat := fun q k => max |dotLo q k| |dotHi q k|
           let scoreBaseAbs : Fin seq → Fin seq → Rat := fun q k =>
             |inputs.scale| * dotAbs q k
           let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
-            if masked q k then inputs.maskValue else -scoreBaseAbs q k
+            if masked q k then
+              inputs.maskValue
+            else
+              if hscale : 0 ≤ inputs.scale then
+                inputs.scale * dotLo q k
+              else
+                inputs.scale * dotHi q k
           let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
-            if masked q k then inputs.maskValue else scoreBaseAbs q k
+            if masked q k then
+              inputs.maskValue
+            else
+              if hscale : 0 ≤ inputs.scale then
+                inputs.scale * dotHi q k
+              else
+                inputs.scale * dotLo q k
           let scoreLoPrev : Fin seq → Rat := fun q =>
             scoreLo q (inputs.prev q)
           let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
@@ -286,65 +352,129 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               let univ : Finset (Fin seq) := Finset.univ
               have hnonempty : univ.Nonempty := Finset.univ_nonempty
               univ.sup' hnonempty (fun q => lnAbsMax q)
-            let qAbsRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+            let qLoRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ =>
                   ⟨Array.ofFn (fun d : Fin dHead =>
-                      Bounds.dotIntervalAbsBound (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
-                        |inputs.bq d|),
+                      Bounds.dotIntervalLowerUnnorm (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
+                        inputs.bq d),
                     by simp⟩))
-            let qAbsBaseArr : Array { row : Array Rat // row.size = dHead } :=
-              Array.ofFn (fun q : Fin seq =>
-                (qAbsRowTasks[q.1]'(by
-                  have hsize : qAbsRowTasks.size = seq := by
-                    simp [qAbsRowTasks]
-                  simp [hsize])).get)
-            let qAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
-              let row := qAbsBaseArr[q.1]'(by
-                have hsize : qAbsBaseArr.size = seq := by
-                  simp [qAbsBaseArr]
-                simp [hsize])
-              row.1[d.1]'(by
-                simp [row.2])
-            let kAbsRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+            let qHiRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ =>
                   ⟨Array.ofFn (fun d : Fin dHead =>
-                      Bounds.dotIntervalAbsBound (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
-                        |inputs.bk d|),
+                      Bounds.dotIntervalUpperUnnorm (fun j => inputs.wq j d) (lnLo q) (lnHi q) +
+                        inputs.bq d),
                     by simp⟩))
-            let kAbsBaseArr : Array { row : Array Rat // row.size = dHead } :=
+            let qLoArr : Array { row : Array Rat // row.size = dHead } :=
               Array.ofFn (fun q : Fin seq =>
-                (kAbsRowTasks[q.1]'(by
-                  have hsize : kAbsRowTasks.size = seq := by
-                    simp [kAbsRowTasks]
+                (qLoRowTasks[q.1]'(by
+                  have hsize : qLoRowTasks.size = seq := by
+                    simp [qLoRowTasks]
                   simp [hsize])).get)
-            let kAbsBase : Fin seq → Fin dHead → Rat := fun q d =>
-              let row := kAbsBaseArr[q.1]'(by
-                have hsize : kAbsBaseArr.size = seq := by
-                  simp [kAbsBaseArr]
+            let qHiArr : Array { row : Array Rat // row.size = dHead } :=
+              Array.ofFn (fun q : Fin seq =>
+                (qHiRowTasks[q.1]'(by
+                  have hsize : qHiRowTasks.size = seq := by
+                    simp [qHiRowTasks]
+                  simp [hsize])).get)
+            let qLo : Fin seq → Fin dHead → Rat := fun q d =>
+              let row := qLoArr[q.1]'(by
+                have hsize : qLoArr.size = seq := by
+                  simp [qLoArr]
                 simp [hsize])
               row.1[d.1]'(by
                 simp [row.2])
-            let qLo : Fin seq → Fin dHead → Rat := fun q d => -qAbsBase q d
-            let qHi : Fin seq → Fin dHead → Rat := fun q d => qAbsBase q d
-            let kLo : Fin seq → Fin dHead → Rat := fun q d => -kAbsBase q d
-            let kHi : Fin seq → Fin dHead → Rat := fun q d => kAbsBase q d
-            let qAbs : Fin seq → Fin dHead → Rat := qAbsBase
-            let kAbs : Fin seq → Fin dHead → Rat := kAbsBase
+            let qHi : Fin seq → Fin dHead → Rat := fun q d =>
+              let row := qHiArr[q.1]'(by
+                have hsize : qHiArr.size = seq := by
+                  simp [qHiArr]
+                simp [hsize])
+              row.1[d.1]'(by
+                simp [row.2])
+            let kLoRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+              Array.ofFn (fun q : Fin seq =>
+                Task.spawn (fun _ =>
+                  ⟨Array.ofFn (fun d : Fin dHead =>
+                      Bounds.dotIntervalLowerUnnorm (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
+                        inputs.bk d),
+                    by simp⟩))
+            let kHiRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
+              Array.ofFn (fun q : Fin seq =>
+                Task.spawn (fun _ =>
+                  ⟨Array.ofFn (fun d : Fin dHead =>
+                      Bounds.dotIntervalUpperUnnorm (fun j => inputs.wk j d) (lnLo q) (lnHi q) +
+                        inputs.bk d),
+                    by simp⟩))
+            let kLoArr : Array { row : Array Rat // row.size = dHead } :=
+              Array.ofFn (fun q : Fin seq =>
+                (kLoRowTasks[q.1]'(by
+                  have hsize : kLoRowTasks.size = seq := by
+                    simp [kLoRowTasks]
+                  simp [hsize])).get)
+            let kHiArr : Array { row : Array Rat // row.size = dHead } :=
+              Array.ofFn (fun q : Fin seq =>
+                (kHiRowTasks[q.1]'(by
+                  have hsize : kHiRowTasks.size = seq := by
+                    simp [kHiRowTasks]
+                  simp [hsize])).get)
+            let kLo : Fin seq → Fin dHead → Rat := fun q d =>
+              let row := kLoArr[q.1]'(by
+                have hsize : kLoArr.size = seq := by
+                  simp [kLoArr]
+                simp [hsize])
+              row.1[d.1]'(by
+                simp [row.2])
+            let kHi : Fin seq → Fin dHead → Rat := fun q d =>
+              let row := kHiArr[q.1]'(by
+                have hsize : kHiArr.size = seq := by
+                  simp [kHiArr]
+                simp [hsize])
+              row.1[d.1]'(by
+                simp [row.2])
+            let qAbs : Fin seq → Fin dHead → Rat := fun q d => max |qLo q d| |qHi q d|
+            let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
             let masked : Fin seq → Fin seq → Prop := fun q k =>
               inputs.maskCausal = true ∧ q < k
-            let dotAbs :=
-              Bounds.cacheBound2Task (fun q k =>
-                Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))
+            let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
+              Array.ofFn (fun q : Fin seq =>
+                Task.spawn (fun _ =>
+                  ⟨Array.ofFn (fun k : Fin seq =>
+                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen
+                        (fun d => qLo q d) (fun d => qHi q d)
+                        (fun d => kLo k d) (fun d => kHi k d)),
+                    by simp⟩))
+            let dotLo : Fin seq → Fin seq → Rat := fun q k =>
+              let row := (dotRowTasks[q.1]'(by
+                simp [dotRowTasks, q.isLt])).get
+              let entry := row.1[k.1]'(by
+                simp [row.2, k.isLt])
+              entry.1
+            let dotHi : Fin seq → Fin seq → Rat := fun q k =>
+              let row := (dotRowTasks[q.1]'(by
+                simp [dotRowTasks, q.isLt])).get
+              let entry := row.1[k.1]'(by
+                simp [row.2, k.isLt])
+              entry.2
+            let dotAbs : Fin seq → Fin seq → Rat := fun q k => max |dotLo q k| |dotHi q k|
             let scoreBaseAbs : Fin seq → Fin seq → Rat := fun q k =>
               |inputs.scale| * dotAbs q k
-            let scoreAbs : Fin seq → Fin seq → Rat := fun q k =>
-              if masked q k then |inputs.maskValue| else scoreBaseAbs q k
             let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
-              if masked q k then inputs.maskValue else -scoreBaseAbs q k
+              if masked q k then
+                inputs.maskValue
+              else
+                if hscale : 0 ≤ inputs.scale then
+                  inputs.scale * dotLo q k
+                else
+                  inputs.scale * dotHi q k
             let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
-              if masked q k then inputs.maskValue else scoreBaseAbs q k
+              if masked q k then
+                inputs.maskValue
+              else
+                if hscale : 0 ≤ inputs.scale then
+                  inputs.scale * dotHi q k
+                else
+                  inputs.scale * dotLo q k
             let scoreLoPrev : Fin seq → Rat := fun q =>
               scoreLo q (inputs.prev q)
             let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
@@ -409,12 +539,13 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               simpa
                 [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive, lnBounds,
                   lnLo, lnHi, lnAbsMaxTask, lnAbsMaxArr, lnAbsMax, lnAbsMaxMax,
-                  qAbsRowTasks, qAbsBaseArr, qAbsBase, kAbsRowTasks, kAbsBaseArr, kAbsBase,
-                  qLo, qHi, kLo, kHi, qAbs, kAbs, masked, dotAbs, scoreBaseAbs, scoreLo,
+                  qLoRowTasks, qHiRowTasks, qLoArr, qHiArr, qLo, qHi,
+                  kLoRowTasks, kHiRowTasks, kLoArr, kHiArr, kLo, kHi,
+                  qAbs, kAbs, masked, dotRowTasks, dotLo, dotHi, dotAbs, scoreBaseAbs, scoreLo,
                   scoreHi, scoreLoPrev, otherKeys, marginAt, epsAt, margin, eps, dirHeadVec,
                   dirHead, wvDir, bDir, valsAbsBase, valsLoBase, valsHiBase, valsLo,
                   valsHi, univ, lo, hi, valCert, cert, Task.spawn, Bounds.cacheBoundTask_apply,
-                  Bounds.cacheBound2Task_apply, Array.getElem_ofFn]
+                  Array.getElem_ofFn]
                 using hcore
             have hc : c = cert := by
               simpa using (Option.some.inj hcore').symm
@@ -517,70 +648,58 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 ∀ q d, (qLo q d : Real) ≤ qRealOfInputs inputs q d ∧
                   qRealOfInputs inputs q d ≤ (qHi q d : Real) := by
               intro q d
-              have hdot := hdot_abs_bound (fun j => inputs.wq j d) q
-              have hq_abs :
-                  |qRealOfInputs inputs q d| ≤ (qAbsBase q d : Real) := by
-                have hsum :
-                    |qRealOfInputs inputs q d| ≤
-                      (Bounds.dotIntervalAbsBound (fun j => inputs.wq j d) (lnLo q) (lnHi q) :
-                          Real) + |(inputs.bq d : Real)| := by
-                  calc
-                    |qRealOfInputs inputs q d|
-                        = |dotProduct (fun j => (inputs.wq j d : Real))
-                            (lnRealOfInputs inputs q) + (inputs.bq d : Real)| := by
-                          simp [qRealOfInputs]
-                    _ ≤ |dotProduct (fun j => (inputs.wq j d : Real))
-                            (lnRealOfInputs inputs q)| + |(inputs.bq d : Real)| := by
-                          exact
-                            (abs_add_le (a := dotProduct (fun j => (inputs.wq j d : Real))
-                              (lnRealOfInputs inputs q)) (b := (inputs.bq d : Real)))
-                    _ ≤ (Bounds.dotIntervalAbsBound (fun j => inputs.wq j d) (lnLo q) (lnHi q) :
-                          Real) + |(inputs.bq d : Real)| := by
-                          exact add_le_add hdot (le_rfl)
-                have hsum' :
-                    |qRealOfInputs inputs q d| ≤ (qAbsBase q d : Real) := by
-                  simpa [qAbsBase, qAbsBaseArr, qAbsRowTasks, lnLo, lnHi, Task.spawn,
-                    Bounds.dotIntervalAbsBound, ratToReal_add, ratToReal_abs]
-                    using hsum
-                exact hsum'
-              have hq_bounds := (abs_le).1 hq_abs
-              constructor
-              · simpa [qLo] using hq_bounds.1
-              · simpa [qHi] using hq_bounds.2
+              have hln := hln_bounds q
+              have hlo : ∀ j, (lnLo q j : Real) ≤ lnRealOfInputs inputs q j := fun j =>
+                (hln j).1
+              have hhi : ∀ j, lnRealOfInputs inputs q j ≤ (lnHi q j : Real) := fun j =>
+                (hln j).2
+              have hdot_lo :=
+                Bounds.dotIntervalLower_le_dotProduct_real
+                  (v := fun j => inputs.wq j d) (lo := lnLo q) (hi := lnHi q)
+                  (x := lnRealOfInputs inputs q) hlo hhi
+              have hdot_hi :=
+                Bounds.dotProduct_le_dotIntervalUpper_real
+                  (v := fun j => inputs.wq j d) (lo := lnLo q) (hi := lnHi q)
+                  (x := lnRealOfInputs inputs q) hlo hhi
+              have hlow :
+                  (qLo q d : Real) ≤ qRealOfInputs inputs q d := by
+                have h := add_le_add_right hdot_lo (inputs.bq d : Real)
+                simpa [qRealOfInputs, qLo, qLoArr, qLoRowTasks, lnLo, lnHi, Task.spawn,
+                  Bounds.dotIntervalLowerUnnorm, ratToReal_add] using h
+              have hhigh :
+                  qRealOfInputs inputs q d ≤ (qHi q d : Real) := by
+                have h := add_le_add_right hdot_hi (inputs.bq d : Real)
+                simpa [qRealOfInputs, qHi, qHiArr, qHiRowTasks, lnLo, lnHi, Task.spawn,
+                  Bounds.dotIntervalUpperUnnorm, ratToReal_add] using h
+              exact ⟨hlow, hhigh⟩
             have hk_bounds :
                 ∀ q d, (kLo q d : Real) ≤ kRealOfInputs inputs q d ∧
                   kRealOfInputs inputs q d ≤ (kHi q d : Real) := by
               intro q d
-              have hdot := hdot_abs_bound (fun j => inputs.wk j d) q
-              have hk_abs :
-                  |kRealOfInputs inputs q d| ≤ (kAbsBase q d : Real) := by
-                have hsum :
-                    |kRealOfInputs inputs q d| ≤
-                      (Bounds.dotIntervalAbsBound (fun j => inputs.wk j d) (lnLo q) (lnHi q) :
-                          Real) + |(inputs.bk d : Real)| := by
-                  calc
-                    |kRealOfInputs inputs q d|
-                        = |dotProduct (fun j => (inputs.wk j d : Real))
-                            (lnRealOfInputs inputs q) + (inputs.bk d : Real)| := by
-                          simp [kRealOfInputs]
-                    _ ≤ |dotProduct (fun j => (inputs.wk j d : Real))
-                            (lnRealOfInputs inputs q)| + |(inputs.bk d : Real)| := by
-                          exact
-                            (abs_add_le (a := dotProduct (fun j => (inputs.wk j d : Real))
-                              (lnRealOfInputs inputs q)) (b := (inputs.bk d : Real)))
-                    _ ≤ (Bounds.dotIntervalAbsBound (fun j => inputs.wk j d) (lnLo q) (lnHi q) :
-                          Real) + |(inputs.bk d : Real)| := by
-                          exact add_le_add hdot (le_rfl)
-                have hsum' :
-                    |kRealOfInputs inputs q d| ≤ (kAbsBase q d : Real) := by
-                  simpa [kAbsBase, kAbsBaseArr, kAbsRowTasks, lnLo, lnHi, Task.spawn,
-                    Bounds.dotIntervalAbsBound, ratToReal_add, ratToReal_abs]
-                    using hsum
-                exact hsum'
-              have hk_bounds := (abs_le).1 hk_abs
-              constructor
-              · simpa [kLo] using hk_bounds.1
-              · simpa [kHi] using hk_bounds.2
+              have hln := hln_bounds q
+              have hlo : ∀ j, (lnLo q j : Real) ≤ lnRealOfInputs inputs q j := fun j =>
+                (hln j).1
+              have hhi : ∀ j, lnRealOfInputs inputs q j ≤ (lnHi q j : Real) := fun j =>
+                (hln j).2
+              have hdot_lo :=
+                Bounds.dotIntervalLower_le_dotProduct_real
+                  (v := fun j => inputs.wk j d) (lo := lnLo q) (hi := lnHi q)
+                  (x := lnRealOfInputs inputs q) hlo hhi
+              have hdot_hi :=
+                Bounds.dotProduct_le_dotIntervalUpper_real
+                  (v := fun j => inputs.wk j d) (lo := lnLo q) (hi := lnHi q)
+                  (x := lnRealOfInputs inputs q) hlo hhi
+              have hlow :
+                  (kLo q d : Real) ≤ kRealOfInputs inputs q d := by
+                have h := add_le_add_right hdot_lo (inputs.bk d : Real)
+                simpa [kRealOfInputs, kLo, kLoArr, kLoRowTasks, lnLo, lnHi, Task.spawn,
+                  Bounds.dotIntervalLowerUnnorm, ratToReal_add] using h
+              have hhigh :
+                  kRealOfInputs inputs q d ≤ (kHi q d : Real) := by
+                have h := add_le_add_right hdot_hi (inputs.bk d : Real)
+                simpa [kRealOfInputs, kHi, kHiArr, kHiRowTasks, lnLo, lnHi, Task.spawn,
+                  Bounds.dotIntervalUpperUnnorm, ratToReal_add] using h
+              exact ⟨hlow, hhigh⟩
             have hscore_bounds :
                 ∀ q k, (scoreLo q k : Real) ≤ scoresRealOfInputs inputs q k ∧
                   scoresRealOfInputs inputs q k ≤ (scoreHi q k : Real) := by
@@ -589,147 +708,109 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               let base :=
                 (inputs.scale : Real) *
                   dotProduct (fun d => qRealOfInputs inputs q d) (fun d => kRealOfInputs inputs k d)
-              have hq_abs : ∀ d, |qRealOfInputs inputs q d| ≤ (qAbs q d : Real) := by
-                intro d
-                have hq := hq_bounds q d
-                have hq' :
-                    -(qAbsBase q d : Real) ≤ qRealOfInputs inputs q d ∧
-                      qRealOfInputs inputs q d ≤ (qAbsBase q d : Real) := by
-                  simpa [qLo, qHi] using hq
-                have h := (abs_le).2 hq'
-                simpa [qAbs, qAbsBase] using h
-              have hk_abs : ∀ d, |kRealOfInputs inputs k d| ≤ (kAbs k d : Real) := by
-                intro d
-                have hk := hk_bounds k d
-                have hk' :
-                    -(kAbsBase k d : Real) ≤ kRealOfInputs inputs k d ∧
-                      kRealOfInputs inputs k d ≤ (kAbsBase k d : Real) := by
-                  simpa [kLo, kHi] using hk
-                have h := (abs_le).2 hk'
-                simpa [kAbs, kAbsBase] using h
-              have hdot_abs :
-                  |dotProduct (fun d => qRealOfInputs inputs q d)
-                      (fun d => kRealOfInputs inputs k d)| ≤
-                    (dotAbs q k : Real) := by
-                have hsum :
-                    |∑ d, qRealOfInputs inputs q d * kRealOfInputs inputs k d| ≤
-                      ∑ d, |qRealOfInputs inputs q d * kRealOfInputs inputs k d| := by
-                  simpa [dotProduct] using
-                    (Finset.abs_sum_le_sum_abs (s := (Finset.univ : Finset (Fin dHead)))
-                      (f := fun d => qRealOfInputs inputs q d * kRealOfInputs inputs k d))
-                have hterm :
-                    ∀ d,
-                      |qRealOfInputs inputs q d * kRealOfInputs inputs k d| ≤
-                        (qAbs q d : Real) * (kAbs k d : Real) := by
-                  intro d
-                  have hq := hq_abs d
-                  have hk := hk_abs d
-                  have hqnonneg : 0 ≤ (qAbs q d : Real) := by
-                    have hdot_nonneg :
-                        0 ≤ Bounds.dotIntervalAbsBound
-                          (fun j => inputs.wq j d) (lnLo q) (lnHi q) := by
-                      have hleft :
-                          0 ≤ |Bounds.dotIntervalLower (fun j => inputs.wq j d)
-                            (lnLo q) (lnHi q)| := by
-                        exact abs_nonneg _
-                      exact le_trans hleft (le_max_left _ _)
-                    have hbq_nonneg : 0 ≤ |inputs.bq d| := abs_nonneg _
-                    have hsum_nonneg :
-                        0 ≤ Bounds.dotIntervalAbsBound
-                          (fun j => inputs.wq j d) (lnLo q) (lnHi q) + |inputs.bq d| := by
-                      exact add_nonneg hdot_nonneg hbq_nonneg
-                    have hqnonneg' : 0 ≤ qAbs q d := by
-                      simpa [qAbs, qAbsBase, qAbsBaseArr, qAbsRowTasks, lnLo, lnHi,
-                        Task.spawn, Bounds.dotIntervalAbsBound] using hsum_nonneg
-                    exact ratToReal_nonneg_of_nonneg hqnonneg'
-                  calc
-                    |qRealOfInputs inputs q d * kRealOfInputs inputs k d| =
-                        |qRealOfInputs inputs q d| * |kRealOfInputs inputs k d| := by
-                          simp [abs_mul]
-                    _ ≤ (qAbs q d : Real) * (kAbs k d : Real) :=
-                      mul_le_mul hq hk (abs_nonneg _) hqnonneg
-                have hsum_le :
-                    ∑ d, |qRealOfInputs inputs q d * kRealOfInputs inputs k d| ≤
-                      ∑ d, (qAbs q d : Real) * (kAbs k d : Real) := by
-                  refine Finset.sum_le_sum ?_
-                  intro d _
-                  exact hterm d
-                have hcast :
-                    (dotAbs q k : Real) =
-                      ∑ d, (qAbs q d : Real) * (kAbs k d : Real) := by
-                  have hsum :
-                      ((∑ d, qAbs q d * kAbs k d : Rat) : Real) =
-                        ∑ d, ((qAbs q d * kAbs k d : Rat) : Real) := by
-                    have h := Linear.ratToReal_sum_univ (f := fun d => qAbs q d * kAbs k d)
-                    dsimp [ratToReal] at h
-                    exact h
-                  have hsum' :
-                      ∑ d, ((qAbs q d * kAbs k d : Rat) : Real) =
-                        ∑ d, (qAbs q d : Real) * (kAbs k d : Real) := by
-                    refine Finset.sum_congr rfl ?_
-                    intro d _
-                    simp
-                  have hfinal := hsum.trans hsum'
-                  calc
-                    (dotAbs q k : Real)
-                        = ((∑ d, qAbs q d * kAbs k d : Rat) : Real) := by
-                          simp [dotAbs, Bounds.cacheBound2Task_apply,
-                            Linear.dotFin_eq_dotProduct, dotProduct]
-                    _ = ∑ d, (qAbs q d : Real) * (kAbs k d : Real) := hfinal
-                have hfinal := hsum.trans (hsum_le.trans_eq hcast.symm)
-                simpa [dotProduct] using hfinal
-              have hscale_abs : 0 ≤ (|inputs.scale| : Real) := by
-                exact abs_nonneg (ratToReal inputs.scale)
-              have hbase_abs :
-                  |base| ≤ (scoreBaseAbs q k : Real) := by
-                have hdot_abs' := hdot_abs
-                have hmul :
-                    |base| =
-                      (|inputs.scale| : Real) *
-                        |dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs k d)| := by
-                  simp [base, abs_mul]
-                have hmul_le :
-                    (|inputs.scale| : Real) *
-                        |dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs k d)| ≤
-                      (|inputs.scale| : Real) * (dotAbs q k : Real) := by
-                  exact mul_le_mul_of_nonneg_left hdot_abs' hscale_abs
-                simpa [scoreBaseAbs, hmul] using hmul_le
+              have hdot_bounds :
+                  (dotLo q k : Real) ≤
+                    dotProduct (fun d => qRealOfInputs inputs q d)
+                      (fun d => kRealOfInputs inputs k d) ∧
+                  dotProduct (fun d => qRealOfInputs inputs q d)
+                      (fun d => kRealOfInputs inputs k d) ≤ (dotHi q k : Real) := by
+                have hq := hq_bounds q
+                have hk := hk_bounds k
+                have hlo1 : ∀ d, (qLo q d : Real) ≤ qRealOfInputs inputs q d := fun d =>
+                  (hq d).1
+                have hhi1 : ∀ d, qRealOfInputs inputs q d ≤ (qHi q d : Real) := fun d =>
+                  (hq d).2
+                have hlo2 : ∀ d, (kLo k d : Real) ≤ kRealOfInputs inputs k d := fun d =>
+                  (hk d).1
+                have hhi2 : ∀ d, kRealOfInputs inputs k d ≤ (kHi k d : Real) := fun d =>
+                  (hk d).2
+                have hlow :=
+                  _root_.Nfp.Sound.Bounds.dotIntervalLower2_le_dotProduct_real
+                    (lo1 := fun d => qLo q d) (hi1 := fun d => qHi q d)
+                    (lo2 := fun d => kLo k d) (hi2 := fun d => kHi k d)
+                    (x := fun d => qRealOfInputs inputs q d)
+                    (y := fun d => kRealOfInputs inputs k d)
+                    hlo1 hhi1 hlo2 hhi2
+                have hhigh :=
+                  _root_.Nfp.Sound.Bounds.dotProduct_le_dotIntervalUpper2_real
+                    (lo1 := fun d => qLo q d) (hi1 := fun d => qHi q d)
+                    (lo2 := fun d => kLo k d) (hi2 := fun d => kHi k d)
+                    (x := fun d => qRealOfInputs inputs q d)
+                    (y := fun d => kRealOfInputs inputs k d)
+                    hlo1 hhi1 hlo2 hhi2
+                have hlow' :
+                    (dotLo q k : Real) ≤
+                      dotProduct (fun d => qRealOfInputs inputs q d)
+                        (fun d => kRealOfInputs inputs k d) := by
+                  simpa [dotLo, dotRowTasks, Task.spawn, Array.getElem_ofFn,
+                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen_fst] using hlow
+                have hhigh' :
+                    dotProduct (fun d => qRealOfInputs inputs q d)
+                        (fun d => kRealOfInputs inputs k d) ≤ (dotHi q k : Real) := by
+                  simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn,
+                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen_snd] using hhigh
+                exact ⟨hlow', hhigh'⟩
               by_cases hcausal : inputs.maskCausal
               · by_cases hle : k ≤ q
                 · have hnot : ¬ q < k := not_lt_of_ge hle
                   have hscore_eq : scoresReal q k = base := by
                     simp [scoresReal, scoresRealOfInputs, hcausal, hle, base]
-                  have hscore_abs' : |scoresReal q k| ≤ (scoreBaseAbs q k : Real) := by
-                    simpa [hscore_eq] using hbase_abs
-                  have hscore_abs :
-                      |scoresReal q k| ≤ (scoreAbs q k : Real) := by
-                    simpa [scoreAbs, masked, hcausal, hnot]
-                      using hscore_abs'
-                  have hscore_bounds := (abs_le).1 hscore_abs
-                  constructor
-                  · simpa [scoresReal, scoreLo, scoreAbs, masked, hcausal, hnot]
-                      using hscore_bounds.1
-                  · simpa [scoresReal, scoreHi, scoreAbs, masked, hcausal, hnot]
-                      using hscore_bounds.2
+                  by_cases hscale : 0 ≤ inputs.scale
+                  · have hscale_real : 0 ≤ (inputs.scale : Real) :=
+                      ratToReal_nonneg_of_nonneg hscale
+                    have hlow :=
+                      mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
+                    have hhigh :=
+                      mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
+                    constructor
+                    · simpa [scoresReal, scoreLo, masked, hcausal, hnot, hscale, hscore_eq, base]
+                        using hlow
+                    · simpa [scoresReal, scoreHi, masked, hcausal, hnot, hscale, hscore_eq, base]
+                        using hhigh
+                  · have hscale_nonpos : inputs.scale ≤ 0 :=
+                      le_of_lt (lt_of_not_ge hscale)
+                    have hscale_real : (inputs.scale : Real) ≤ 0 :=
+                      (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
+                    have hlow :=
+                      mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
+                    have hhigh :=
+                      mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
+                    constructor
+                    · simpa [scoresReal, scoreLo, masked, hcausal, hnot, hscale, hscore_eq, base]
+                        using hlow
+                    · simpa [scoresReal, scoreHi, masked, hcausal, hnot, hscale, hscore_eq, base]
+                        using hhigh
                 · have hlt : q < k := lt_of_not_ge hle
                   constructor
                   · simp [scoresRealOfInputs, scoreLo, masked, hcausal, hle, hlt]
                   · simp [scoresRealOfInputs, scoreHi, masked, hcausal, hle, hlt]
               · have hscore_eq : scoresReal q k = base := by
                   simp [scoresReal, scoresRealOfInputs, hcausal, base]
-                have hscore_abs' : |scoresReal q k| ≤ (scoreBaseAbs q k : Real) := by
-                  simpa [hscore_eq] using hbase_abs
-                have hscore_abs :
-                    |scoresReal q k| ≤ (scoreAbs q k : Real) := by
-                  simpa [scoreAbs, masked, hcausal] using hscore_abs'
-                have hscore_bounds := (abs_le).1 hscore_abs
-                constructor
-                · simpa [scoresReal, scoreLo, scoreAbs, masked, hcausal]
-                    using hscore_bounds.1
-                · simpa [scoresReal, scoreHi, scoreAbs, masked, hcausal]
-                    using hscore_bounds.2
+                by_cases hscale : 0 ≤ inputs.scale
+                · have hscale_real : 0 ≤ (inputs.scale : Real) :=
+                    ratToReal_nonneg_of_nonneg hscale
+                  have hlow :=
+                    mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
+                  have hhigh :=
+                    mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
+                  constructor
+                  · simpa [scoresReal, scoreLo, masked, hcausal, hscale, hscore_eq, base]
+                      using hlow
+                  · simpa [scoresReal, scoreHi, masked, hcausal, hscale, hscore_eq, base]
+                      using hhigh
+                · have hscale_nonpos : inputs.scale ≤ 0 :=
+                    le_of_lt (lt_of_not_ge hscale)
+                  have hscale_real : (inputs.scale : Real) ≤ 0 :=
+                    (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
+                  have hlow :=
+                    mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
+                  have hhigh :=
+                    mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
+                  constructor
+                  · simpa [scoresReal, scoreLo, masked, hcausal, hscale, hscore_eq, base]
+                      using hlow
+                  · simpa [scoresReal, scoreHi, masked, hcausal, hscale, hscore_eq, base]
+                      using hhigh
             let scoresReal := scoresRealOfInputs inputs
             have hmarginAt_le :
                 ∀ q, q ∈ inputs.active → ∀ k, k ≠ inputs.prev q →

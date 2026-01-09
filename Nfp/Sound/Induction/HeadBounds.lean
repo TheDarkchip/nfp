@@ -527,6 +527,95 @@ theorem headScoreBoundsFromDotAbs_spec [NeZero seq] {dModel dHead : Nat}
         margin := margin
         eps := eps } := rfl
 
+/-- Compute score and margin bounds from Q/K interval bounds. -/
+def headScoreBoundsFromIntervals [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (qLo qHi kLo kHi : Fin seq → Fin dHead → Rat) :
+    HeadScoreBounds seq dModel dHead :=
+  let masked : Fin seq → Fin seq → Prop := fun q k =>
+    inputs.maskCausal = true ∧ q < k
+  let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
+    Array.ofFn (fun q : Fin seq =>
+      Task.spawn (fun _ =>
+        ⟨Array.ofFn (fun k : Fin seq =>
+            dotIntervalLowerUpper2CommonDen (fun d => qLo q d) (fun d => qHi q d)
+              (fun d => kLo k d) (fun d => kHi k d)),
+          by simp⟩))
+  let dotLo : Fin seq → Fin seq → Rat := fun q k =>
+    let row := (dotRowTasks[q.1]'(by
+      simp [dotRowTasks, q.isLt])).get
+    let entry := row.1[k.1]'(by
+      simp [row.2, k.isLt])
+    entry.1
+  let dotHi : Fin seq → Fin seq → Rat := fun q k =>
+    let row := (dotRowTasks[q.1]'(by
+      simp [dotRowTasks, q.isLt])).get
+    let entry := row.1[k.1]'(by
+      simp [row.2, k.isLt])
+    entry.2
+  let dotAbs : Fin seq → Fin seq → Rat := fun q k => max |dotLo q k| |dotHi q k|
+  let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
+    if masked q k then
+      inputs.maskValue
+    else
+      if 0 ≤ inputs.scale then
+        inputs.scale * dotLo q k
+      else
+        inputs.scale * dotHi q k
+  let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
+    if masked q k then
+      inputs.maskValue
+    else
+      if 0 ≤ inputs.scale then
+        inputs.scale * dotHi q k
+      else
+        inputs.scale * dotLo q k
+  headScoreBoundsFromCaches inputs dotAbs scoreLo scoreHi
+
+theorem headScoreBoundsFromIntervals_spec [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (qLo qHi kLo kHi : Fin seq → Fin dHead → Rat) :
+    headScoreBoundsFromIntervals inputs qLo qHi kLo kHi =
+      let masked : Fin seq → Fin seq → Prop := fun q k =>
+        inputs.maskCausal = true ∧ q < k
+      let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
+        Array.ofFn (fun q : Fin seq =>
+          Task.spawn (fun _ =>
+            ⟨Array.ofFn (fun k : Fin seq =>
+                dotIntervalLowerUpper2CommonDen (fun d => qLo q d) (fun d => qHi q d)
+                  (fun d => kLo k d) (fun d => kHi k d)),
+              by simp⟩))
+      let dotLo : Fin seq → Fin seq → Rat := fun q k =>
+        let row := (dotRowTasks[q.1]'(by
+          simp [dotRowTasks, q.isLt])).get
+        let entry := row.1[k.1]'(by
+          simp [row.2, k.isLt])
+        entry.1
+      let dotHi : Fin seq → Fin seq → Rat := fun q k =>
+        let row := (dotRowTasks[q.1]'(by
+          simp [dotRowTasks, q.isLt])).get
+        let entry := row.1[k.1]'(by
+          simp [row.2, k.isLt])
+        entry.2
+      let dotAbs : Fin seq → Fin seq → Rat := fun q k => max |dotLo q k| |dotHi q k|
+      let scoreLo : Fin seq → Fin seq → Rat := fun q k =>
+        if masked q k then
+          inputs.maskValue
+        else
+          if 0 ≤ inputs.scale then
+            inputs.scale * dotLo q k
+          else
+            inputs.scale * dotHi q k
+      let scoreHi : Fin seq → Fin seq → Rat := fun q k =>
+        if masked q k then
+          inputs.maskValue
+        else
+          if 0 ≤ inputs.scale then
+            inputs.scale * dotHi q k
+          else
+            inputs.scale * dotLo q k
+      headScoreBoundsFromCaches inputs dotAbs scoreLo scoreHi := rfl
+
 /-- Compute score and margin bounds from Q/K absolute bounds. -/
 def headScoreBounds [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
