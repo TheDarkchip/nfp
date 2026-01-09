@@ -184,6 +184,31 @@ def dotIntervalLowerUpper2CommonDen {n : Nat} (lo1 hi1 lo2 hi2 : Fin n → Rat) 
         acc.2 + mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j)))
     (0, 0)
 
+/-! Sign-splitting bounds. -/
+
+/-- Clamp a single coordinate interval to be nonnegative or nonpositive. -/
+def clampAt {n : Nat} (i : Fin n) (nonneg : Bool) (lo hi : Fin n → Rat) :
+    (Fin n → Rat) × (Fin n → Rat) :=
+  if nonneg then
+    (fun j => if j = i then max 0 (lo j) else lo j, hi)
+  else
+    (lo, fun j => if j = i then min 0 (hi j) else hi j)
+
+/-- Lower/upper interval endpoints with sign-splitting on selected coordinates. -/
+def dotIntervalLowerUpper2SignSplit {n : Nat} (dims : List (Fin n))
+    (lo1 hi1 lo2 hi2 : Fin n → Rat) : Rat × Rat :=
+  match dims with
+  | [] =>
+      dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2
+  | i :: rest =>
+      let boundsPos :=
+        let clamped := clampAt i true lo1 hi1
+        dotIntervalLowerUpper2SignSplit rest clamped.1 clamped.2 lo2 hi2
+      let boundsNeg :=
+        let clamped := clampAt i false lo1 hi1
+        dotIntervalLowerUpper2SignSplit rest clamped.1 clamped.2 lo2 hi2
+      (min boundsPos.1 boundsNeg.1, max boundsPos.2 boundsNeg.2)
+
 theorem dotIntervalLower2_le_dotProduct {n : Nat} (lo1 hi1 lo2 hi2 x y : Fin n → Rat)
     (hlo1 : ∀ j, lo1 j ≤ x j) (hhi1 : ∀ j, x j ≤ hi1 j)
     (hlo2 : ∀ j, lo2 j ≤ y j) (hhi2 : ∀ j, y j ≤ hi2 j) :
@@ -672,6 +697,83 @@ theorem dotProduct_le_dotIntervalUpper2_real {n : Nat} (lo1 hi1 lo2 hi2 : Fin n 
     intro j _
     exact mul_le_mulIntervalUpper_real (hlo1 j) (hhi1 j) (hlo2 j) (hhi2 j)
   simpa [hcast, dotProduct] using hsum
+
+theorem dotIntervalLowerUpper2SignSplit_spec_real {n : Nat} (dims : List (Fin n))
+    (lo1 hi1 lo2 hi2 : Fin n → Rat) (x y : Fin n → Real)
+    (hlo1 : ∀ j, (lo1 j : Real) ≤ x j) (hhi1 : ∀ j, x j ≤ (hi1 j : Real))
+    (hlo2 : ∀ j, (lo2 j : Real) ≤ y j) (hhi2 : ∀ j, y j ≤ (hi2 j : Real)) :
+    let bounds := dotIntervalLowerUpper2SignSplit dims lo1 hi1 lo2 hi2
+    (bounds.1 : Real) ≤ dotProduct x y ∧ dotProduct x y ≤ (bounds.2 : Real) := by
+  classical
+  induction dims generalizing lo1 hi1 with
+  | nil =>
+      have hlow :=
+        dotIntervalLower2_le_dotProduct_real
+          (lo1 := lo1) (hi1 := hi1) (lo2 := lo2) (hi2 := hi2)
+          (x := x) (y := y) hlo1 hhi1 hlo2 hhi2
+      have hhigh :=
+        dotProduct_le_dotIntervalUpper2_real
+          (lo1 := lo1) (hi1 := hi1) (lo2 := lo2) (hi2 := hi2)
+          (x := x) (y := y) hlo1 hhi1 hlo2 hhi2
+      simpa [dotIntervalLowerUpper2SignSplit, dotIntervalLowerUpper2CommonDen_fst,
+        dotIntervalLowerUpper2CommonDen_snd] using And.intro hlow hhigh
+  | cons i rest ih =>
+      by_cases hx : 0 ≤ x i
+      · let clamped := clampAt i true lo1 hi1
+        let boundsPos := dotIntervalLowerUpper2SignSplit rest clamped.1 clamped.2 lo2 hi2
+        let boundsNeg :=
+          dotIntervalLowerUpper2SignSplit rest (clampAt i false lo1 hi1).1
+            (clampAt i false lo1 hi1).2 lo2 hi2
+        have hlo1' : ∀ j, (clamped.1 j : Real) ≤ x j := by
+          intro j
+          by_cases hji : j = i
+          · have hmax : max (0 : Real) (lo1 i : Real) ≤ x i :=
+              (max_le_iff).2 ⟨hx, hlo1 i⟩
+            simpa [clamped, clampAt, hji, ratToReal_max] using hmax
+          · simpa [clamped, clampAt, hji] using hlo1 j
+        have hhi1' : ∀ j, x j ≤ (clamped.2 j : Real) := by
+          intro j
+          simpa [clamped, clampAt] using hhi1 j
+        have hpos :=
+          ih (lo1 := clamped.1) (hi1 := clamped.2) hlo1' hhi1'
+        have hlow : (min boundsPos.1 boundsNeg.1 : Real) ≤ dotProduct x y := by
+          have hmin : (min boundsPos.1 boundsNeg.1 : Real) ≤ (boundsPos.1 : Real) := by
+            exact min_le_left _ _
+          exact le_trans hmin hpos.1
+        have hhigh : dotProduct x y ≤ (max boundsPos.2 boundsNeg.2 : Real) := by
+          have hmax : (boundsPos.2 : Real) ≤ (max boundsPos.2 boundsNeg.2 : Real) := by
+            exact le_max_left _ _
+          exact le_trans hpos.2 hmax
+        simpa [dotIntervalLowerUpper2SignSplit, boundsPos, boundsNeg, clamped] using
+          And.intro hlow hhigh
+      · have hxneg : x i ≤ 0 := le_of_lt (lt_of_not_ge hx)
+        let clamped := clampAt i false lo1 hi1
+        let boundsPos :=
+          dotIntervalLowerUpper2SignSplit rest (clampAt i true lo1 hi1).1
+            (clampAt i true lo1 hi1).2 lo2 hi2
+        let boundsNeg := dotIntervalLowerUpper2SignSplit rest clamped.1 clamped.2 lo2 hi2
+        have hlo1' : ∀ j, (clamped.1 j : Real) ≤ x j := by
+          intro j
+          simpa [clamped, clampAt] using hlo1 j
+        have hhi1' : ∀ j, x j ≤ (clamped.2 j : Real) := by
+          intro j
+          by_cases hji : j = i
+          · have hmin : x i ≤ min (0 : Real) (hi1 i : Real) :=
+              (le_min_iff).2 ⟨hxneg, hhi1 i⟩
+            simpa [clamped, clampAt, hji, ratToReal_min] using hmin
+          · simpa [clamped, clampAt, hji] using hhi1 j
+        have hneg :=
+          ih (lo1 := clamped.1) (hi1 := clamped.2) hlo1' hhi1'
+        have hlow : (min boundsPos.1 boundsNeg.1 : Real) ≤ dotProduct x y := by
+          have hmin : (min boundsPos.1 boundsNeg.1 : Real) ≤ (boundsNeg.1 : Real) := by
+            exact min_le_right _ _
+          exact le_trans hmin hneg.1
+        have hhigh : dotProduct x y ≤ (max boundsPos.2 boundsNeg.2 : Real) := by
+          have hmax : (boundsNeg.2 : Real) ≤ (max boundsPos.2 boundsNeg.2 : Real) := by
+            exact le_max_right _ _
+          exact le_trans hneg.2 hmax
+        simpa [dotIntervalLowerUpper2SignSplit, boundsPos, boundsNeg, clamped] using
+          And.intro hlow hhigh
 
 theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
     (x : Fin n → Real)

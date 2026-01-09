@@ -217,11 +217,17 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
           let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
           let masked : Fin seq → Fin seq → Prop := fun q k =>
             inputs.maskCausal = true ∧ q < k
+          let splitBudget : Nat := 2
+          let splitDims : Fin seq → List (Fin dHead) := fun q =>
+            let ambig :=
+              (List.finRange dHead).filter (fun d => qLo q d < 0 ∧ 0 < qHi q d)
+            ambig.take splitBudget
           let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
-                  ⟨Array.ofFn (fun k : Fin seq =>
-                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen
+                let dims := splitDims q
+                ⟨Array.ofFn (fun k : Fin seq =>
+                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit dims
                       (fun d => qLo q d) (fun d => qHi q d)
                       (fun d => kLo k d) (fun d => kHi k d)),
                   by simp⟩))
@@ -436,11 +442,17 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
             let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
             let masked : Fin seq → Fin seq → Prop := fun q k =>
               inputs.maskCausal = true ∧ q < k
+            let splitBudget : Nat := 2
+            let splitDims : Fin seq → List (Fin dHead) := fun q =>
+              let ambig :=
+                (List.finRange dHead).filter (fun d => qLo q d < 0 ∧ 0 < qHi q d)
+              ambig.take splitBudget
             let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ =>
+                  let dims := splitDims q
                   ⟨Array.ofFn (fun k : Fin seq =>
-                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen
+                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit dims
                         (fun d => qLo q d) (fun d => qHi q d)
                         (fun d => kLo k d) (fun d => kHi k d)),
                     by simp⟩))
@@ -541,7 +553,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   lnLo, lnHi, lnAbsMaxTask, lnAbsMaxArr, lnAbsMax, lnAbsMaxMax,
                   qLoRowTasks, qHiRowTasks, qLoArr, qHiArr, qLo, qHi,
                   kLoRowTasks, kHiRowTasks, kLoArr, kHiArr, kLo, kHi,
-                  qAbs, kAbs, masked, dotRowTasks, dotLo, dotHi, dotAbs, scoreBaseAbs, scoreLo,
+                  qAbs, kAbs, masked, splitBudget, splitDims, dotRowTasks, dotLo, dotHi, dotAbs,
+                  scoreBaseAbs, scoreLo,
                   scoreHi, scoreLoPrev, otherKeys, marginAt, epsAt, margin, eps, dirHeadVec,
                   dirHead, wvDir, bDir, valsAbsBase, valsLoBase, valsHiBase, valsLo,
                   valsHi, univ, lo, hi, valCert, cert, Task.spawn, Bounds.cacheBoundTask_apply,
@@ -724,15 +737,9 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   (hk d).1
                 have hhi2 : ∀ d, kRealOfInputs inputs k d ≤ (kHi k d : Real) := fun d =>
                   (hk d).2
-                have hlow :=
-                  _root_.Nfp.Sound.Bounds.dotIntervalLower2_le_dotProduct_real
-                    (lo1 := fun d => qLo q d) (hi1 := fun d => qHi q d)
-                    (lo2 := fun d => kLo k d) (hi2 := fun d => kHi k d)
-                    (x := fun d => qRealOfInputs inputs q d)
-                    (y := fun d => kRealOfInputs inputs k d)
-                    hlo1 hhi1 hlo2 hhi2
-                have hhigh :=
-                  _root_.Nfp.Sound.Bounds.dotProduct_le_dotIntervalUpper2_real
+                have hspec :=
+                  _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit_spec_real
+                    (dims := splitDims q)
                     (lo1 := fun d => qLo q d) (hi1 := fun d => qHi q d)
                     (lo2 := fun d => kLo k d) (hi2 := fun d => kHi k d)
                     (x := fun d => qRealOfInputs inputs q d)
@@ -742,13 +749,13 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     (dotLo q k : Real) ≤
                       dotProduct (fun d => qRealOfInputs inputs q d)
                         (fun d => kRealOfInputs inputs k d) := by
-                  simpa [dotLo, dotRowTasks, Task.spawn, Array.getElem_ofFn,
-                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen_fst] using hlow
+                  simpa [dotLo, dotRowTasks, Task.spawn, Array.getElem_ofFn, splitDims]
+                    using hspec.1
                 have hhigh' :
                     dotProduct (fun d => qRealOfInputs inputs q d)
                         (fun d => kRealOfInputs inputs k d) ≤ (dotHi q k : Real) := by
-                  simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn,
-                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2CommonDen_snd] using hhigh
+                  simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn, splitDims]
+                    using hspec.2
                 exact ⟨hlow', hhigh'⟩
               by_cases hcausal : inputs.maskCausal
               · by_cases hle : k ≤ q
