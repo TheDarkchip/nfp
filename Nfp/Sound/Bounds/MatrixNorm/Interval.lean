@@ -209,6 +209,13 @@ def dotIntervalLowerUpper2SignSplit {n : Nat} (dims : List (Fin n))
         dotIntervalLowerUpper2SignSplit rest clamped.1 clamped.2 lo2 hi2
       (min boundsPos.1 boundsNeg.1, max boundsPos.2 boundsNeg.2)
 
+/-- Lower/upper interval endpoints with sign-splitting on both sides. -/
+def dotIntervalLowerUpper2SignSplitBoth {n : Nat} (dims1 dims2 : List (Fin n))
+    (lo1 hi1 lo2 hi2 : Fin n → Rat) : Rat × Rat :=
+  let bounds1 := dotIntervalLowerUpper2SignSplit dims1 lo1 hi1 lo2 hi2
+  let bounds2 := dotIntervalLowerUpper2SignSplit dims2 lo2 hi2 lo1 hi1
+  (max bounds1.1 bounds2.1, min bounds1.2 bounds2.2)
+
 theorem dotIntervalLower2_le_dotProduct {n : Nat} (lo1 hi1 lo2 hi2 x y : Fin n → Rat)
     (hlo1 : ∀ j, lo1 j ≤ x j) (hhi1 : ∀ j, x j ≤ hi1 j)
     (hlo2 : ∀ j, lo2 j ≤ y j) (hhi2 : ∀ j, y j ≤ hi2 j) :
@@ -774,6 +781,35 @@ theorem dotIntervalLowerUpper2SignSplit_spec_real {n : Nat} (dims : List (Fin n)
           exact le_trans hneg.2 hmax
         simpa [dotIntervalLowerUpper2SignSplit, boundsPos, boundsNeg, clamped] using
           And.intro hlow hhigh
+
+theorem dotIntervalLowerUpper2SignSplitBoth_spec_real {n : Nat} (dims1 dims2 : List (Fin n))
+    (lo1 hi1 lo2 hi2 : Fin n → Rat) (x y : Fin n → Real)
+    (hlo1 : ∀ j, (lo1 j : Real) ≤ x j) (hhi1 : ∀ j, x j ≤ (hi1 j : Real))
+    (hlo2 : ∀ j, (lo2 j : Real) ≤ y j) (hhi2 : ∀ j, y j ≤ (hi2 j : Real)) :
+    let bounds := dotIntervalLowerUpper2SignSplitBoth dims1 dims2 lo1 hi1 lo2 hi2
+    (bounds.1 : Real) ≤ dotProduct x y ∧ dotProduct x y ≤ (bounds.2 : Real) := by
+  classical
+  let bounds1 := dotIntervalLowerUpper2SignSplit dims1 lo1 hi1 lo2 hi2
+  let bounds2 := dotIntervalLowerUpper2SignSplit dims2 lo2 hi2 lo1 hi1
+  have h1 :=
+    dotIntervalLowerUpper2SignSplit_spec_real
+      (dims := dims1) (lo1 := lo1) (hi1 := hi1) (lo2 := lo2) (hi2 := hi2)
+      (x := x) (y := y) hlo1 hhi1 hlo2 hhi2
+  have h2swap :=
+    dotIntervalLowerUpper2SignSplit_spec_real
+      (dims := dims2) (lo1 := lo2) (hi1 := hi2) (lo2 := lo1) (hi2 := hi1)
+      (x := y) (y := x) hlo2 hhi2 hlo1 hhi1
+  have h2 : (bounds2.1 : Real) ≤ dotProduct x y ∧ dotProduct x y ≤ (bounds2.2 : Real) := by
+    simpa [dotProduct_comm] using h2swap
+  have hlow' : max (bounds1.1 : Real) (bounds2.1 : Real) ≤ dotProduct x y :=
+    (max_le_iff).2 ⟨h1.1, h2.1⟩
+  have hhigh' : dotProduct x y ≤ min (bounds1.2 : Real) (bounds2.2 : Real) :=
+    (le_min_iff).2 ⟨h1.2, h2.2⟩
+  have hlow : ((max bounds1.1 bounds2.1 : Rat) : Real) ≤ dotProduct x y := by
+    simpa [ratToReal_max] using hlow'
+  have hhigh : dotProduct x y ≤ ((min bounds1.2 bounds2.2 : Rat) : Real) := by
+    simpa [ratToReal_min] using hhigh'
+  simpa [dotIntervalLowerUpper2SignSplitBoth, bounds1, bounds2] using And.intro hlow hhigh
 
 theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
     (x : Fin n → Real)

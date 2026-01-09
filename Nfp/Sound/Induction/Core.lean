@@ -1,5 +1,4 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Algebra.Order.Field.Basic
@@ -15,26 +14,18 @@ import Nfp.Sound.Bounds.MatrixNorm
 import Nfp.Sound.Induction.CoreDefs
 import Nfp.Sound.Induction.OneHot
 import Nfp.Sound.Linear.FinFold
-
 /-!
 Sound builders for induction certificates.
-
 These builders recompute certificate bounds inside Lean from exact inputs and
 return proof-carrying results. The head-input path derives softmax tolerances
 from score margins rather than trusting external weight dumps.
 -/
-
 namespace Nfp
-
 namespace Sound
-
 open scoped BigOperators
-
 open Nfp.Circuit
 open Nfp.Sound.Bounds
-
 variable {seq : Nat}
-
 /-- Build and certify a softmax-margin certificate from exact scores/weights. -/
 def buildSoftmaxMarginCert? [NeZero seq]
     (active : Finset (Fin seq))
@@ -81,7 +72,6 @@ def buildSoftmaxMarginCert? [NeZero seq]
     exact some ⟨cert, h⟩
   else
     exact none
-
 /-- Build and certify a value-range certificate from exact values. -/
 def buildValueRangeCert? [NeZero seq]
     (vals : Fin seq → Rat)
@@ -104,7 +94,6 @@ def buildValueRangeCert? [NeZero seq]
     exact some ⟨cert, h⟩
   else
     exact none
-
 /-- Build induction certificates from exact head inputs (core computation). -/
 def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
@@ -215,6 +204,16 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               simp [row.2])
           let qAbs : Fin seq → Fin dHead → Rat := fun q d => max |qLo q d| |qHi q d|
           let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
+          let qAbsMaxArr : Array Rat :=
+            Array.ofFn (fun d : Fin dHead =>
+              let univ : Finset (Fin seq) := Finset.univ
+              have hnonempty : univ.Nonempty := Finset.univ_nonempty
+              univ.sup' hnonempty (fun q => qAbs q d))
+          let qAbsMax : Fin dHead → Rat := fun d =>
+            qAbsMaxArr[d.1]'(by
+              have hsize : qAbsMaxArr.size = dHead := by
+                simp [qAbsMaxArr]
+              simp [hsize])
           let kAbsMaxArr : Array Rat :=
             Array.ofFn (fun d : Fin dHead =>
               let univ : Finset (Fin seq) := Finset.univ
@@ -227,8 +226,9 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               simp [hsize])
           let masked : Fin seq → Fin seq → Prop := fun q k =>
             inputs.maskCausal = true ∧ q < k
-          let splitBudget : Nat := 2
-          let splitDims : Fin seq → List (Fin dHead) := fun q =>
+          let splitBudgetQ : Nat := 2
+          let splitBudgetK : Nat := 1
+          let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
             let ambig :=
               (List.finRange dHead).filter (fun d => qLo q d < 0 ∧ 0 < qHi q d)
             let score : Fin dHead → Rat := fun d => (qHi q d - qLo q d) * kAbsMax d
@@ -252,13 +252,39 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               | (some b1, some b2) => [b1.2, b2.2]
               | (some b1, none) => [b1.2]
               | (none, _) => []
-            dims.take splitBudget
+            dims.take splitBudgetQ
+          let splitDimsK : Fin seq → List (Fin dHead) := fun k =>
+            let ambig :=
+              (List.finRange dHead).filter (fun d => kLo k d < 0 ∧ 0 < kHi k d)
+            let score : Fin dHead → Rat := fun d => (kHi k d - kLo k d) * qAbsMax d
+            let step
+                (best : Option (Rat × Fin dHead) × Option (Rat × Fin dHead))
+                (d : Fin dHead) :
+                Option (Rat × Fin dHead) × Option (Rat × Fin dHead) :=
+              let s := score d
+              match best with
+              | (none, none) => (some (s, d), none)
+              | (some b1, none) =>
+                  if b1.1 < s then (some (s, d), some b1) else (some b1, some (s, d))
+              | (some b1, some b2) =>
+                  if b1.1 < s then (some (s, d), some b1)
+                  else if b2.1 < s then (some b1, some (s, d)) else (some b1, some b2)
+              | (none, some b2) =>
+                  if b2.1 < s then (some (s, d), some b2) else (some b2, some (s, d))
+            let best := ambig.foldl step (none, none)
+            let dims :=
+              match best with
+              | (some b1, some b2) => [b1.2, b2.2]
+              | (some b1, none) => [b1.2]
+              | (none, _) => []
+            dims.take splitBudgetK
           let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
-                let dims := splitDims q
+                let dimsQ := splitDimsQ q
                 ⟨Array.ofFn (fun k : Fin seq =>
-                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit dims
+                    let dimsK := splitDimsK k
+                    _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
                       (fun d => qLo q d) (fun d => qHi q d)
                       (fun d => kLo k d) (fun d => kHi k d)),
                   by simp⟩))
@@ -355,7 +381,6 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
         · exact none
     · exact none
   · exact none
-
 set_option maxHeartbeats 1000000 in
 -- Large softmax/interval proof expands many bounds; bump heartbeats to avoid timeouts.
 /-- Soundness for `buildInductionCertFromHeadCore?`. -/
@@ -471,6 +496,16 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 simp [row.2])
             let qAbs : Fin seq → Fin dHead → Rat := fun q d => max |qLo q d| |qHi q d|
             let kAbs : Fin seq → Fin dHead → Rat := fun q d => max |kLo q d| |kHi q d|
+            let qAbsMaxArr : Array Rat :=
+              Array.ofFn (fun d : Fin dHead =>
+                let univ : Finset (Fin seq) := Finset.univ
+                have hnonempty : univ.Nonempty := Finset.univ_nonempty
+                univ.sup' hnonempty (fun q => qAbs q d))
+            let qAbsMax : Fin dHead → Rat := fun d =>
+              qAbsMaxArr[d.1]'(by
+                have hsize : qAbsMaxArr.size = dHead := by
+                  simp [qAbsMaxArr]
+                simp [hsize])
             let kAbsMaxArr : Array Rat :=
               Array.ofFn (fun d : Fin dHead =>
                 let univ : Finset (Fin seq) := Finset.univ
@@ -483,8 +518,9 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 simp [hsize])
             let masked : Fin seq → Fin seq → Prop := fun q k =>
               inputs.maskCausal = true ∧ q < k
-            let splitBudget : Nat := 2
-            let splitDims : Fin seq → List (Fin dHead) := fun q =>
+            let splitBudgetQ : Nat := 2
+            let splitBudgetK : Nat := 1
+            let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
               let ambig :=
                 (List.finRange dHead).filter (fun d => qLo q d < 0 ∧ 0 < qHi q d)
               let score : Fin dHead → Rat := fun d => (qHi q d - qLo q d) * kAbsMax d
@@ -508,13 +544,39 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 | (some b1, some b2) => [b1.2, b2.2]
                 | (some b1, none) => [b1.2]
                 | (none, _) => []
-              dims.take splitBudget
+              dims.take splitBudgetQ
+            let splitDimsK : Fin seq → List (Fin dHead) := fun k =>
+              let ambig :=
+                (List.finRange dHead).filter (fun d => kLo k d < 0 ∧ 0 < kHi k d)
+              let score : Fin dHead → Rat := fun d => (kHi k d - kLo k d) * qAbsMax d
+              let step
+                  (best : Option (Rat × Fin dHead) × Option (Rat × Fin dHead))
+                  (d : Fin dHead) :
+                  Option (Rat × Fin dHead) × Option (Rat × Fin dHead) :=
+                let s := score d
+                match best with
+                | (none, none) => (some (s, d), none)
+                | (some b1, none) =>
+                    if b1.1 < s then (some (s, d), some b1) else (some b1, some (s, d))
+                | (some b1, some b2) =>
+                    if b1.1 < s then (some (s, d), some b1)
+                    else if b2.1 < s then (some b1, some (s, d)) else (some b1, some b2)
+                | (none, some b2) =>
+                    if b2.1 < s then (some (s, d), some b2) else (some b2, some (s, d))
+              let best := ambig.foldl step (none, none)
+              let dims :=
+                match best with
+                | (some b1, some b2) => [b1.2, b2.2]
+                | (some b1, none) => [b1.2]
+                | (none, _) => []
+              dims.take splitBudgetK
             let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ =>
-                  let dims := splitDims q
+                  let dimsQ := splitDimsQ q
                   ⟨Array.ofFn (fun k : Fin seq =>
-                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit dims
+                      let dimsK := splitDimsK k
+                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
                         (fun d => qLo q d) (fun d => qHi q d)
                         (fun d => kLo k d) (fun d => kHi k d)),
                     by simp⟩))
@@ -615,7 +677,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   lnLo, lnHi, lnAbsMaxTask, lnAbsMaxArr, lnAbsMax, lnAbsMaxMax,
                   qLoRowTasks, qHiRowTasks, qLoArr, qHiArr, qLo, qHi,
                   kLoRowTasks, kHiRowTasks, kLoArr, kHiArr, kLo, kHi,
-                  qAbs, kAbs, kAbsMaxArr, kAbsMax, masked, splitBudget, splitDims,
+                  qAbs, kAbs, qAbsMaxArr, qAbsMax, kAbsMaxArr, kAbsMax, masked,
+                  splitBudgetQ, splitBudgetK, splitDimsQ, splitDimsK,
                   dotRowTasks, dotLo, dotHi, dotAbs,
                   scoreBaseAbs, scoreLo, scoreHi, scoreLoPrev, otherKeys, marginAt, epsAt,
                   margin, eps, dirHeadVec, dirHead, wvDir, bDir, valsAbsBase, valsLoBase,
@@ -800,8 +863,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 have hhi2 : ∀ d, kRealOfInputs inputs k d ≤ (kHi k d : Real) := fun d =>
                   (hk d).2
                 have hspec :=
-                  _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplit_spec_real
-                    (dims := splitDims q)
+                  _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth_spec_real
+                    (dims1 := splitDimsQ q) (dims2 := splitDimsK k)
                     (lo1 := fun d => qLo q d) (hi1 := fun d => qHi q d)
                     (lo2 := fun d => kLo k d) (hi2 := fun d => kHi k d)
                     (x := fun d => qRealOfInputs inputs q d)
@@ -1431,7 +1494,5 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
     · have : False := by
         simp [buildInductionCertFromHeadCore?, hEps] at hcore
       exact this.elim
-  
 end Sound
-
 end Nfp
