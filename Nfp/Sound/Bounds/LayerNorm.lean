@@ -66,9 +66,20 @@ def sqrtUpperAlt (q : Rat) : Rat :=
   let a := Nat.sqrt (num * den)
   ratRoundUp ((a + 1 : Rat) / den)
 
+/-- Extra precision scale for `sqrtLowerScaled`. -/
+def sqrtLowerScale : Nat := 4096
+
+/-- Scaled rational lower bound for a square root (extra precision). -/
+def sqrtLowerScaled (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
+  let scale := sqrtLowerScale
+  let a := Nat.sqrt (num * den * scale * scale)
+  ratRoundDown ((a : Rat) / (den * scale))
+
 /-- Rational lower bound for a square root (tighter of two bounds). -/
 def sqrtLower (q : Rat) : Rat :=
-  max (sqrtLowerBase q) (sqrtLowerAlt q)
+  max (max (sqrtLowerBase q) (sqrtLowerAlt q)) (sqrtLowerScaled q)
 
 /-- Rational upper bound for a square root (tighter of two bounds). -/
 def sqrtUpper (q : Rat) : Rat :=
@@ -167,7 +178,9 @@ theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
 /-- `sqrtLower` is nonnegative. -/
 theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
   have hbase : 0 ≤ sqrtLowerBase q := sqrtLowerBase_nonneg q
-  exact le_trans hbase (le_max_left _ _)
+  have hmax : 0 ≤ max (sqrtLowerBase q) (sqrtLowerAlt q) :=
+    le_trans hbase (le_max_left _ _)
+  exact le_trans hmax (le_max_left _ _)
 
 
 /-- `sqrtUpper` is nonnegative. -/
@@ -353,6 +366,89 @@ theorem sqrtLowerAlt_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     simpa [sqrtLowerAlt, num, den, a] using hdown'
   exact le_trans hdown hle
 
+/-- Scaled square-root lower bound in reals. -/
+theorem sqrtLowerScaled_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
+    (sqrtLowerScaled q : Real) ≤ Real.sqrt (q : Real) := by
+  classical
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
+  set scale : Nat := sqrtLowerScale
+  set a : Nat := Nat.sqrt (num * den * scale * scale)
+  have hden_pos : 0 < (den : Real) := by
+    exact_mod_cast q.den_pos
+  have hscale_pos : 0 < (scale : Real) := by
+    have hscale_pos_nat : 0 < scale := by
+      simp [scale, sqrtLowerScale]
+    exact_mod_cast hscale_pos_nat
+  have hnumden_le : (a ^ 2 : Real) ≤ (num * den * scale * scale : Nat) := by
+    exact_mod_cast (Nat.sqrt_le' (num * den * scale * scale))
+  have hmul :
+      (a ^ 2 : Real) ≤ (num : Real) * den * (scale : Real) * (scale : Real) := by
+    simpa [num, den, scale, Nat.cast_mul, mul_assoc, mul_left_comm, mul_comm] using hnumden_le
+  have hdenScale_pos : 0 < (den : Real) * (scale : Real) :=
+    mul_pos hden_pos hscale_pos
+  have hdenScale_pos2 : 0 < ((den : Real) * (scale : Real)) ^ 2 := by
+    exact pow_pos hdenScale_pos 2
+  have hmul' :
+      (a ^ 2 : Real) * ((den : Real) * (scale : Real)) ^ 2 ≤
+        ((num : Real) * den * (scale : Real) * (scale : Real)) *
+          ((den : Real) * (scale : Real)) ^ 2 := by
+    have hnonneg : 0 ≤ ((den : Real) * (scale : Real)) ^ 2 := by
+      exact sq_nonneg _
+    exact mul_le_mul_of_nonneg_right hmul hnonneg
+  have hdiv :
+      (a ^ 2 : Real) / ((den : Real) * (scale : Real)) ^ 2 ≤
+        ((num : Real) * den * (scale : Real) * (scale : Real)) /
+          ((den : Real) * (scale : Real)) ^ 2 := by
+    exact (div_le_div_iff₀ hdenScale_pos2 hdenScale_pos2).2 hmul'
+  have hdenScale_ne : ((den : Real) * (scale : Real)) ≠ 0 :=
+    ne_of_gt hdenScale_pos
+  have hq_cast : (q : Real) = (num : Real) / den := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
+      simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
+    have hnum_cast : (q.num : Real) = (num : Real) := by
+      exact_mod_cast hnum_eq.symm
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
+    simpa [hnum_cast, den] using hq_rat
+  have hq_eq :
+      ((num : Real) * den * (scale : Real) * (scale : Real)) /
+          ((den : Real) * (scale : Real)) ^ 2 = (num : Real) / den := by
+    field_simp [hdenScale_ne]
+  have hpow :
+      ((a : Real) / ((den : Real) * (scale : Real))) ^ 2 =
+        (a ^ 2 : Real) / ((den : Real) * (scale : Real)) ^ 2 := by
+    simp [pow_two, div_mul_div_comm]
+  have hsq :
+      ((a : Real) / ((den : Real) * (scale : Real))) ^ 2 ≤ (q : Real) := by
+    calc
+      ((a : Real) / ((den : Real) * (scale : Real))) ^ 2
+          = (a ^ 2 : Real) / ((den : Real) * (scale : Real)) ^ 2 := hpow
+      _ ≤ ((num : Real) * den * (scale : Real) * (scale : Real)) /
+            ((den : Real) * (scale : Real)) ^ 2 := hdiv
+      _ = (num : Real) / den := hq_eq
+      _ = (q : Real) := by simp [hq_cast]
+  have hnonneg : 0 ≤ (a : Real) / ((den : Real) * (scale : Real)) := by
+    have hnum_nonneg : 0 ≤ (a : Real) := by exact_mod_cast (Nat.zero_le a)
+    have hden_nonneg : 0 ≤ (den : Real) * (scale : Real) := by
+      nlinarith [hden_pos, hscale_pos]
+    exact div_nonneg hnum_nonneg hden_nonneg
+  have hq_nonneg : 0 ≤ (q : Real) := by
+    exact ratToReal_nonneg_of_nonneg hq
+  have hle :
+      (a : Real) / ((den : Real) * (scale : Real)) ≤ Real.sqrt (q : Real) :=
+    (Real.le_sqrt hnonneg hq_nonneg).2 hsq
+  have hdown :
+      (sqrtLowerScaled q : Real) ≤ (a : Real) / ((den : Real) * (scale : Real)) := by
+    have hdown' :
+        ratToReal (ratRoundDown ((a : Rat) / (den * scale))) ≤
+          (a : Real) / ((den : Real) * (scale : Real)) := by
+      simpa using ratRoundDown_le_real ((a : Rat) / (den * scale))
+    simpa [sqrtLowerScaled, num, den, scale, a] using hdown'
+  exact le_trans hdown hle
+
 /-- Alternate square-root upper bound in reals. -/
 theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
     Real.sqrt (q : Real) ≤ (sqrtUpperAlt q : Real) := by
@@ -412,12 +508,20 @@ theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
     simpa [sqrtUpperAlt, num, den, a] using hup'
   exact le_trans hle hup
 
-/-- Square-root lower bound in reals (tighter of two bounds). -/
+/-- Square-root lower bound in reals (tighter of three bounds). -/
 theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     (sqrtLower q : Real) ≤ Real.sqrt (q : Real) := by
   have hbase := sqrtLowerBase_le_real_sqrt (q := q) hq
   have halt := sqrtLowerAlt_le_real_sqrt (q := q) hq
-  simpa [sqrtLower] using (max_le_iff).2 ⟨hbase, halt⟩
+  have hscaled := sqrtLowerScaled_le_real_sqrt (q := q) hq
+  have hmax1 :
+      (max (sqrtLowerBase q) (sqrtLowerAlt q) : Real) ≤ Real.sqrt (q : Real) := by
+    simpa [ratToReal_max] using (max_le_iff).2 ⟨hbase, halt⟩
+  have hmax2 :
+      (max (max (sqrtLowerBase q) (sqrtLowerAlt q)) (sqrtLowerScaled q) : Real) ≤
+        Real.sqrt (q : Real) := by
+    simpa [ratToReal_max] using (max_le_iff).2 ⟨hmax1, hscaled⟩
+  simpa [sqrtLower] using hmax2
 
 /-- Square-root upper bound in reals (tighter of two bounds). -/
 theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
