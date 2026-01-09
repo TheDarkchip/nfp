@@ -506,7 +506,10 @@ def layerNormBounds {n : Nat}
     let μHi := meanUpper x
     let centeredBound : Fin n → Rat := fun i =>
       max |x i - μHi| |x i - μLo|
-    let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
+    let varLo : Rat := variance x
+    let varEpsLo : Rat := varLo + eps
+    let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEpsLo)
+    let invStdBound : Rat := ratDivUp 1 sqrtLowerBound
     let radius : Fin n → Rat := fun i => |gamma i| * centeredBound i * invStdBound
     (fun i => beta i - radius i, fun i => beta i + radius i)
 
@@ -523,7 +526,10 @@ theorem layerNormBounds_spec {n : Nat}
   let μLo : Rat := mean x
   let μHi : Rat := meanUpper x
   let centeredBound : Fin n → Rat := fun j => max |x j - μHi| |x j - μLo|
-  let invStdBound : Rat := ratDivUp 1 (sqrtLower eps)
+  let varLo : Rat := variance x
+  let varEpsLo : Rat := varLo + eps
+  let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEpsLo)
+  let invStdBound : Rat := ratDivUp 1 sqrtLowerBound
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let μ : Real := meanRat x
   let invStd : Real := (Real.sqrt varEps)⁻¹
@@ -547,27 +553,62 @@ theorem layerNormBounds_spec {n : Nat}
     simpa [centeredBound, μLo, μHi, ratToReal_abs, ratToReal_sub,
       ratToReal_max] using hbound
   have hvar_nonneg : 0 ≤ (varianceRat x : Real) := varianceRat_nonneg_real x hne
+  have hvar_nonneg_rat : 0 ≤ varianceRat x := by
+    have hreal : 0 ≤ (varianceRat x : Real) := hvar_nonneg
+    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hreal
+  have hvarLo_nonneg : 0 ≤ varLo := by
+    have h := ratRoundDown_nonneg (q := varianceRat x) hvar_nonneg_rat
+    simpa [varLo, variance_def x hne] using h
+  have hvarEpsLo_nonneg : 0 ≤ varEpsLo := by
+    exact add_nonneg hvarLo_nonneg (le_of_lt heps)
   have hsqrt_lower :
-      (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
+      (sqrtLowerBound : Real) ≤ Real.sqrt varEps := by
     have hsqrt_eps :
-        (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
-      have h := sqrtLower_le_real_sqrt (q := eps) (by exact le_of_lt heps)
-      simpa using h
-    have hle : (eps : Real) ≤ varEps := by
-      have hle' : (eps : Real) ≤ (varianceRat x : Real) + (eps : Real) :=
-        le_add_of_nonneg_left hvar_nonneg
-      simpa [varEps] using hle'
-    have hsqrt_eps' : Real.sqrt (eps : Real) ≤ Real.sqrt varEps := by
-      exact Real.sqrt_le_sqrt hle
-    exact le_trans hsqrt_eps hsqrt_eps'
-  have hsqrt_lower_pos : 0 < (sqrtLower eps : Real) := by
-    exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
-  have hinv_sqrt : invStd ≤ (sqrtLower eps : Real)⁻¹ := by
+        (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
+      have hsqrt_eps' :
+          (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
+        have h := sqrtLower_le_real_sqrt (q := eps) (by exact le_of_lt heps)
+        simpa using h
+      have hle : (eps : Real) ≤ varEps := by
+        have hle' : (eps : Real) ≤ (varianceRat x : Real) + (eps : Real) :=
+          le_add_of_nonneg_left hvar_nonneg
+        simpa [varEps] using hle'
+      have hsqrt_eps'' : Real.sqrt (eps : Real) ≤ Real.sqrt varEps := by
+        exact Real.sqrt_le_sqrt hle
+      exact le_trans hsqrt_eps' hsqrt_eps''
+    have hsqrt_var :
+        (sqrtLower varEpsLo : Real) ≤ Real.sqrt varEps := by
+      have hsqrt_var' :
+          (sqrtLower varEpsLo : Real) ≤ Real.sqrt (varEpsLo : Real) := by
+        have h := sqrtLower_le_real_sqrt (q := varEpsLo) hvarEpsLo_nonneg
+        simpa using h
+      have hle : (varEpsLo : Real) ≤ varEps := by
+        have hle' : (varLo : Real) ≤ (varianceRat x : Real) := by
+          have h := ratRoundDown_le_real (varianceRat x)
+          simpa [varLo, variance_def x hne] using h
+        have hle'' := add_le_add_right hle' (eps : Real)
+        simpa [varEpsLo, varEps, ratToReal_add] using hle''
+      have hsqrt_var'' : Real.sqrt (varEpsLo : Real) ≤ Real.sqrt varEps := by
+        exact Real.sqrt_le_sqrt hle
+      exact le_trans hsqrt_var' hsqrt_var''
+    have hmax :
+        max (sqrtLower eps : Real) (sqrtLower varEpsLo : Real) ≤ Real.sqrt varEps :=
+      (max_le_iff).2 ⟨hsqrt_eps, hsqrt_var⟩
+    simpa [sqrtLowerBound, ratToReal_max] using hmax
+  have hsqrt_lower_pos : 0 < (sqrtLowerBound : Real) := by
+    have hpos : 0 < (sqrtLower eps : Real) := by
+      exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
+    have hpos' : 0 < max (sqrtLower eps : Real) (sqrtLower varEpsLo : Real) := by
+      exact lt_of_lt_of_le hpos (le_max_left _ _)
+    simpa [sqrtLowerBound, ratToReal_max] using hpos'
+  have hinv_sqrt : invStd ≤ (sqrtLowerBound : Real)⁻¹ := by
     have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
     simpa [invStd] using h
-  have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
-    have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+  have hinv_bound : (sqrtLowerBound : Real)⁻¹ ≤ (invStdBound : Real) := by
+    have hsqrt_lower_pos_rat : 0 < sqrtLowerBound := by
+      exact lt_of_lt_of_le hsqrt (le_max_left _ _)
+    have hy : sqrtLowerBound ≠ 0 := ne_of_gt hsqrt_lower_pos_rat
+    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLowerBound) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -615,11 +656,11 @@ theorem layerNormBounds_spec {n : Nat}
       layerNormReal eps gamma beta x i = t + (beta i : Real) := by
     simp [layerNormReal, hne, μ, invStd, varEps, t, add_comm]
   have hlo : (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i := by
-    simpa [bounds, layerNormBounds, hne, radius, centeredBound, invStdBound, μLo, μHi,
-      hreal] using hlow
+    simpa [bounds, layerNormBounds, hne, radius, centeredBound, varLo, varEpsLo,
+      sqrtLowerBound, invStdBound, μLo, μHi, hreal] using hlow
   have hhi : layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
-    simpa [bounds, layerNormBounds, hne, radius, centeredBound, invStdBound, μLo, μHi,
-      hreal] using hhigh
+    simpa [bounds, layerNormBounds, hne, radius, centeredBound, varLo, varEpsLo,
+      sqrtLowerBound, invStdBound, μLo, μHi, hreal] using hhigh
   exact And.intro hlo hhi
 
 /-- Interval bounds for LayerNorm outputs from per-coordinate intervals. -/
