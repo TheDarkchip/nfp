@@ -236,9 +236,10 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               simp [hsize])
           let masked : Fin seq → Fin seq → Prop := fun q k =>
             inputs.maskCausal = true ∧ q < k
-          let splitBudgetQ : Nat := 8
-          let splitBudgetK : Nat := 8
-          let splitBudgetDiff : Nat := 6
+          let splitBudgetQ : Nat := 2
+          let splitBudgetK : Nat := 2
+          let splitBudgetDiffBase : Nat := 0
+          let splitBudgetDiffRefined : Nat := 12
           let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
             let ambig :=
               (List.finRange dHead).filter (fun d => decide (qLo q d < 0 ∧ 0 < qHi q d))
@@ -291,7 +292,7 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
             let dims1 := top2 ambig
             let dims2 := top2 (ambig.filter (fun d => decide (d ∉ dims1)))
             (dims1 ++ dims2).take splitBudgetK
-          let splitDimsDiff : Fin seq → Fin seq → List (Fin dHead) := fun q k =>
+          let splitDimsDiffCore : Nat → Fin seq → Fin seq → List (Fin dHead) := fun budget q k =>
             let prev := inputs.prev q
             let diffLo : Fin dHead → Rat := fun d => kLo prev d - kHi k d
             let diffHi : Fin dHead → Rat := fun d => kHi prev d - kLo k d
@@ -326,7 +327,11 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               top2
                 ((ambig.filter (fun d => decide (d ∉ dims1))).filter
                   (fun d => !memDims2 d))
-            (dims1 ++ dims2 ++ dims3).take splitBudgetDiff
+            (dims1 ++ dims2 ++ dims3).take budget
+          let splitDimsDiffBase : Fin seq → Fin seq → List (Fin dHead) :=
+            splitDimsDiffCore splitBudgetDiffBase
+          let splitDimsDiffRefined : Fin seq → Fin seq → List (Fin dHead) :=
+            splitDimsDiffCore splitBudgetDiffRefined
           let dotRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
@@ -337,7 +342,7 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
                       (fun d => qLo q d) (fun d => qHi q d)
                       (fun d => kLo k d) (fun d => kHi k d)),
                   by simp⟩))
-          let dotDiffRowTasks : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
+          let dotDiffRowTasksBase : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ =>
                 if hq : q ∈ inputs.active then
@@ -346,7 +351,7 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
                       if masked q k then
                         (0, 0)
                       else
-                        let dimsDiff := splitDimsDiff q k
+                        let dimsDiff := splitDimsDiffBase q k
                         let prev := inputs.prev q
                         _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
                           (fun d => qLo q d) (fun d => qHi q d)
@@ -367,15 +372,15 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
             let entry := row.1[k.1]'(by
               simp [row.2, k.isLt])
             entry.2
-          let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
-            let row := (dotDiffRowTasks[q.1]'(by
-              simp [dotDiffRowTasks, q.isLt])).get
+          let dotDiffLoBase : Fin seq → Fin seq → Rat := fun q k =>
+            let row := (dotDiffRowTasksBase[q.1]'(by
+              simp [dotDiffRowTasksBase, q.isLt])).get
             let entry := row.1[k.1]'(by
               simp [row.2, k.isLt])
             entry.1
-          let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
-            let row := (dotDiffRowTasks[q.1]'(by
-              simp [dotDiffRowTasks, q.isLt])).get
+          let dotDiffHiBase : Fin seq → Fin seq → Rat := fun q k =>
+            let row := (dotDiffRowTasksBase[q.1]'(by
+              simp [dotDiffRowTasksBase, q.isLt])).get
             let entry := row.1[k.1]'(by
               simp [row.2, k.isLt])
             entry.2
@@ -400,6 +405,57 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
                 inputs.scale * dotLo q k
           let scoreLoPrev : Fin seq → Rat := fun q =>
             scoreLo q (inputs.prev q)
+          let scoreGapLoBase : Fin seq → Fin seq → Rat := fun q k =>
+            if masked q (inputs.prev q) then
+              scoreLoPrev q - scoreHi q k
+            else if masked q k then
+              scoreLoPrev q - inputs.maskValue
+            else if hscale : 0 ≤ inputs.scale then
+              inputs.scale * dotDiffLoBase q k
+            else
+              inputs.scale * dotDiffHiBase q k
+          let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
+            (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
+          let worstKey : Fin seq → Option (Fin seq) := fun q =>
+            if hq : q ∈ inputs.active then
+              let ks := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
+              match ks with
+              | [] => none
+              | k :: ks =>
+                  let step (best : Rat × Fin seq) (k : Fin seq) :=
+                    let s := scoreGapLoBase q k
+                    if s ≤ best.1 then (s, k) else best
+                  some (ks.foldl step (scoreGapLoBase q k, k)).2
+            else
+              none
+          let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
+            match worstKey q with
+            | some k' =>
+                if hk : k = k' then
+                  let dimsQ := splitDimsQ q
+                  let dimsDiff := splitDimsDiffRefined q k
+                  let prev := inputs.prev q
+                  (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                    (fun d => qLo q d) (fun d => qHi q d)
+                    (fun d => kLo prev d - kHi k d)
+                    (fun d => kHi prev d - kLo k d)).1
+                else
+                  dotDiffLoBase q k
+            | none => dotDiffLoBase q k
+          let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
+            match worstKey q with
+            | some k' =>
+                if hk : k = k' then
+                  let dimsQ := splitDimsQ q
+                  let dimsDiff := splitDimsDiffRefined q k
+                  let prev := inputs.prev q
+                  (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                    (fun d => qLo q d) (fun d => qHi q d)
+                    (fun d => kLo prev d - kHi k d)
+                    (fun d => kHi prev d - kLo k d)).2
+                else
+                  dotDiffHiBase q k
+            | none => dotDiffHiBase q k
           let scoreGapLo : Fin seq → Fin seq → Rat := fun q k =>
             if masked q (inputs.prev q) then
               scoreLoPrev q - scoreHi q k
@@ -409,8 +465,6 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               inputs.scale * dotDiffLo q k
             else
               inputs.scale * dotDiffHi q k
-          let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
-            (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
           let marginAt : Fin seq → Rat := fun q =>
             if hq : q ∈ inputs.active then
               let other := otherKeys q
