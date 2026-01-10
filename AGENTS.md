@@ -16,7 +16,7 @@ but keep the core invariants and the “no fake proofs” ethos.
 
 ## 0. Quick Start (What to run)
 
-### Build (warnings are errors)
+### Build
 - `lake build --wfail`
 
 ### Build the CLI
@@ -27,15 +27,12 @@ One of these typically works (depending on your Lake setup):
 - `lake exe nfp --help`
 
 If you add or change CLI behavior, validate at least:
-- `nfp --help`
-- `nfp analyze --help`
-- `nfp induction --help`
-- `nfp --version` (if supported)
+- `lake exe nfp --help` (or `nfp --help` if on PATH)
+- `lake exe nfp analyze --help` (or `nfp analyze --help`)
+- `lake exe nfp induction --help` (or `nfp induction --help`)
+- `lake exe nfp --version` (or `nfp --version`) if supported
 
-Before you finish any change:
-- `lake build --wfail`
-- `lake build nfp --wfail`
-
+### Search tips
 Note: `models/` is gitignored, so `rg` will skip it unless you pass `--no-ignore`
 or `-uuu` (or equivalent) when searching.
 
@@ -45,12 +42,14 @@ or `-uuu` (or equivalent) when searching.
 
 ### 1.1 No fake proofs
 - **Forbidden:** `sorry`
-- **Forbidden:** introducing new nontrivial axioms beyond what mathlib already uses.
 
 ### 1.2 Linting stays on
 - **Never** disable linters globally or locally.
 - **Forbidden:** any `set_option linter.* false` (including e.g. `linter.unnecessarySimpa`).
 - Fix the code/proofs instead.
+- If linters warn about line length or file length, prefer principled refactors
+  (split modules, extract helpers) and keep docstrings with their code; avoid
+  squashing whitespace or formatting.
 
 ### 1.3 Clean build
 - `lake build --wfail` must succeed.
@@ -65,14 +64,15 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - Finiteness assumptions (`[Fintype _]`) are used intentionally and consistently
 
 ### 1.5 Trusted Code Verification (Total Soundness)
-**All code** in trusted namespaces (e.g., `Nfp.Sound.*`) must be **verified**.
+**All code** in trusted namespaces (see §6) must be **verified**.
 - **Requirement:** Every pure definition in the trusted scope must be characterized by a theorem
   or return a proof-carrying structure.
     - *Example (Bad):* `def addOne (x : Nat) := x + 1` (Unverified logic)
     - *Example (Good):* `def addOne (x : Nat) : { y // y > x } := ⟨x + 1, Nat.lt_succ_self _⟩`
     - *Example (Good):* `def addOne ...` followed immediately by `theorem addOne_gt_input ...`
 - **Scope:** This applies to **everything**: parsers, converters, arithmetic helpers, and bound computations.
-- **IO Exception:** Low-level IO primitives (reading bytes/files) cannot be "proven" correct but must be kept **logic-free**.
+- **IO Exception:** Low-level IO primitives (reading bytes/files) cannot be "proven"
+  correct but must be kept **logic-free**.
     - IO code should only read data and pass it to verified Pure code.
     - No mathematical transformations or complex branching allowed in IO functions.
 
@@ -90,15 +90,24 @@ The library’s claims rest on these being preserved (preferably with explicit l
   (or whether it belongs in a more general file in this repo).
 
 ### 2.3 Verify, Don't Trust
-- Distinguish between **witness generation** (untrusted, can use heuristics) and **verification** (trusted, must contain proofs).
-- The trusted kernel should only check that a candidate witness is valid; it should not be responsible for finding it if the search is complex.
+- Distinguish between **witness generation** (untrusted, can use heuristics) and
+  **verification** (trusted, must contain proofs).
+- The trusted kernel should only check that a candidate witness is valid; it
+  should not be responsible for finding it if the search is complex.
+
+### 2.4 Prefer principled redesigns
+When forced to choose between:
+- “slightly breaking but conceptually clean redesign”
+- vs “preserve an awkward design forever”
+
+prefer the **clean redesign**, but do it consciously and document the rationale.
 
 ---
 
 ## 3. Workflow Expectations (How to make changes)
 
 ### 3.1 Before coding
-- Identify the right module (see §5 Module Map).
+- Identify the right module (see `MODULE_MAP.md`).
 - Skim the top docstring / main definitions in that module.
 - Look for existing lemmas and naming patterns to match.
 
@@ -112,10 +121,7 @@ The library’s claims rest on these being preserved (preferably with explicit l
   - small lemmas, smaller proof terms, fewer global simp rules.
 
 ### 3.3 After coding
-- Ensure `lake build --wfail` passes.
-- Ensure no `sorry`.
-- Ensure no linter toggles were introduced.
-- If you changed module responsibilities/structure, update §5 in the same commit.
+- Ensure the Definition of Done checklist is satisfied.
 
 ---
 
@@ -138,223 +144,13 @@ The library’s claims rest on these being preserved (preferably with explicit l
 - You may do nontrivial refactors to improve conceptual cleanliness.
 - If you rename/reshape core APIs:
   - update all call sites,
-  - leave a brief comment (or commit message rationale),
-  - keep the module map (§5) accurate.
+  - leave a brief comment (or commit message rationale).
 
 ---
 
 ## 5. Module Map (Where Things Live)
 
-This is a *map*, not a prison. You may reshuffle if a better design emerges,
-but you **must** update this list in the same commit.
-
-### 5.1 Core types
-- `Nfp/Core/Basic.lean`
-  - `Mass` alias for nonnegative weights used throughout the rewrite.
-- `Nfp/Core.lean`
-  - Aggregator for core shared definitions.
-
-### 5.2 Probability vectors
-- `Nfp/Prob/Basic.lean`
-  - `ProbVec` definition + invariants.
-- `Nfp/Prob/Operations.lean`
-  - `pure`, `mix`, and basic lemmas.
-- `Nfp/Prob.lean`
-  - Aggregator for probability modules.
-
-### 5.3 Mixers
-- `Nfp/Mixer/Basic.lean`
-  - `Mixer` structure and row-stochastic invariant.
-- `Nfp/Mixer/Operations.lean`
-  - `push`, `comp`, and `id` mixers.
-- `Nfp/Mixer.lean`
-  - Aggregator for mixer modules.
-
-### 5.4 Systems (DAG + local mixing)
-- `Nfp/System/Dag.lean`
-  - DAG relation + parent/child sets.
-- `Nfp/System/LocalSystem.lean`
-  - `LocalSystem` with edge support, row-stochastic predicate, and evaluation semantics.
-- `Nfp/System.lean`
-  - Aggregator for system modules.
-
-### 5.5 Circuits (certification core)
-- `Nfp/Circuit/Basic.lean`
-  - DAG-based circuit structure with inputs/outputs and gate semantics.
-- `Nfp/Circuit/Combinators.lean`
-  - Core circuit combinators (relabeling, interface transport).
-- `Nfp/Circuit/Interface.lean`
-  - Typed input/output interfaces and interface-based evaluation.
-- `Nfp/Circuit/Semantics.lean`
-  - Well-founded evaluation semantics for circuits.
-- `Nfp/Circuit/WellFormed.lean`
-  - Basic well-formedness conditions for circuit inputs.
-- `Nfp/Circuit/Cert.lean`
-  - Equivalence definition and finite checker.
-- `Nfp/Circuit/Cert/SoftmaxMargin.lean`
-  - Softmax-margin certificate payloads and checker soundness.
-- `Nfp/Circuit/Cert/ValueRange.lean`
-  - Value-range certificate payloads and checker soundness.
-- `Nfp/Circuit/Cert/LogitDiff.lean`
-  - Logit-diff lower-bound computation for induction certificates.
-- `Nfp/Circuit/Cert/DownstreamLinear.lean`
-  - Downstream linear error certificates for end-to-end induction bounds.
-- `Nfp/Circuit/Cert/ResidualBound.lean`
-  - Residual-stream bound certificates for downstream error computation.
-- `Nfp/Circuit/Cert/ResidualInterval.lean`
-  - Residual-stream interval certificates for downstream dot-product bounds.
-- `Nfp/Circuit/Typed.lean`
-  - Typed circuit wrapper and interface-level equivalence checker.
-- `Nfp/Circuit/Compose.lean`
-  - Sequential composition and residual wiring for typed circuits.
-- `Nfp/Circuit/Gates/Basic.lean`
-  - Basic gate combinators for aggregating parent values.
-- `Nfp/Circuit/Gates/Linear.lean`
-  - Linear and affine gate combinators built from `Matrix.mulVec`.
-- `Nfp/Circuit/Gates.lean`
-  - Aggregator for gate combinator modules.
-- `Nfp/Circuit/Tensor.lean`
-  - Typed tensor indices and tensor aliases.
-- `Nfp/Circuit/Layers/Linear.lean`
-  - Linear/affine layer circuits with typed interfaces.
-- `Nfp/Circuit/Layers/Tensor.lean`
-  - Batched linear/affine layer circuits for tensor-shaped data.
-- `Nfp/Circuit/Layers/Reshape.lean`
-  - Reshape combinators for product-typed circuit interfaces.
-- `Nfp/Circuit/Layers/Heads.lean`
-  - Head split/merge combinators for transformer-shaped indices.
-- `Nfp/Circuit/Layers/Softmax.lean`
-  - Softmax helpers and margin-based bounds for layer reasoning.
-- `Nfp/Circuit/Layers/Attention.lean`
-  - Q/K/V, output projection wiring, and attention score/mixing core.
-- `Nfp/Circuit/Layers/Induction.lean`
-  - Induction-head weight specs and attention-core output lemmas.
-- `Nfp/Circuit/Layers/TransformerBlock.lean`
-  - GPT-style transformer block wiring from LN/attention/MLP circuits.
-- `Nfp/Circuit/Layers.lean`
-  - Aggregator for circuit layer modules.
-- `Nfp/Circuit.lean`
-  - Aggregator for circuit modules.
-
-### 5.6 CLI surface
-- `Nfp/IO/Pure.lean`
-  - Aggregator for pure parsing helpers.
-- `Nfp/IO/Pure/Basic.lean`
-  - Shared parsing helpers (`Nat`/`Int`/`Rat`, token cleanup).
-- `Nfp/IO/Pure/InductionHead.lean`
-  - Induction-head input payload parsing from text/bytes.
-- `Nfp/IO/Pure/InductionHead/Bytes.lean`
-  - Byte-level parser for induction-head input payloads.
-- `Nfp/IO/Pure/SoftmaxMargin.lean`
-  - Aggregator for softmax-margin parsing helpers.
-- `Nfp/IO/Pure/SoftmaxMargin/Shared.lean`
-  - Shared parsing helpers for softmax-margin payloads.
-- `Nfp/IO/Pure/SoftmaxMargin/Cert.lean`
-  - Softmax-margin certificate parser.
-- `Nfp/IO/Pure/SoftmaxMargin/Raw.lean`
-  - Softmax-margin raw-input parser.
-- `Nfp/IO/Pure/ValueRange.lean`
-  - Aggregator for value-range parsing helpers.
-- `Nfp/IO/Pure/ValueRange/Shared.lean`
-  - Shared parsing helpers for value-range payloads.
-- `Nfp/IO/Pure/ValueRange/Cert.lean`
-  - Value-range certificate parser.
-- `Nfp/IO/Pure/ValueRange/Raw.lean`
-  - Value-range raw-input parser.
-- `Nfp/IO/Pure/Downstream.lean`
-  - Downstream linear and matrix payload parsers.
-- `Nfp/IO/Pure/Residual.lean`
-  - Residual-bound and residual-interval payload parsers.
-- `Nfp/IO/NfptPure.lean`
-  - Pure parsing helpers for `NFP_BINARY_V1` model slices.
-- `Nfp/IO/HeadScore.lean`
-  - Pure task-based cache builder for head score dot-abs bounds.
-- `Nfp/IO/Loaders.lean`
-  - IO loaders for certificates and raw inputs.
-- `Nfp/IO/Checks.lean`
-  - IO checks for certificate validity.
-- `Nfp/IO/Derive.lean`
-  - IO derivations building certificates from model binaries.
-- `Nfp/IO/Timing.lean`
-  - IO timing helpers with microsecond reporting and phase wrappers.
-- `Nfp/IO/Util.lean`
-  - Small CLI parsing utilities shared across IO entrypoints.
-- `Nfp/IO/InductionHead.lean`
-  - Induction-head IO pipeline with timing instrumentation.
-- `Nfp/IO/Bench/Rational.lean`
-  - Microbenchmarks for rational arithmetic and caching.
-- `Nfp/IO.lean`
-  - IO-only wrappers for loading inputs and running checks.
-- `Nfp/Cli.lean`
-  - CLI commands and `main` implementation.
-- `Main.lean`
-  - Thin entrypoint delegating to `Nfp.Cli.main`.
-  - Benchmark entrypoint for rational microbenchmarks.
-- `Nfp.lean`
-  - Top-level reexports.
-- `TheoremAxioms.lean`
-  - Axiom dashboard for `theorem-axioms` build target (`#print axioms`).
-
-### 5.7 Sound certification
-- `Nfp/Sound/Induction.lean`
-  - Aggregator for induction soundness modules.
-- `Nfp/Sound/Induction/Core.lean`
-  - Sound builders and core proofs for induction certificates from exact inputs.
-- `Nfp/Sound/Induction/CoreSound.lean`
-  - Soundness proof for `buildInductionCertFromHeadCore?`.
-- `Nfp/Sound/Induction/CoreSound/Values.lean`
-  - Helper lemmas for value-direction projections in the core soundness proof.
-- `Nfp/Sound/Induction/CoreDefs.lean`
-  - Core definitions and soundness predicates for induction certificates.
-- `Nfp/Sound/Induction/HeadOutput.lean`
-  - Head-output interval certificates built from induction head inputs.
-- `Nfp/Sound/Induction/HeadBounds.lean`
-  - Helper bounds used to stage head-induction certificate construction.
-- `Nfp/Sound/Bounds/Cache.lean`
-  - Cached bound evaluators (thunk/task backed) for interval computations.
-- `Nfp/Sound/Bounds/MatrixNorm.lean`
-  - Row-sum matrix norms and downstream linear certificate builders.
-- `Nfp/Sound/Bounds/MatrixNorm/Interval.lean`
-  - Dot-product and matrix-vector interval bounds (rational and real).
-- `Nfp/Sound/Bounds/LayerNorm.lean`
-  - LayerNorm interval bounds and end-to-end soundness lemmas.
-- `Nfp/Sound/Bounds/LayerNorm/MeanVariance.lean`
-  - Mean/variance helpers for LayerNorm bounds.
-- `Nfp/Sound/Bounds/LayerNorm/InvStd.lean`
-  - Inverse-standard-deviation bounds for LayerNorm.
-- `Nfp/Sound/Bounds/UnnormRat.lean`
-  - Unnormalized rational helpers for deferred normalization in bounds kernels.
-- `Nfp/Sound/Bounds/Gelu.lean`
-  - Tanh-GELU bounds for interval propagation through MLPs.
-- `Nfp/Sound/Bounds/Mlp.lean`
-  - Interval bounds for GPT-2 MLP blocks and LayerNorm composition.
-- `Nfp/Sound/Bounds/Attention.lean`
-  - Interval bounds for multi-head attention and transformer layers.
-- `Nfp/Sound/Bounds/Transformer.lean`
-  - Interval bounds for transformer stacks and final LayerNorm outputs.
-- `Nfp/Sound/Bounds/Transformer/Embedding.lean`
-  - Embedding interval bounds and position-restricted bounds.
-- `Nfp/Sound/Linear/FinFold.lean`
-  - Tail-recursive folds and sums for sound linear computations.
-- `Nfp/Sound/Gpt2/HeadInputs.lean`
-  - Sound construction of GPT-2 induction head inputs.
-- `Nfp/Sound.lean`
-  - Aggregator for sound certification modules.
-
-### 5.8 Model inputs
-- `Nfp/Model/InductionHead.lean`
-  - Exact induction-head input payloads (embeddings and projection weights).
-- `Nfp/Model/InductionPrompt.lean`
-  - Prompt utilities (`prev` map and active set for periodic prompts).
-- `Nfp/Model/Gpt2.lean`
-  - Exact GPT-2 head-slice data, layer/MLP/LayerNorm parameters, and embedding helpers.
-- `Nfp/Model.lean`
-  - Aggregator for model input modules.
-
-If you introduce a new conceptual layer:
-- either extend the closest existing file,
-- or add a new module with a clear name + top docstring,
-- and update this map in the same commit.
+The module map lives in `MODULE_MAP.md`.
 
 ---
 
@@ -364,6 +160,9 @@ This repo treats “axioms creep” as a serious regression.
 
 - Do not add axioms.
 - Keep an eye on classical assumptions; they may be unavoidable, but should be explicit.
+- Trusted namespaces are `Nfp.Sound.*`, `Nfp.IO.Pure.*`, and `Nfp.IO.NfptPure`.
+  If another module is intended to be trusted, say so explicitly in its docstring
+  and treat it as in-scope here.
 - Use `TheoremAxioms.lean` / `lake build theorem-axioms --wfail` as the trust dashboard for
   `#print axioms` / dependency visibility.
 
@@ -374,15 +173,10 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] `lake build --wfail` succeeds.
 - [ ] No `sorry`.
 - [ ] No new axioms were introduced.
-- [ ] **Total Soundness:** Every pure definition in the trusted section is verified/proven.
+- [ ] **Total Soundness:** Every pure definition in trusted namespaces is verified/proven.
 - [ ] No linters were disabled (`set_option linter.* false` is absent).
 - [ ] New nontrivial definitions/theorems have short, accurate docstrings.
-- [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are preserved and, where possible, explicitly proved.
-- [ ] §5 Module Map is accurate (updated in the same commit if needed).
+- [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are
+  preserved and, where possible, explicitly proved.
+- [ ] Module map in `MODULE_MAP.md` is accurate (updated in the same commit if needed).
 - [ ] If CLI behavior changed: `lake build nfp --wfail` succeeds and basic `nfp ... --help` works.
-
-When forced to choose between:
-- “slightly breaking but conceptually clean redesign”
-- vs “preserve an awkward design forever”
-
-prefer the **clean redesign**, but do it consciously and document the rationale.
