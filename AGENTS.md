@@ -140,7 +140,15 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
   - and broadly safe.
 - Prefer `simp [foo]` over global simp-set growth.
 
-### 4.3 Refactors are allowed—but must be principled
+### 4.3 Proof automation discipline
+- Use automation to *discover* proofs, then write the small explicit proof (or a minimal
+  `simp only [...]` set) that captures it.
+- Avoid large one-line automation proofs (e.g. `aesop`, `simp` without a controlled set)
+  in core library code; they are brittle and can slow down elaboration.
+- Prefer local simplification: use `simp?` to get a minimal `simp only [...]` set for
+  non-terminal goals, and keep custom simp sets local via `registerSimpAttr` when needed.
+
+### 4.4 Refactors are allowed—but must be principled
 - You may do nontrivial refactors to improve conceptual cleanliness.
 - If you rename/reshape core APIs:
   - update all call sites,
