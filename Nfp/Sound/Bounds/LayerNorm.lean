@@ -67,7 +67,7 @@ def sqrtUpperAlt (q : Rat) : Rat :=
   ratRoundUp ((a + 1 : Rat) / den)
 
 /-- Extra precision scale for `sqrtLowerScaled`. -/
-def sqrtLowerScale : Nat := 4096
+def sqrtLowerScale : Nat := 65536
 
 /-- Scaled rational lower bound for a square root (extra precision). -/
 def sqrtLowerScaled (q : Rat) : Rat :=
@@ -77,13 +77,21 @@ def sqrtLowerScaled (q : Rat) : Rat :=
   let a := Nat.sqrt (num * den * scale * scale)
   ratRoundDown ((a : Rat) / (den * scale))
 
-/-- Rational lower bound for a square root (tighter of two bounds). -/
+/-- Scaled rational upper bound for a square root (extra precision). -/
+def sqrtUpperScaled (q : Rat) : Rat :=
+  let num := q.num.natAbs
+  let den := q.den
+  let scale := sqrtLowerScale
+  let a := Nat.sqrt (num * den * scale * scale)
+  ratRoundUp ((a + 1 : Rat) / (den * scale))
+
+/-- Rational lower bound for a square root (tighter of three bounds). -/
 def sqrtLower (q : Rat) : Rat :=
   max (max (sqrtLowerBase q) (sqrtLowerAlt q)) (sqrtLowerScaled q)
 
-/-- Rational upper bound for a square root (tighter of two bounds). -/
+/-- Rational upper bound for a square root (tighter of three bounds). -/
 def sqrtUpper (q : Rat) : Rat :=
-  min (sqrtUpperBase q) (sqrtUpperAlt q)
+  min (min (sqrtUpperBase q) (sqrtUpperAlt q)) (sqrtUpperScaled q)
 
 /-- `sqrtLowerBase` is nonnegative. -/
 theorem sqrtLowerBase_nonneg (q : Rat) : 0 ≤ sqrtLowerBase q := by
@@ -173,6 +181,43 @@ theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
     exact div_pos hnum_pos hden_pos
   exact ratRoundUp_pos hrat_pos
 
+/-- `sqrtUpperScaled` is nonnegative. -/
+theorem sqrtUpperScaled_nonneg (q : Rat) : 0 ≤ sqrtUpperScaled q := by
+  classical
+  unfold sqrtUpperScaled
+  have hnum :
+      0 ≤ (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat) := by
+    exact_mod_cast
+      (Nat.zero_le (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1))
+  have hden : 0 ≤ (q.den * sqrtLowerScale : Rat) := by
+    exact_mod_cast (Nat.zero_le (q.den * sqrtLowerScale))
+  have hrat :
+      0 ≤ (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat) /
+        (q.den * sqrtLowerScale) := by
+    exact div_nonneg hnum hden
+  exact ratRoundUp_nonneg hrat
+
+/-- `sqrtUpperScaled` is always positive. -/
+theorem sqrtUpperScaled_pos (q : Rat) : 0 < sqrtUpperScaled q := by
+  classical
+  unfold sqrtUpperScaled
+  have hnum_pos :
+      (0 : Rat) <
+        (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat) := by
+    exact_mod_cast
+      (Nat.succ_pos (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale)))
+  have hden_pos : (0 : Rat) < (q.den * sqrtLowerScale : Rat) := by
+    have hden : 0 < q.den := q.den_pos
+    have hscale : 0 < sqrtLowerScale := by
+      simp [sqrtLowerScale]
+    exact_mod_cast (Nat.mul_pos hden hscale)
+  have hrat_pos :
+      (0 : Rat) <
+        (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat) /
+          (q.den * sqrtLowerScale) := by
+    exact div_pos hnum_pos hden_pos
+  exact ratRoundUp_pos hrat_pos
+
 /-! Combined bounds. -/
 
 /-- `sqrtLower` is nonnegative. -/
@@ -187,13 +232,19 @@ theorem sqrtLower_nonneg (q : Rat) : 0 ≤ sqrtLower q := by
 theorem sqrtUpper_nonneg (q : Rat) : 0 ≤ sqrtUpper q := by
   have hbase : 0 ≤ sqrtUpperBase q := sqrtUpperBase_nonneg q
   have halt : 0 ≤ sqrtUpperAlt q := sqrtUpperAlt_nonneg q
-  exact le_min hbase halt
+  have hscaled : 0 ≤ sqrtUpperScaled q := sqrtUpperScaled_nonneg q
+  have hmin1 : 0 ≤ min (sqrtUpperBase q) (sqrtUpperAlt q) := by
+    exact le_min hbase halt
+  exact le_min hmin1 hscaled
 
 /-- `sqrtUpper` is always positive. -/
 theorem sqrtUpper_pos (q : Rat) : 0 < sqrtUpper q := by
   have hbase : 0 < sqrtUpperBase q := sqrtUpperBase_pos q
   have halt : 0 < sqrtUpperAlt q := sqrtUpperAlt_pos q
-  exact lt_min hbase halt
+  have hscaled : 0 < sqrtUpperScaled q := sqrtUpperScaled_pos q
+  have hmin1 : 0 < min (sqrtUpperBase q) (sqrtUpperAlt q) := by
+    exact lt_min hbase halt
+  exact lt_min hmin1 hscaled
 
 /-- Square-root lower bound in reals. -/
 theorem sqrtLowerBase_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
@@ -508,6 +559,90 @@ theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
     simpa [sqrtUpperAlt, num, den, a] using hup'
   exact le_trans hle hup
 
+/-- Scaled square-root upper bound in reals. -/
+theorem real_sqrt_le_sqrtUpperScaled {q : Rat} (hq : 0 ≤ q) :
+    Real.sqrt (q : Real) ≤ (sqrtUpperScaled q : Real) := by
+  classical
+  set num : Nat := q.num.natAbs
+  set den : Nat := q.den
+  set scale : Nat := sqrtLowerScale
+  set a : Nat := Nat.sqrt (num * den * scale * scale)
+  have hden_pos : 0 < (den : Real) := by
+    exact_mod_cast q.den_pos
+  have hscale_pos : 0 < (scale : Real) := by
+    have hscale_pos_nat : 0 < scale := by
+      simp [scale, sqrtLowerScale]
+    exact_mod_cast hscale_pos_nat
+  have hnumden_lt : (num * den * scale * scale : Real) < (a + 1) ^ 2 := by
+    exact_mod_cast (Nat.lt_succ_sqrt' (num * den * scale * scale))
+  have hmul :
+      (num : Real) * den * (scale : Real) * (scale : Real) ≤ (a + 1 : Real) ^ 2 := by
+    exact le_of_lt hnumden_lt
+  have hdenScale_pos : 0 < (den : Real) * (scale : Real) := by
+    exact mul_pos hden_pos hscale_pos
+  have hdenScale_pos2 : 0 < ((den : Real) * (scale : Real)) ^ 2 := by
+    exact pow_pos hdenScale_pos 2
+  have hdiv :
+      (num : Real) * den * (scale : Real) * (scale : Real) /
+          ((den : Real) * (scale : Real)) ^ 2 ≤
+        (a + 1 : Real) ^ 2 / ((den : Real) * (scale : Real)) ^ 2 := by
+    have hmul' :
+        (num : Real) * den * (scale : Real) * (scale : Real) *
+            ((den : Real) * (scale : Real)) ^ 2 ≤
+          (a + 1 : Real) ^ 2 * ((den : Real) * (scale : Real)) ^ 2 := by
+      have hden_sq_nonneg : 0 ≤ ((den : Real) * (scale : Real)) ^ 2 := by
+        exact sq_nonneg _
+      exact mul_le_mul_of_nonneg_right hmul hden_sq_nonneg
+    exact (div_le_div_iff₀ hdenScale_pos2 hdenScale_pos2).2 hmul'
+  have hdenScale_ne : ((den : Real) * (scale : Real)) ≠ 0 := by
+    exact ne_of_gt hdenScale_pos
+  have hq_cast : (q : Real) = (num : Real) / den := by
+    have hnum_nonneg : 0 ≤ q.num := by
+      exact (Rat.num_nonneg (q := q)).2 hq
+    have hnum_eq : (num : Int) = q.num := by
+      simpa [num] using (Int.natAbs_of_nonneg hnum_nonneg)
+    have hnum_cast : (q.num : Real) = (num : Real) := by
+      exact_mod_cast hnum_eq.symm
+    have hq_rat : (q : Real) = (q.num : Real) / q.den := by
+      simp [Rat.cast_def]
+    simpa [hnum_cast, den] using hq_rat
+  have hq_eq :
+      ((num : Real) * den * (scale : Real) * (scale : Real)) /
+          ((den : Real) * (scale : Real)) ^ 2 = (num : Real) / den := by
+    field_simp [hdenScale_ne]
+  have hq_cast' :
+      (q : Real) =
+        ((num : Real) * den * (scale : Real) * (scale : Real)) /
+          ((den : Real) * (scale : Real)) ^ 2 := by
+    calc
+      (q : Real) = (num : Real) / den := hq_cast
+      _ = ((num : Real) * den * (scale : Real) * (scale : Real)) /
+            ((den : Real) * (scale : Real)) ^ 2 := hq_eq.symm
+  have hpow :
+      ((a + 1 : Real) / ((den : Real) * (scale : Real))) ^ 2 =
+        (a + 1 : Real) ^ 2 / ((den : Real) * (scale : Real)) ^ 2 := by
+    simp [pow_two, div_mul_div_comm]
+  have hsq :
+      (q : Real) ≤ ((a + 1 : Real) / ((den : Real) * (scale : Real))) ^ 2 := by
+    simpa [hq_cast', hpow] using hdiv
+  have hnonneg : 0 ≤ ((a + 1 : Real) / ((den : Real) * (scale : Real))) := by
+    have hnum_nonneg : 0 ≤ (a + 1 : Real) := by
+      exact_mod_cast (Nat.zero_le (a + 1))
+    have hden_nonneg : 0 ≤ (den : Real) * (scale : Real) := by
+      nlinarith [hden_pos, hscale_pos]
+    exact div_nonneg hnum_nonneg hden_nonneg
+  have hle :
+      Real.sqrt (q : Real) ≤ (a + 1 : Real) / ((den : Real) * (scale : Real)) :=
+    (Real.sqrt_le_iff).2 ⟨hnonneg, hsq⟩
+  have hup :
+      (a + 1 : Real) / ((den : Real) * (scale : Real)) ≤ (sqrtUpperScaled q : Real) := by
+    have hup' :
+        (a + 1 : Real) / ((den : Real) * (scale : Real)) ≤
+          ratToReal (ratRoundUp ((a + 1 : Rat) / (den * scale))) := by
+      simpa using real_le_ratRoundUp ((a + 1 : Rat) / (den * scale))
+    simpa [sqrtUpperScaled, num, den, scale, a] using hup'
+  exact le_trans hle hup
+
 /-- Square-root lower bound in reals (tighter of three bounds). -/
 theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     (sqrtLower q : Real) ≤ Real.sqrt (q : Real) := by
@@ -523,12 +658,20 @@ theorem sqrtLower_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     simpa [ratToReal_max] using (max_le_iff).2 ⟨hmax1, hscaled⟩
   simpa [sqrtLower] using hmax2
 
-/-- Square-root upper bound in reals (tighter of two bounds). -/
+/-- Square-root upper bound in reals (tighter of three bounds). -/
 theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
     Real.sqrt (q : Real) ≤ (sqrtUpper q : Real) := by
   have hbase := real_sqrt_le_sqrtUpperBase (q := q) hq
   have halt := real_sqrt_le_sqrtUpperAlt (q := q) hq
-  simpa [sqrtUpper] using (le_min_iff).2 ⟨hbase, halt⟩
+  have hscaled := real_sqrt_le_sqrtUpperScaled (q := q) hq
+  have hmin1 :
+      Real.sqrt (q : Real) ≤ min (sqrtUpperBase q : Real) (sqrtUpperAlt q : Real) := by
+    exact (le_min_iff).2 ⟨hbase, halt⟩
+  have hmin2 :
+      Real.sqrt (q : Real) ≤
+        min (min (sqrtUpperBase q : Real) (sqrtUpperAlt q : Real)) (sqrtUpperScaled q : Real) := by
+    exact (le_min_iff).2 ⟨hmin1, hscaled⟩
+  simpa [sqrtUpper, ratToReal_min] using hmin2
 
 /-- Bounds for multiplying a scalar by a bounded value. -/
 def scaleInterval (x lo hi : Rat) : Rat × Rat :=
@@ -606,16 +749,26 @@ def layerNormBounds {n : Nat}
   if n = 0 then
     (fun _ => 0, fun _ => 0)
   else
-    let μLo := mean x
-    let μHi := meanUpper x
-    let centeredBound : Fin n → Rat := fun i =>
-      max |x i - μHi| |x i - μLo|
-    let varLo : Rat := variance x
-    let varEpsLo : Rat := varLo + eps
-    let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEpsLo)
-    let invStdBound : Rat := ratDivUp 1 sqrtLowerBound
-    let radius : Fin n → Rat := fun i => |gamma i| * centeredBound i * invStdBound
-    (fun i => beta i - radius i, fun i => beta i + radius i)
+    let μ : Rat := mean x
+    let centered : Fin n → Rat := fun i => x i - μ
+    let var : Rat := variance x
+    let varEps : Rat := var + eps
+    let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEps)
+    let sqrtUpperBound : Rat := sqrtUpper varEps
+    let invStdLower : Rat := ratDivDown 1 sqrtUpperBound
+    let invStdUpper : Rat := ratDivUp 1 sqrtLowerBound
+    let coeff : Fin n → Rat := fun i => gamma i * centered i
+    let lo : Fin n → Rat := fun i =>
+      if 0 ≤ coeff i then
+        beta i + coeff i * invStdLower
+      else
+        beta i + coeff i * invStdUpper
+    let hi : Fin n → Rat := fun i =>
+      if 0 ≤ coeff i then
+        beta i + coeff i * invStdUpper
+      else
+        beta i + coeff i * invStdLower
+    (lo, hi)
 
 /-- `layerNormBounds` soundness for real LayerNorm outputs. -/
 theorem layerNormBounds_spec {n : Nat}
@@ -627,145 +780,138 @@ theorem layerNormBounds_spec {n : Nat}
         layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
   classical
   intro bounds i
-  let μLo : Rat := mean x
-  let μHi : Rat := meanUpper x
-  let centeredBound : Fin n → Rat := fun j => max |x j - μHi| |x j - μLo|
-  let varLo : Rat := variance x
-  let varEpsLo : Rat := varLo + eps
-  let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEpsLo)
-  let invStdBound : Rat := ratDivUp 1 sqrtLowerBound
-  let varEps : Real := (varianceRat x : Real) + (eps : Real)
+  let μRat : Rat := mean x
+  let varRat : Rat := variance x
+  let varEpsRat : Rat := varRat + eps
+  let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEpsRat)
+  let sqrtUpperBound : Rat := sqrtUpper varEpsRat
+  let invStdLower : Rat := ratDivDown 1 sqrtUpperBound
+  let invStdUpper : Rat := ratDivUp 1 sqrtLowerBound
+  let centered : Rat := x i - μRat
+  let coeff : Rat := gamma i * centered
   let μ : Real := meanRat x
+  let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let invStd : Real := (Real.sqrt varEps)⁻¹
-  have hcentered_nonneg : 0 ≤ (centeredBound i : Real) := by
-    have h0 : 0 ≤ centeredBound i := by
-      dsimp [centeredBound]
-      exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact ratToReal_nonneg_of_nonneg h0
-  have hmean_lo_real : (μLo : Real) ≤ μ := by
-    have h := ratRoundDown_le_real (meanRat x)
-    simpa [μLo, μ, mean_def x hne] using h
-  have hmean_hi_real : μ ≤ (μHi : Real) := by
-    have h := real_le_ratRoundUp (meanRat x)
-    simpa [μHi, μ, meanUpper_def x hne] using h
-  have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound i : Real) := by
-    have hlo : (x i : Real) - (μHi : Real) ≤ (x i : Real) - μ := by
-      exact sub_le_sub_left hmean_hi_real (x i : Real)
-    have hhi : (x i : Real) - μ ≤ (x i : Real) - (μLo : Real) := by
-      exact sub_le_sub_left hmean_lo_real (x i : Real)
-    have hbound := abs_le_max_of_bounds hlo hhi
-    simpa [centeredBound, μLo, μHi, ratToReal_abs, ratToReal_sub,
-      ratToReal_max] using hbound
+  have hmu : (μRat : Real) = μ := by
+    simp [μRat, μ, mean_def, hne, ratRoundDown]
+  have hvar : (varRat : Real) = (varianceRat x : Real) := by
+    simp [varRat, variance_def, hne, ratRoundDown]
+  have hvarEps : (varEpsRat : Real) = varEps := by
+    simp [varEpsRat, varEps, hvar]
   have hvar_nonneg : 0 ≤ (varianceRat x : Real) := varianceRat_nonneg_real x hne
   have hvar_nonneg_rat : 0 ≤ varianceRat x := by
-    have hreal : 0 ≤ (varianceRat x : Real) := hvar_nonneg
-    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hreal
-  have hvarLo_nonneg : 0 ≤ varLo := by
+    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hvar_nonneg
+  have hvarRat_nonneg : 0 ≤ varRat := by
     have h := ratRoundDown_nonneg (q := varianceRat x) hvar_nonneg_rat
-    simpa [varLo, variance_def x hne] using h
-  have hvarEpsLo_nonneg : 0 ≤ varEpsLo := by
-    exact add_nonneg hvarLo_nonneg (le_of_lt heps)
+    simpa [varRat, variance_def x hne] using h
+  have hvarEps_nonneg : 0 ≤ varEpsRat := by
+    exact add_nonneg hvarRat_nonneg (le_of_lt heps)
   have hsqrt_lower :
       (sqrtLowerBound : Real) ≤ Real.sqrt varEps := by
-    have hsqrt_eps :
-        (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
-      have hsqrt_eps' :
-          (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
+    have hsqrt_eps : (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
+      have hsqrt_eps' : (sqrtLower eps : Real) ≤ Real.sqrt (eps : Real) := by
         have h := sqrtLower_le_real_sqrt (q := eps) (by exact le_of_lt heps)
         simpa using h
       have hle : (eps : Real) ≤ varEps := by
         have hle' : (eps : Real) ≤ (varianceRat x : Real) + (eps : Real) :=
           le_add_of_nonneg_left hvar_nonneg
         simpa [varEps] using hle'
-      have hsqrt_eps'' : Real.sqrt (eps : Real) ≤ Real.sqrt varEps := by
-        exact Real.sqrt_le_sqrt hle
-      exact le_trans hsqrt_eps' hsqrt_eps''
-    have hsqrt_var :
-        (sqrtLower varEpsLo : Real) ≤ Real.sqrt varEps := by
+      exact le_trans hsqrt_eps' (Real.sqrt_le_sqrt hle)
+    have hsqrt_var : (sqrtLower varEpsRat : Real) ≤ Real.sqrt varEps := by
       have hsqrt_var' :
-          (sqrtLower varEpsLo : Real) ≤ Real.sqrt (varEpsLo : Real) := by
-        have h := sqrtLower_le_real_sqrt (q := varEpsLo) hvarEpsLo_nonneg
+          (sqrtLower varEpsRat : Real) ≤ Real.sqrt (varEpsRat : Real) := by
+        have h := sqrtLower_le_real_sqrt (q := varEpsRat) hvarEps_nonneg
         simpa using h
-      have hle : (varEpsLo : Real) ≤ varEps := by
-        have hle' : (varLo : Real) ≤ (varianceRat x : Real) := by
-          have h := ratRoundDown_le_real (varianceRat x)
-          simpa [varLo, variance_def x hne] using h
-        have hle'' := add_le_add_right hle' (eps : Real)
-        simpa [varEpsLo, varEps, ratToReal_add] using hle''
-      have hsqrt_var'' : Real.sqrt (varEpsLo : Real) ≤ Real.sqrt varEps := by
-        exact Real.sqrt_le_sqrt hle
-      exact le_trans hsqrt_var' hsqrt_var''
+      have hle : (varEpsRat : Real) ≤ varEps := by
+        simp [hvarEps]
+      exact le_trans hsqrt_var' (Real.sqrt_le_sqrt hle)
     have hmax :
-        max (sqrtLower eps : Real) (sqrtLower varEpsLo : Real) ≤ Real.sqrt varEps :=
+        max (sqrtLower eps : Real) (sqrtLower varEpsRat : Real) ≤ Real.sqrt varEps :=
       (max_le_iff).2 ⟨hsqrt_eps, hsqrt_var⟩
     simpa [sqrtLowerBound, ratToReal_max] using hmax
+  have hsqrt_upper :
+      Real.sqrt varEps ≤ (sqrtUpperBound : Real) := by
+    have h := real_sqrt_le_sqrtUpper (q := varEpsRat) hvarEps_nonneg
+    simpa [sqrtUpperBound, hvarEps] using h
+  have hsqrt_lower_pos_rat : 0 < sqrtLowerBound := by
+    have hpos : 0 < sqrtLower eps := hsqrt
+    have hpos' : 0 < max (sqrtLower eps) (sqrtLower varEpsRat) :=
+      lt_of_lt_of_le hpos (le_max_left _ _)
+    simpa [sqrtLowerBound] using hpos'
   have hsqrt_lower_pos : 0 < (sqrtLowerBound : Real) := by
-    have hpos : 0 < (sqrtLower eps : Real) := by
-      exact (Rat.cast_pos (K := Real) (q := sqrtLower eps)).2 hsqrt
-    have hpos' : 0 < max (sqrtLower eps : Real) (sqrtLower varEpsLo : Real) := by
-      exact lt_of_lt_of_le hpos (le_max_left _ _)
-    simpa [sqrtLowerBound, ratToReal_max] using hpos'
-  have hinv_sqrt : invStd ≤ (sqrtLowerBound : Real)⁻¹ := by
-    have h := inv_anti₀ hsqrt_lower_pos hsqrt_lower
-    simpa [invStd] using h
-  have hinv_bound : (sqrtLowerBound : Real)⁻¹ ≤ (invStdBound : Real) := by
-    have hsqrt_lower_pos_rat : 0 < sqrtLowerBound := by
-      exact lt_of_lt_of_le hsqrt (le_max_left _ _)
-    have hy : sqrtLowerBound ≠ 0 := ne_of_gt hsqrt_lower_pos_rat
-    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLowerBound) hy
-    simpa [invStdBound, one_div] using hdiv
-  have hinv : invStd ≤ (invStdBound : Real) := by
-    exact le_trans hinv_sqrt hinv_bound
-  have hinv_nonneg : 0 ≤ invStd := by
-    have hsqrt_nonneg : 0 ≤ Real.sqrt varEps := by
-      exact Real.sqrt_nonneg _
-    exact inv_nonneg.2 hsqrt_nonneg
-  have hmul1 : |(x i : Real) - μ| * invStd ≤
-      (centeredBound i : Real) * (invStdBound : Real) := by
-    have hleft :
-        |(x i : Real) - μ| * invStd ≤ (centeredBound i : Real) * invStd := by
-      exact mul_le_mul_of_nonneg_right hcentered_abs hinv_nonneg
-    have hright :
-        (centeredBound i : Real) * invStd ≤ (centeredBound i : Real) * (invStdBound : Real) := by
-      exact mul_le_mul_of_nonneg_left hinv hcentered_nonneg
-    exact le_trans hleft hright
-  have hmul2 : |(gamma i : Real)| * |(x i : Real) - μ| * invStd ≤
-      |(gamma i : Real)| * (centeredBound i : Real) * (invStdBound : Real) := by
-    have hgamma_nonneg : 0 ≤ |(gamma i : Real)| := abs_nonneg _
-    have hmul2' : |(gamma i : Real)| * (|(x i : Real) - μ| * invStd) ≤
-        |(gamma i : Real)| * ((centeredBound i : Real) * (invStdBound : Real)) := by
-      exact mul_le_mul_of_nonneg_left hmul1 hgamma_nonneg
-    simpa [mul_assoc] using hmul2'
-  let t : Real := (gamma i : Real) * ((x i : Real) - μ) * invStd
-  have ht_abs :
-      |t| ≤ |(gamma i : Real)| * (centeredBound i : Real) * (invStdBound : Real) := by
-    have ht : |t| = |(gamma i : Real)| * |(x i : Real) - μ| * invStd := by
-      have hinv_abs : |invStd| = invStd := abs_of_nonneg hinv_nonneg
-      simp [t, abs_mul, hinv_abs, mul_assoc]
-    simpa [ht] using hmul2
-  let radius : Fin n → Rat := fun j => |gamma j| * centeredBound j * invStdBound
-  have ht_abs' : |t| ≤ (radius i : Real) := by
-    simpa [radius, centeredBound, invStdBound] using ht_abs
-  have hbounds : -(radius i : Real) ≤ t ∧ t ≤ (radius i : Real) := by
-    exact abs_le.mp ht_abs'
-  have hlow :
-      (beta i : Real) - (radius i : Real) ≤ t + (beta i : Real) := by
-    have h := add_le_add_left hbounds.1 (beta i : Real)
-    simpa [sub_eq_add_neg, add_comm, add_left_comm, add_assoc] using h
-  have hhigh :
-      t + (beta i : Real) ≤ (beta i : Real) + (radius i : Real) := by
-    have h := add_le_add_left hbounds.2 (beta i : Real)
-    simpa [add_comm, add_left_comm, add_assoc] using h
-  have hreal :
-      layerNormReal eps gamma beta x i = t + (beta i : Real) := by
-    simp [layerNormReal, hne, μ, invStd, varEps, t, add_comm]
-  have hlo : (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i := by
-    simpa [bounds, layerNormBounds, hne, radius, centeredBound, varLo, varEpsLo,
-      sqrtLowerBound, invStdBound, μLo, μHi, hreal] using hlow
-  have hhi : layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
-    simpa [bounds, layerNormBounds, hne, radius, centeredBound, varLo, varEpsLo,
-      sqrtLowerBound, invStdBound, μLo, μHi, hreal] using hhigh
-  exact And.intro hlo hhi
+    exact (Rat.cast_pos (K := Real) (q := sqrtLowerBound)).2 hsqrt_lower_pos_rat
+  have hsqrt_upper_pos_rat : 0 < sqrtUpperBound := by
+    simpa [sqrtUpperBound] using sqrtUpper_pos varEpsRat
+  have hsqrt_upper_pos : 0 < (sqrtUpperBound : Real) := by
+    exact (Rat.cast_pos (K := Real) (q := sqrtUpperBound)).2 hsqrt_upper_pos_rat
+  have hvarEps_pos : 0 < varEps := by
+    have heps_real : 0 < (eps : Real) := by
+      exact_mod_cast heps
+    have hpos := add_pos_of_nonneg_of_pos hvar_nonneg heps_real
+    simpa [varEps] using hpos
+  have hsqrt_pos : 0 < Real.sqrt varEps := Real.sqrt_pos.2 hvarEps_pos
+  have hinv_lower_real :
+      (sqrtUpperBound : Real)⁻¹ ≤ invStd := by
+    have hle := inv_anti₀ hsqrt_pos hsqrt_upper
+    simpa [invStd] using hle
+  have hinv_upper_real :
+      invStd ≤ (sqrtLowerBound : Real)⁻¹ := by
+    have hle := inv_anti₀ hsqrt_lower_pos hsqrt_lower
+    simpa [invStd] using hle
+  have hupper_ne : sqrtUpperBound ≠ 0 := ne_of_gt hsqrt_upper_pos_rat
+  have hlower_ne : sqrtLowerBound ≠ 0 := ne_of_gt hsqrt_lower_pos_rat
+  have hinv_lower : (invStdLower : Real) ≤ invStd := by
+    simpa [invStdLower, ratDivDown, hupper_ne, one_div] using hinv_lower_real
+  have hinv_upper : invStd ≤ (invStdUpper : Real) := by
+    simpa [invStdUpper, ratDivUp, hlower_ne, one_div] using hinv_upper_real
+  have hlayer :
+      layerNormReal eps gamma beta x i =
+        (beta i : Real) + (coeff : Real) * invStd := by
+    simp [layerNormReal, hne, coeff, centered, μ, hmu, invStd, varEps, add_comm, mul_assoc]
+  by_cases hcoeff : 0 ≤ coeff
+  · have hcoeff_real : 0 ≤ (coeff : Real) :=
+      ratToReal_nonneg_of_nonneg hcoeff
+    have hlow_raw :
+        (beta i : Real) + (coeff : Real) * (invStdLower : Real) ≤
+          (beta i : Real) + (coeff : Real) * invStd := by
+      have hmul := mul_le_mul_of_nonneg_left hinv_lower hcoeff_real
+      exact add_le_add_right hmul (beta i : Real)
+    have hhigh_raw :
+        (beta i : Real) + (coeff : Real) * invStd ≤
+          (beta i : Real) + (coeff : Real) * (invStdUpper : Real) := by
+      have hmul := mul_le_mul_of_nonneg_left hinv_upper hcoeff_real
+      exact add_le_add_right hmul (beta i : Real)
+    have hlo : (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i := by
+      simpa [bounds, layerNormBounds, hne, μRat, centered, varRat, varEpsRat,
+        sqrtLowerBound, sqrtUpperBound, invStdLower, invStdUpper, coeff, hcoeff, hlayer]
+        using hlow_raw
+    have hhi : layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+      simpa [bounds, layerNormBounds, hne, μRat, centered, varRat, varEpsRat,
+        sqrtLowerBound, sqrtUpperBound, invStdLower, invStdUpper, coeff, hcoeff, hlayer]
+        using hhigh_raw
+    exact And.intro hlo hhi
+  · have hcoeff_lt : coeff < 0 := lt_of_not_ge hcoeff
+    have hcoeff_real : (coeff : Real) ≤ 0 := by
+      exact_mod_cast (le_of_lt hcoeff_lt)
+    have hlow_raw :
+        (beta i : Real) + (coeff : Real) * (invStdUpper : Real) ≤
+          (beta i : Real) + (coeff : Real) * invStd := by
+      have hmul := mul_le_mul_of_nonpos_left hinv_upper hcoeff_real
+      exact add_le_add_right hmul (beta i : Real)
+    have hhigh_raw :
+        (beta i : Real) + (coeff : Real) * invStd ≤
+          (beta i : Real) + (coeff : Real) * (invStdLower : Real) := by
+      have hmul := mul_le_mul_of_nonpos_left hinv_lower hcoeff_real
+      exact add_le_add_right hmul (beta i : Real)
+    have hlo : (bounds.1 i : Real) ≤ layerNormReal eps gamma beta x i := by
+      simpa [bounds, layerNormBounds, hne, μRat, centered, varRat, varEpsRat,
+        sqrtLowerBound, sqrtUpperBound, invStdLower, invStdUpper, coeff, hcoeff, hlayer]
+        using hlow_raw
+    have hhi : layerNormReal eps gamma beta x i ≤ (bounds.2 i : Real) := by
+      simpa [bounds, layerNormBounds, hne, μRat, centered, varRat, varEpsRat,
+        sqrtLowerBound, sqrtUpperBound, invStdLower, invStdUpper, coeff, hcoeff, hlayer]
+        using hhigh_raw
+    exact And.intro hlo hhi
 
 /-- Interval bounds for LayerNorm outputs from per-coordinate intervals. -/
 def layerNormIntervalBounds {n : Nat}

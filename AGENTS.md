@@ -300,6 +300,10 @@ but you **must** update this list in the same commit.
   - Aggregator for induction soundness modules.
 - `Nfp/Sound/Induction/Core.lean`
   - Sound builders and core proofs for induction certificates from exact inputs.
+- `Nfp/Sound/Induction/CoreSound.lean`
+  - Soundness proof for `buildInductionCertFromHeadCore?`.
+- `Nfp/Sound/Induction/CoreSound/Values.lean`
+  - Helper lemmas for value-direction projections in the core soundness proof.
 - `Nfp/Sound/Induction/CoreDefs.lean`
   - Core definitions and soundness predicates for induction certificates.
 - `Nfp/Sound/Induction/HeadOutput.lean`
@@ -316,6 +320,8 @@ but you **must** update this list in the same commit.
   - LayerNorm interval bounds and end-to-end soundness lemmas.
 - `Nfp/Sound/Bounds/LayerNorm/MeanVariance.lean`
   - Mean/variance helpers for LayerNorm bounds.
+- `Nfp/Sound/Bounds/LayerNorm/InvStd.lean`
+  - Inverse-standard-deviation bounds for LayerNorm.
 - `Nfp/Sound/Bounds/UnnormRat.lean`
   - Unnormalized rational helpers for deferred normalization in bounds kernels.
 - `Nfp/Sound/Bounds/Gelu.lean`

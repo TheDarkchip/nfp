@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Induction.Core
+import Nfp.Sound.Induction.CoreSound
 
 /-!
 Head-output interval certificates for induction heads.
