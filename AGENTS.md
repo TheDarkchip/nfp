@@ -134,13 +134,33 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
   - and broadly safe.
 - Prefer `simp [foo]` over global simp-set growth.
 
-### 4.3 Proof automation discipline
-- Use automation to *discover* proofs, then write the small explicit proof (or a minimal
-  `simp only [...]` set) that captures it.
-- Avoid large one-line automation proofs (e.g. `aesop`, `simp` without a controlled set)
-  in core library code; they are brittle and can slow down elaboration.
-- Prefer local simplification: use `simp?` to get a minimal `simp only [...]` set for
-  non-terminal goals, and keep custom simp sets local via `registerSimpAttr` when needed.
+### 4.3 Proof automation discipline (Aesop-aware)
+
+- Use `aesop?` (and `simp?`) to *discover* a proof or a minimal set of steps, then
+  prefer to:
+  - write a small explicit proof (`simp only [...]`, `constructor`, `cases`, `refine`, `exact`, etc.), or
+  - keep Aesop but constrain it with a local ruleset and/or targeted rules.
+
+- Avoid unconditional `by aesop` in core/trusted library code unless:
+  - the goal is genuinely routine,
+  - it stays fast and stable under small refactors, and
+  - it does not rely on a large implicit rule universe.
+
+- Prefer local rules over global rules:
+  - If a lemma is meant to be reused by Aesop, tag it deliberately (e.g. `@[aesop safe]`)
+    and explain why it is safe.
+  - Avoid tagging “utility” lemmas as Aesop rules unless you want them participating
+    in search broadly.
+
+- If Aesop succeeds but produces a long/fragile search:
+  - extract a helper lemma that expresses the key reasoning step,
+  - prove that lemma explicitly (or with tightly scoped automation),
+  - then let Aesop use the helper.
+
+- Keep automation predictable:
+  - prefer `simp only [...]` and small custom simp sets locally,
+  - avoid growing the global simp set and global Aesop rule set without strong reason.
+
 
 ### 4.4 Refactors are allowed—but must be principled
 - You may do nontrivial refactors to improve conceptual cleanliness.
