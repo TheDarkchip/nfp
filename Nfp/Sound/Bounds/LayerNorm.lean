@@ -686,17 +686,11 @@ theorem scaleInterval_bounds {x lo hi y : Rat}
     let bounds := scaleInterval x lo hi
     bounds.1 ≤ x * y ∧ x * y ≤ bounds.2 := by
   by_cases hx : 0 ≤ x
-  · have h1 : x * lo ≤ x * y := by
-      exact mul_le_mul_of_nonneg_left hlo hx
-    have h2 : x * y ≤ x * hi := by
-      exact mul_le_mul_of_nonneg_left hhi hx
-    simp [scaleInterval, hx, h1, h2]
+  · simpa [scaleInterval, hx] using
+      And.intro (mul_le_mul_of_nonneg_left hlo hx) (mul_le_mul_of_nonneg_left hhi hx)
   · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have h1 : x * hi ≤ x * y := by
-      exact mul_le_mul_of_nonpos_left hhi hx'
-    have h2 : x * y ≤ x * lo := by
-      exact mul_le_mul_of_nonpos_left hlo hx'
-    simp [scaleInterval, hx, h1, h2]
+    simpa [scaleInterval, hx] using
+      And.intro (mul_le_mul_of_nonpos_left hhi hx') (mul_le_mul_of_nonpos_left hlo hx')
 
 /-- `scaleInterval` bounds interpreted in the reals. -/
 theorem scaleInterval_bounds_real {x lo hi : Rat} {y : Real}
@@ -704,21 +698,13 @@ theorem scaleInterval_bounds_real {x lo hi : Rat} {y : Real}
     let bounds := scaleInterval x lo hi
     (bounds.1 : Real) ≤ (x : Real) * y ∧ (x : Real) * y ≤ (bounds.2 : Real) := by
   by_cases hx : 0 ≤ x
-  · have h1 : (x : Real) * (lo : Real) ≤ (x : Real) * y := by
-      have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
-      exact mul_le_mul_of_nonneg_left hlo hx'
-    have h2 : (x : Real) * y ≤ (x : Real) * (hi : Real) := by
-      have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
-      exact mul_le_mul_of_nonneg_left hhi hx'
-    simp [scaleInterval, hx, h1, h2]
+  · have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
+    simpa [scaleInterval, hx] using
+      And.intro (mul_le_mul_of_nonneg_left hlo hx') (mul_le_mul_of_nonneg_left hhi hx')
   · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have h1 : (x : Real) * (hi : Real) ≤ (x : Real) * y := by
-      have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
-      exact mul_le_mul_of_nonpos_left hhi hx''
-    have h2 : (x : Real) * y ≤ (x : Real) * (lo : Real) := by
-      have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
-      exact mul_le_mul_of_nonpos_left hlo hx''
-    simp [scaleInterval, hx, h1, h2]
+    have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
+    simpa [scaleInterval, hx] using
+      And.intro (mul_le_mul_of_nonpos_left hhi hx'') (mul_le_mul_of_nonpos_left hlo hx'')
 
 /-- Real-valued LayerNorm output for a vector. -/
 noncomputable def layerNormReal {n : Nat}

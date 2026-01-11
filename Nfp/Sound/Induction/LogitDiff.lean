@@ -88,11 +88,7 @@ theorem logitDiffLowerBoundFromCert_le
           (lb : Real) ≤
             (c.values.valsLo (c.prev q) : Real) -
               (c.epsAt q : Real) * ((c.values.hi : Real) - (c.values.lo : Real)) := by
-        have hboundReal' :
-            (lb : Real) ≤
-              (c.values.valsLo (c.prev q) - c.epsAt q * (c.values.hi - c.values.lo) : Rat) := by
-          exact ratToReal_le_of_le hboundRat
-        simpa [ratToReal_sub, ratToReal_mul] using hboundReal'
+        simpa [ratToReal_sub, ratToReal_mul] using ratToReal_le_of_le hboundRat
       have hvalsLo :
           (c.values.valsLo (c.prev q) : Real) ≤
             valsRealOfInputs inputs (c.prev q) := by

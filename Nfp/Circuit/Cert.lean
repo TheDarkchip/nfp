@@ -68,22 +68,7 @@ theorem finsetAll_eq_true_iff {β : Type v} {s : Finset β} {p : β → Bool} :
   | @insert a s ha ih =>
       have hfold : finsetAll (insert a s) p = true ↔ p a = true ∧ finsetAll s p = true := by
         simp [finsetAll, ha, Bool.and_eq_true]
-      calc
-        finsetAll (insert a s) p = true
-            ↔ p a = true ∧ finsetAll s p = true := hfold
-        _ ↔ p a = true ∧ ∀ a ∈ s, p a = true := by simp [ih]
-        _ ↔ ∀ x ∈ insert a s, p x = true := by
-              constructor
-              · intro h x hx
-                rcases h with ⟨ha', hs⟩
-                by_cases hx' : x = a
-                · simpa [hx'] using ha'
-                · exact hs x (Finset.mem_of_mem_insert_of_ne hx hx')
-              · intro h
-                refine ⟨?_, ?_⟩
-                · exact h a (Finset.mem_insert_self a s)
-                · intro x hx
-                  exact h x (Finset.mem_insert_of_mem hx)
+      simp [hfold, ih]
 
 /-- Boolean check for interface equality. -/
 def sameInterface (C₁ C₂ : Circuit ι α) : Bool :=

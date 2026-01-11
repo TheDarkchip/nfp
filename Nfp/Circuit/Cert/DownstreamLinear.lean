@@ -49,7 +49,7 @@ theorem checkDownstreamLinearCert_sound (c : DownstreamLinearCert) :
   have h' :
       ((0 ≤ c.error ∧ 0 ≤ c.gain) ∧ 0 ≤ c.inputBound) ∧
         c.error = c.gain * c.inputBound := by
-    simpa [checkDownstreamLinearCert, Bool.and_eq_true] using h
+    simpa [checkDownstreamLinearCert, Bool.and_eq_true, decide_eq_true_iff] using h
   rcases h' with ⟨⟨⟨herror, hgain⟩, hinput⟩, heq⟩
   refine
     { error_nonneg := herror

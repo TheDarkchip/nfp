@@ -53,24 +53,18 @@ theorem checkValueRangeCert_sound [NeZero seq] (c : ValueRangeCert seq) :
           decide (c.lo ≤ c.vals k) && decide (c.vals k ≤ c.hi)) = true := by
     simpa [checkValueRangeCert, Bool.and_eq_true] using hcheck
   rcases hcheck' with ⟨hlohi, hall⟩
-  have hlohi' : c.lo ≤ c.hi := (decide_eq_true_iff).1 hlohi
+  have hlohi' : c.lo ≤ c.hi := by
+    simpa [decide_eq_true_iff] using hlohi
   have hall' :=
     (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hall
-  have hlo : ∀ k, c.lo ≤ c.vals k := by
+  have hbounds : ∀ k, c.lo ≤ c.vals k ∧ c.vals k ≤ c.hi := by
     intro k
     have hk := hall' k (by simp)
-    have hk' :
-        decide (c.lo ≤ c.vals k) = true ∧ decide (c.vals k ≤ c.hi) = true := by
-      simpa [Bool.and_eq_true] using hk
-    exact (decide_eq_true_iff).1 hk'.1
-  have hhi : ∀ k, c.vals k ≤ c.hi := by
-    intro k
-    have hk := hall' k (by simp)
-    have hk' :
-        decide (c.lo ≤ c.vals k) = true ∧ decide (c.vals k ≤ c.hi) = true := by
-      simpa [Bool.and_eq_true] using hk
-    exact (decide_eq_true_iff).1 hk'.2
-  exact { lo_le_hi := hlohi', lo_le := hlo, le_hi := hhi }
+    simpa [Bool.and_eq_true, decide_eq_true_iff] using hk
+  exact
+    { lo_le_hi := hlohi'
+      lo_le := fun k => (hbounds k).1
+      le_hi := fun k => (hbounds k).2 }
 
 end Circuit
 

@@ -119,8 +119,8 @@ theorem ratToReal_le_iff {x y : Rat} :
 
 /-- Rational order implies real order after casting. -/
 theorem ratToReal_le_of_le {x y : Rat} (h : x ≤ y) :
-    ratToReal x ≤ ratToReal y :=
-  (ratToReal_le_iff (x := x) (y := y)).2 h
+    ratToReal x ≤ ratToReal y := by
+  simpa [ratToReal_le_iff] using h
 
 theorem ratToReal_lt_iff {x y : Rat} :
     ratToReal x < ratToReal y ↔ x < y := by
@@ -131,8 +131,8 @@ theorem ratToReal_nonneg_iff {x : Rat} :
   simp [ratToReal]
 
 theorem ratToReal_nonneg_of_nonneg {x : Rat} (h : 0 ≤ x) :
-    0 ≤ ratToReal x :=
-  (ratToReal_nonneg_iff (x := x)).2 h
+    0 ≤ ratToReal x := by
+  simpa [ratToReal_nonneg_iff] using h
 
 theorem ratToReal_nonpos_iff {x : Rat} :
     ratToReal x ≤ 0 ↔ x ≤ 0 := by
@@ -144,9 +144,7 @@ theorem ratToReal_nonpos_iff {x : Rat} :
 
 theorem ratToReal_abs_le_of_le {x y : Rat} (h : |x| ≤ y) :
     |ratToReal x| ≤ ratToReal y := by
-  have h' : ratToReal |x| ≤ ratToReal y :=
-    ratToReal_le_of_le h
-  simpa [ratToReal_abs] using h'
+  simpa [ratToReal_abs] using ratToReal_le_of_le h
 
 @[simp] theorem ratToReal_max (x y : Rat) :
     ratToReal (max x y) = max (ratToReal x) (ratToReal y) := by

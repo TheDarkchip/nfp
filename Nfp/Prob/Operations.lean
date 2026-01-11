@@ -28,28 +28,18 @@ def pure (i0 : ι) [DecidableEq ι] : ProbVec ι := by
   refine
     { mass := Pi.single i0 (1 : Mass)
       sum_mass := ?_ }
-  exact (Fintype.sum_pi_single' (ι := ι) (i := i0) (a := (1 : Mass)))
+  simp
 
 @[simp] theorem mass_pure (i0 i : ι) [DecidableEq ι] :
     (pure i0).mass i = if i = i0 then 1 else 0 := by
-  by_cases h : i = i0
-  · subst h
-    simp [pure, Pi.single]
-  · simp [pure, Pi.single, h]
+  by_cases h : i = i0 <;> simp [pure, Pi.single, h]
 
 /-- Convex combination of two probability vectors with weights that sum to one. -/
 def mix (a b : Mass) (h : a + b = 1) (p q : ProbVec ι) : ProbVec ι :=
   { mass := fun i => a * p.mass i + b * q.mass i
     sum_mass := by
       classical
-      calc
-        ∑ i, (a * p.mass i + b * q.mass i)
-            = (∑ i, a * p.mass i) + (∑ i, b * q.mass i) := by
-                simp [Finset.sum_add_distrib]
-        _ = a * ∑ i, p.mass i + b * ∑ i, q.mass i := by
-              simp [sum_mul_const]
-        _ = a * 1 + b * 1 := by simp
-        _ = 1 := by simp [h] }
+      simp [Finset.sum_add_distrib, sum_mul_const, h] }
 
 end ProbVec
 end Nfp

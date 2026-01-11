@@ -830,8 +830,7 @@ theorem headValueValsLoCommonDen_eq {seq dModel dHead : Nat}
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsLoCommonDen inputs vLo vHi = headValueValsLo inputs vLo vHi := by
   funext k
-  simp [headValueValsLoCommonDen, headValueValsLo, headValueValsLoCommonDenArray,
-    headValueValsLoArray]
+  simp [headValueValsLoCommonDen, headValueValsLo, headValueValsLoCommonDenArray_eq]
 
 /-- Cached upper value bounds from V intervals. -/
 def headValueValsHiArray {seq dModel dHead : Nat}
@@ -907,8 +906,7 @@ theorem headValueValsHiCommonDen_eq {seq dModel dHead : Nat}
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsHiCommonDen inputs vLo vHi = headValueValsHi inputs vLo vHi := by
   funext k
-  simp [headValueValsHiCommonDen, headValueValsHi, headValueValsHiCommonDenArray,
-    headValueValsHiArray]
+  simp [headValueValsHiCommonDen, headValueValsHi, headValueValsHiCommonDenArray_eq]
 
 /-- Global lower value bound from an array of per-key values. -/
 def headValueLoArray (valsLo : Array Rat) : Rat :=

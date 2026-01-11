@@ -59,45 +59,52 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
         c.prev c.scores c.weights := by
   classical
   intro hcheck
+  let weightsOk (q : Fin seq) : Bool :=
+    finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
+      decide (0 ≤ c.weights q k) &&
+        (if k = c.prev q then
+          true
+        else
+          decide (c.weights q k ≤ c.eps)))
+  let scoresOk (q : Fin seq) : Bool :=
+    finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
+      if k = c.prev q then
+        true
+      else
+        decide (c.scores q k + c.margin ≤ c.scores q (c.prev q)))
   have hqall :
       ∀ q ∈ (Finset.univ : Finset (Fin seq)),
         (if q ∈ c.active then
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
+          weightsOk q &&
+            scoresOk q &&
             decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
             decide ((∑ k, c.weights q k) = 1)
         else
           true) = true := by
-    have hcheck' : checkSoftmaxMarginCert c = true := hcheck
     have hcheck'' :
         finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
             if q ∈ c.active then
-              finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-                  decide (0 ≤ c.weights q k) &&
-                    (if k = c.prev q then
-                      true
-                    else
-                      decide (c.weights q k ≤ c.eps))) &&
-                finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-                  if k = c.prev q then
-                    true
-                  else
-                    decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
+              weightsOk q &&
+                scoresOk q &&
                 decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
                 decide ((∑ k, c.weights q k) = 1)
             else
               true) = true := by
-      simpa [checkSoftmaxMarginCert] using hcheck'
+      simpa [checkSoftmaxMarginCert, weightsOk, scoresOk] using hcheck
     exact (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hcheck''
+  have hqchecks {q} (hq : q ∈ c.active) :
+      weightsOk q = true ∧
+        scoresOk q = true ∧
+          decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
+            decide ((∑ k, c.weights q k) = 1) = true := by
+    have hqall' := hqall q (by simp)
+    have hqall'' :
+        weightsOk q &&
+          scoresOk q &&
+          decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
+          decide ((∑ k, c.weights q k) = 1) = true := by
+      simpa [hq] using hqall'
+    simpa [Bool.and_eq_true, and_assoc] using hqall''
   refine
     { score_margin := ?_
       nonneg := ?_
@@ -105,95 +112,18 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
       prev_large := ?_
       other_le := ?_ }
   · intro q hq k hk
-    have hqcheck := hqall q (by simp)
-    have hqcheck' :
-        finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-            if k = c.prev q then
-              true
-            else
-              decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true := by
-      have hqcheck'' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
-            decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [hq] using hqcheck
-      have hqcheck''' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) = true ∧
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true ∧
-              decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
-                decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [Bool.and_eq_true, and_assoc] using hqcheck''
-      rcases hqcheck''' with ⟨_, hscoreOk, _, _⟩
-      exact hscoreOk
+    rcases hqchecks hq with ⟨_, hscore, _, _⟩
     have hscoreall :=
-      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hqcheck'
+      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hscore
     have hscorek := hscoreall k (by simp)
     have hscorek' :
         decide (c.scores q k + c.margin ≤ c.scores q (c.prev q)) = true := by
       simpa [hk] using hscorek
-    exact (decide_eq_true_iff).1 hscorek'
+    simpa [decide_eq_true_iff] using hscorek'
   · intro q hq k
-    have hqcheck := hqall q (by simp)
-    have hqcheck' :
-        finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-            decide (0 ≤ c.weights q k) &&
-              (if k = c.prev q then
-                true
-              else
-                decide (c.weights q k ≤ c.eps))) = true := by
-      have hqcheck'' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
-            decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [hq] using hqcheck
-      have hqcheck''' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) = true ∧
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true ∧
-              decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
-                decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [Bool.and_eq_true, and_assoc] using hqcheck''
-      rcases hqcheck''' with ⟨hweightsOk, _, _, _⟩
-      exact hweightsOk
+    rcases hqchecks hq with ⟨hweights, _, _, _⟩
     have hweightsall :=
-      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hqcheck'
+      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hweights
     have hweightsk := hweightsall k (by simp)
     have hweightsk' :
         decide (0 ≤ c.weights q k) = true ∧
@@ -202,124 +132,17 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
           else
             decide (c.weights q k ≤ c.eps)) = true := by
       simpa [Bool.and_eq_true] using hweightsk
-    exact (decide_eq_true_iff).1 hweightsk'.1
+    simpa [decide_eq_true_iff] using hweightsk'.1
   · intro q hq
-    have hqcheck := hqall q (by simp)
-    have hqcheck' :
-        decide ((∑ k, c.weights q k) = 1) = true := by
-      have hqcheck'' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
-            decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [hq] using hqcheck
-      have hqcheck''' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) = true ∧
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true ∧
-              decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
-                decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [Bool.and_eq_true, and_assoc] using hqcheck''
-      rcases hqcheck''' with ⟨_, _, _, hsumOk⟩
-      exact hsumOk
-    exact (decide_eq_true_iff).1 hqcheck'
+    rcases hqchecks hq with ⟨_, _, _, hsum⟩
+    simpa [decide_eq_true_iff] using hsum
   · intro q hq
-    have hqcheck := hqall q (by simp)
-    have hqcheck' :
-        decide (1 ≤ c.weights q (c.prev q) + c.eps) = true := by
-      have hqcheck'' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
-            decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [hq] using hqcheck
-      have hqcheck''' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) = true ∧
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true ∧
-              decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
-                decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [Bool.and_eq_true, and_assoc] using hqcheck''
-      rcases hqcheck''' with ⟨_, _, hprevOk, _⟩
-      exact hprevOk
-    exact (decide_eq_true_iff).1 hqcheck'
+    rcases hqchecks hq with ⟨_, _, hprev, _⟩
+    simpa [decide_eq_true_iff] using hprev
   · intro q hq k hk
-    have hqcheck := hqall q (by simp)
-    have hqcheck' :
-        finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-            decide (0 ≤ c.weights q k) &&
-              (if k = c.prev q then
-                true
-              else
-                decide (c.weights q k ≤ c.eps))) = true := by
-      have hqcheck'' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) &&
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) &&
-            decide (1 ≤ c.weights q (c.prev q) + c.eps) &&
-            decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [hq] using hqcheck
-      have hqcheck''' :
-          finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              decide (0 ≤ c.weights q k) &&
-                (if k = c.prev q then
-                  true
-                else
-                  decide (c.weights q k ≤ c.eps))) = true ∧
-            finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-              if k = c.prev q then
-                true
-              else
-                decide (c.scores q k + c.margin ≤ c.scores q (c.prev q))) = true ∧
-              decide (1 ≤ c.weights q (c.prev q) + c.eps) = true ∧
-                decide ((∑ k, c.weights q k) = 1) = true := by
-        simpa [Bool.and_eq_true, and_assoc] using hqcheck''
-      rcases hqcheck''' with ⟨hweightsOk, _, _, _⟩
-      exact hweightsOk
+    rcases hqchecks hq with ⟨hweights, _, _, _⟩
     have hweightsall :=
-      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hqcheck'
+      (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hweights
     have hweightsk := hweightsall k (by simp)
     have hweightsk' :
         decide (0 ≤ c.weights q k) = true ∧
@@ -331,7 +154,7 @@ theorem checkSoftmaxMarginCert_sound [NeZero seq] (c : SoftmaxMarginCert seq) :
     have hother :
         decide (c.weights q k ≤ c.eps) = true := by
       simpa [hk] using hweightsk'.2
-    exact (decide_eq_true_iff).1 hother
+    simpa [decide_eq_true_iff] using hother
 
 end Circuit
 

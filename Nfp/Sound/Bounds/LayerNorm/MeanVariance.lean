@@ -128,16 +128,8 @@ theorem meanReal_eq_meanRat {n : Nat} (x : Fin n → Rat) :
     meanReal (fun i => (x i : Real)) = (meanRat x : Real) := by
   by_cases h : n = 0
   · simp [meanReal, meanRat, h]
-  · have hsum :
-        (sumRat x : Real) = ∑ i, (x i : Real) := by
-      classical
-      unfold sumRat
-      simp [Rat.cast_sum]
-    have hmean : (meanRat x : Real) = (sumRat x : Real) / n := by
-      simp [meanRat, h]
-    have hreal : meanReal (fun i => (x i : Real)) = (∑ i, (x i : Real)) / n := by
-      simp [meanReal, h]
-    simpa [hmean, hsum] using hreal
+  · classical
+    simp [meanReal, meanRat, sumRat, h, Rat.cast_sum]
 
 /-- Mean is monotone under pointwise order (real inputs). -/
 theorem meanReal_le_meanReal {n : Nat} (x y : Fin n → Real) (hne : n ≠ 0)
@@ -197,26 +189,8 @@ theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Rat) :
     varianceReal (fun i => (x i : Real)) = (varianceRat x : Real) := by
   by_cases h : n = 0
   · simp [varianceReal, varianceRat, h]
-  · have hmean := meanReal_eq_meanRat (n := n) x
-    have hsum :
-        (∑ i, ((x i : Real) - (meanRat x : Real)) ^ 2) =
-          (∑ i, ((x i : Rat) - meanRat x) ^ 2 : Rat) := by
-      classical
-      simp [Rat.cast_sum]
-    have hreal : varianceReal (fun i => (x i : Real)) =
-        (∑ i, ((x i : Real) - meanReal (fun j => (x j : Real))) ^ 2) / n := by
-      simp [varianceReal, h]
-    have hrat : (varianceRat x : Real) =
-        (∑ i, ((x i : Rat) - meanRat x) ^ 2 : Rat) / n := by
-      simp [varianceRat, h]
-    calc
-      varianceReal (fun i => (x i : Real))
-          = (∑ i, ((x i : Real) - meanReal (fun j => (x j : Real))) ^ 2) / n := hreal
-      _ = (∑ i, ((x i : Real) - (meanRat x : Real)) ^ 2) / n := by
-            simp [hmean]
-      _ = (∑ i, ((x i : Rat) - meanRat x) ^ 2 : Rat) / n := by
-            rw [hsum]
-      _ = (varianceRat x : Real) := hrat.symm
+  · classical
+    simp [varianceReal, varianceRat, h, meanReal_eq_meanRat, Rat.cast_sum]
 
 /-- Variance is nonnegative when `n ≠ 0`, interpreted in reals. -/
 theorem varianceRat_nonneg_real {n : Nat} (x : Fin n → Rat) (hne : n ≠ 0) :

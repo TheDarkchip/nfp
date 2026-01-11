@@ -42,7 +42,7 @@ theorem checkResidualIntervalCert_sound {n : Nat} (c : ResidualIntervalCert n) :
   refine { lo_le_hi := ?_ }
   intro i
   have hi := hall' i (by simp)
-  exact (decide_eq_true_iff).1 hi
+  simpa [decide_eq_true_iff] using hi
 
 end Circuit
 

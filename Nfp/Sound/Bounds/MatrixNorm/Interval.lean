@@ -30,10 +30,8 @@ lemma foldl_max_ge_init {α : Type _} (f : α → Rat) :
   | nil =>
       simp
   | cons a l ih =>
-      have hinit : init ≤ max init (f a) := le_max_left _ _
-      have hrest : max init (f a) ≤ l.foldl (fun acc x => max acc (f x)) (max init (f a)) :=
-        ih (max init (f a))
-      simpa [List.foldl] using le_trans hinit hrest
+      simpa [List.foldl] using
+        le_trans (le_max_left _ _) (ih (max init (f a)))
 
 lemma foldl_max_ge_mem {α : Type _} (f : α → Rat) :
     ∀ (l : List α) (a : α) (init : Rat),
@@ -43,49 +41,25 @@ lemma foldl_max_ge_mem {α : Type _} (f : α → Rat) :
   | nil =>
       cases hmem
   | cons b l ih =>
-      have hmem' : a = b ∨ a ∈ l := by
-        simpa using hmem
-      cases hmem' with
-      | inl h =>
-          subst h
-          have hstep : f a ≤ max init (f a) := le_max_right _ _
-          have hrest :
-              max init (f a) ≤ l.foldl (fun acc x => max acc (f x)) (max init (f a)) :=
-            foldl_max_ge_init (f := f) l (max init (f a))
-          simpa [List.foldl] using le_trans hstep hrest
-      | inr h =>
-          have h' := ih (init := max init (f b)) h
-          simpa [List.foldl] using h'
+      rcases (List.mem_cons.mp hmem) with rfl | hmem
+      · simpa [List.foldl] using
+          le_trans (le_max_right _ _)
+            (foldl_max_ge_init (f := f) l (max init (f a)))
+      · simpa [List.foldl] using ih (init := max init (f b)) hmem
 
 lemma foldlFin_max_ge_init {n : Nat} (f : Fin n → Rat) (init : Rat) :
     init ≤ Linear.foldlFin n (fun acc j => max acc (f j)) init := by
   classical
-  have hlist :
-      init ≤ (List.finRange n).foldl (fun acc j => max acc (f j)) init :=
-    foldl_max_ge_init (f := f) (List.finRange n) init
-  have hfold :
-      Linear.foldlFin n (fun acc j => max acc (f j)) init =
-        (List.finRange n).foldl (fun acc j => max acc (f j)) init := by
-    simpa [Linear.foldlFin_eq_foldl] using
-      (Fin.foldl_eq_foldl_finRange
-        (f := fun acc j => max acc (f j)) (x := init) (n := n))
-  simpa [hfold] using hlist
+  simpa [Linear.foldlFin_eq_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_max_ge_init (f := f) (List.finRange n) init)
 
 lemma foldlFin_max_ge {n : Nat} (f : Fin n → Rat) (i : Fin n) :
     f i ≤ Linear.foldlFin n (fun acc j => max acc (f j)) 0 := by
   classical
   have hmem : i ∈ List.finRange n := by
     simp
-  have hlist :
-      f i ≤ (List.finRange n).foldl (fun acc j => max acc (f j)) 0 :=
-    foldl_max_ge_mem (f := f) (List.finRange n) i 0 hmem
-  have hfold :
-      Linear.foldlFin n (fun acc j => max acc (f j)) 0 =
-        (List.finRange n).foldl (fun acc j => max acc (f j)) 0 := by
-    simpa [Linear.foldlFin_eq_foldl] using
-      (Fin.foldl_eq_foldl_finRange
-        (f := fun acc j => max acc (f j)) (x := (0 : Rat)) (n := n))
-  simpa [hfold] using hlist
+  simpa [Linear.foldlFin_eq_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_max_ge_mem (f := f) (List.finRange n) i 0 hmem)
 
 /-- Lower interval endpoint for a dot product with per-coordinate bounds. -/
 def dotIntervalLower {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
@@ -305,51 +279,23 @@ theorem dotIntervalLowerUpper2CommonDen_fst {n : Nat} (lo1 hi1 lo2 hi2 : Fin n �
     (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).1 =
       dotIntervalLower2 lo1 hi1 lo2 hi2 := by
   classical
-  have hfold :
-      (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).1 =
-        (List.finRange n).foldl
-          (fun acc j => acc + mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := by
-    simpa [dotIntervalLowerUpper2CommonDen, Linear.foldlFin_eq_foldl,
-      Fin.foldl_eq_foldl_finRange] using
-      (foldl_pair_fst (xs := List.finRange n)
-        (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-        (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-        (a := 0) (b := 0))
-  have hsum :
-      dotIntervalLower2 lo1 hi1 lo2 hi2 =
-        (List.finRange n).foldl
-          (fun acc j => acc + mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := by
-    simp [dotIntervalLower2, Linear.sumFin_eq_list_foldl]
-  calc
-    (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).1
-        = (List.finRange n).foldl
-            (fun acc j => acc + mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := hfold
-    _ = dotIntervalLower2 lo1 hi1 lo2 hi2 := hsum.symm
+  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalLower2, Linear.foldlFin_eq_foldl,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_pair_fst (xs := List.finRange n)
+      (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
+      (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
+      (a := 0) (b := 0))
 
 theorem dotIntervalLowerUpper2CommonDen_snd {n : Nat} (lo1 hi1 lo2 hi2 : Fin n → Rat) :
     (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).2 =
       dotIntervalUpper2 lo1 hi1 lo2 hi2 := by
   classical
-  have hfold :
-      (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).2 =
-        (List.finRange n).foldl
-          (fun acc j => acc + mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := by
-    simpa [dotIntervalLowerUpper2CommonDen, Linear.foldlFin_eq_foldl,
-      Fin.foldl_eq_foldl_finRange] using
-      (foldl_pair_snd (xs := List.finRange n)
-        (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-        (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-        (a := 0) (b := 0))
-  have hsum :
-      dotIntervalUpper2 lo1 hi1 lo2 hi2 =
-        (List.finRange n).foldl
-          (fun acc j => acc + mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := by
-    simp [dotIntervalUpper2, Linear.sumFin_eq_list_foldl]
-  calc
-    (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).2
-        = (List.finRange n).foldl
-            (fun acc j => acc + mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j)) 0 := hfold
-    _ = dotIntervalUpper2 lo1 hi1 lo2 hi2 := hsum.symm
+  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalUpper2, Linear.foldlFin_eq_foldl,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_pair_snd (xs := List.finRange n)
+      (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
+      (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
+      (a := 0) (b := 0))
 
 theorem dotIntervalLowerUpper2CommonDen_eq {n : Nat} (lo1 hi1 lo2 hi2 : Fin n → Rat) :
     dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2 =
@@ -359,54 +305,24 @@ theorem dotIntervalLowerUpper2CommonDen_eq {n : Nat} (lo1 hi1 lo2 hi2 : Fin n �
 theorem dotIntervalLowerUpperCommonDen_fst {n : Nat} (v lo hi : Fin n → Rat) :
     (dotIntervalLowerUpperCommonDen v lo hi).1 = dotIntervalLowerCommonDen v lo hi := by
   classical
-  have hsum :
-      dotIntervalLowerCommonDen v lo hi =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * lo j else v j * hi j) 0 := by
-    simp [dotIntervalLowerCommonDen, Linear.sumFinCommonDen_eq_sumFin,
-      Linear.sumFin_eq_list_foldl]
-  have hfold :
-      (dotIntervalLowerUpperCommonDen v lo hi).1 =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * lo j else v j * hi j) 0 := by
-    simpa [dotIntervalLowerUpperCommonDen, Linear.foldlFin_eq_foldl,
-      Fin.foldl_eq_foldl_finRange] using
-      (foldl_pair_fst (xs := List.finRange n)
-        (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
-        (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
-        (a := 0) (b := 0))
-  calc
-    (dotIntervalLowerUpperCommonDen v lo hi).1
-        =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * lo j else v j * hi j) 0 := hfold
-    _ = dotIntervalLowerCommonDen v lo hi := hsum.symm
+  simpa [dotIntervalLowerUpperCommonDen, dotIntervalLowerCommonDen,
+    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_pair_fst (xs := List.finRange n)
+      (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
+      (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
+      (a := 0) (b := 0))
 
 theorem dotIntervalLowerUpperCommonDen_snd {n : Nat} (v lo hi : Fin n → Rat) :
     (dotIntervalLowerUpperCommonDen v lo hi).2 = dotIntervalUpperCommonDen v lo hi := by
   classical
-  have hsum :
-      dotIntervalUpperCommonDen v lo hi =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * hi j else v j * lo j) 0 := by
-    simp [dotIntervalUpperCommonDen, Linear.sumFinCommonDen_eq_sumFin,
-      Linear.sumFin_eq_list_foldl]
-  have hfold :
-      (dotIntervalLowerUpperCommonDen v lo hi).2 =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * hi j else v j * lo j) 0 := by
-    simpa [dotIntervalLowerUpperCommonDen, Linear.foldlFin_eq_foldl,
-      Fin.foldl_eq_foldl_finRange] using
-      (foldl_pair_snd (xs := List.finRange n)
-        (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
-        (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
-        (a := 0) (b := 0))
-  calc
-    (dotIntervalLowerUpperCommonDen v lo hi).2
-        =
-        (List.finRange n).foldl
-          (fun acc j => acc + if 0 ≤ v j then v j * hi j else v j * lo j) 0 := hfold
-    _ = dotIntervalUpperCommonDen v lo hi := hsum.symm
+  simpa [dotIntervalLowerUpperCommonDen, dotIntervalUpperCommonDen,
+    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
+    (foldl_pair_snd (xs := List.finRange n)
+      (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
+      (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
+      (a := 0) (b := 0))
 
 /-- Single-pass lower/upper endpoints agree with the common-denominator bounds. -/
 theorem dotIntervalLowerUpperCommonDen_eq {n : Nat} (v lo hi : Fin n → Rat) :
@@ -492,13 +408,9 @@ theorem dotIntervalLower_le_dotProduct {n : Nat} (v lo hi x : Fin n → Rat)
   refine Finset.sum_le_sum ?_
   intro j _
   by_cases hv : 0 ≤ v j
-  · have h1 : v j * lo j ≤ v j * x j :=
-      mul_le_mul_of_nonneg_left (hlo j) hv
-    simpa [hv] using h1
+  · simpa [hv] using (mul_le_mul_of_nonneg_left (hlo j) hv)
   · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
-    have h1 : v j * hi j ≤ v j * x j :=
-      mul_le_mul_of_nonpos_left (hhi j) hv'
-    simpa [hv] using h1
+    simpa [hv] using (mul_le_mul_of_nonpos_left (hhi j) hv')
 
 theorem dotProduct_le_dotIntervalUpper {n : Nat} (v lo hi x : Fin n → Rat)
     (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
@@ -508,34 +420,13 @@ theorem dotProduct_le_dotIntervalUpper {n : Nat} (v lo hi x : Fin n → Rat)
   refine Finset.sum_le_sum ?_
   intro j _
   by_cases hv : 0 ≤ v j
-  · have h1 : v j * x j ≤ v j * hi j :=
-      mul_le_mul_of_nonneg_left (hhi j) hv
-    simpa [hv] using h1
+  · simpa [hv] using (mul_le_mul_of_nonneg_left (hhi j) hv)
   · have hv' : v j ≤ 0 := le_of_lt (lt_of_not_ge hv)
-    have h1 : v j * x j ≤ v j * lo j :=
-      mul_le_mul_of_nonpos_left (hlo j) hv'
-    simpa [hv] using h1
+    simpa [hv] using (mul_le_mul_of_nonpos_left (hlo j) hv')
 
 theorem abs_le_max_abs_abs_of_interval {a b x : Rat} (hlo : a ≤ x) (hhi : x ≤ b) :
     |x| ≤ max |a| |b| := by
-  by_cases hx : 0 ≤ x
-  · have hb : 0 ≤ b := le_trans hx hhi
-    have hx' : |x| = x := abs_of_nonneg hx
-    have hb' : |b| = b := abs_of_nonneg hb
-    calc
-      |x| = x := hx'
-      _ ≤ b := hhi
-      _ = |b| := hb'.symm
-      _ ≤ max |a| |b| := le_max_right _ _
-  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have ha : a ≤ 0 := le_trans hlo hx'
-    have hxabs : |x| = -x := abs_of_nonpos hx'
-    have haabs : |a| = -a := abs_of_nonpos ha
-    calc
-      |x| = -x := hxabs
-      _ ≤ -a := neg_le_neg hlo
-      _ = |a| := by simp [haabs]
-      _ ≤ max |a| |b| := le_max_left _ _
+  exact abs_le_max_abs_abs hlo hhi
 
 /-- Global absolute bound from interval endpoints. -/
 def intervalAbsBound {n : Nat} (lo hi : Fin n → Rat) : Rat :=
@@ -567,8 +458,7 @@ theorem abs_dotProduct_le_dotIntervalAbsBound {n : Nat} (v lo hi x : Fin n → R
   have habs : |dotProduct v x| ≤
       max |dotIntervalLower v lo hi| |dotIntervalUpper v lo hi| :=
     abs_le_max_abs_abs_of_interval hlow hhigh
-  unfold dotIntervalAbsBound
-  exact habs
+  simpa [dotIntervalAbsBound] using habs
 
 /-! Real-valued bounds from rational intervals. -/
 
@@ -828,15 +718,11 @@ theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
     refine Finset.sum_le_sum ?_
     intro j _
     by_cases hv : 0 ≤ v j
-    · have h1 : (v j : Real) * (lo j : Real) ≤ (v j : Real) * x j := by
-        have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
-        exact mul_le_mul_of_nonneg_left (hlo j) hv'
-      simpa [hv] using h1
+    · have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
+      simpa [hv] using (mul_le_mul_of_nonneg_left (hlo j) hv')
     · have hv' : (v j : Real) ≤ 0 := by
         exact (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
-      have h1 : (v j : Real) * (hi j : Real) ≤ (v j : Real) * x j := by
-        exact mul_le_mul_of_nonpos_left (hhi j) hv'
-      simpa [hv] using h1
+      simpa [hv] using (mul_le_mul_of_nonpos_left (hhi j) hv')
   simpa [hcast, dotProduct] using hsum
 
 theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
@@ -856,37 +742,16 @@ theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
     refine Finset.sum_le_sum ?_
     intro j _
     by_cases hv : 0 ≤ v j
-    · have h1 : (v j : Real) * x j ≤ (v j : Real) * (hi j : Real) := by
-        have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
-        exact mul_le_mul_of_nonneg_left (hhi j) hv'
-      simpa [hv] using h1
+    · have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
+      simpa [hv] using (mul_le_mul_of_nonneg_left (hhi j) hv')
     · have hv' : (v j : Real) ≤ 0 := by
         exact (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
-      have h1 : (v j : Real) * x j ≤ (v j : Real) * (lo j : Real) := by
-        exact mul_le_mul_of_nonpos_left (hlo j) hv'
-      simpa [hv] using h1
+      simpa [hv] using (mul_le_mul_of_nonpos_left (hlo j) hv')
   simpa [hcast, dotProduct] using hsum
 
 theorem abs_le_max_abs_abs_of_interval_real {a b x : Real} (hlo : a ≤ x) (hhi : x ≤ b) :
     |x| ≤ max |a| |b| := by
-  by_cases hx : 0 ≤ x
-  · have hb : 0 ≤ b := le_trans hx hhi
-    have hx' : |x| = x := abs_of_nonneg hx
-    have hb' : |b| = b := abs_of_nonneg hb
-    calc
-      |x| = x := hx'
-      _ ≤ b := hhi
-      _ = |b| := hb'.symm
-      _ ≤ max |a| |b| := le_max_right _ _
-  · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have ha : a ≤ 0 := le_trans hlo hx'
-    have hxabs : |x| = -x := abs_of_nonpos hx'
-    have haabs : |a| = -a := abs_of_nonpos ha
-    calc
-      |x| = -x := hxabs
-      _ ≤ -a := neg_le_neg hlo
-      _ = |a| := by simp [haabs]
-      _ ≤ max |a| |b| := le_max_left _ _
+  exact abs_le_max_abs_abs hlo hhi
 
 /-- `intervalAbsBound` controls real-valued coordinates inside a rational interval. -/
 theorem abs_le_intervalAbsBound_real {n : Nat} (lo hi : Fin n → Rat) (x : Fin n → Real)
@@ -894,21 +759,14 @@ theorem abs_le_intervalAbsBound_real {n : Nat} (lo hi : Fin n → Rat) (x : Fin 
     |x i| ≤ (intervalAbsBound lo hi : Real) := by
   have hbound : |x i| ≤ max |(lo i : Real)| |(hi i : Real)| :=
     abs_le_max_abs_abs_of_interval_real (hlo i) (hhi i)
+  have hsup : max |lo i| |hi i| ≤ intervalAbsBound lo hi :=
+    max_abs_le_intervalAbsBound lo hi i
   have hsup_real :
       max |(lo i : Real)| |(hi i : Real)| ≤ (intervalAbsBound lo hi : Real) := by
-    have hsup : max |lo i| |hi i| ≤ intervalAbsBound lo hi :=
-      max_abs_le_intervalAbsBound lo hi i
-    have hlo : |lo i| ≤ intervalAbsBound lo hi :=
-      le_trans (le_max_left _ _) hsup
-    have hhi : |hi i| ≤ intervalAbsBound lo hi :=
-      le_trans (le_max_right _ _) hsup
-    have hlo_real :
-        |(lo i : Real)| ≤ (intervalAbsBound lo hi : Real) := by
-      exact ratToReal_abs_le_of_le hlo
-    have hhi_real :
-        |(hi i : Real)| ≤ (intervalAbsBound lo hi : Real) := by
-      exact ratToReal_abs_le_of_le hhi
-    exact max_le_iff.mpr ⟨hlo_real, hhi_real⟩
+    refine max_le_iff.mpr ?_
+    constructor
+    · exact ratToReal_abs_le_of_le (le_trans (le_max_left _ _) hsup)
+    · exact ratToReal_abs_le_of_le (le_trans (le_max_right _ _) hsup)
   exact le_trans hbound hsup_real
 
 theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n → Rat)
@@ -925,11 +783,7 @@ theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n �
       |dotProduct (fun j => (v j : Real)) x| ≤
         max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| :=
     abs_le_max_abs_abs_of_interval_real hlow hhigh
-  have hcast :
-      (dotIntervalAbsBound v lo hi : Real) =
-        max |(dotIntervalLower v lo hi : Real)| |(dotIntervalUpper v lo hi : Real)| := by
-    simp [dotIntervalAbsBound]
-  simpa [hcast] using habs
+  simpa [dotIntervalAbsBound] using habs
 
 /-! Matrix-vector interval bounds. -/
 
@@ -937,17 +791,15 @@ theorem mulVecIntervalLower_le_mulVec {m n : Nat} (W : Matrix (Fin m) (Fin n) Ra
     (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     ∀ i, mulVecIntervalLower W lo hi i ≤ Matrix.mulVec W x i := by
   intro i
-  have h :=
-    dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi x hlo hhi
-  simpa [mulVecIntervalLower, Matrix.mulVec, dotProduct] using h
+  simpa [mulVecIntervalLower, Matrix.mulVec, dotProduct] using
+    (dotIntervalLower_le_dotProduct (v := fun j => W i j) lo hi x hlo hhi)
 
 theorem mulVec_le_mulVecIntervalUpper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (lo hi x : Fin n → Rat) (hlo : ∀ j, lo j ≤ x j) (hhi : ∀ j, x j ≤ hi j) :
     ∀ i, Matrix.mulVec W x i ≤ mulVecIntervalUpper W lo hi i := by
   intro i
-  have h :=
-    dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi x hlo hhi
-  simpa [mulVecIntervalUpper, Matrix.mulVec, dotProduct] using h
+  simpa [mulVecIntervalUpper, Matrix.mulVec, dotProduct] using
+    (dotProduct_le_dotIntervalUpper (v := fun j => W i j) lo hi x hlo hhi)
 
 theorem mulVecIntervalLower_le_upper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :

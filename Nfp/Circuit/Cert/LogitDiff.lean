@@ -52,20 +52,16 @@ theorem logitDiffLowerBound_le (active : Finset (Fin seq))
   classical
   intro lb hbound
   have hnonempty : active.Nonempty := ⟨q, hq⟩
-  have hbound' :
-      (active.image (fun q => vals (prev q) - eps * (hi - lo))).min'
-          (hnonempty.image (fun q => vals (prev q) - eps * (hi - lo))) = lb := by
-    simpa [logitDiffLowerBound, hnonempty] using hbound
   let gap := eps * (hi - lo)
   let f : Fin seq → Rat := fun q => vals (prev q) - gap
+  have hbound' : (active.image f).min' (hnonempty.image f) = lb := by
+    simpa [logitDiffLowerBound, hnonempty, f, gap] using hbound
   have hmem : f q ∈ (active.image f) := by
     refine Finset.mem_image.2 ?_
     exact ⟨q, hq, rfl⟩
   have hmin : (active.image f).min' (hnonempty.image f) ≤ f q :=
     Finset.min'_le _ _ hmem
-  have hlb : lb = (active.image f).min' (hnonempty.image f) := by
-    simpa [f, gap] using hbound'.symm
-  simpa [f, gap, hlb] using hmin
+  simpa [f, gap, hbound'] using hmin
 
 /-- The per-query lower bound is below every active `prev` value minus the local gap. -/
 theorem logitDiffLowerBoundAt_le (active : Finset (Fin seq))
@@ -77,20 +73,16 @@ theorem logitDiffLowerBoundAt_le (active : Finset (Fin seq))
   classical
   intro lb hbound
   have hnonempty : active.Nonempty := ⟨q, hq⟩
-  have hbound' :
-      (active.image (fun q => vals (prev q) - epsAt q * (hi - lo))).min'
-          (hnonempty.image (fun q => vals (prev q) - epsAt q * (hi - lo))) = lb := by
-    simpa [logitDiffLowerBoundAt, hnonempty] using hbound
   let gap : Fin seq → Rat := fun q => epsAt q * (hi - lo)
   let f : Fin seq → Rat := fun q => vals (prev q) - gap q
+  have hbound' : (active.image f).min' (hnonempty.image f) = lb := by
+    simpa [logitDiffLowerBoundAt, hnonempty, f, gap] using hbound
   have hmem : f q ∈ (active.image f) := by
     refine Finset.mem_image.2 ?_
     exact ⟨q, hq, rfl⟩
   have hmin : (active.image f).min' (hnonempty.image f) ≤ f q :=
     Finset.min'_le _ _ hmem
-  have hlb : lb = (active.image f).min' (hnonempty.image f) := by
-    simpa [f, gap] using hbound'.symm
-  simpa [f, gap, hlb] using hmin
+  simpa [f, gap, hbound'] using hmin
 
 end Circuit
 

@@ -26,44 +26,24 @@ theorem wvDir_real_eq_sum (inputs : Model.InductionHeadInputs seq dModel dHead)
     (hwvDir : ∀ j, wvDir j = Linear.dotFin dHead dirHead (fun d => inputs.wv j d)) :
     ∀ j, (wvDir j : Real) = ∑ d, (dirHead d : Real) * (inputs.wv j d : Real) := by
   intro j
-  have hsum :
-      ((∑ d, dirHead d * inputs.wv j d : Rat) : Real) =
-        ∑ d, ((dirHead d * inputs.wv j d : Rat) : Real) := by
-    simp
-  have hsum' :
-      ∑ d, ((dirHead d * inputs.wv j d : Rat) : Real) =
-        ∑ d, (dirHead d : Real) * (inputs.wv j d : Real) := by
-    refine Finset.sum_congr rfl ?_
-    intro d _
-    simp
-  have hfinal := hsum.trans hsum'
   calc
     (wvDir j : Real)
         = ((∑ d, dirHead d * inputs.wv j d : Rat) : Real) := by
           simp [hwvDir j, Linear.dotFin_eq_dotProduct, dotProduct]
-    _ = ∑ d, (dirHead d : Real) * (inputs.wv j d : Real) := hfinal
+    _ = ∑ d, (dirHead d : Real) * (inputs.wv j d : Real) := by
+          simp
 
 /-- Cast a cached `bDir` dot to a Real-valued sum over head biases. -/
 theorem bDir_real_eq_sum (inputs : Model.InductionHeadInputs seq dModel dHead)
     (dirHead : Fin dHead → Rat) (bDir : Rat)
     (hbDir : bDir = Linear.dotFin dHead dirHead (fun d => inputs.bv d)) :
     (bDir : Real) = ∑ d, (dirHead d : Real) * (inputs.bv d : Real) := by
-  have hsum :
-      ((∑ d, dirHead d * inputs.bv d : Rat) : Real) =
-        ∑ d, ((dirHead d * inputs.bv d : Rat) : Real) := by
-    simp
-  have hsum' :
-      ∑ d, ((dirHead d * inputs.bv d : Rat) : Real) =
-        ∑ d, (dirHead d : Real) * (inputs.bv d : Real) := by
-    refine Finset.sum_congr rfl ?_
-    intro d _
-    simp
-  have hfinal := hsum.trans hsum'
   calc
     (bDir : Real)
         = ((∑ d, dirHead d * inputs.bv d : Rat) : Real) := by
           simp [hbDir, Linear.dotFin_eq_dotProduct, dotProduct]
-    _ = ∑ d, (dirHead d : Real) * (inputs.bv d : Real) := hfinal
+    _ = ∑ d, (dirHead d : Real) * (inputs.bv d : Real) := by
+          simp
 
 /-- Rewrite direction values using cached `wvDir` and `bDir` sums. -/
 theorem valsReal_eq_of_dir (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -151,11 +131,7 @@ theorem valsReal_eq_of_dir (inputs : Model.InductionHeadInputs seq dModel dHead)
       have hb :
           dotProduct (fun d => (dirHead d : Real)) (fun d => (inputs.bv d : Real)) =
             (bDir : Real) := by
-        calc
-          dotProduct (fun d => (dirHead d : Real)) (fun d => (inputs.bv d : Real))
-              = ∑ d, (dirHead d : Real) * (inputs.bv d : Real) := by
-                simp [dotProduct]
-          _ = (bDir : Real) := hdir_bv.symm
+        simpa [dotProduct] using hdir_bv.symm
       simp [hb]
 
 end Sound

@@ -116,16 +116,9 @@ theorem seqBridge_iff_eq {j : Node₁} {i : Node₂} (hmem : i ∈ C2.inputs) :
   · rintro ⟨h, hEq⟩
     have hSubtype :
         (⟨i, h⟩ : { i // i ∈ C2.inputs }) = ⟨i, hmem⟩ := by
-      apply Subtype.ext
+      ext
       rfl
-    have hMid :
-        I2.inputs.symm ⟨i, h⟩ = I2.inputs.symm ⟨i, hmem⟩ := by
-      exact congrArg I2.inputs.symm hSubtype
-    have hOut :
-        (I1.outputs (I2.inputs.symm ⟨i, h⟩)).1 =
-          (I1.outputs (I2.inputs.symm ⟨i, hmem⟩)).1 := by
-      exact congrArg Subtype.val (congrArg I1.outputs hMid)
-    exact hEq.trans hOut
+    simpa [hSubtype] using hEq
   · intro hEq
     exact ⟨hmem, hEq⟩
 
@@ -203,9 +196,7 @@ def seqCircuit : Circuit (Node₁ ⊕ Node₂) Val :=
       cases i with
       | inl i =>
           exact C1.gate i (fun j h =>
-            rec (Sum.inl j) (by
-              change C1.dag.rel j i
-              exact h))
+            rec (Sum.inl j) (by simpa using h))
       | inr i =>
           by_cases hinput : i ∈ C2.inputs
           · let mid : Mid := I2.inputs.symm ⟨i, hinput⟩
@@ -213,9 +204,7 @@ def seqCircuit : Circuit (Node₁ ⊕ Node₂) Val :=
             exact rec (Sum.inl out) (by
               refine ⟨hinput, rfl⟩)
           · exact C2.gate i (fun j h =>
-              rec (Sum.inr j) (by
-                change C2.dag.rel j i
-                exact h)) }
+              rec (Sum.inr j) (by simpa using h)) }
 
 /-- Interface for sequentially composed circuits. -/
 def seqInterface :

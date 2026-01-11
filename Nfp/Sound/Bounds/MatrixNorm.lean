@@ -48,25 +48,15 @@ def rowSumWeightedNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
 /-- Row-sums are nonnegative. -/
 theorem rowSum_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
     0 ≤ rowSum W i := by
-  have hsum : rowSum W i = ∑ j, |W i j| := by
-    simp [rowSum, Linear.sumFin_eq_sum_univ]
-  have hnonneg : 0 ≤ ∑ j, |W i j| := by
-    refine Finset.sum_nonneg ?_
-    intro j _
-    exact abs_nonneg (W i j)
-  simpa [hsum] using hnonneg
+  simpa [rowSum, Linear.sumFin_eq_sum_univ] using
+    (Finset.sum_nonneg (fun j _ => abs_nonneg (W i j)))
 
 /-- Weighted row-sums are nonnegative under nonnegative bounds. -/
 theorem rowSumWeighted_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (bound : Fin n → Rat) (i : Fin m) (hbound : ∀ j, 0 ≤ bound j) :
     0 ≤ rowSumWeighted W bound i := by
-  have hsum : rowSumWeighted W bound i = ∑ j, |W i j| * bound j := by
-    simp [rowSumWeighted, Linear.sumFin_eq_sum_univ]
-  have hnonneg : 0 ≤ ∑ j, |W i j| * bound j := by
-    refine Finset.sum_nonneg ?_
-    intro j _
-    exact mul_nonneg (abs_nonneg (W i j)) (hbound j)
-  simpa [hsum] using hnonneg
+  simpa [rowSumWeighted, Linear.sumFin_eq_sum_univ] using
+    (Finset.sum_nonneg (fun j _ => mul_nonneg (abs_nonneg (W i j)) (hbound j)))
 
 /-- Each row-sum is bounded by the row-sum norm. -/
 theorem rowSum_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat) (i : Fin m) :
@@ -131,13 +121,12 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     have h2 : ∑ j, |W i j * x j| ≤ ∑ j, |W i j| * inputBound := by
       refine Finset.sum_le_sum ?_
       intro j _
-      have hxj := hx j
       have hnonneg : 0 ≤ |W i j| := abs_nonneg (W i j)
       calc
         |W i j * x j| = |W i j| * |x j| := by
           simp [abs_mul]
         _ ≤ |W i j| * inputBound := by
-          exact mul_le_mul_of_nonneg_left hxj hnonneg
+          exact mul_le_mul_of_nonneg_left (hx j) hnonneg
     have h3 : ∑ j, |W i j| * inputBound = rowSum W i * inputBound := by
       have hsum :
           (∑ j, |W i j|) * inputBound = ∑ j, |W i j| * inputBound := by
@@ -147,9 +136,7 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
             (f := fun j => |W i j|)
             (a := inputBound))
       simpa [rowSum, Linear.sumFin_eq_sum_univ] using hsum.symm
-    have hmul : |Matrix.mulVec W x i| ≤ rowSum W i * inputBound := by
-      simpa [Matrix.mulVec, dotProduct] using h1.trans (h2.trans_eq h3)
-    exact hmul
+    simpa [Matrix.mulVec, dotProduct] using h1.trans (h2.trans_eq h3)
   have hle : rowSum W i ≤ rowSumNorm W := rowSum_le_rowSumNorm W i
   have hmul : rowSum W i * inputBound ≤ rowSumNorm W * inputBound :=
     mul_le_mul_of_nonneg_right hle hinput

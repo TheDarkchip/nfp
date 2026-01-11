@@ -40,7 +40,7 @@ theorem checkResidualBoundCert_sound {n : Nat} (c : ResidualBoundCert n) :
   refine { bound_nonneg := ?_ }
   intro i
   have hi := hall' i (by simp)
-  exact (decide_eq_true_iff).1 hi
+  simpa [decide_eq_true_iff] using hi
 
 end Circuit
 

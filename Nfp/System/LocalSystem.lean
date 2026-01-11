@@ -40,7 +40,8 @@ def toMixer (L : LocalSystem ι) (h : IsRowStochastic L) : Mixer ι ι :=
 /-- Off-edge weights are zero. -/
 theorem weight_eq_zero_of_not_parent (L : LocalSystem ι) {i j : ι} (h : ¬ L.dag.rel j i) :
     L.weight i j = 0 :=
-  L.support i j h
+  by
+    simpa using L.support i j h
 
 /-- One-step evaluation functional used by `eval`. -/
 def evalStep (L : LocalSystem ι) (input : ι → Mass)
@@ -57,11 +58,12 @@ theorem eval_eq (L : LocalSystem ι) (input : ι → Mass) (i : ι) :
     eval L input i =
       input i +
         ∑ j, (if _ : L.dag.rel j i then L.weight i j * eval L input j else 0) := by
+  classical
   set F : ∀ i, (∀ j, L.dag.rel j i → Mass) → Mass := fun i rec => evalStep L input i rec
   change L.dag.wf.fix F i =
     input i + ∑ j, (if _ : L.dag.rel j i then L.weight i j * L.dag.wf.fix F j else 0)
   rw [WellFounded.fix_eq]
-  dsimp [F, evalStep]
+  simp [F, evalStep]
 
 end LocalSystem
 

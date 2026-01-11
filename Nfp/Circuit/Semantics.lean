@@ -32,7 +32,7 @@ theorem eval_eq (C : Circuit ι α) (input : ι → α) (i : ι) :
   change C.dag.wf.fix F i =
     if _ : i ∈ C.inputs then input i else C.gate i (fun j _ => C.dag.wf.fix F j)
   rw [WellFounded.fix_eq]
-  dsimp [F, evalStep]
+  simp [F, evalStep]
 
 /-- Input nodes evaluate to their assigned input value. -/
 theorem eval_eq_input (C : Circuit ι α) (input : ι → α) {i : ι} (h : i ∈ C.inputs) :
@@ -61,7 +61,7 @@ theorem evalInput_eq (C : Circuit ι α) (input : C.InputAssignment) (i : ι) :
   change C.dag.wf.fix F i =
     if h : i ∈ C.inputs then input ⟨i, h⟩ else C.gate i (fun j _ => C.dag.wf.fix F j)
   rw [WellFounded.fix_eq]
-  dsimp [F, evalInputStep]
+  simp [F, evalInputStep]
 
 /-- Input nodes evaluate to their assigned input value (input-only form). -/
 theorem evalInput_eq_input (C : Circuit ι α) (input : C.InputAssignment) {i : ι}

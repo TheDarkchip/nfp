@@ -86,11 +86,8 @@ theorem geluTanh_bounds (x : Real) :
             2) ≤ x := by
       have h := mul_le_mul_of_nonneg_left hcoeff.2 hx
       simpa [mul_one] using h
-    have h0 : 0 ≤ geluTanh x := by
-      simpa [geluTanh] using hnonneg
-    have h1 : geluTanh x ≤ x := by
-      simpa [geluTanh] using hle
-    simpa [min_eq_right hx, max_eq_left hx] using And.intro h0 h1
+    simpa [geluTanh, min_eq_right hx, max_eq_left hx] using
+      And.intro hnonneg hle
   · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
     have hcoeff := geluTanh_coeff_bounds x
     have hle0 :
@@ -111,11 +108,7 @@ theorem geluTanh_bounds (x : Real) :
               2) := by
       have h := mul_le_mul_of_nonpos_left hcoeff.2 hx'
       simpa [mul_one] using h
-    have h0 : geluTanh x ≤ 0 := by
-      simpa [geluTanh] using hle0
-    have h1 : x ≤ geluTanh x := by
-      simpa [geluTanh] using hxle
-    simpa [min_eq_left hx', max_eq_right hx'] using And.intro h1 h0
+    simpa [geluTanh, min_eq_left hx', max_eq_right hx'] using And.intro hxle hle0
 
 /-- Interval bounds for GELU given input bounds. -/
 def geluInterval (lo hi : Rat) : Rat × Rat :=
@@ -142,8 +135,7 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
     · by_cases hhi0 : 0 ≤ hi
       · have hhi0r : 0 ≤ (hi : Real) := by
           exact ratToReal_nonneg_of_nonneg hhi0
-        have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
-        simpa [geluInterval, hhi0, hmax'] using hhi'
+        simpa [geluInterval, hhi0, max_eq_left hhi0r] using hhi'
       · have hhi0r : (hi : Real) ≤ 0 := by
           exact (ratToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
         have hx0 : x ≤ 0 := le_trans hhi hhi0r
@@ -164,8 +156,7 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
     · by_cases hhi0 : 0 ≤ hi
       · have hhi0r : 0 ≤ (hi : Real) := by
           exact ratToReal_nonneg_of_nonneg hhi0
-        have hmax' : max (hi : Real) 0 = (hi : Real) := max_eq_left hhi0r
-        simpa [geluInterval, hhi0, hmax'] using hhi'
+        simpa [geluInterval, hhi0, max_eq_left hhi0r] using hhi'
       · have hhi0r : (hi : Real) ≤ 0 := by
           exact (ratToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
         have hx0' : x ≤ 0 := le_trans hhi hhi0r
