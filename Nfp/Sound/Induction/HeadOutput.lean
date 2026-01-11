@@ -328,22 +328,20 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       hlower''
                   have hlo :
                       (loOut i : Real) ≤ (boundLoRat q i : Real) := by
-                    have hloRat : loOut i ≤ boundLoRat q i := by
-                      simpa [loOut, hactive] using
-                        (Finset.inf'_le
-                          (s := activeSet)
-                          (f := fun q => boundLoRat q i)
-                          (b := q) hq)
-                    exact ratToReal_le_of_le hloRat
+                    refine ratToReal_le_of_le ?_
+                    simpa [loOut, hactive] using
+                      (Finset.inf'_le
+                        (s := activeSet)
+                        (f := fun q => boundLoRat q i)
+                        (b := q) hq)
                   have hhi :
                       (boundHiRat q i : Real) ≤ (hiOut i : Real) := by
-                    have hhiRat : boundHiRat q i ≤ hiOut i := by
-                      simpa [hiOut, hactive] using
-                        (Finset.le_sup'
-                          (s := activeSet)
-                          (f := fun q => boundHiRat q i)
-                          (b := q) hq)
-                    exact ratToReal_le_of_le hhiRat
+                    refine ratToReal_le_of_le ?_
+                    simpa [hiOut, hactive] using
+                      (Finset.le_sup'
+                        (s := activeSet)
+                        (f := fun q => boundHiRat q i)
+                        (b := q) hq)
                   exact ⟨le_trans hlo hlower, le_trans hupper hhi⟩
                 have hbounds : Circuit.ResidualIntervalBounds { lo := loOut, hi := hiOut } := by
                   refine { lo_le_hi := ?_ }
@@ -351,9 +349,8 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                   by_cases hactive : activeSet.Nonempty
                   · rcases hactive with ⟨q, hq⟩
                     have hout_i := hout q hq i
-                    have hleReal : (loOut i : Real) ≤ (hiOut i : Real) :=
-                      le_trans hout_i.1 hout_i.2
-                    exact (ratToReal_le_iff (x := loOut i) (y := hiOut i)).1 hleReal
+                    exact (ratToReal_le_iff (x := loOut i) (y := hiOut i)).1
+                      (le_trans hout_i.1 hout_i.2)
                   · simp [loOut, hiOut, hactive]
                 let certOut : Circuit.ResidualIntervalCert dModel := { lo := loOut, hi := hiOut }
                 exact some

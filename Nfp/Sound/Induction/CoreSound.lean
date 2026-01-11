@@ -1359,13 +1359,12 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     (lnAbsMax k : Real) ≤ (lnAbsMaxMax : Real) :=
                   ratToReal_le_of_le (hln_abs_max k)
                 have hsum_nonneg : 0 ≤ (Linear.sumFin dModel (fun j => |wvDir j|) : Real) := by
-                  have hsum_nonneg' : 0 ≤ (Linear.sumFin dModel (fun j => |wvDir j|) : Rat) := by
-                    have hsum_nonneg'' : 0 ≤ ∑ j, |wvDir j| := by
-                      refine Finset.sum_nonneg ?_
-                      intro j _
-                      exact abs_nonneg _
-                    simpa [Linear.sumFin_eq_sum_univ] using hsum_nonneg''
-                  exact ratToReal_nonneg_of_nonneg hsum_nonneg'
+                  refine ratToReal_nonneg_of_nonneg ?_
+                  have : 0 ≤ ∑ j, |wvDir j| := by
+                    refine Finset.sum_nonneg ?_
+                    intro j _
+                    exact abs_nonneg _
+                  simpa [Linear.sumFin_eq_sum_univ] using this
                 have hmul :
                     (Linear.sumFin dModel (fun j => |wvDir j|) : Real) * (lnAbsMax k : Real) ≤
                       (Linear.sumFin dModel (fun j => |wvDir j|) : Real) * (lnAbsMaxMax : Real) :=
@@ -1398,9 +1397,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     change lo ≤ valsLo k0
                     dsimp [lo]
                     refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
-                      (f := valsLo) (a := valsLo k0)).2 ?_
-                    refine ⟨k0, hmem0, ?_⟩
-                    exact le_rfl
+                      (f := valsLo) (a := valsLo k0)).2 ⟨k0, hmem0, le_rfl⟩
                   exact ratToReal_le_of_le hloRat
                 have hvals :
                     (valCert.valsLo k0 : Real) ≤ valsRealOfInputs inputs k0 ∧
@@ -1411,34 +1408,27 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     change valsHi k0 ≤ hi
                     dsimp [hi]
                     refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
-                      (f := valsHi) (a := valsHi k0)).2 ?_
-                    exact ⟨k0, ⟨hmem0, le_rfl⟩⟩
+                      (f := valsHi) (a := valsHi k0)).2 ⟨k0, ⟨hmem0, le_rfl⟩⟩
                   exact ratToReal_le_of_le hhiRat
                 have hreal :
                     (valCert.lo : Real) ≤ (valCert.hi : Real) :=
                   le_trans hlo (le_trans hvals.1 (le_trans hvals.2 hhi))
                 exact (ratToReal_le_iff (x := valCert.lo) (y := valCert.hi)).1 hreal
               · intro k
-                have hmem : k ∈ univ := by simp [univ]
                 have hloRat : valCert.lo ≤ valCert.valsLo k := by
                   change lo ≤ valsLo k
                   dsimp [lo]
                   refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
-                    (f := valsLo) (a := valsLo k)).2 ?_
-                  refine ⟨k, hmem, ?_⟩
-                  exact le_rfl
+                    (f := valsLo) (a := valsLo k)).2 ⟨k, by simp [univ], le_rfl⟩
                 exact ratToReal_le_of_le hloRat
               · intro k
                 exact hvals_bounds_at k
               · intro k
-                have hmem : k ∈ univ := by simp [univ]
                 have hhiRat : valCert.valsHi k ≤ valCert.hi := by
                   change valsHi k ≤ hi
                   dsimp [hi]
                   refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
-                    (f := valsHi) (a := valsHi k)).2 ?_
-                  refine ⟨k, hmem, ?_⟩
-                  exact le_rfl
+                    (f := valsHi) (a := valsHi k)).2 ⟨k, by simp [univ], le_rfl⟩
                 exact ratToReal_le_of_le hhiRat
             exact
               { softmax_bounds := hsoftmax_bounds
