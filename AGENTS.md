@@ -26,12 +26,6 @@ but keep the core invariants and the “no fake proofs” ethos.
 One of these typically works (depending on your Lake setup):
 - `lake exe nfp --help`
 
-If you add or change CLI behavior, validate at least:
-- `lake exe nfp --help` (or `nfp --help` if on PATH)
-- `lake exe nfp analyze --help` (or `nfp analyze --help`)
-- `lake exe nfp induction --help` (or `nfp induction --help`)
-- `lake exe nfp --version` (or `nfp --version`) if supported
-
 ### Search tips
 Note: `models/` is gitignored, so `rg` will skip it unless you pass `--no-ignore`
 or `-uuu` (or equivalent) when searching.
