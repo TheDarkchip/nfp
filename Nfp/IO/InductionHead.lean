@@ -1137,6 +1137,150 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
           | Except.ok inputs =>
               checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff? minMargin maxEps
 
+/-- Heuristic logit-diff direction derived from prompt tokens. -/
+private def deriveDirectionFromTokens {seq : Nat} (tokens : Fin seq → Nat) :
+    Except String (Nat × Nat) := do
+  let tokenArr : Array Nat := Array.ofFn (fun i : Fin seq => tokens i)
+  let n := tokenArr.size
+  if n < 2 then
+    throw "token sequence must have length at least 2"
+  let lastTok := tokenArr.getD (n - 1) 0
+  let prevIdx? :=
+    (List.range (n - 1)).reverse.find? (fun i =>
+      tokenArr.getD i lastTok = lastTok)
+  let targetTok :=
+    match prevIdx? with
+    | some i => tokenArr.getD (i + 1) lastTok
+    | none => lastTok
+  let neg0 := tokenArr.getD (n - 2) lastTok
+  let neg :=
+    if neg0 = targetTok then
+      if lastTok ≠ targetTok then
+        lastTok
+      else if targetTok ≠ 0 then
+        0
+      else
+        1
+    else
+      neg0
+  return (targetTok, neg)
+
+/-- Build and check induction certificates from a model binary, deriving direction tokens from the
+prompt sequence. -/
+def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
+    (layer head : Nat) (period? : Option Nat)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
+      logTiming "start: read model file"
+      IO.println "timing: read model file start"
+      flushStdout
+      let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
+      let headerE ← timePure "parse model header" (fun () =>
+        NfptPure.parseHeader data)
+      match headerE with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨header, start⟩ =>
+          let tokensE ← timePure "read prompt tokens" (fun () =>
+            NfptPure.readTokens data start header)
+          match tokensE with
+          | Except.error msg =>
+              IO.eprintln s!"error: {msg}"
+              return 1
+          | Except.ok tokens =>
+              match deriveDirectionFromTokens tokens with
+              | Except.error msg =>
+                  IO.eprintln s!"error: {msg}"
+                  return 1
+              | Except.ok ⟨dirTarget, dirNegative⟩ =>
+                  IO.println
+                    s!"info: direction-target={dirTarget} direction-negative={dirNegative}"
+                  let inputsE ← timePure "read head inputs" (fun () =>
+                    NfptPure.readInductionHeadInputs
+                      data start header layer head dirTarget dirNegative period?)
+                  match inputsE with
+                  | Except.error msg =>
+                      IO.eprintln s!"error: {msg}"
+                      return 1
+                  | Except.ok inputs =>
+                      checkInductionHeadInputs inputs minActive? minLogitDiff?
+                        minMargin maxEps
+
+/-- Build and check a strictly positive induction logit-diff bound from a model binary, deriving
+direction tokens from the prompt sequence. -/
+def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
+    (layer head : Nat) (period? : Option Nat)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
+  let minMargin?E := parseRatOpt "min-margin" minMarginStr?
+  let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E with
+  | Except.error msg, _, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+      let minMargin := minMargin?.getD (0 : Rat)
+      let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
+      logTiming "start: read model file"
+      IO.println "timing: read model file start"
+      flushStdout
+      let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
+      let headerE ← timePure "parse model header" (fun () =>
+        NfptPure.parseHeader data)
+      match headerE with
+      | Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 1
+      | Except.ok ⟨header, start⟩ =>
+          let tokensE ← timePure "read prompt tokens" (fun () =>
+            NfptPure.readTokens data start header)
+          match tokensE with
+          | Except.error msg =>
+              IO.eprintln s!"error: {msg}"
+              return 1
+          | Except.ok tokens =>
+              match deriveDirectionFromTokens tokens with
+              | Except.error msg =>
+                  IO.eprintln s!"error: {msg}"
+                  return 1
+              | Except.ok ⟨dirTarget, dirNegative⟩ =>
+                  IO.println
+                    s!"info: direction-target={dirTarget} direction-negative={dirNegative}"
+                  let inputsE ← timePure "read head inputs" (fun () =>
+                    NfptPure.readInductionHeadInputs
+                      data start header layer head dirTarget dirNegative period?)
+                  match inputsE with
+                  | Except.error msg =>
+                      IO.eprintln s!"error: {msg}"
+                      return 1
+                  | Except.ok inputs =>
+                      checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff?
+                        minMargin maxEps
+
 /-- Build head-output interval bounds from exact head inputs. -/
 def runInductionHeadInterval (inputsPath : System.FilePath)
     (outPath? : Option System.FilePath) : IO UInt32 := do

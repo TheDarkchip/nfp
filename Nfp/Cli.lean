@@ -247,6 +247,32 @@ def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
   IO.runInductionCertifyHeadModelNonvacuous modelPath layer head dirTarget dirNegative period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
 
+/-- `nfp induction certify_head_model_auto` subcommand. -/
+def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
+  let modelPath := p.flag! "model" |>.as! String
+  let layer := p.flag! "layer" |>.as! Nat
+  let head := p.flag! "head" |>.as! Nat
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyHeadModelAuto modelPath layer head period?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
+/-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
+def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
+  let modelPath := p.flag! "model" |>.as! String
+  let layer := p.flag! "layer" |>.as! Nat
+  let head := p.flag! "head" |>.as! Nat
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer head period?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
 /-- `nfp induction certify_head_model` subcommand. -/
 def inductionCertifyHeadModelCmd : Cmd := `[Cli|
   certify_head_model VIA runInductionCertifyHeadModel;
@@ -277,6 +303,42 @@ def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
     period : Nat; "Optional prompt period override (default: derive from tokens)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal; default: 0)."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify_head_model_auto` subcommand. -/
+def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
+  certify_head_model_auto VIA runInductionCertifyHeadModelAuto;
+  "Check induction certificates by reading a model binary and deriving the direction \
+  from the prompt tokens."
+  FLAGS:
+    model : String; "Path to the NFP_BINARY_V1 model file."
+    layer : Nat; "Layer index for the induction head."
+    head : Nat; "Head index for the induction head."
+    period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
+/-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
+def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
+  certify_head_model_auto_nonvacuous VIA runInductionCertifyHeadModelAutoNonvacuous;
+  "Require a strictly positive logit-diff bound from a model binary, with the direction \
+  derived from the prompt tokens."
+  FLAGS:
+    model : String; "Path to the NFP_BINARY_V1 model file."
+    layer : Nat; "Layer index for the induction head."
+    head : Nat; "Head index for the induction head."
+    period : Nat; "Optional prompt period override (default: derive from tokens)."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
@@ -339,6 +401,8 @@ def inductionCmd : Cmd := `[Cli|
     inductionCertifyHeadNonvacuousCmd;
     inductionCertifyHeadModelCmd;
     inductionCertifyHeadModelNonvacuousCmd;
+    inductionCertifyHeadModelAutoCmd;
+    inductionCertifyHeadModelAutoNonvacuousCmd;
     inductionHeadIntervalCmd;
     inductionHeadIntervalModelCmd
 ]

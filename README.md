@@ -107,6 +107,22 @@ By default, `certify_head_model` derives the `prev` map and active set from the
 token sequence stored in the model file. Use `--period <n>` to override with a
 fixed periodic prompt.
 
+### GPT2-small (model-driven)
+
+To certify induction heads from GPT2-small weights, export a model binary and
+let the CLI derive the logit-diff direction from the stored prompt tokens
+(prefix matching: [A][B] ... [A] -> [B]):
+
+```bash
+python scripts/export_gpt2.py models/gpt2_small.nfpt
+
+lake exe nfp induction certify_head_model_auto \
+  --model models/gpt2_small.nfpt \
+  --layer 5 --head 1
+```
+
+Use `--period <n>` to override the prompt period derived from tokens.
+
 ### End-to-end check with downstream bound (prototype)
 
 ```bash

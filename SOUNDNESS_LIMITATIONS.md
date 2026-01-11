@@ -19,6 +19,8 @@ It is intentionally brief and focused on the soundness boundary.
   attention projection biases, and derives `prev`/active from the stored token sequence by
   default, but still ignores LayerNorm and the shared attention output bias. It currently
   requires `head_dim` to be a perfect square to represent the scale as an exact rational.
+- The `certify_head_model_auto` path derives the logit-diff direction from the stored prompt
+  tokens using a heuristic; use explicit direction tokens for fixed claims.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
 - There is no bridge theorem connecting certificate validity to a full circuit/model semantics
   statement (for example, a formal statement about logits under a transformer block stack).
