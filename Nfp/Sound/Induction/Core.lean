@@ -236,10 +236,10 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               simp [hsize])
           let masked : Fin seq → Fin seq → Prop := fun q k =>
             inputs.maskCausal = true ∧ q < k
-          let splitBudgetQ : Nat := 4
-          let splitBudgetK : Nat := 4
-          let splitBudgetDiffBase : Nat := 4
-          let splitBudgetDiffRefined : Nat := 16
+          let splitBudgetQ : Nat := 3
+          let splitBudgetK : Nat := 3
+          let splitBudgetDiffBase : Nat := 2
+          let splitBudgetDiffRefined : Nat := 12
           let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
             let ambig :=
               (List.finRange dHead).filter (fun d => decide (qLo q d < 0 ∧ 0 < qHi q d))
