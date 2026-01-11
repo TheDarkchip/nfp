@@ -67,7 +67,7 @@ def sqrtUpperAlt (q : Rat) : Rat :=
   ratRoundUp ((a + 1 : Rat) / den)
 
 /-- Extra precision scale for `sqrtLowerScaled`. -/
-def sqrtLowerScale : Nat := 65536
+def sqrtLowerScale : Nat := 1048576
 
 /-- Scaled rational lower bound for a square root (extra precision). -/
 def sqrtLowerScaled (q : Rat) : Rat :=
