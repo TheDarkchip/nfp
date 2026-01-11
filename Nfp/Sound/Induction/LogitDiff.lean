@@ -172,7 +172,7 @@ def buildInductionLogitLowerBoundNonvacuous?
   | none => exact none
   | some base =>
       by_cases hpos : 0 < base.lb
-      · exact some { base := base, lb_pos := hpos }
+      · exact some ⟨base, hpos⟩
       · exact none
 
 end LogitDiffLowerBound

@@ -65,9 +65,7 @@ theorem oneHot_bounds_at_of_marginAt
         Finset.sum_le_sum_of_subset_of_nonneg hsubset (by
           intro k _ _
           exact hweights_nonneg k)
-      have hsum_le' : (∑ k ∈ others q, weights q k) ≤ 1 := by
-        simpa [hsum_one] using hsum_le
-      simpa [heps] using hsum_le'
+      simpa [heps, hsum_one] using hsum_le
     · have hnonneg : 0 ≤ marginAt q := le_of_not_gt hneg
       have hnonneg_real : 0 ≤ (marginAt q : Real) := by
         exact ratToReal_nonneg_of_nonneg hnonneg
@@ -142,8 +140,8 @@ theorem oneHot_bounds_at_of_marginAt
     have hsum_le' :
         weights q (prev q) + ∑ k ∈ others q, weights q k ≤
           weights q (prev q) + (epsAt q : Real) := by
-      have hsum_le'' := add_le_add_left hsum_others_le (weights q (prev q))
-      simpa [add_comm, add_left_comm, add_assoc] using hsum_le''
+      simpa [add_comm, add_left_comm, add_assoc] using
+        (add_le_add_left hsum_others_le (weights q (prev q)))
     have hprev :
         1 ≤ weights q (prev q) + (epsAt q : Real) := by
       simpa [hsum_eq] using hsum_le'
