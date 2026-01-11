@@ -115,10 +115,6 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               have hsize : lnAbsMaxArr.size = seq := by
                 simp [lnAbsMaxArr]
               simp [hsize])
-          let lnAbsMaxMax : Rat :=
-            let univ : Finset (Fin seq) := Finset.univ
-            have hnonempty : univ.Nonempty := Finset.univ_nonempty
-            univ.sup' hnonempty (fun q => lnAbsMax q)
           let invStdBoundsTasks : Array (Task (Rat × Rat)) :=
             Array.ofFn (fun q : Fin seq =>
               Task.spawn (fun _ => invStdBounds inputs.lnEps (inputs.embed q)))
@@ -496,12 +492,10 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
               Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
           let bDir : Rat :=
             Linear.dotFin dHead dirHead (fun d => inputs.bv d)
-          let valsAbsBase : Rat :=
-            Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMaxMax
-          let valsLoBase := bDir - valsAbsBase
-          let valsHiBase := bDir + valsAbsBase
-          let valsLo : Fin seq → Rat := fun _ => valsLoBase
-          let valsHi : Fin seq → Rat := fun _ => valsHiBase
+          let valsAbs : Fin seq → Rat := fun q =>
+            Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMax q
+          let valsLo : Fin seq → Rat := fun q => bDir - valsAbs q
+          let valsHi : Fin seq → Rat := fun q => bDir + valsAbs q
           let univ : Finset (Fin seq) := Finset.univ
           have hnonempty : univ.Nonempty := by simp [univ]
           let lo := univ.inf' hnonempty valsLo

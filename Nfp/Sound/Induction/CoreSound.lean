@@ -37,10 +37,6 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               lnAbsMaxArr[q.1]'(by
                 have hsize : lnAbsMaxArr.size = seq := by simp [lnAbsMaxArr]
                 simp [hsize])
-            let lnAbsMaxMax : Rat :=
-              let univ : Finset (Fin seq) := Finset.univ
-              have hnonempty : univ.Nonempty := Finset.univ_nonempty
-              univ.sup' hnonempty (fun q => lnAbsMax q)
             let invStdBoundsTasks : Array (Task (Rat × Rat)) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ => invStdBounds inputs.lnEps (inputs.embed q)))
@@ -409,12 +405,10 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
             let bDir : Rat :=
               Linear.dotFin dHead dirHead (fun d => inputs.bv d)
-            let valsAbsBase : Rat :=
-              Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMaxMax
-            let valsLoBase := bDir - valsAbsBase
-            let valsHiBase := bDir + valsAbsBase
-            let valsLo : Fin seq → Rat := fun _ => valsLoBase
-            let valsHi : Fin seq → Rat := fun _ => valsHiBase
+            let valsAbs : Fin seq → Rat := fun q =>
+              Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMax q
+            let valsLo : Fin seq → Rat := fun q => bDir - valsAbs q
+            let valsHi : Fin seq → Rat := fun q => bDir + valsAbs q
             let univ : Finset (Fin seq) := Finset.univ
             have hnonempty : univ.Nonempty := by simp [univ]
             let lo := univ.inf' hnonempty valsLo
@@ -460,15 +454,6 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   (hhi := fun j => (hln j).2) j
               simpa [lnAbsMax, lnAbsMaxArr, lnAbsMaxTask, Bounds.cacheBoundTask_apply,
                 Array.getElem_ofFn] using h
-            have hln_abs_max : ∀ q, lnAbsMax q ≤ lnAbsMaxMax := by
-              intro q
-              have hnonempty : (Finset.univ : Finset (Fin seq)).Nonempty :=
-                Finset.univ_nonempty
-              have hmem : q ∈ (Finset.univ : Finset (Fin seq)) := by simp
-              simpa [lnAbsMaxMax] using
-                (Finset.le_sup'_iff (s := (Finset.univ : Finset (Fin seq)))
-                  (H := hnonempty) (f := fun q => lnAbsMax q) (a := lnAbsMax q)).2
-                  ⟨q, hmem, le_rfl⟩
             have hdot_abs_bound :
                 ∀ (v : Fin dModel → Rat) (q : Fin seq),
                   |dotProduct (fun j => (v j : Real)) (lnRealOfInputs inputs q)| ≤
@@ -1353,34 +1338,19 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               intro k
               have hdot_abs :
                   |dotProduct (fun j => (wvDir j : Real)) (lnRealOfInputs inputs k)| ≤
-                    (valsAbsBase : Real) := by
+                    (valsAbs k : Real) := by
                 have hdot := hdot_abs_bound_sum (fun j => wvDir j) k
-                have hln_max_real :
-                    (lnAbsMax k : Real) ≤ (lnAbsMaxMax : Real) :=
-                  ratToReal_le_of_le (hln_abs_max k)
-                have hsum_nonneg : 0 ≤ (Linear.sumFin dModel (fun j => |wvDir j|) : Real) := by
-                  refine ratToReal_nonneg_of_nonneg ?_
-                  have : 0 ≤ ∑ j, |wvDir j| := by
-                    refine Finset.sum_nonneg ?_
-                    intro j _
-                    exact abs_nonneg _
-                  simpa [Linear.sumFin_eq_sum_univ] using this
-                have hmul :
-                    (Linear.sumFin dModel (fun j => |wvDir j|) : Real) * (lnAbsMax k : Real) ≤
-                      (Linear.sumFin dModel (fun j => |wvDir j|) : Real) * (lnAbsMaxMax : Real) :=
-                  mul_le_mul_of_nonneg_left hln_max_real hsum_nonneg
-                have hfinal := hdot.trans hmul
-                simpa [valsAbsBase, ratToReal_mul] using hfinal
+                simpa [valsAbs, ratToReal_mul] using hdot
               have hdot_bounds := (abs_le).1 hdot_abs
               have hlow' := add_le_add_right hdot_bounds.1 (bDir : Real)
               have hhigh' := add_le_add_right hdot_bounds.2 (bDir : Real)
               have hlow :
                   (valCert.valsLo k : Real) ≤ valsRealOfInputs inputs k := by
-                simpa [valCert, valsLo, valsLoBase, valsAbsBase, hvals_eq k, ratToReal_sub,
+                simpa [valCert, valsLo, valsAbs, hvals_eq k, ratToReal_sub,
                   sub_eq_add_neg, add_comm, add_left_comm, add_assoc] using hlow'
               have hhigh :
                   valsRealOfInputs inputs k ≤ (valCert.valsHi k : Real) := by
-                simpa [valCert, valsHi, valsHiBase, valsAbsBase, hvals_eq k, ratToReal_add,
+                simpa [valCert, valsHi, valsAbs, hvals_eq k, ratToReal_add,
                   add_comm, add_left_comm, add_assoc] using hhigh'
               exact ⟨hlow, hhigh⟩
             have hvals_bounds :
