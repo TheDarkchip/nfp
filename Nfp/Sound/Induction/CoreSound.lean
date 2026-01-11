@@ -938,14 +938,11 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                       (scoreLoPrev q : Real) - (scoreHi q k : Real) ≤
                         (scoreLoPrev q : Real) - scoresReal q k :=
                     sub_le_sub_left hscore_hi (scoreLoPrev q : Real)
-                  have hsum_le'' := add_le_add_left hsub (scoresReal q k)
-                  have hsum_le''' :
-                      (scoreLoPrev q : Real) - (scoreHi q k : Real) + scoresReal q k ≤
-                        (scoreLoPrev q : Real) - scoresReal q k + scoresReal q k := by
-                    simpa [add_comm, add_left_comm, add_assoc] using hsum_le''
                   calc
                     (scoreLoPrev q : Real) - (scoreHi q k : Real) + scoresReal q k
-                        ≤ (scoreLoPrev q : Real) - scoresReal q k + scoresReal q k := hsum_le'''
+                        ≤ (scoreLoPrev q : Real) - scoresReal q k + scoresReal q k := by
+                          simpa [add_comm, add_left_comm, add_assoc] using
+                            (add_le_add_left hsub (scoresReal q k))
                     _ = (scoreLoPrev q : Real) := by
                       simp [sub_add_cancel]
                 calc
@@ -1163,9 +1160,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     have hsum_one : (∑ k, weights q k) = 1 := by
                       simpa [weights] using
                         (Circuit.softmax_sum_one (scores := scoresReal q))
-                    have hsum_le' : (∑ k ∈ others q, weights q k) ≤ 1 := by
-                      simpa [hsum_one] using hsum_le
-                    simpa [heps] using hsum_le'
+                    simpa [heps, hsum_one] using hsum_le
                   · have hnonneg : 0 ≤ margin := le_of_not_gt hneg
                     have hnonneg_real : 0 ≤ (margin : Real) := by
                       exact ratToReal_nonneg_of_nonneg hnonneg
@@ -1192,10 +1187,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     have hsum_le' :
                         (∑ k ∈ others q, weights q k) ≤
                           (seq - 1 : Real) * (1 + (margin : Real))⁻¹ := by
-                      have hsum_le'' := hsum_le.trans_eq hsum_const
-                      have hsum_le''' := hsum_le''
-                      simp only [hcard, Nat.cast_sub hseq, Nat.cast_one] at hsum_le'''
-                      exact hsum_le'''
+                      simpa [hcard, Nat.cast_sub hseq, Nat.cast_one] using
+                        (hsum_le.trans_eq hsum_const)
                     have hpos : (0 : Rat) < 1 + margin := by
                       have hone : (0 : Rat) < 1 := by
                         exact zero_lt_one
@@ -1226,17 +1219,11 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 have hsum_le' :
                     weights q (inputs.prev q) + ∑ k ∈ others q, weights q k ≤
                       weights q (inputs.prev q) + (eps : Real) := by
-                  have hsum_le'' := add_le_add_left hsum_others_le (weights q (inputs.prev q))
-                  have hsum_le''' := hsum_le''
-                  rw [add_comm (∑ k ∈ others q, weights q k)
-                    (weights q (inputs.prev q))] at hsum_le'''
-                  rw [add_comm (eps : Real) (weights q (inputs.prev q))] at hsum_le'''
-                  exact hsum_le'''
+                  simpa [add_comm, add_left_comm, add_assoc] using
+                    (add_le_add_left hsum_others_le (weights q (inputs.prev q)))
                 have hprev :
                     1 ≤ weights q (inputs.prev q) + (eps : Real) := by
-                  have hsum_le'' := hsum_le'
-                  rw [hsum_eq] at hsum_le''
-                  exact hsum_le''
+                  simpa [hsum_eq] using hsum_le'
                 exact hprev
               · intro q hq k hk
                 have hsum_others_le : (∑ j ∈ others q, weights q j) ≤ (eps : Real) := by
@@ -1259,9 +1246,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     have hsum_one : (∑ j, weights q j) = 1 := by
                       simpa [weights] using
                         (Circuit.softmax_sum_one (scores := scoresReal q))
-                    have hsum_le' : (∑ j ∈ others q, weights q j) ≤ 1 := by
-                      simpa [hsum_one] using hsum_le
-                    simpa [heps] using hsum_le'
+                    simpa [heps, hsum_one] using hsum_le
                   · have hnonneg : 0 ≤ margin := le_of_not_gt hneg
                     have hnonneg_real : 0 ≤ (margin : Real) := by
                       exact ratToReal_nonneg_of_nonneg hnonneg
@@ -1288,10 +1273,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     have hsum_le' :
                         (∑ j ∈ others q, weights q j) ≤
                           (seq - 1 : Real) * (1 + (margin : Real))⁻¹ := by
-                      have hsum_le'' := hsum_le.trans_eq hsum_const
-                      have hsum_le''' := hsum_le''
-                      simp only [hcard, Nat.cast_sub hseq, Nat.cast_one] at hsum_le'''
-                      exact hsum_le'''
+                      simpa [hcard, Nat.cast_sub hseq, Nat.cast_one] using
+                        (hsum_le.trans_eq hsum_const)
                     have hpos : (0 : Rat) < 1 + margin := by
                       have hone : (0 : Rat) < 1 := by
                         exact zero_lt_one
@@ -1315,8 +1298,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     (Circuit.softmax_nonneg (scores := scoresReal q) j)
                 have hle :
                     weights q k ≤ ∑ j ∈ others q, weights q j := by
-                  have h := Finset.single_le_sum hnonneg hk'
-                  simpa using h
+                  simpa using (Finset.single_le_sum hnonneg hk')
                 exact hle.trans hsum_others_le
             have hepsAt :
                 ∀ q, epsAt q =
