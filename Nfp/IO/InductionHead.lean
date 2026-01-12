@@ -26,6 +26,17 @@ private def unwrapTaskResult {α : Type} (res : Except IO.Error α) : IO α :=
   | .ok a => pure a
   | .error e => throw e
 
+private def configureTiming (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO Unit := do
+  match timing? with
+  | some v => setTimingStdout (v ≠ 0)
+  | none => pure ()
+  match heartbeatMs? with
+  | some v =>
+      setTimingHeartbeatMs (UInt32.ofNat v)
+      if timing?.isNone && (v != 0) then
+        setTimingStdout true
+  | none => pure ()
+
 open Nfp.Circuit
 
 private def valueBoundsModeFromEnv : IO (Option Bool) := do
@@ -34,18 +45,16 @@ private def valueBoundsModeFromEnv : IO (Option Bool) := do
   | some "cached" => return some false
   | _ => return none
 
-/-- Read the heartbeat interval (ms) for long-running induction cert builds. -/
-private def heartbeatMsFromEnv : IO UInt32 := do
-  let defaultMs : Nat := 10000
-  let ms := (← IO.getEnv "NFP_TIMING_HEARTBEAT_MS").bind String.toNat? |>.getD defaultMs
-  return UInt32.ofNat ms
+/-- Resolve the heartbeat interval (ms) for long-running induction cert builds. -/
+private def heartbeatMs : IO UInt32 :=
+  timingHeartbeatMs
 
 private def timePureWithHeartbeat {α : Type} (label : String) (f : Unit → α) : IO α := do
   let t0 ← monoUsNow
-  IO.println s!"timing: {label} start"
-  flushStdout
+  timingPrint s!"timing: {label} start"
+  timingFlush
   let task : Task α := Task.spawn (fun _ => f ())
-  let heartbeatMs ← heartbeatMsFromEnv
+  let heartbeatMs ← heartbeatMs
   if heartbeatMs ≠ 0 then
     let mut finished := (← IO.hasFinished task)
     while !finished do
@@ -53,11 +62,11 @@ private def timePureWithHeartbeat {α : Type} (label : String) (f : Unit → α)
       finished := (← IO.hasFinished task)
       if !finished then
         let now ← monoUsNow
-        IO.println s!"timing: {label} running {now - t0} us"
-        flushStdout
+        timingPrint s!"timing: {label} running {now - t0} us"
+        timingFlush
   let res ← IO.wait task
   let t1 ← monoUsNow
-  IO.println s!"timing: {label} {t1 - t0} us"
+  timingPrint s!"timing: {label} {t1 - t0} us"
   return res
 
 private def forceRat (x : Rat) : IO Unit := do
@@ -69,8 +78,8 @@ private def forceRat (x : Rat) : IO Unit := do
 /-- Profile the core induction-head bounds used by the sound certificate builder. -/
 private def timeInductionHeadCoreStages {seq dModel dHead : Nat} [NeZero seq]
     (inputs : Model.InductionHeadInputs seq dModel dHead) : IO Unit := do
-  IO.println "timing: core stages start"
-  flushStdout
+  timingPrint "timing: core stages start"
+  timingFlush
   let lnBounds ← timePureWithHeartbeat "core: ln bounds" (fun () =>
     Sound.headLnBounds inputs)
   let lnLo := lnBounds.1
@@ -152,18 +161,18 @@ private def timeInductionHeadCoreStages {seq dModel dHead : Nat} [NeZero seq]
     decide (margin < 0))
   let verboseTiming ← IO.getEnv "NFP_TIMING_VERBOSE"
   if verboseTiming.isSome then
-    IO.println s!"timing: core: margin neg={marginNeg}"
+    timingPrint s!"timing: core: margin neg={marginNeg}"
   let tEps0 ← monoUsNow
-  IO.println "timing: core: eps start"
-  flushStdout
+  timingPrint "timing: core: eps start"
+  timingFlush
   let eps :=
     if marginNeg then
       (1 : Rat)
     else
       ratDivUp (seq - 1) (1 + margin)
   let tEps1 ← monoUsNow
-  IO.println s!"timing: core: eps {tEps1 - tEps0} us"
-  flushStdout
+  timingPrint s!"timing: core: eps {tEps1 - tEps0} us"
+  timingFlush
   let _ := marginAt
   let dirHeadVec ← timePureWithHeartbeat "core: dir head vec" (fun () =>
     Sound.dirHeadVecOfInputs inputs)
@@ -188,8 +197,8 @@ private def timeInductionHeadCoreStages {seq dModel dHead : Nat} [NeZero seq]
     let lo := univ.inf' hnonempty valsLo
     let hi := univ.sup' hnonempty valsHi
     (lo, hi))
-  IO.println "timing: core stages done"
-  flushStdout
+  timingPrint "timing: core stages done"
+  timingFlush
 
 /-- Load induction head inputs from disk. -/
 def loadInductionHeadInputs (path : System.FilePath) :
@@ -198,14 +207,14 @@ def loadInductionHeadInputs (path : System.FilePath) :
   let t0 ← monoUsNow
   let data ← IO.FS.readFile path
   let t1 ← monoUsNow
-  IO.println s!"timing: read head input file {t1 - t0} us"
+  timingPrint s!"timing: read head input file {t1 - t0} us"
   let t2 ← monoUsNow
   let parsed :=
     match Pure.parseInductionHeadInputs data with
     | Except.error msg => Except.error msg
     | Except.ok v => Except.ok v
   let t3 ← monoUsNow
-  IO.println s!"timing: parse head input file {t3 - t2} us"
+  timingPrint s!"timing: parse head input file {t3 - t2} us"
   return parsed
 
 private def ratToString (x : Rat) : String :=
@@ -333,36 +342,36 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
       let seq := Nat.succ n
       let _ : NeZero seq := ⟨by simp⟩
       logTiming "start: head build induction cert"
-      IO.println "timing: head build induction cert start"
-      flushStdout
+      timingPrint "timing: head build induction cert start"
+      timingFlush
       let verboseTiming ← IO.getEnv "NFP_TIMING_VERBOSE"
       let taskBenchEnv ← IO.getEnv "NFP_TASK_BENCH"
       if taskBenchEnv.isSome then
         let n := taskBenchEnv.bind String.toNat? |>.getD 1000
         Nfp.IO.taskBench n
       if verboseTiming.isSome then
-        IO.println s!"timing: head dims seq={seq} dModel={dModel} dHead={dHead}"
-        IO.println s!"timing: head active card={inputs.active.card}"
-        flushStdout
+        timingPrint s!"timing: head dims seq={seq} dModel={dModel} dHead={dHead}"
+        timingPrint s!"timing: head active card={inputs.active.card}"
+        timingFlush
       let precompute := (← IO.getEnv "NFP_TIMING_PRECOMPUTE").isSome
       if precompute then
-        IO.println "timing: head ln bounds start"
-        flushStdout
+        timingPrint "timing: head ln bounds start"
+        timingFlush
         let lnBounds ← timePure "head: ln bounds" (fun () =>
           Sound.headLnBounds inputs)
-        IO.println "timing: head ln bounds done"
-        flushStdout
-        IO.println "timing: head qkv bounds start"
-        flushStdout
+        timingPrint "timing: head ln bounds done"
+        timingFlush
+        timingPrint "timing: head qkv bounds start"
+        timingFlush
         let lnLo := lnBounds.1
         let lnHi := lnBounds.2
         let qkv ← timePure "head: qkv bounds" (fun () =>
           Sound.headQKVBounds inputs lnLo lnHi)
-        IO.println "timing: head qkv bounds done"
-        flushStdout
+        timingPrint "timing: head qkv bounds done"
+        timingFlush
         if verboseTiming.isSome then
-          IO.println "timing: head qkv abs force start"
-          flushStdout
+          timingPrint "timing: head qkv abs force start"
+          timingFlush
           let tAbs0 ← monoUsNow
           for q in List.finRange seq do
             for d in List.finRange dHead do
@@ -370,36 +379,36 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               let _ := qkv.kAbs q d
               pure ()
           let tAbs1 ← monoUsNow
-          IO.println s!"timing: head qkv abs force {tAbs1 - tAbs0} us"
-          flushStdout
-        IO.println "timing: head score/value bounds spawn start"
-        flushStdout
+          timingPrint s!"timing: head qkv abs force {tAbs1 - tAbs0} us"
+          timingFlush
+        timingPrint "timing: head score/value bounds spawn start"
+        timingFlush
         let tSpawn0 ← monoUsNow
         if verboseTiming.isSome then
-          IO.println "timing: head score dotAbs tasks start"
-          flushStdout
+          timingPrint "timing: head score dotAbs tasks start"
+          timingFlush
         let dotAbs ← timePure "head: score dotAbs tasks" (fun () =>
           dotAbsFromQKV qkv.qAbs qkv.kAbs)
         if verboseTiming.isSome then
-          IO.println "timing: head score dotAbs tasks done"
-          flushStdout
+          timingPrint "timing: head score dotAbs tasks done"
+          timingFlush
         if verboseTiming.isSome then
-          IO.println "timing: head score dotAbs force start"
-          flushStdout
+          timingPrint "timing: head score dotAbs force start"
+          timingFlush
           let tForce0 ← monoUsNow
           match List.finRange seq with
           | [] =>
-              IO.println "timing: head score dotAbs force skipped (empty seq)"
+              timingPrint "timing: head score dotAbs force skipped (empty seq)"
           | q :: _ =>
               match List.finRange seq with
               | [] =>
-                  IO.println "timing: head score dotAbs force skipped (empty seq)"
+                  timingPrint "timing: head score dotAbs force skipped (empty seq)"
               | k :: _ =>
                   let _ := dotAbs q k
                   pure ()
           let tForce1 ← monoUsNow
-          IO.println s!"timing: head score dotAbs force {tForce1 - tForce0} us"
-          flushStdout
+          timingPrint s!"timing: head score dotAbs force {tForce1 - tForce0} us"
+          timingFlush
         let inlineVals := (← IO.getEnv "NFP_TIMING_VALUE_INLINE").isSome
         let valueMode? ← valueBoundsModeFromEnv
         let useCommon := valueMode?.getD false
@@ -422,16 +431,16 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         if verboseTiming.isSome then
           timeHeadScoreMarginRaw inputs dotAbs activeList
         let tSpawn1 ← monoUsNow
-        IO.println s!"timing: head score/value bounds spawn {tSpawn1 - tSpawn0} us"
-        flushStdout
+        timingPrint s!"timing: head score/value bounds spawn {tSpawn1 - tSpawn0} us"
+        timingFlush
         let skipScoreBounds := (← IO.getEnv "NFP_TIMING_SKIP_SCORE_BOUNDS").isSome
         let scoreTaskOpt ←
           if skipScoreBounds then
-            IO.println "timing: head score bounds skipped"
+            timingPrint "timing: head score bounds skipped"
             pure none
           else
-            IO.println "timing: head score bounds from dotAbs start"
-            flushStdout
+            timingPrint "timing: head score bounds from dotAbs start"
+            timingFlush
             let exactMargin := (← IO.getEnv "NFP_TIMING_EXACT_MARGIN").isSome
             let action :=
               if exactMargin then
@@ -441,65 +450,65 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             let t ← action.asTask
             pure (some t)
         if verboseTiming.isSome then
-          IO.println "timing: head value parts start"
-          flushStdout
-          IO.println "timing: head value dirHead start"
-          flushStdout
+          timingPrint "timing: head value parts start"
+          timingFlush
+          timingPrint "timing: head value dirHead start"
+          timingFlush
           let tDir0 ← monoUsNow
           let dirHead := Sound.headValueDirHead inputs
           match List.finRange dHead with
           | [] =>
-              IO.println "timing: head value dirHead forced skipped (empty dHead)"
+              timingPrint "timing: head value dirHead forced skipped (empty dHead)"
           | d :: _ =>
               let _ := dirHead d
               pure ()
           let tDir1 ← monoUsNow
-          IO.println s!"timing: head value dirHead {tDir1 - tDir0} us"
-          flushStdout
-          IO.println "timing: head value valsLo start"
-          flushStdout
+          timingPrint s!"timing: head value dirHead {tDir1 - tDir0} us"
+          timingFlush
+          timingPrint "timing: head value valsLo start"
+          timingFlush
           let tLo0 ← monoUsNow
           let valsLo := Sound.headValueValsLo inputs qkv.vLo qkv.vHi
           match List.finRange seq with
           | [] =>
-              IO.println "timing: head value valsLo forced skipped (empty seq)"
+              timingPrint "timing: head value valsLo forced skipped (empty seq)"
           | k :: _ =>
               let _ := valsLo k
               pure ()
           let tLo1 ← monoUsNow
-          IO.println s!"timing: head value valsLo {tLo1 - tLo0} us"
-          flushStdout
-          IO.println "timing: head value valsHi start"
-          flushStdout
+          timingPrint s!"timing: head value valsLo {tLo1 - tLo0} us"
+          timingFlush
+          timingPrint "timing: head value valsHi start"
+          timingFlush
           let tHi0 ← monoUsNow
           let valsHi := Sound.headValueValsHi inputs qkv.vLo qkv.vHi
           match List.finRange seq with
           | [] =>
-              IO.println "timing: head value valsHi forced skipped (empty seq)"
+              timingPrint "timing: head value valsHi forced skipped (empty seq)"
           | k :: _ =>
               let _ := valsHi k
               pure ()
           let tHi1 ← monoUsNow
-          IO.println s!"timing: head value valsHi {tHi1 - tHi0} us"
-          flushStdout
-          IO.println "timing: head value lo start"
-          flushStdout
+          timingPrint s!"timing: head value valsHi {tHi1 - tHi0} us"
+          timingFlush
+          timingPrint "timing: head value lo start"
+          timingFlush
           let tLo2 ← monoUsNow
           let _ := Sound.headValueLo valsLo
           let tLo3 ← monoUsNow
-          IO.println s!"timing: head value lo {tLo3 - tLo2} us"
-          flushStdout
-          IO.println "timing: head value hi start"
-          flushStdout
+          timingPrint s!"timing: head value lo {tLo3 - tLo2} us"
+          timingFlush
+          timingPrint "timing: head value hi start"
+          timingFlush
           let tHi2 ← monoUsNow
           let _ := Sound.headValueHi valsHi
           let tHi3 ← monoUsNow
-          IO.println s!"timing: head value hi {tHi3 - tHi2} us"
-          flushStdout
-          IO.println "timing: head value parts done"
-          flushStdout
-        IO.println "timing: head value bounds start"
-        flushStdout
+          timingPrint s!"timing: head value hi {tHi3 - tHi2} us"
+          timingFlush
+          timingPrint "timing: head value parts done"
+          timingFlush
+        timingPrint "timing: head value bounds start"
+        timingFlush
         let tVals0 ← monoUsNow
         let vals ←
           match valsInline?, valsTask? with
@@ -511,16 +520,16 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               timePure "head: value bounds inline" (fun () =>
                 Sound.headValueBounds inputs qkv.vLo qkv.vHi)
         let tVals1 ← monoUsNow
-        IO.println s!"timing: head value bounds {tVals1 - tVals0} us"
-        flushStdout
+        timingPrint s!"timing: head value bounds {tVals1 - tVals0} us"
+        timingFlush
         let scoreOpt ←
           match scoreTaskOpt with
           | none => pure none
           | some scoreTask => do
               let res ← IO.wait scoreTask
               let score ← unwrapTaskResult res
-              IO.println "timing: head score bounds from dotAbs done"
-              flushStdout
+              timingPrint "timing: head score bounds from dotAbs done"
+              timingFlush
               pure (some score)
         match scoreOpt with
         | none => pure ()
@@ -532,14 +541,14 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             if verboseTiming.isSome then
               timeHeadScoreFieldForces score
             if verboseTiming.isSome then
-              IO.println "timing: head score bounds force start"
-              flushStdout
+              timingPrint "timing: head score bounds force start"
+              timingFlush
               let tScore0 ← monoUsNow
               let _ := score.margin
               let _ := score.eps
               let tScore1 ← monoUsNow
-              IO.println s!"timing: head score bounds force {tScore1 - tScore0} us"
-              flushStdout
+              timingPrint s!"timing: head score bounds force {tScore1 - tScore0} us"
+              timingFlush
       let coreStages := (← IO.getEnv "NFP_TIMING_CORE_STAGES").isSome
       let coreStagesOnly := (← IO.getEnv "NFP_TIMING_CORE_STAGES_ONLY").isSome
       if coreStages then
@@ -550,8 +559,8 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
       if breakdown then
         let lnBounds ← timePureWithHeartbeat "breakdown: ln bounds" (fun () =>
           Sound.headLnBounds inputs)
-        IO.println "timing: breakdown ln bounds force start"
-        flushStdout
+        timingPrint "timing: breakdown ln bounds force start"
+        timingFlush
         let tLn0 ← monoUsNow
         for q in List.finRange seq do
           for i in List.finRange dModel do
@@ -559,12 +568,12 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             let _ := lnBounds.2 q i
             pure ()
         let tLn1 ← monoUsNow
-        IO.println s!"timing: breakdown ln bounds force {tLn1 - tLn0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown ln bounds force {tLn1 - tLn0} us"
+        timingFlush
         let qkv ← timePureWithHeartbeat "breakdown: qkv bounds" (fun () =>
           Sound.headQKVBounds inputs lnBounds.1 lnBounds.2)
-        IO.println "timing: breakdown qkv bounds force start"
-        flushStdout
+        timingPrint "timing: breakdown qkv bounds force start"
+        timingFlush
         let tQkv0 ← monoUsNow
         for q in List.finRange seq do
           for d in List.finRange dHead do
@@ -578,8 +587,8 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             let _ := qkv.kAbs q d
             pure ()
         let tQkv1 ← monoUsNow
-        IO.println s!"timing: breakdown qkv bounds force {tQkv1 - tQkv0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown qkv bounds force {tQkv1 - tQkv0} us"
+        timingFlush
         let dotAbs : Fin seq → Fin seq → Rat := fun q k =>
           Sound.Linear.dotFin dHead (fun d => qkv.qAbs q d) (fun d => qkv.kAbs k d)
         let dotAbsRowTasks :
@@ -590,16 +599,16 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 ⟨Array.ofFn (fun k : Fin seq => dotAbs q k), by simp⟩)))
         let dotAbsRowDefault : Task { row : Array Rat // row.size = seq } :=
           Task.spawn (fun _ => ⟨Array.ofFn (fun _ : Fin seq => (0 : Rat)), by simp⟩)
-        IO.println "timing: breakdown score dotAbs force start"
-        flushStdout
+        timingPrint "timing: breakdown score dotAbs force start"
+        timingFlush
         let tDot0 ← monoUsNow
         for q in List.finRange seq do
           let row := (dotAbsRowTasks.getD q.1 dotAbsRowDefault).get
           let _ := row
           pure ()
         let tDot1 ← monoUsNow
-        IO.println s!"timing: breakdown score dotAbs force {tDot1 - tDot0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown score dotAbs force {tDot1 - tDot0} us"
+        timingFlush
         let masked : Fin seq → Fin seq → Prop := fun q k =>
           inputs.maskCausal = true ∧ q < k
         let scaleAbs : Rat := |inputs.scale|
@@ -658,16 +667,16 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         let marginAtCached : Fin seq → Rat ←
           timePureWithHeartbeat "breakdown: score margin cache" (fun () =>
             Sound.Bounds.cacheBoundThunk marginAtRaw)
-        IO.println "timing: breakdown score margin force start"
-        flushStdout
+        timingPrint "timing: breakdown score margin force start"
+        timingFlush
         let tMargin0 ← monoUsNow
         for q in List.finRange seq do
           let m := marginAtCached q
           forceRat m
           pure ()
         let tMargin1 ← monoUsNow
-        IO.println s!"timing: breakdown score margin force {tMargin1 - tMargin0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown score margin force {tMargin1 - tMargin0} us"
+        timingFlush
         let epsAtRaw : Fin seq → Rat := fun q =>
           let m := marginAtCached q
           if m < 0 then
@@ -677,41 +686,41 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         let epsAtCached : Fin seq → Rat ←
           timePureWithHeartbeat "breakdown: score eps cache" (fun () =>
             Sound.Bounds.cacheBoundThunk epsAtRaw)
-        IO.println "timing: breakdown score eps force start"
-        flushStdout
+        timingPrint "timing: breakdown score eps force start"
+        timingFlush
         let tEps0 ← monoUsNow
         for q in List.finRange seq do
           let e := epsAtCached q
           forceRat e
           pure ()
         let tEps1 ← monoUsNow
-        IO.println s!"timing: breakdown score eps force {tEps1 - tEps0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown score eps force {tEps1 - tEps0} us"
+        timingFlush
         let valsLo ← timePureWithHeartbeat "breakdown: value valsLo" (fun () =>
           Sound.headValueValsLo inputs qkv.vLo qkv.vHi)
-        IO.println "timing: breakdown value valsLo force start"
-        flushStdout
+        timingPrint "timing: breakdown value valsLo force start"
+        timingFlush
         let tValsLo0 ← monoUsNow
         for k in List.finRange seq do
           let v := valsLo k
           forceRat v
           pure ()
         let tValsLo1 ← monoUsNow
-        IO.println s!"timing: breakdown value valsLo force {tValsLo1 - tValsLo0} us"
-        flushStdout
+        timingPrint s!"timing: breakdown value valsLo force {tValsLo1 - tValsLo0} us"
+        timingFlush
         let valsHi ← timePureWithHeartbeat "breakdown: value valsHi" (fun () =>
           Sound.headValueValsHi inputs qkv.vLo qkv.vHi)
-        IO.println "timing: breakdown value valsHi force start"
-        flushStdout
+        timingPrint "timing: breakdown value valsHi force start"
+        timingFlush
         let tValsHi0 ← monoUsNow
         for k in List.finRange seq do
           let v := valsHi k
           forceRat v
           pure ()
         let tValsHi1 ← monoUsNow
-        IO.println s!"timing: breakdown value valsHi force {tValsHi1 - tValsHi0} us"
-        flushStdout
-        let heartbeatMs ← heartbeatMsFromEnv
+        timingPrint s!"timing: breakdown value valsHi force {tValsHi1 - tValsHi0} us"
+        timingFlush
+        let heartbeatMs ← heartbeatMs
         let taskMin (t1 t2 : Task Rat) : Task Rat :=
           Task.bind t1 (fun v1 => Task.map (fun v2 => min v1 v2) t2)
         let taskMax (t1 t2 : Task Rat) : Task Rat :=
@@ -747,8 +756,8 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 finished := count
                 remaining := chunkTasks.size
                 if finished < remaining then
-                  IO.println s!"timing: breakdown value lo progress {finished}/{remaining}"
-                  flushStdout
+                  timingPrint s!"timing: breakdown value lo progress {finished}/{remaining}"
+                  timingFlush
             let init := chunkTasks.getD 0 defaultTask
             let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
             pure ((rest.foldl (fun acc i => taskMin acc (chunkTasks.getD i defaultTask)) init).get)
@@ -783,8 +792,8 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 finished := count
                 remaining := chunkTasks.size
                 if finished < remaining then
-                  IO.println s!"timing: breakdown value hi progress {finished}/{remaining}"
-                  flushStdout
+                  timingPrint s!"timing: breakdown value hi progress {finished}/{remaining}"
+                  timingFlush
             let init := chunkTasks.getD 0 defaultTask
             let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
             pure ((rest.foldl (fun acc i => taskMax acc (chunkTasks.getD i defaultTask)) init).get)
@@ -800,7 +809,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         else
           let loTask := Sound.headValueLoTask valsLo
           let hiTask := Sound.headValueHiTask valsHi
-          let heartbeatMs ← heartbeatMsFromEnv
+          let heartbeatMs ← heartbeatMs
           let tLo0 ← monoUsNow
           if heartbeatMs ≠ 0 then
             let mut finished := (← IO.hasFinished loTask)
@@ -809,12 +818,12 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               finished := (← IO.hasFinished loTask)
               if !finished then
                 let now ← monoUsNow
-                IO.println s!"timing: breakdown: value lo running {now - tLo0} us"
-                flushStdout
+                timingPrint s!"timing: breakdown: value lo running {now - tLo0} us"
+                timingFlush
           let lo := loTask.get
           let tLo1 ← monoUsNow
-          IO.println s!"timing: breakdown: value lo {tLo1 - tLo0} us"
-          flushStdout
+          timingPrint s!"timing: breakdown: value lo {tLo1 - tLo0} us"
+          timingFlush
           let tHi0 ← monoUsNow
           if heartbeatMs ≠ 0 then
             let mut finished := (← IO.hasFinished hiTask)
@@ -823,12 +832,12 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               finished := (← IO.hasFinished hiTask)
               if !finished then
                 let now ← monoUsNow
-                IO.println s!"timing: breakdown: value hi running {now - tHi0} us"
-                flushStdout
+                timingPrint s!"timing: breakdown: value hi running {now - tHi0} us"
+                timingFlush
           let hi := hiTask.get
           let tHi1 ← monoUsNow
-          IO.println s!"timing: breakdown: value hi {tHi1 - tHi0} us"
-          flushStdout
+          timingPrint s!"timing: breakdown: value hi {tHi1 - tHi0} us"
+          timingFlush
           let _ := lo
           let _ := hi
         if (← IO.getEnv "NFP_TIMING_SEQ_REDUCE").isSome then
@@ -857,7 +866,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           | some ⟨cert, hcert⟩ =>
               let _ := cert.active.card
               some ⟨cert, hcert⟩)
-      let heartbeatMs ← heartbeatMsFromEnv
+      let heartbeatMs ← heartbeatMs
       if heartbeatMs ≠ 0 then
         let mut finished := (← IO.hasFinished certTask)
         while !finished do
@@ -865,24 +874,24 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           finished := (← IO.hasFinished certTask)
           if !finished then
             let now ← monoUsNow
-            IO.println s!"timing: head build induction cert running {now - tCert0} us"
-            flushStdout
+            timingPrint s!"timing: head build induction cert running {now - tCert0} us"
+            timingFlush
       let certOpt ← IO.wait certTask
       let tCert1 ← monoUsNow
       logTiming s!"done: head build induction cert {tCert1 - tCert0} us"
-      IO.println s!"timing: head build induction cert {tCert1 - tCert0} us"
-      IO.println "timing: head build induction cert returned"
-      flushStdout
+      timingPrint s!"timing: head build induction cert {tCert1 - tCert0} us"
+      timingPrint "timing: head build induction cert returned"
+      timingFlush
       match certOpt with
       | none =>
           IO.eprintln "error: head inputs rejected"
           return 2
       | some ⟨cert, _hcert⟩ =>
-          IO.println "timing: head active count start"
-          flushStdout
+          timingPrint "timing: head active count start"
+          timingFlush
           let activeCount := cert.active.card
-          IO.println "timing: head active count done"
-          flushStdout
+          timingPrint "timing: head active count done"
+          timingFlush
           let defaultMinActive := max 1 (seq / 8)
           let minActive := minActive?.getD defaultMinActive
           if activeCount < minActive then
@@ -899,14 +908,14 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               s!"error: eps {ratToString cert.eps} \
               above maximum {ratToString maxEps}"
             return 2
-          IO.println "timing: head tol start"
-          flushStdout
+          timingPrint "timing: head tol start"
+          timingFlush
           let tol := cert.eps * (cert.values.hi - cert.values.lo)
-          IO.println "timing: head tol done"
-          flushStdout
+          timingPrint "timing: head tol done"
+          timingFlush
           logTiming "start: head logit-diff lower bound"
-          IO.println "timing: head logit-diff lower bound start"
-          flushStdout
+          timingPrint "timing: head logit-diff lower bound start"
+          timingFlush
           let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
             Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
               cert.values.lo cert.values.hi cert.values.valsLo)
@@ -953,8 +962,8 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
       let seq := Nat.succ n
       let _ : NeZero seq := ⟨by simp⟩
       logTiming "start: head build induction cert"
-      IO.println "timing: head build induction cert start"
-      flushStdout
+      timingPrint "timing: head build induction cert start"
+      timingFlush
       let tCert0 ← monoUsNow
       let certTask :
           Task
@@ -966,7 +975,7 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
           | some ⟨cert, hcert⟩ =>
               let _ := cert.active.card
               some ⟨cert, hcert⟩)
-      let heartbeatMs ← heartbeatMsFromEnv
+      let heartbeatMs ← heartbeatMs
       if heartbeatMs ≠ 0 then
         let mut finished := (← IO.hasFinished certTask)
         while !finished do
@@ -974,14 +983,14 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
           finished := (← IO.hasFinished certTask)
           if !finished then
             let now ← monoUsNow
-            IO.println s!"timing: head build induction cert running {now - tCert0} us"
-            flushStdout
+            timingPrint s!"timing: head build induction cert running {now - tCert0} us"
+            timingFlush
       let certOpt ← IO.wait certTask
       let tCert1 ← monoUsNow
       logTiming s!"done: head build induction cert {tCert1 - tCert0} us"
-      IO.println s!"timing: head build induction cert {tCert1 - tCert0} us"
-      IO.println "timing: head build induction cert returned"
-      flushStdout
+      timingPrint s!"timing: head build induction cert {tCert1 - tCert0} us"
+      timingPrint "timing: head build induction cert returned"
+      timingFlush
       match certOpt with
       | none =>
           IO.eprintln "error: head inputs rejected"
@@ -1004,8 +1013,8 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
               s!"error: eps {ratToString cert.eps} above maximum {ratToString maxEps}"
             return 2
           logTiming "start: head logit-diff lower bound"
-          IO.println "timing: head logit-diff lower bound start"
-          flushStdout
+          timingPrint "timing: head logit-diff lower bound start"
+          timingFlush
           let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
             Sound.logitDiffLowerBoundFromCert cert)
           logTiming "done: head logit-diff lower bound"
@@ -1037,7 +1046,9 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
 /-- Build and check induction certificates from exact head inputs. -/
 def runInductionCertifyHead (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1066,7 +1077,9 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
 /-- Build and check a strictly positive induction logit-diff bound from head inputs. -/
 def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1096,7 +1109,9 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1114,8 +1129,8 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
-      IO.println "timing: read model file start"
-      flushStdout
+      timingPrint "timing: read model file start"
+      timingFlush
       let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
       let headerE ← timePure "parse model header" (fun () =>
         NfptPure.parseHeader data)
@@ -1138,7 +1153,9 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
 def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1156,8 +1173,8 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
-      IO.println "timing: read model file start"
-      flushStdout
+      timingPrint "timing: read model file start"
+      timingFlush
       let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
       let headerE ← timePure "parse model header" (fun () =>
         NfptPure.parseHeader data)
@@ -1209,7 +1226,9 @@ prompt sequence. -/
 def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
     (layer head : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1227,8 +1246,8 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
-      IO.println "timing: read model file start"
-      flushStdout
+      timingPrint "timing: read model file start"
+      timingFlush
       let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
       let headerE ← timePure "parse model header" (fun () =>
         NfptPure.parseHeader data)
@@ -1267,7 +1286,9 @@ direction tokens from the prompt sequence. -/
 def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
     (layer head : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+  configureTiming timing? heartbeatMs?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1285,8 +1306,8 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
-      IO.println "timing: read model file start"
-      flushStdout
+      timingPrint "timing: read model file start"
+      timingFlush
       let data ← timePhase "read model file" <| IO.FS.readBinFile modelPath
       let headerE ← timePure "parse model header" (fun () =>
         NfptPure.parseHeader data)

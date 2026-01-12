@@ -176,8 +176,10 @@ def runInductionCertifyHead (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
-    minMarginStr? maxEpsStr?
+    minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
 def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
@@ -186,8 +188,10 @@ def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHeadNonvacuous inputsPath minActive? minLogitDiffStr?
-    minMarginStr? maxEpsStr?
+    minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head` subcommand. -/
 def inductionCertifyHeadCmd : Cmd := `[Cli|
@@ -201,6 +205,8 @@ def inductionCertifyHeadCmd : Cmd := `[Cli|
                                 (rational literal). Defaults to 0."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
@@ -215,6 +221,8 @@ def inductionCertifyHeadNonvacuousCmd : Cmd := `[Cli|
                                 (rational literal; default: 0)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction certify_head_model` subcommand. -/
@@ -229,8 +237,10 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHeadModel modelPath layer head dirTarget dirNegative period?
-    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
@@ -244,8 +254,10 @@ def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHeadModelNonvacuous modelPath layer head dirTarget dirNegative period?
-    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head_model_auto` subcommand. -/
 def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
@@ -257,8 +269,10 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHeadModelAuto modelPath layer head period?
-    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
@@ -270,8 +284,10 @@ def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
   IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer head period?
-    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+    minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
 
 /-- `nfp induction certify_head_model` subcommand. -/
 def inductionCertifyHeadModelCmd : Cmd := `[Cli|
@@ -290,6 +306,8 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
                                 (rational literal). Defaults to 0."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
@@ -309,6 +327,8 @@ def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
                                 (rational literal; default: 0)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction certify_head_model_auto` subcommand. -/
@@ -327,6 +347,8 @@ def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
                                 (rational literal). Defaults to 0."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
@@ -345,6 +367,8 @@ def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
                                 (rational literal; default: 0)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
 
 /-- `nfp induction head_interval` subcommand. -/

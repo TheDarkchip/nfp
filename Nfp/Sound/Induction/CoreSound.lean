@@ -250,10 +250,13 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 Task.spawn (fun _ =>
                   let dimsQ := splitDimsQ q
                   ⟨Array.ofFn (fun k : Fin seq =>
-                      let dimsK := splitDimsK q k
-                      _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
-                        (fun d => qLo q d) (fun d => qHi q d)
-                        (fun d => kLo k d) (fun d => kHi k d)),
+                      if masked q k then
+                        (0, 0)
+                      else
+                        let dimsK := splitDimsK q k
+                        _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
+                          (fun d => qLo q d) (fun d => qHi q d)
+                          (fun d => kLo k d) (fun d => kHi k d)),
                     by simp⟩))
             let dotDiffRowTasksBase : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
               Array.ofFn (fun q : Fin seq =>
@@ -654,7 +657,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               let base :=
                 (inputs.scale : Real) *
                   dotProduct (fun d => qRealOfInputs inputs q d) (fun d => kRealOfInputs inputs k d)
-              have hdot_bounds :
+              have hdot_bounds (hnot : ¬ masked q k) :
                   (dotLo q k : Real) ≤
                     dotProduct (fun d => qRealOfInputs inputs q d)
                       (fun d => kRealOfInputs inputs k d) ∧
@@ -682,12 +685,12 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     (dotLo q k : Real) ≤
                       dotProduct (fun d => qRealOfInputs inputs q d)
                         (fun d => kRealOfInputs inputs k d) := by
-                  simpa [dotLo, dotRowTasks, Task.spawn, Array.getElem_ofFn]
+                  simpa [dotLo, dotRowTasks, Task.spawn, Array.getElem_ofFn, hnot]
                     using hspec.1
                 have hhigh' :
                     dotProduct (fun d => qRealOfInputs inputs q d)
                         (fun d => kRealOfInputs inputs k d) ≤ (dotHi q k : Real) := by
-                  simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn]
+                  simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn, hnot]
                     using hspec.2
                 exact ⟨hlow', hhigh'⟩
               have hscore_base_bounds (hnot : ¬ masked q k) :
@@ -695,8 +698,9 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 by_cases hscale : 0 ≤ inputs.scale
                 · have hscale_real : 0 ≤ (inputs.scale : Real) :=
                     ratToReal_nonneg_of_nonneg hscale
-                  have hlow := mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
-                  have hhigh := mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
+                  have hdot := hdot_bounds hnot
+                  have hlow := mul_le_mul_of_nonneg_left hdot.1 hscale_real
+                  have hhigh := mul_le_mul_of_nonneg_left hdot.2 hscale_real
                   constructor
                   · simpa [scoreLo, masked, hnot, hscale, base] using hlow
                   · simpa [scoreHi, masked, hnot, hscale, base] using hhigh
@@ -704,8 +708,9 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     le_of_lt (lt_of_not_ge hscale)
                   have hscale_real : (inputs.scale : Real) ≤ 0 :=
                     (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
-                  have hlow := mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
-                  have hhigh := mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
+                  have hdot := hdot_bounds hnot
+                  have hlow := mul_le_mul_of_nonpos_left hdot.2 hscale_real
+                  have hhigh := mul_le_mul_of_nonpos_left hdot.1 hscale_real
                   constructor
                   · simpa [scoreLo, masked, hnot, hscale, base] using hlow
                   · simpa [scoreHi, masked, hnot, hscale, base] using hhigh

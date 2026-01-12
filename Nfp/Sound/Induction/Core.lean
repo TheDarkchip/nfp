@@ -477,10 +477,13 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       Task.spawn (fun _ =>
         let dimsQ := splitDimsQ q
         ⟨Array.ofFn (fun k : Fin seq =>
-            let dimsK := splitDimsK q k
-            _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
-              (fun d => qLo q d) (fun d => qHi q d)
-              (fun d => kLo k d) (fun d => kHi k d)),
+            if masked q k then
+              (0, 0)
+            else
+              let dimsK := splitDimsK q k
+              _root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsK
+                (fun d => qLo q d) (fun d => qHi q d)
+                (fun d => kLo k d) (fun d => kHi k d)),
           by simp⟩))
   let dotDiffRowTasksBase : Array (Task { row : Array (Rat × Rat) // row.size = seq }) :=
     Array.ofFn (fun q : Fin seq =>
