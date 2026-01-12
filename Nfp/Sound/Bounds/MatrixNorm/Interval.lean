@@ -277,18 +277,9 @@ theorem dotIntervalUpperCommonDen_eq {n : Nat} (v lo hi : Fin n → Rat) :
     dotIntervalUpperCommonDen v lo hi = dotIntervalUpper v lo hi := by
   simp only [dotIntervalUpperCommonDen, dotIntervalUpper, Linear.sumFinCommonDen_eq_sumFin]
 
-private lemma foldl_pair_fst {α : Type _} (xs : List α) (f g : α → Rat) (a b : Rat) :
-    (xs.foldl (fun acc x => (acc.1 + f x, acc.2 + g x)) (a, b)).1 =
-      xs.foldl (fun acc x => acc + f x) a := by
-  induction xs generalizing a b with
-  | nil =>
-      simp
-  | cons x xs ih =>
-      simp [List.foldl, ih]
-
-private lemma foldl_pair_snd {α : Type _} (xs : List α) (f g : α → Rat) (a b : Rat) :
-    (xs.foldl (fun acc x => (acc.1 + f x, acc.2 + g x)) (a, b)).2 =
-      xs.foldl (fun acc x => acc + g x) b := by
+private lemma foldl_pair {α : Type _} (xs : List α) (f g : α → Rat) (a b : Rat) :
+    xs.foldl (fun acc x => (acc.1 + f x, acc.2 + g x)) (a, b) =
+      (xs.foldl (fun acc x => acc + f x) a, xs.foldl (fun acc x => acc + g x) b) := by
   induction xs generalizing a b with
   | nil =>
       simp
@@ -299,23 +290,27 @@ theorem dotIntervalLowerUpper2CommonDen_fst {n : Nat} (lo1 hi1 lo2 hi2 : Fin n �
     (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).1 =
       dotIntervalLower2 lo1 hi1 lo2 hi2 := by
   classical
-  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalLower2, Linear.foldlFin_eq_foldl,
-    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
-    (foldl_pair_fst (xs := List.finRange n)
+  have hpair :=
+    foldl_pair (xs := List.finRange n)
       (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
       (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-      (a := 0) (b := 0))
+      (a := 0) (b := 0)
+  have hfst := congrArg Prod.fst hpair
+  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalLower2, Linear.foldlFin_eq_foldl,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using hfst
 
 theorem dotIntervalLowerUpper2CommonDen_snd {n : Nat} (lo1 hi1 lo2 hi2 : Fin n → Rat) :
     (dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2).2 =
       dotIntervalUpper2 lo1 hi1 lo2 hi2 := by
   classical
-  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalUpper2, Linear.foldlFin_eq_foldl,
-    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
-    (foldl_pair_snd (xs := List.finRange n)
+  have hpair :=
+    foldl_pair (xs := List.finRange n)
       (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j))
       (g := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j))
-      (a := 0) (b := 0))
+      (a := 0) (b := 0)
+  have hsnd := congrArg Prod.snd hpair
+  simpa [dotIntervalLowerUpper2CommonDen, dotIntervalUpper2, Linear.foldlFin_eq_foldl,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using hsnd
 
 theorem dotIntervalLowerUpper2CommonDen_eq {n : Nat} (lo1 hi1 lo2 hi2 : Fin n → Rat) :
     dotIntervalLowerUpper2CommonDen lo1 hi1 lo2 hi2 =
@@ -325,24 +320,28 @@ theorem dotIntervalLowerUpper2CommonDen_eq {n : Nat} (lo1 hi1 lo2 hi2 : Fin n �
 theorem dotIntervalLowerUpperCommonDen_fst {n : Nat} (v lo hi : Fin n → Rat) :
     (dotIntervalLowerUpperCommonDen v lo hi).1 = dotIntervalLowerCommonDen v lo hi := by
   classical
-  simpa [dotIntervalLowerUpperCommonDen, dotIntervalLowerCommonDen,
-    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
-    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
-    (foldl_pair_fst (xs := List.finRange n)
+  have hpair :=
+    foldl_pair (xs := List.finRange n)
       (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
       (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
-      (a := 0) (b := 0))
+      (a := 0) (b := 0)
+  have hfst := congrArg Prod.fst hpair
+  simpa [dotIntervalLowerUpperCommonDen, dotIntervalLowerCommonDen,
+    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using hfst
 
 theorem dotIntervalLowerUpperCommonDen_snd {n : Nat} (v lo hi : Fin n → Rat) :
     (dotIntervalLowerUpperCommonDen v lo hi).2 = dotIntervalUpperCommonDen v lo hi := by
   classical
-  simpa [dotIntervalLowerUpperCommonDen, dotIntervalUpperCommonDen,
-    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
-    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using
-    (foldl_pair_snd (xs := List.finRange n)
+  have hpair :=
+    foldl_pair (xs := List.finRange n)
       (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j)
       (g := fun j => if 0 ≤ v j then v j * hi j else v j * lo j)
-      (a := 0) (b := 0))
+      (a := 0) (b := 0)
+  have hsnd := congrArg Prod.snd hpair
+  simpa [dotIntervalLowerUpperCommonDen, dotIntervalUpperCommonDen,
+    Linear.foldlFin_eq_foldl, Linear.sumFinCommonDen_eq_sumFin,
+    Linear.sumFin_eq_list_foldl, Fin.foldl_eq_foldl_finRange] using hsnd
 
 /-- Single-pass lower/upper endpoints agree with the common-denominator bounds. -/
 theorem dotIntervalLowerUpperCommonDen_eq {n : Nat} (v lo hi : Fin n → Rat) :

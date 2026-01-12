@@ -791,10 +791,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   have hscore : scoresReal q k = (inputs.maskValue : Real) :=
                     scoresReal_eq_masked q k hmask
                   constructor
-                  ·
-                    simp [hscore, scoreLo, hmask]
-                  ·
-                    simp [hscore, scoreHi, hmask]
+                  · simp [hscore, scoreLo, hmask]
+                  · simp [hscore, scoreHi, hmask]
               · have hnot_masked : ¬ masked q k := by
                   simp [masked, hcausal]
                 have hscore_eq : scoresReal q k = base :=
