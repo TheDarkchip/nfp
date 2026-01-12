@@ -211,6 +211,8 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   marginAt : Fin seq → Rat
   /-- Epsilon per query. -/
   epsAt : Fin seq → Rat
+  /-- Per-key weight bounds derived from score gaps. -/
+  weightBoundAt : Fin seq → Fin seq → Rat
   /-- Global margin. -/
   margin : Rat
   /-- Global epsilon. -/
@@ -223,8 +225,6 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   wvDir : Fin dModel → Rat
   /-- Direction bias term. -/
   bDir : Rat
-  /-- Value absolute bounds. -/
-  valsAbs : Fin seq → Rat
   /-- Value lower bounds. -/
   valsLo : Fin seq → Rat
   /-- Value upper bounds. -/
@@ -545,7 +545,7 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
         inputs.scale * dotLo q k
   let scoreLoPrev : Fin seq → Rat := fun q =>
     scoreLo q (inputs.prev q)
-  let scoreGapLoBase : Fin seq → Fin seq → Rat := fun q k =>
+  let scoreGapLoBaseRaw : Fin seq → Fin seq → Rat := fun q k =>
     if masked q (inputs.prev q) then
       scoreLoPrev q - scoreHi q k
     else if masked q k then
@@ -554,9 +554,11 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       inputs.scale * dotDiffLoBase q k
     else
       inputs.scale * dotDiffHiBase q k
+  let scoreGapLoBase : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2 scoreGapLoBaseRaw
   let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
     (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
-  let worstKey : Fin seq → Option (Fin seq) := fun q =>
+  let worstKeyRaw : Fin seq → Option (Fin seq) := fun q =>
     if hq : q ∈ inputs.active then
       let ks := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
       match ks with
@@ -568,6 +570,12 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
           some (ks.foldl step (scoreGapLoBase q k, k)).2
     else
       none
+  let worstKeyArr : Array (Thunk (Option (Fin seq))) :=
+    Array.ofFn (fun q => Thunk.mk (fun _ => worstKeyRaw q))
+  let worstKey : Fin seq → Option (Fin seq) := fun q =>
+    let t := worstKeyArr[q.1]'(by
+      simp [worstKeyArr, q.isLt])
+    Thunk.get t
   let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
     match worstKey q with
     | some k' =>
@@ -596,7 +604,7 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
         else
           dotDiffHiBase q k
     | none => dotDiffHiBase q k
-  let scoreGapLo : Fin seq → Fin seq → Rat := fun q k =>
+  let scoreGapLoRaw : Fin seq → Fin seq → Rat := fun q k =>
     if masked q (inputs.prev q) then
       scoreLoPrev q - scoreHi q k
     else if masked q k then
@@ -605,6 +613,8 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       inputs.scale * dotDiffLo q k
     else
       inputs.scale * dotDiffHi q k
+  let scoreGapLo : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2 scoreGapLoRaw
   let marginAt : Fin seq → Rat := fun q =>
     if hq : q ∈ inputs.active then
       let other := otherKeys q
@@ -614,16 +624,23 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
         (0 : Rat)
     else
       (0 : Rat)
-  let epsAt : Fin seq → Rat := fun q =>
+  let weightBoundAtBase : Fin seq → Fin seq → Rat := fun q k =>
+    if hk : k = inputs.prev q then
+      (0 : Rat)
+    else
+      let gap := scoreGapLo q k
+      if gap < 0 then
+        (1 : Rat)
+      else
+        ratDivUp 1 (1 + gap)
+  let weightBoundAt : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2 weightBoundAtBase
+  let epsAtBase : Fin seq → Rat := fun q =>
     let other := otherKeys q
-    let total :=
-      other.sum (fun k =>
-        let gap := scoreGapLo q k
-        if gap < 0 then
-          (1 : Rat)
-        else
-          ratDivUp 1 (1 + gap))
+    let total := other.sum (fun k => weightBoundAt q k)
     min (1 : Rat) total
+  let epsAt : Fin seq → Rat :=
+    Bounds.cacheBoundThunk epsAtBase
   let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
@@ -641,10 +658,10 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
   let bDir : Rat :=
     Linear.dotFin dHead dirHead (fun d => inputs.bv d)
-  let valsAbs : Fin seq → Rat := fun q =>
-    Linear.sumFin dModel (fun j => |wvDir j|) * lnAbsMax q
-  let valsLo : Fin seq → Rat := fun q => bDir - valsAbs q
-  let valsHi : Fin seq → Rat := fun q => bDir + valsAbs q
+  let valsLo : Fin seq → Rat := fun q =>
+    bDir + Bounds.dotIntervalLower (fun j => wvDir j) (lnLo q) (lnHi q)
+  let valsHi : Fin seq → Rat := fun q =>
+    bDir + Bounds.dotIntervalUpper (fun j => wvDir j) (lnLo q) (lnHi q)
   let univ : Finset (Fin seq) := Finset.univ
   have hnonempty : univ.Nonempty := by simp [univ]
   let lo := univ.inf' hnonempty valsLo
@@ -658,6 +675,7 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
   let cert : InductionHeadCert seq :=
     { eps := eps
       epsAt := epsAt
+      weightBoundAt := weightBoundAt
       margin := margin
       active := inputs.active
       prev := inputs.prev
@@ -722,13 +740,13 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       scoreGapLo := scoreGapLo
       marginAt := marginAt
       epsAt := epsAt
+      weightBoundAt := weightBoundAt
       margin := margin
       eps := eps
       dirHeadVec := dirHeadVec
       dirHead := dirHead
       wvDir := wvDir
       bDir := bDir
-      valsAbs := valsAbs
       valsLo := valsLo
       valsHi := valsHi
       univ := univ
@@ -740,9 +758,10 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
 /-- The cached certificate is built from cache fields. -/
 theorem buildInductionHeadCoreCache_cert_eq [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
-    (buildInductionHeadCoreCache inputs).cert =
+  (buildInductionHeadCoreCache inputs).cert =
       { eps := (buildInductionHeadCoreCache inputs).eps
         epsAt := (buildInductionHeadCoreCache inputs).epsAt
+        weightBoundAt := (buildInductionHeadCoreCache inputs).weightBoundAt
         margin := (buildInductionHeadCoreCache inputs).margin
         active := inputs.active
         prev := inputs.prev

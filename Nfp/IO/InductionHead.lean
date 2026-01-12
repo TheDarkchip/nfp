@@ -952,18 +952,41 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
   | Nat.succ n =>
       let seq := Nat.succ n
       let _ : NeZero seq := ⟨by simp⟩
-      logTiming "start: head build nonvacuous logit-diff"
-      let res : Option (Sound.InductionLogitLowerBoundNonvacuous inputs) ←
-        timePure "head: build nonvacuous logit-diff" (fun () =>
-          Sound.buildInductionLogitLowerBoundNonvacuous? inputs)
-      logTiming "done: head build nonvacuous logit-diff"
-      match res with
+      logTiming "start: head build induction cert"
+      IO.println "timing: head build induction cert start"
+      flushStdout
+      let tCert0 ← monoUsNow
+      let certTask :
+          Task
+            (Option { c : Sound.InductionHeadCert seq //
+              Sound.InductionHeadCertSound inputs c }) :=
+        Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
+          match Sound.buildInductionCertFromHead? inputs with
+          | none => none
+          | some ⟨cert, hcert⟩ =>
+              let _ := cert.active.card
+              some ⟨cert, hcert⟩)
+      let heartbeatMs ← heartbeatMsFromEnv
+      if heartbeatMs ≠ 0 then
+        let mut finished := (← IO.hasFinished certTask)
+        while !finished do
+          IO.sleep heartbeatMs
+          finished := (← IO.hasFinished certTask)
+          if !finished then
+            let now ← monoUsNow
+            IO.println s!"timing: head build induction cert running {now - tCert0} us"
+            flushStdout
+      let certOpt ← IO.wait certTask
+      let tCert1 ← monoUsNow
+      logTiming s!"done: head build induction cert {tCert1 - tCert0} us"
+      IO.println s!"timing: head build induction cert {tCert1 - tCert0} us"
+      IO.println "timing: head build induction cert returned"
+      flushStdout
+      match certOpt with
       | none =>
-          IO.eprintln "error: nonvacuous logit-diff construction failed"
+          IO.eprintln "error: head inputs rejected"
           return 2
-      | some result =>
-          let cert := result.base.cert
-          let logitDiffLB := result.base.lb
+      | some ⟨cert, _hcert⟩ =>
           let activeCount := cert.active.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := minActive?.getD defaultMinActive
@@ -980,20 +1003,36 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             IO.eprintln
               s!"error: eps {ratToString cert.eps} above maximum {ratToString maxEps}"
             return 2
-          match minLogitDiff? with
-          | some minLogitDiff =>
-              if logitDiffLB < minLogitDiff then
+          logTiming "start: head logit-diff lower bound"
+          IO.println "timing: head logit-diff lower bound start"
+          flushStdout
+          let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
+            Sound.logitDiffLowerBoundFromCert cert)
+          logTiming "done: head logit-diff lower bound"
+          match logitDiffLB? with
+          | none =>
+              IO.eprintln "error: empty active set for logit-diff bound"
+              return 2
+          | some logitDiffLB =>
+              if logitDiffLB ≤ 0 then
                 IO.eprintln
                   s!"error: logitDiffLB {ratToString logitDiffLB} \
-                  below minimum {ratToString minLogitDiff}"
+                  is not strictly positive"
                 return 2
-          | none => pure ()
-          let tol := cert.eps * (cert.values.hi - cert.values.lo)
-          IO.println
-            s!"ok: nonvacuous induction bound certified \
-            (seq={seq}, active={activeCount}, \
-            tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB})"
-          return 0
+              match minLogitDiff? with
+              | some minLogitDiff =>
+                  if logitDiffLB < minLogitDiff then
+                    IO.eprintln
+                      s!"error: logitDiffLB {ratToString logitDiffLB} \
+                      below minimum {ratToString minLogitDiff}"
+                    return 2
+              | none => pure ()
+              let tol := cert.eps * (cert.values.hi - cert.values.lo)
+              IO.println
+                s!"ok: nonvacuous induction bound certified \
+                (seq={seq}, active={activeCount}, \
+                tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB})"
+              return 0
 
 /-- Build and check induction certificates from exact head inputs. -/
 def runInductionCertifyHead (inputsPath : System.FilePath)

@@ -215,8 +215,8 @@ private def ratOfFloatBits (bits : Nat) : Option Rat :=
       some (ratOfIntWithPrec num 1074)
   else
     let mant := mantBits + pow2 52
-    let exp := expBits - 1023
-    let shift : Int := Int.ofNat exp - 52
+    let exp : Int := Int.ofNat expBits - 1023
+    let shift : Int := exp - 52
     let prec : Int := -shift
     some (ratOfIntWithPrec (sign * Int.ofNat mant) prec)
 

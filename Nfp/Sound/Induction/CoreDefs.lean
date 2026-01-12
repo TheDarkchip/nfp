@@ -171,6 +171,8 @@ structure InductionHeadCert (seq : Nat) where
   eps : Rat
   /-- Per-query weight tolerance derived from local margins. -/
   epsAt : Fin seq → Rat
+  /-- Per-key weight bounds derived from score gaps. -/
+  weightBoundAt : Fin seq → Fin seq → Rat
   /-- Score margin used to justify the weight tolerance. -/
   margin : Rat
   /-- Active queries for which bounds are required. -/
@@ -195,6 +197,10 @@ structure InductionHeadCertSound [NeZero seq] {dModel dHead : Nat}
       Layers.OneHotApproxBoundsOnActive (Val := Real) (c.epsAt q : Real)
         (fun q' => q' = q) c.prev
         (fun q' k => Circuit.softmax (scoresRealOfInputs inputs q') k)
+  /-- Per-key weight bounds derived from local score gaps. -/
+  weight_bounds_at :
+    ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
+      Circuit.softmax (scoresRealOfInputs inputs q) k ≤ (c.weightBoundAt q k : Real)
   /-- Interval bounds hold for the direction values. -/
   value_bounds :
     ValueIntervalBounds (vals := valsRealOfInputs inputs) c.values
