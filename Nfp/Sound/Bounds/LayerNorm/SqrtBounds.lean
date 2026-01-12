@@ -28,6 +28,21 @@ lemma rat_nat_cast_nonneg (n : Nat) : (0 : Rat) ≤ (n : Rat) := by
 lemma rat_nat_cast_pos {n : Nat} (h : 0 < n) : (0 : Rat) < (n : Rat) := by
   exact (Nat.cast_pos (α := Rat)).2 h
 
+/-- `ratRoundDown` preserves nonnegativity for nonnegative divisions. -/
+theorem ratRoundDown_nonneg_div {a b : Rat} (ha : 0 ≤ a) (hb : 0 ≤ b) :
+    0 ≤ ratRoundDown (a / b) := by
+  exact ratRoundDown_nonneg (q := a / b) (by exact div_nonneg ha hb)
+
+/-- `ratRoundUp` preserves nonnegativity for nonnegative divisions. -/
+theorem ratRoundUp_nonneg_div {a b : Rat} (ha : 0 ≤ a) (hb : 0 ≤ b) :
+    0 ≤ ratRoundUp (a / b) := by
+  exact ratRoundUp_nonneg (q := a / b) (by exact div_nonneg ha hb)
+
+/-- `ratRoundUp` preserves positivity for positive divisions. -/
+theorem ratRoundUp_pos_div {a b : Rat} (ha : 0 < a) (hb : 0 < b) :
+    0 < ratRoundUp (a / b) := by
+  exact ratRoundUp_pos (q := a / b) (by exact div_pos ha hb)
+
 /-- Base rational lower bound for a square root. -/
 def sqrtLowerBase (q : Rat) : Rat :=
   let num := q.num.natAbs
@@ -93,9 +108,7 @@ theorem sqrtLowerBase_nonneg (q : Rat) : 0 ≤ sqrtLowerBase q := by
     rat_nat_cast_nonneg (Nat.sqrt q.num.natAbs)
   have hden : 0 ≤ (Nat.sqrt q.den : Rat) + 1 := by
     simpa using rat_nat_cast_nonneg (Nat.sqrt q.den + 1)
-  exact ratRoundDown_nonneg
-    (q := (Nat.sqrt q.num.natAbs : Rat) / (Nat.sqrt q.den + 1))
-    (by exact div_nonneg hnum hden)
+  exact ratRoundDown_nonneg_div hnum hden
 
 /-- `sqrtUpperBase` is nonnegative. -/
 theorem sqrtUpperBase_nonneg (q : Rat) : 0 ≤ sqrtUpperBase q := by
@@ -105,9 +118,7 @@ theorem sqrtUpperBase_nonneg (q : Rat) : 0 ≤ sqrtUpperBase q := by
     simpa using rat_nat_cast_nonneg (Nat.sqrt q.num.natAbs + 1)
   have hden : 0 ≤ (Nat.sqrt q.den : Rat) :=
     rat_nat_cast_nonneg (Nat.sqrt q.den)
-  exact ratRoundUp_nonneg
-    (q := (Nat.sqrt q.num.natAbs + 1 : Rat) / (Nat.sqrt q.den))
-    (by exact div_nonneg hnum hden)
+  exact ratRoundUp_nonneg_div hnum hden
 
 /-- `sqrtUpperBase` is always positive. -/
 theorem sqrtUpperBase_pos (q : Rat) : 0 < sqrtUpperBase q := by
@@ -118,9 +129,7 @@ theorem sqrtUpperBase_pos (q : Rat) : 0 < sqrtUpperBase q := by
   have hden_pos : (0 : Rat) < (Nat.sqrt q.den : Rat) := by
     have hden : 0 < q.den := q.den_pos
     exact rat_nat_cast_pos (Nat.sqrt_pos.2 hden)
-  exact ratRoundUp_pos
-    (q := (Nat.sqrt q.num.natAbs + 1 : Rat) / (Nat.sqrt q.den))
-    (by exact div_pos hnum_pos hden_pos)
+  exact ratRoundUp_pos_div hnum_pos hden_pos
 
 /-- `sqrtLowerAlt` is nonnegative. -/
 theorem sqrtLowerAlt_nonneg (q : Rat) : 0 ≤ sqrtLowerAlt q := by
@@ -130,9 +139,7 @@ theorem sqrtLowerAlt_nonneg (q : Rat) : 0 ≤ sqrtLowerAlt q := by
     rat_nat_cast_nonneg (Nat.sqrt (q.num.natAbs * q.den))
   have hden : 0 ≤ (q.den : Rat) :=
     rat_nat_cast_nonneg q.den
-  exact ratRoundDown_nonneg
-    (q := (Nat.sqrt (q.num.natAbs * q.den) : Rat) / q.den)
-    (by exact div_nonneg hnum hden)
+  exact ratRoundDown_nonneg_div hnum hden
 
 /-- `sqrtUpperAlt` is nonnegative. -/
 theorem sqrtUpperAlt_nonneg (q : Rat) : 0 ≤ sqrtUpperAlt q := by
@@ -142,9 +149,7 @@ theorem sqrtUpperAlt_nonneg (q : Rat) : 0 ≤ sqrtUpperAlt q := by
     simpa using rat_nat_cast_nonneg (Nat.sqrt (q.num.natAbs * q.den) + 1)
   have hden : 0 ≤ (q.den : Rat) :=
     rat_nat_cast_nonneg q.den
-  exact ratRoundUp_nonneg
-    (q := (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) / q.den)
-    (by exact div_nonneg hnum hden)
+  exact ratRoundUp_nonneg_div hnum hden
 
 /-- `sqrtUpperAlt` is always positive. -/
 theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
@@ -155,9 +160,7 @@ theorem sqrtUpperAlt_pos (q : Rat) : 0 < sqrtUpperAlt q := by
     simpa using rat_nat_cast_pos (Nat.succ_pos (Nat.sqrt (q.num.natAbs * q.den)))
   have hden_pos : (0 : Rat) < (q.den : Rat) :=
     rat_nat_cast_pos q.den_pos
-  exact ratRoundUp_pos
-    (q := (Nat.sqrt (q.num.natAbs * q.den) + 1 : Rat) / q.den)
-    (by exact div_pos hnum_pos hden_pos)
+  exact ratRoundUp_pos_div hnum_pos hden_pos
 
 /-- `sqrtUpperScaled` is nonnegative. -/
 theorem sqrtUpperScaled_nonneg (q : Rat) : 0 ≤ sqrtUpperScaled q := by
@@ -169,10 +172,7 @@ theorem sqrtUpperScaled_nonneg (q : Rat) : 0 ≤ sqrtUpperScaled q := by
       (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1)
   have hden : 0 ≤ (q.den : Rat) * (sqrtLowerScale : Rat) := by
     simpa [Nat.cast_mul] using rat_nat_cast_nonneg (q.den * sqrtLowerScale)
-  exact ratRoundUp_nonneg
-    (q := (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat)
-      / (q.den * sqrtLowerScale))
-    (by exact div_nonneg hnum hden)
+  exact ratRoundUp_nonneg_div hnum hden
 
 /-- `sqrtUpperScaled` is always positive. -/
 theorem sqrtUpperScaled_pos (q : Rat) : 0 < sqrtUpperScaled q := by
@@ -188,10 +188,7 @@ theorem sqrtUpperScaled_pos (q : Rat) : 0 < sqrtUpperScaled q := by
     have hscale : 0 < sqrtLowerScale := by
       simp [sqrtLowerScale]
     simpa [Nat.cast_mul] using rat_nat_cast_pos (Nat.mul_pos hden hscale)
-  exact ratRoundUp_pos
-    (q := (Nat.sqrt (q.num.natAbs * q.den * sqrtLowerScale * sqrtLowerScale) + 1 : Rat)
-      / (q.den * sqrtLowerScale))
-    (by exact div_pos hnum_pos hden_pos)
+  exact ratRoundUp_pos_div hnum_pos hden_pos
 
 /-! Combined bounds. -/
 
