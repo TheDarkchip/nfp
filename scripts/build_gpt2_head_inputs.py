@@ -332,7 +332,10 @@ def main() -> None:
     ln_eps_raw = header.get("layer_norm_eps")
     if ln_eps_raw is None:
         raise SystemExit("Missing layer_norm_eps in header.")
-    ln_eps = rat_from_float_exact(float(ln_eps_raw))
+    try:
+        ln_eps = Fraction(ln_eps_raw)
+    except ValueError:
+        ln_eps = rat_from_float_exact(float(ln_eps_raw))
     write_head_inputs(
         args.output,
         scale,
