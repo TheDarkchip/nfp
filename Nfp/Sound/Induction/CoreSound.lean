@@ -171,10 +171,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
             let splitBudgetK : Nat := 2
             let splitBudgetDiffBase : Nat := 0
             let splitBudgetDiffRefined : Nat := 12
-            let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
-              let ambig :=
-                (List.finRange dHead).filter (fun d => decide (qLo q d < 0 ∧ 0 < qHi q d))
-              let score : Fin dHead → Rat := fun d => (qHi q d - qLo q d) * kAbsMax d
+            let top2ByScore :
+                (Fin dHead → Rat) → List (Fin dHead) → List (Fin dHead) := fun score ambig =>
               let step
                   (best : Option (Rat × Fin dHead) × Option (Rat × Fin dHead))
                   (d : Fin dHead) :
@@ -189,39 +187,23 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                     else if b2.1 < s then (some b1, some (s, d)) else (some b1, some b2)
                 | (none, some b2) =>
                     if b2.1 < s then (some (s, d), some b2) else (some b2, some (s, d))
-              let top2 : List (Fin dHead) → List (Fin dHead) := fun ambig =>
-                match ambig.foldl step (none, none) with
-                | (some b1, some b2) => [b1.2, b2.2]
-                | (some b1, none) => [b1.2]
-                | (none, _) => []
-              let dims1 := top2 ambig
-              let dims2 := top2 (ambig.filter (fun d => decide (d ∉ dims1)))
+              match ambig.foldl step (none, none) with
+              | (some b1, some b2) => [b1.2, b2.2]
+              | (some b1, none) => [b1.2]
+              | (none, _) => []
+            let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
+              let ambig :=
+                (List.finRange dHead).filter (fun d => decide (qLo q d < 0 ∧ 0 < qHi q d))
+              let score : Fin dHead → Rat := fun d => (qHi q d - qLo q d) * kAbsMax d
+              let dims1 := top2ByScore score ambig
+              let dims2 := top2ByScore score (ambig.filter (fun d => decide (d ∉ dims1)))
               (dims1 ++ dims2).take splitBudgetQ
             let splitDimsK : Fin seq → Fin seq → List (Fin dHead) := fun q k =>
               let ambig :=
                 (List.finRange dHead).filter (fun d => decide (kLo k d < 0 ∧ 0 < kHi k d))
               let score : Fin dHead → Rat := fun d => (kHi k d - kLo k d) * qAbs q d
-              let step
-                  (best : Option (Rat × Fin dHead) × Option (Rat × Fin dHead))
-                  (d : Fin dHead) :
-                  Option (Rat × Fin dHead) × Option (Rat × Fin dHead) :=
-                let s := score d
-                match best with
-                | (none, none) => (some (s, d), none)
-                | (some b1, none) =>
-                    if b1.1 < s then (some (s, d), some b1) else (some b1, some (s, d))
-                | (some b1, some b2) =>
-                    if b1.1 < s then (some (s, d), some b1)
-                    else if b2.1 < s then (some b1, some (s, d)) else (some b1, some b2)
-                | (none, some b2) =>
-                    if b2.1 < s then (some (s, d), some b2) else (some b2, some (s, d))
-              let top2 : List (Fin dHead) → List (Fin dHead) := fun ambig =>
-                match ambig.foldl step (none, none) with
-                | (some b1, some b2) => [b1.2, b2.2]
-                | (some b1, none) => [b1.2]
-                | (none, _) => []
-              let dims1 := top2 ambig
-              let dims2 := top2 (ambig.filter (fun d => decide (d ∉ dims1)))
+              let dims1 := top2ByScore score ambig
+              let dims2 := top2ByScore score (ambig.filter (fun d => decide (d ∉ dims1)))
               (dims1 ++ dims2).take splitBudgetK
             let splitDimsDiffCore : Nat → Fin seq → Fin seq → List (Fin dHead) := fun budget q k =>
               let prev := inputs.prev q
