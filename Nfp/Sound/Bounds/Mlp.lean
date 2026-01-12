@@ -65,16 +65,16 @@ theorem mlpBounds_spec {dModel hidden : Nat}
     dotProduct (fun j => (wIn j h : Real)) x + (bIn h : Real)
   have hpre_lower : ∀ h, (preLo h : Real) ≤ pre h := by
     intro h
-    simpa [pre, preLo] using
-      add_le_add_right
-        (dotIntervalLower_le_dotProduct_real (v := fun j => wIn j h) lo hi x hlo hhi)
-        (bIn h : Real)
+    have hlow :=
+      dotIntervalLower_le_dotProduct_real_add (v := fun j => wIn j h)
+        (lo := lo) (hi := hi) (x := x) (b := (bIn h : Real)) hlo hhi
+    simpa [pre, preLo] using hlow
   have hpre_upper : ∀ h, pre h ≤ (preHi h : Real) := by
     intro h
-    simpa [pre, preHi] using
-      add_le_add_right
-        (dotProduct_le_dotIntervalUpper_real (v := fun j => wIn j h) lo hi x hlo hhi)
-        (bIn h : Real)
+    have hhigh :=
+      dotProduct_le_dotIntervalUpper_real_add (v := fun j => wIn j h)
+        (lo := lo) (hi := hi) (x := x) (b := (bIn h : Real)) hlo hhi
+    simpa [pre, preHi] using hhigh
   let geluBounds : Fin hidden → Rat × Rat := fun h => geluInterval (preLo h) (preHi h)
   let geluLo : Fin hidden → Rat := fun h => (geluBounds h).1
   let geluHi : Fin hidden → Rat := fun h => (geluBounds h).2
@@ -90,18 +90,22 @@ theorem mlpBounds_spec {dModel hidden : Nat}
     dotIntervalUpper (fun h => wOut h i) geluLo geluHi + bOut i
   have hout_lower :
       (outLo i : Real) ≤ dotProduct (fun h => (wOut h i : Real)) hidden + (bOut i : Real) := by
-    simpa [outLo] using
-      add_le_add_right
-        (dotIntervalLower_le_dotProduct_real (v := fun h => wOut h i) geluLo geluHi hidden
-          (fun h => (hgelu h).1) (fun h => (hgelu h).2))
-        (bOut i : Real)
+    have hgelu_lo : ∀ h, (geluLo h : Real) ≤ hidden h := fun h => (hgelu h).1
+    have hgelu_hi : ∀ h, hidden h ≤ (geluHi h : Real) := fun h => (hgelu h).2
+    have hlow :=
+      dotIntervalLower_le_dotProduct_real_add (v := fun h => wOut h i)
+        (lo := geluLo) (hi := geluHi) (x := hidden) (b := (bOut i : Real))
+        hgelu_lo hgelu_hi
+    simpa [outLo] using hlow
   have hout_upper :
       dotProduct (fun h => (wOut h i : Real)) hidden + (bOut i : Real) ≤ (outHi i : Real) := by
-    simpa [outHi] using
-      add_le_add_right
-        (dotProduct_le_dotIntervalUpper_real (v := fun h => wOut h i) geluLo geluHi hidden
-          (fun h => (hgelu h).1) (fun h => (hgelu h).2))
-        (bOut i : Real)
+    have hgelu_lo : ∀ h, (geluLo h : Real) ≤ hidden h := fun h => (hgelu h).1
+    have hgelu_hi : ∀ h, hidden h ≤ (geluHi h : Real) := fun h => (hgelu h).2
+    have hhigh :=
+      dotProduct_le_dotIntervalUpper_real_add (v := fun h => wOut h i)
+        (lo := geluLo) (hi := geluHi) (x := hidden) (b := (bOut i : Real))
+        hgelu_lo hgelu_hi
+    simpa [outHi] using hhigh
   have hlo' : (outLo i : Real) ≤ mlpReal wIn bIn wOut bOut x i := by
     simpa [mlpReal, hidden, pre] using hout_lower
   have hhi' : mlpReal wIn bIn wOut bOut x i ≤ (outHi i : Real) := by
@@ -199,8 +203,12 @@ theorem residualAddBounds_spec {n : Nat} (x : Fin n → Rat)
     ∀ i, (bounds.1 i : Real) ≤ (x i : Real) + y i ∧
       (x i : Real) + y i ≤ (bounds.2 i : Real) := by
   intro bounds i
-  have hlow := add_le_add_left (hlo i) (x i : Real)
-  have hhigh := add_le_add_left (hhi i) (x i : Real)
+  have hlow : (x i : Real) + (lo i : Real) ≤ (x i : Real) + y i := by
+    simpa [add_comm] using
+      add_le_add_left (hlo i) (x i : Real)
+  have hhigh : (x i : Real) + y i ≤ (x i : Real) + (hi i : Real) := by
+    simpa [add_comm] using
+      add_le_add_left (hhi i) (x i : Real)
   constructor
   · simpa [bounds, residualAddBounds] using hlow
   · simpa [bounds, residualAddBounds] using hhigh
@@ -267,8 +275,14 @@ theorem layerNormAbsMlpResidualBounds_spec {n hidden : Nat}
     layerNormAbsMlpBounds_spec eps gamma beta wIn bIn wOut bOut lo hi x hne heps hsqrt hlo hhi
   have hlo' := (hmlp i).1
   have hhi' := (hmlp i).2
-  have hlow := add_le_add (hlo i) hlo'
-  have hhigh := add_le_add (hhi i) hhi'
+  have hlow :
+      (lo i : Real) + (mlp.1 i : Real) ≤
+        x i + mlpReal wIn bIn wOut bOut (layerNormRealOfReal eps gamma beta x) i := by
+    exact add_le_add (hlo i) hlo'
+  have hhigh :
+      x i + mlpReal wIn bIn wOut bOut (layerNormRealOfReal eps gamma beta x) i ≤
+        (hi i : Real) + (mlp.2 i : Real) := by
+    exact add_le_add (hhi i) hhi'
   constructor
   · simpa [bounds, layerNormAbsMlpResidualBounds, mlp] using hlow
   · simpa [bounds, layerNormAbsMlpResidualBounds, mlp] using hhigh

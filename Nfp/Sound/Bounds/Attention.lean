@@ -88,6 +88,41 @@ def attentionOutputBounds {dModel dHead numHeads : Nat}
   let sumHi : Fin dModel → Rat := fun i => ∑ h, headHi h i
   (fun i => sumLo i + attnBias i, fun i => sumHi i + attnBias i)
 
+private theorem sum_weighted_const {seq : Nat} (w : Fin seq → Real) (c : Real)
+    (hsum : ∑ k, w k = 1) :
+    ∑ k, w k * c = c := by
+  calc
+    ∑ k, w k * c = (∑ k, w k) * c := by
+      simpa using
+        (Finset.sum_mul (s := (Finset.univ : Finset (Fin seq))) (f := w) (a := c)).symm
+    _ = c := by simp [hsum]
+
+/-- Weighted dot-products preserve interval bounds. -/
+theorem dotProduct_bounds_of_weights {seq : Nat} {lo hi : Real}
+    {vals w : Fin seq → Real}
+    (hlo : ∀ k, lo ≤ vals k) (hhi : ∀ k, vals k ≤ hi)
+    (hnonneg : ∀ k, 0 ≤ w k) (hsum : ∑ k, w k = 1) :
+    lo ≤ dotProduct w vals ∧ dotProduct w vals ≤ hi := by
+  have hsum_lo : ∑ k, w k * lo ≤ ∑ k, w k * vals k := by
+    refine Finset.sum_le_sum ?_
+    intro k _
+    exact mul_le_mul_of_nonneg_left (hlo k) (hnonneg k)
+  have hsum_lo' : ∑ k, w k * lo = lo := sum_weighted_const w lo hsum
+  have hlow : lo ≤ dotProduct w vals := by
+    have hsum_le : lo ≤ ∑ k, w k * vals k := by
+      simpa [hsum_lo'] using hsum_lo
+    simpa [dotProduct] using hsum_le
+  have hsum_hi : ∑ k, w k * vals k ≤ ∑ k, w k * hi := by
+    refine Finset.sum_le_sum ?_
+    intro k _
+    exact mul_le_mul_of_nonneg_left (hhi k) (hnonneg k)
+  have hsum_hi' : ∑ k, w k * hi = hi := sum_weighted_const w hi hsum
+  have hhigh : dotProduct w vals ≤ hi := by
+    have hsum_le : ∑ k, w k * vals k ≤ hi := by
+      simpa [hsum_hi'] using hsum_hi
+    simpa [dotProduct] using hsum_le
+  exact ⟨hlow, hhigh⟩
+
 /-- `attentionOutputBounds` soundness for real attention outputs. -/
 theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq]
     (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
@@ -155,52 +190,15 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
     have hln := hln_bounds k
     have hlo' : ∀ j, (lnLo j : Real) ≤ lnOut k j := fun j => (hln j).1
     have hhi' : ∀ j, lnOut k j ≤ (lnHi j : Real) := fun j => (hln j).2
-    have hlow :=
-      dotIntervalLower_le_dotProduct_real (v := fun j => (heads h).wv j d)
-        (lo := lnLo) (hi := lnHi) (x := lnOut k) hlo' hhi'
-    have hhigh :=
-      dotProduct_le_dotIntervalUpper_real (v := fun j => (heads h).wv j d)
-        (lo := lnLo) (hi := lnHi) (x := lnOut k) hlo' hhi'
-    have hlow' := add_le_add_right hlow ((heads h).bv d : Real)
-    have hhigh' := add_le_add_right hhigh ((heads h).bv d : Real)
+    have hlow' :=
+      dotIntervalLower_le_dotProduct_real_add (v := fun j => (heads h).wv j d)
+        (lo := lnLo) (hi := lnHi) (x := lnOut k) (b := ((heads h).bv d : Real)) hlo' hhi'
+    have hhigh' :=
+      dotProduct_le_dotIntervalUpper_real_add (v := fun j => (heads h).wv j d)
+        (lo := lnLo) (hi := lnHi) (x := lnOut k) (b := ((heads h).bv d : Real)) hlo' hhi'
     constructor
     · simpa [headValue, vLo] using hlow'
     · simpa [headValue, vHi] using hhigh'
-  have weighted_bounds :
-      ∀ {lo hi : Real} {vals : Fin seq → Real} {w : Fin seq → Real},
-        (∀ k, lo ≤ vals k) → (∀ k, vals k ≤ hi) →
-        (∀ k, 0 ≤ w k) → (∑ k, w k = 1) →
-        lo ≤ dotProduct w vals ∧ dotProduct w vals ≤ hi := by
-    intro lo hi vals w hlo' hhi' hnonneg hsum
-    have hsum_lo : ∑ k, w k * lo ≤ ∑ k, w k * vals k := by
-      refine Finset.sum_le_sum ?_
-      intro k _
-      exact mul_le_mul_of_nonneg_left (hlo' k) (hnonneg k)
-    have hsum_lo' : ∑ k, w k * lo = lo := by
-      calc
-        ∑ k, w k * lo = (∑ k, w k) * lo := by
-          simpa using
-            (Finset.sum_mul (s := (Finset.univ : Finset (Fin seq))) (f := w) (a := lo)).symm
-        _ = lo := by simp [hsum]
-    have hlow : lo ≤ dotProduct w vals := by
-      have hsum_le : lo ≤ ∑ k, w k * vals k := by
-        simpa [hsum_lo'] using hsum_lo
-      simpa [dotProduct] using hsum_le
-    have hsum_hi : ∑ k, w k * vals k ≤ ∑ k, w k * hi := by
-      refine Finset.sum_le_sum ?_
-      intro k _
-      exact mul_le_mul_of_nonneg_left (hhi' k) (hnonneg k)
-    have hsum_hi' : ∑ k, w k * hi = hi := by
-      calc
-        ∑ k, w k * hi = (∑ k, w k) * hi := by
-          simpa using
-            (Finset.sum_mul (s := (Finset.univ : Finset (Fin seq))) (f := w) (a := hi)).symm
-        _ = hi := by simp [hsum]
-    have hhigh : dotProduct w vals ≤ hi := by
-      have hsum_le : ∑ k, w k * vals k ≤ hi := by
-        simpa [hsum_hi'] using hsum_hi
-      simpa [dotProduct] using hsum_le
-    exact ⟨hlow, hhigh⟩
   have hhead_output_bounds :
       ∀ h q d,
         (vLo h d : Real) ≤ headOutput h q d ∧
@@ -216,7 +214,7 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
       exact Circuit.softmax_nonneg (scores h q) k
     have hsum : ∑ k, headWeights h q k = 1 := by
       simpa [headWeights] using Circuit.softmax_sum_one (scores h q)
-    have h := weighted_bounds (lo := (vLo h d : Real)) (hi := (vHi h d : Real))
+    have h := dotProduct_bounds_of_weights (lo := (vLo h d : Real)) (hi := (vHi h d : Real))
       (vals := fun k => headValue h k d) (w := headWeights h q)
       hlo' hhi' hnonneg hsum
     simpa [headOutput] using h
@@ -257,13 +255,13 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
   have hlow :
       (sumLo i : Real) + (attnBias i : Real) ≤
         (∑ h, headProj h q i) + (attnBias i : Real) := by
-    have h := add_le_add_left hsum_bounds.1 (attnBias i : Real)
-    simpa [add_comm, add_left_comm, add_assoc] using h
+    simpa [add_comm] using
+      add_le_add_left hsum_bounds.1 (attnBias i : Real)
   have hhigh :
       (∑ h, headProj h q i) + (attnBias i : Real) ≤
         (sumHi i : Real) + (attnBias i : Real) := by
-    have h := add_le_add_left hsum_bounds.2 (attnBias i : Real)
-    simpa [add_comm, add_left_comm, add_assoc] using h
+    simpa [add_comm] using
+      add_le_add_left hsum_bounds.2 (attnBias i : Real)
   have hreal :
       attentionOutputReal eps ln1Gamma ln1Beta heads attnBias scores x q i =
         (∑ h, headProj h q i) + (attnBias i : Real) := by

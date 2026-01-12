@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Aesop
 import Nfp.Circuit.Cert.LogitDiff
 import Nfp.Sound.Induction
 
@@ -13,9 +14,24 @@ namespace Sound
 
 open Nfp.Circuit
 
+variable {seq : Nat}
+
+private theorem valueRangeBounds_of_valueIntervalBounds
+    {vals : Fin seq → Real} {c : ValueInterval seq}
+    (h : ValueIntervalBounds vals c) :
+    Layers.ValueRangeBounds (Val := Real) (c.lo : Real) (c.hi : Real) vals := by
+  refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
+  · exact ratToReal_le_of_le h.lo_le_hi
+  · intro k
+    exact le_trans (h.lo_le_valsLo k) (h.vals_bounds k).1
+  · intro k
+    exact le_trans (h.vals_bounds k).2 (h.valsHi_le_hi k)
+
 section LogitDiffLowerBound
 
 variable {seq dModel dHead : Nat} [NeZero seq]
+
+section
 
 /-- Real-valued logit-diff contribution for a query. -/
 noncomputable def headLogitDiff (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -48,17 +64,9 @@ theorem logitDiffLowerBoundFromCert_le
         hsound.oneHot_bounds_at q hq
       have hvalsRange :
           Layers.ValueRangeBounds (Val := Real) (c.values.lo : Real) (c.values.hi : Real)
-            (valsRealOfInputs inputs) := by
-        refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
-        · exact ratToReal_le_of_le hsound.value_bounds.lo_le_hi
-        · intro k
-          exact
-            le_trans (hsound.value_bounds.lo_le_valsLo k)
-              (hsound.value_bounds.vals_bounds k).1
-        · intro k
-          exact
-            le_trans (hsound.value_bounds.vals_bounds k).2
-              (hsound.value_bounds.valsHi_le_hi k)
+            (valsRealOfInputs inputs) :=
+        valueRangeBounds_of_valueIntervalBounds
+          (vals := valsRealOfInputs inputs) (c := c.values) hsound.value_bounds
       have happrox :=
         Layers.inductionSpecApproxOn_of_oneHotApprox_valueRange
           (Val := Real)
@@ -174,6 +182,8 @@ def buildInductionLogitLowerBoundNonvacuous?
       by_cases hpos : 0 < base.lb
       · exact some ⟨base, hpos⟩
       · exact none
+
+end
 
 end LogitDiffLowerBound
 

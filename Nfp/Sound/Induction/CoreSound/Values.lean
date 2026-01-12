@@ -70,7 +70,11 @@ theorem valsReal_eq_of_dir (inputs : Model.InductionHeadInputs seq dModel dHead)
         dotProduct (fun d => (dirHead d : Real))
             (fun d => dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs k)) +
           dotProduct (fun d => (dirHead d : Real)) (fun d => (inputs.bv d : Real)) := by
-    simp [dotProduct, mul_add, Finset.sum_add_distrib]
+    simpa using
+      (Nfp.Sound.Linear.dotProduct_add_right
+        (x := fun d => (dirHead d : Real))
+        (y := fun d => dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs k))
+        (z := fun d => (inputs.bv d : Real)))
   have hdot_wv :
       dotProduct (fun d => (dirHead d : Real))
           (fun d => dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs k)) =

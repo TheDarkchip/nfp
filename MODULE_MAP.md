@@ -183,6 +183,8 @@ but you **must** update this list in the same commit.
   - LayerNorm interval bounds and end-to-end soundness lemmas.
 - `Nfp/Sound/Bounds/LayerNorm/MeanVariance.lean`
   - Mean/variance helpers for LayerNorm bounds.
+- `Nfp/Sound/Bounds/LayerNorm/SqrtBounds.lean`
+  - Square-root bounds (rational + real) used by LayerNorm and invStd bounds.
 - `Nfp/Sound/Bounds/LayerNorm/InvStd.lean`
   - Inverse-standard-deviation bounds for LayerNorm.
 - `Nfp/Sound/Bounds/UnnormRat.lean`

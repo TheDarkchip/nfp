@@ -21,7 +21,13 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
     · by_cases hSqrt : 0 < sqrtLower inputs.lnEps
       · by_cases hmodel : dModel = 0
         · have : False := by
-            simp [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel] at hcore
+            have hnone :=
+              buildInductionCertFromHeadCore?_eq_none_of_model_eq_zero
+                (inputs := inputs) hEps hSqrt hmodel
+            have hcore' :
+                (none : Option (InductionHeadCert seq)) = some c := by
+              exact hnone.symm.trans hcore
+            cases hcore'
           exact this.elim
         · by_cases hactive : inputs.active.Nonempty
           · let lnBounds := Bounds.cacheBoundPair2 (fun q =>
@@ -35,78 +41,100 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               Array.ofFn (fun q : Fin seq => lnAbsMaxTask q)
             let lnAbsMax : Fin seq → Rat := fun q =>
               lnAbsMaxArr[q.1]'(by
-                have hsize : lnAbsMaxArr.size = seq := by simp [lnAbsMaxArr]
-                simp [hsize])
+                simp [lnAbsMaxArr])
             let invStdBoundsTasks : Array (Task (Rat × Rat)) :=
               Array.ofFn (fun q : Fin seq =>
                 Task.spawn (fun _ => invStdBounds inputs.lnEps (inputs.embed q)))
             let invStdBoundsArr : Array (Rat × Rat) :=
               Array.ofFn (fun q : Fin seq =>
                 (invStdBoundsTasks[q.1]'(by
-                  have hsize : invStdBoundsTasks.size = seq := by simp [invStdBoundsTasks]
-                  simp [hsize])).get)
+                  simp [invStdBoundsTasks])).get)
             let invStdLo : Fin seq → Rat := fun q =>
               (invStdBoundsArr[q.1]'(by
-                have hsize : invStdBoundsArr.size = seq := by simp [invStdBoundsArr]
-                simp [hsize])).1
+                simp [invStdBoundsArr])).1
             let invStdHi : Fin seq → Rat := fun q =>
               (invStdBoundsArr[q.1]'(by
-                have hsize : invStdBoundsArr.size = seq := by simp [invStdBoundsArr]
-                simp [hsize])).2
+                simp [invStdBoundsArr])).2
+            let lnCoeff : Fin seq → Fin dModel → Rat := fun q j =>
+              inputs.ln1Gamma j * (inputs.embed q j - mean (inputs.embed q))
+            let invStd : Fin seq → Real := fun q =>
+              (Real.sqrt ((varianceRat (inputs.embed q) : Real) + (inputs.lnEps : Real)))⁻¹
+            have hmeanRat :
+                ∀ q, (mean (inputs.embed q) : Real) = meanRat (inputs.embed q) := by
+              intro q
+              have hmu_rat : mean (inputs.embed q) = meanRat (inputs.embed q) := by
+                simp [mean_def, hmodel, ratRoundDown]
+              simpa [ratToReal] using congrArg ratToReal hmu_rat
+            have hln_affine :
+                ∀ q j,
+                  lnRealOfInputs inputs q j =
+                    (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q := by
+              intro q j
+              have hmu := hmeanRat q
+              simp [lnRealOfInputs, Bounds.layerNormReal, hmodel, lnCoeff, hmu, invStd, add_comm,
+                mul_assoc, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
+            have hln_fun :
+                ∀ q,
+                  lnRealOfInputs inputs q =
+                    fun j => (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q := by
+              intro q
+              funext j
+              exact hln_affine q j
+            have hinv_bounds :
+                ∀ q, (invStdLo q : Real) ≤ invStd q ∧ invStd q ≤ (invStdHi q : Real) := by
+              intro q
+              simpa [invStd, invStdLo, invStdHi, invStdBoundsArr, invStdBoundsTasks,
+                invStdBounds, Task.spawn, Array.getElem_ofFn] using
+                (Bounds.invStdBounds_spec (eps := inputs.lnEps) (x := inputs.embed q)
+                  hmodel hEps hSqrt)
             let qBaseArr : Array Rat :=
               Array.ofFn (fun d : Fin dHead =>
                 Linear.dotFin dModel (fun j => inputs.wq j d) (fun j => inputs.ln1Beta j) +
                   inputs.bq d)
             let qBase : Fin dHead → Rat := fun d =>
               qBaseArr[d.1]'(by
-                have hsize : qBaseArr.size = dHead := by simp [qBaseArr]
-                simp [hsize])
+                simp [qBaseArr])
             let kBaseArr : Array Rat :=
               Array.ofFn (fun d : Fin dHead =>
                 Linear.dotFin dModel (fun j => inputs.wk j d) (fun j => inputs.ln1Beta j) +
                   inputs.bk d)
             let kBase : Fin dHead → Rat := fun d =>
               kBaseArr[d.1]'(by
-                have hsize : kBaseArr.size = dHead := by simp [kBaseArr]
-                simp [hsize])
+                simp [kBaseArr])
+            let coeffRowTasks :
+                (Fin dModel → Fin dHead → Rat) →
+                  Array (Task { row : Array Rat // row.size = dHead }) :=
+              fun w =>
+                Array.ofFn (fun q : Fin seq =>
+                  Task.spawn (fun _ =>
+                    let μ := mean (inputs.embed q)
+                    let coeff : Fin dModel → Rat := fun j =>
+                      inputs.ln1Gamma j * (inputs.embed q j - μ)
+                    ⟨Array.ofFn (fun d : Fin dHead =>
+                        Linear.dotFin dModel (fun j => w j d) coeff),
+                      by simp⟩))
             let qCoeffRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
-              Array.ofFn (fun q : Fin seq =>
-                Task.spawn (fun _ =>
-                  let μ := mean (inputs.embed q)
-                  let coeff : Fin dModel → Rat := fun j =>
-                    inputs.ln1Gamma j * (inputs.embed q j - μ)
-                  ⟨Array.ofFn (fun d : Fin dHead =>
-                      Linear.dotFin dModel (fun j => inputs.wq j d) coeff),
-                    by simp⟩))
+              coeffRowTasks inputs.wq
             let qCoeffArr : Array { row : Array Rat // row.size = dHead } :=
               Array.ofFn (fun q : Fin seq =>
                 (qCoeffRowTasks[q.1]'(by
-                  have hsize : qCoeffRowTasks.size = seq := by simp [qCoeffRowTasks]
-                  simp [hsize])).get)
+                  simp [qCoeffRowTasks, coeffRowTasks])).get)
             let qCoeff : Fin seq → Fin dHead → Rat := fun q d =>
               let row := qCoeffArr[q.1]'(by
-                have hsize : qCoeffArr.size = seq := by simp [qCoeffArr]
-                simp [hsize])
-              row.1[d.1]'(by simp [row.2])
+                simp [qCoeffArr])
+              row.1[d.1]'(by
+                simp [row.2])
             let kCoeffRowTasks : Array (Task { row : Array Rat // row.size = dHead }) :=
-              Array.ofFn (fun q : Fin seq =>
-                Task.spawn (fun _ =>
-                  let μ := mean (inputs.embed q)
-                  let coeff : Fin dModel → Rat := fun j =>
-                    inputs.ln1Gamma j * (inputs.embed q j - μ)
-                  ⟨Array.ofFn (fun d : Fin dHead =>
-                      Linear.dotFin dModel (fun j => inputs.wk j d) coeff),
-                    by simp⟩))
+              coeffRowTasks inputs.wk
             let kCoeffArr : Array { row : Array Rat // row.size = dHead } :=
               Array.ofFn (fun q : Fin seq =>
                 (kCoeffRowTasks[q.1]'(by
-                  have hsize : kCoeffRowTasks.size = seq := by simp [kCoeffRowTasks]
-                  simp [hsize])).get)
+                  simp [kCoeffRowTasks, coeffRowTasks])).get)
             let kCoeff : Fin seq → Fin dHead → Rat := fun q d =>
               let row := kCoeffArr[q.1]'(by
-                have hsize : kCoeffArr.size = seq := by simp [kCoeffArr]
-                simp [hsize])
-              row.1[d.1]'(by simp [row.2])
+                simp [kCoeffArr])
+              row.1[d.1]'(by
+                simp [row.2])
             let qLo : Fin seq → Fin dHead → Rat := fun q d =>
               let bounds := scaleInterval (qCoeff q d) (invStdLo q) (invStdHi q)
               qBase d + bounds.1
@@ -128,9 +156,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 univ.sup' hnonempty (fun q => qAbs q d))
             let qAbsMax : Fin dHead → Rat := fun d =>
               qAbsMaxArr[d.1]'(by
-                have hsize : qAbsMaxArr.size = dHead := by
-                  simp [qAbsMaxArr]
-                simp [hsize])
+                simp [qAbsMaxArr])
             let kAbsMaxArr : Array Rat :=
               Array.ofFn (fun d : Fin dHead =>
                 let univ : Finset (Fin seq) := Finset.univ
@@ -138,9 +164,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 univ.sup' hnonempty (fun k => kAbs k d))
             let kAbsMax : Fin dHead → Rat := fun d =>
               kAbsMaxArr[d.1]'(by
-                have hsize : kAbsMaxArr.size = dHead := by
-                  simp [kAbsMaxArr]
-                simp [hsize])
+                simp [kAbsMaxArr])
             let masked : Fin seq → Fin seq → Prop := fun q k =>
               inputs.maskCausal = true ∧ q < k
             let splitBudgetQ : Nat := 2
@@ -427,8 +451,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 prev := inputs.prev
                 values := valCert }
             have hcore' : buildInductionCertFromHeadCore? inputs = some cert := by
-              simp (config := { zeta := false })
-                [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive, cert, valCert]
+              simp (config := { zeta := false }) only
+                [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive]
               rfl
             have hc : c = cert := by
               have hcert : cert = c := by
@@ -452,7 +476,7 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 Bounds.abs_le_intervalAbsBound_real (lo := lnLo q) (hi := lnHi q)
                   (x := lnRealOfInputs inputs q) (hlo := fun j => (hln j).1)
                   (hhi := fun j => (hln j).2) j
-              simpa [lnAbsMax, lnAbsMaxArr, lnAbsMaxTask, Bounds.cacheBoundTask_apply,
+              simpa only [lnAbsMax, lnAbsMaxArr, lnAbsMaxTask, Bounds.cacheBoundTask_apply,
                 Array.getElem_ofFn] using h
             have hdot_abs_bound :
                 ∀ (v : Fin dModel → Rat) (q : Fin seq),
@@ -521,187 +545,179 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 (Linear.dotFin n f g : Real) =
                   dotProduct (fun j => (f j : Real)) (fun j => (g j : Real)) := by
               simp [Linear.dotFin_def, Linear.sumFin_eq_sum_univ, dotProduct]
+            have proj_bounds
+                (w : Fin dModel → Fin dHead → Rat)
+                (b base : Fin dHead → Rat)
+                (coeff : Fin seq → Fin dHead → Rat)
+                (hbase : ∀ d,
+                  (base d : Real) =
+                    dotProduct (fun j => (w j d : Real))
+                        (fun j => (inputs.ln1Beta j : Real)) +
+                      (b d : Real))
+                (hcoeff : ∀ q d,
+                  (coeff q d : Real) =
+                    dotProduct (fun j => (w j d : Real))
+                      (fun j => (lnCoeff q j : Real))) :
+                ∀ q d,
+                  (base d + (scaleInterval (coeff q d) (invStdLo q) (invStdHi q)).1 : Rat) ≤
+                    dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) ∧
+                  dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) ≤
+                    (base d + (scaleInterval (coeff q d) (invStdLo q) (invStdHi q)).2 : Rat) := by
+              intro q d
+              have hinv : (invStdLo q : Real) ≤ invStd q ∧ invStd q ≤ (invStdHi q : Real) :=
+                hinv_bounds q
+              have hln_fun_q :
+                  lnRealOfInputs inputs q =
+                    fun j => (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q := by
+                exact hln_fun q
+              have hdot_add :
+                  dotProduct (fun j => (w j d : Real))
+                      (fun j =>
+                        (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q) =
+                    dotProduct (fun j => (w j d : Real))
+                        (fun j => (inputs.ln1Beta j : Real)) +
+                      dotProduct (fun j => (w j d : Real))
+                        (fun j => (lnCoeff q j : Real) * invStd q) := by
+                simpa using
+                  (Nfp.Sound.Linear.dotProduct_add_right
+                    (x := fun j => (w j d : Real))
+                    (y := fun j => (inputs.ln1Beta j : Real))
+                    (z := fun j => (lnCoeff q j : Real) * invStd q))
+              have hdot_coeff :
+                  dotProduct (fun j => (w j d : Real))
+                      (fun j => (lnCoeff q j : Real) * invStd q) =
+                    dotProduct (fun j => (w j d : Real))
+                        (fun j => (lnCoeff q j : Real)) *
+                      invStd q := by
+                simpa using
+                  (Nfp.Sound.Linear.dotProduct_mul_right
+                    (x := fun j => (w j d : Real))
+                    (y := fun j => (lnCoeff q j : Real))
+                    (a := invStd q))
+              have hreal :
+                  dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) =
+                    (base d : Real) + (coeff q d : Real) * invStd q := by
+                calc
+                  dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) =
+                      dotProduct (fun j => (w j d : Real))
+                          (fun j =>
+                            (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q) +
+                        (b d : Real) := by
+                        simp [hln_fun_q]
+                  _ =
+                      dotProduct (fun j => (w j d : Real))
+                          (fun j => (inputs.ln1Beta j : Real)) +
+                        dotProduct (fun j => (w j d : Real))
+                            (fun j => (lnCoeff q j : Real)) *
+                          invStd q +
+                        (b d : Real) := by
+                        simp [hdot_add, hdot_coeff, add_assoc]
+                  _ =
+                      (dotProduct (fun j => (w j d : Real))
+                          (fun j => (inputs.ln1Beta j : Real)) +
+                        (b d : Real)) +
+                        dotProduct (fun j => (w j d : Real))
+                            (fun j => (lnCoeff q j : Real)) *
+                          invStd q := by ac_rfl
+                  _ = (base d : Real) + (coeff q d : Real) * invStd q := by
+                        simp [hbase, hcoeff]
+              have hscale :
+                  let bounds := scaleInterval (coeff q d) (invStdLo q) (invStdHi q)
+                  (bounds.1 : Real) ≤ (coeff q d : Real) * invStd q ∧
+                    (coeff q d : Real) * invStd q ≤ (bounds.2 : Real) := by
+                exact scaleInterval_bounds_real (x := coeff q d) (lo := invStdLo q)
+                  (hi := invStdHi q) (y := invStd q) hinv.1 hinv.2
+              have hlow :
+                  (base d + (scaleInterval (coeff q d) (invStdLo q) (invStdHi q)).1 : Rat) ≤
+                    dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) := by
+                simpa [hreal] using add_le_add_left hscale.1 (base d : Real)
+              have hhigh :
+                  dotProduct (fun j => (w j d : Real)) (lnRealOfInputs inputs q) +
+                      (b d : Real) ≤
+                    (base d + (scaleInterval (coeff q d) (invStdLo q) (invStdHi q)).2 : Rat) := by
+                simpa [hreal] using add_le_add_left hscale.2 (base d : Real)
+              exact ⟨hlow, hhigh⟩
             have hq_bounds :
                 ∀ q d, (qLo q d : Real) ≤ qRealOfInputs inputs q d ∧
                   qRealOfInputs inputs q d ≤ (qHi q d : Real) := by
               intro q d
-              let x := inputs.embed q; let μRat : Rat := mean x
-              let centered : Fin dModel → Rat := fun j => x j - μRat
-              let coeff : Fin dModel → Rat := fun j => inputs.ln1Gamma j * centered j
-              let invStd : Real :=
-                (Real.sqrt ((varianceRat x : Real) + (inputs.lnEps : Real)))⁻¹
-              have hmu : (μRat : Real) = meanRat x := by
-                have hmu_rat : μRat = meanRat x := by simp [μRat, mean_def, hmodel, ratRoundDown]
-                simpa [ratToReal] using congrArg ratToReal hmu_rat
-              have hinv : (invStdLo q : Real) ≤ invStd ∧ invStd ≤ (invStdHi q : Real) := by
-                simpa [invStdLo, invStdHi, invStdBoundsArr, invStdBoundsTasks, invStdBounds,
-                  Task.spawn, Array.getElem_ofFn] using
-                  (Bounds.invStdBounds_spec (eps := inputs.lnEps) (x := x) hmodel hEps hSqrt)
-              have hln : ∀ j,
-                  lnRealOfInputs inputs q j =
-                    (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd := by
-                intro j; simp [lnRealOfInputs, Bounds.layerNormReal, hmodel, coeff, centered, μRat,
-                  hmu, invStd, x, add_comm, mul_assoc, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
-              have hln_fun :
-                  lnRealOfInputs inputs q =
-                    fun j => (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd := by
-                funext j; exact hln j
               have hbase :
-                  (qBase d : Real) =
-                    dotProduct (fun j => (inputs.wq j d : Real))
-                        (fun j => (inputs.ln1Beta j : Real)) +
-                      (inputs.bq d : Real) := by simp [qBase, qBaseArr, dotFin_cast]
+                  ∀ d,
+                    (qBase d : Real) =
+                      dotProduct (fun j => (inputs.wq j d : Real))
+                          (fun j => (inputs.ln1Beta j : Real)) +
+                        (inputs.bq d : Real) := by
+                intro d
+                simp [qBase, qBaseArr, dotFin_cast]
               have hcoeff :
-                  (qCoeff q d : Real) =
-                    dotProduct (fun j => (inputs.wq j d : Real)) (fun j => (coeff j : Real)) := by
-                simp [qCoeff, qCoeffArr, qCoeffRowTasks, Task.spawn, coeff, centered, μRat, x,
-                  dotFin_cast]
-              have hdot_add :
-                  dotProduct (fun j => (inputs.wq j d : Real))
-                      (fun j =>
-                        (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd) =
-                    dotProduct (fun j => (inputs.wq j d : Real))
-                        (fun j => (inputs.ln1Beta j : Real)) +
+                  ∀ q' d,
+                    (qCoeff q' d : Real) =
                       dotProduct (fun j => (inputs.wq j d : Real))
-                        (fun j => (coeff j : Real) * invStd) := by
-                    simpa [dotProduct, mul_add] using
-                      (Finset.sum_add_distrib (s := (Finset.univ : Finset (Fin dModel)))
-                        (f := fun j => (inputs.wq j d : Real) * (inputs.ln1Beta j : Real))
-                        (g := fun j => (inputs.wq j d : Real) * ((coeff j : Real) * invStd)))
-              have hdot_coeff :
-                  dotProduct (fun j => (inputs.wq j d : Real))
-                      (fun j => (coeff j : Real) * invStd) =
-                    dotProduct (fun j => (inputs.wq j d : Real)) (fun j => (coeff j : Real)) *
-                      invStd := by
-                simp [dotProduct, mul_assoc, Finset.sum_mul]
-              have hq_real :
-                  qRealOfInputs inputs q d =
-                    (qBase d : Real) + (qCoeff q d : Real) * invStd := by
-                calc
-                  qRealOfInputs inputs q d =
-                      dotProduct (fun j => (inputs.wq j d : Real))
-                          (fun j =>
-                            (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd) +
-                        (inputs.bq d : Real) := by simp [qRealOfInputs, hln_fun]
-                  _ =
-                      dotProduct (fun j => (inputs.wq j d : Real))
-                          (fun j => (inputs.ln1Beta j : Real)) +
-                        dotProduct (fun j => (inputs.wq j d : Real)) (fun j => (coeff j : Real)) *
-                          invStd +
-                        (inputs.bq d : Real) := by simp [hdot_add, hdot_coeff, add_assoc]
-                  _ =
-                      (dotProduct (fun j => (inputs.wq j d : Real))
-                          (fun j => (inputs.ln1Beta j : Real)) +
-                        (inputs.bq d : Real)) +
-                        dotProduct (fun j => (inputs.wq j d : Real)) (fun j => (coeff j : Real)) *
-                          invStd := by ac_rfl
-                  _ = (qBase d : Real) + (qCoeff q d : Real) * invStd := by simp [hbase, hcoeff]
-              have hscale :
-                  let bounds := scaleInterval (qCoeff q d) (invStdLo q) (invStdHi q)
-                  (bounds.1 : Real) ≤ (qCoeff q d : Real) * invStd ∧
-                    (qCoeff q d : Real) * invStd ≤ (bounds.2 : Real) := by
-                exact scaleInterval_bounds_real (x := qCoeff q d) (lo := invStdLo q)
-                  (hi := invStdHi q) (y := invStd) hinv.1 hinv.2
-              have hlow :
-                  (qLo q d : Real) ≤ qRealOfInputs inputs q d := by
-                simpa [qLo, hq_real] using add_le_add_left hscale.1 (qBase d : Real)
-              have hhigh :
-                  qRealOfInputs inputs q d ≤ (qHi q d : Real) := by
-                simpa [qHi, hq_real] using add_le_add_left hscale.2 (qBase d : Real)
-              exact ⟨hlow, hhigh⟩
+                        (fun j => (lnCoeff q' j : Real)) := by
+                intro q' d
+                simpa [qCoeff, qCoeffArr, qCoeffRowTasks, coeffRowTasks, lnCoeff, Task.spawn] using
+                  (dotFin_cast (f := fun j => inputs.wq j d)
+                    (g := fun j =>
+                      inputs.ln1Gamma j * (inputs.embed q' j - mean (inputs.embed q'))))
+              have h := proj_bounds (w := inputs.wq) (b := inputs.bq) (base := qBase)
+                (coeff := qCoeff) hbase hcoeff q d
+              simpa [qLo, qHi, qRealOfInputs] using h
             have hk_bounds :
                 ∀ q d, (kLo q d : Real) ≤ kRealOfInputs inputs q d ∧
                   kRealOfInputs inputs q d ≤ (kHi q d : Real) := by
               intro q d
-              let x := inputs.embed q; let μRat : Rat := mean x
-              let centered : Fin dModel → Rat := fun j => x j - μRat
-              let coeff : Fin dModel → Rat := fun j => inputs.ln1Gamma j * centered j
-              let invStd : Real :=
-                (Real.sqrt ((varianceRat x : Real) + (inputs.lnEps : Real)))⁻¹
-              have hmu : (μRat : Real) = meanRat x := by
-                have hmu_rat : μRat = meanRat x := by simp [μRat, mean_def, hmodel, ratRoundDown]
-                simpa [ratToReal] using congrArg ratToReal hmu_rat
-              have hinv : (invStdLo q : Real) ≤ invStd ∧ invStd ≤ (invStdHi q : Real) := by
-                simpa [invStdLo, invStdHi, invStdBoundsArr, invStdBoundsTasks, invStdBounds,
-                  Task.spawn, Array.getElem_ofFn] using
-                  (Bounds.invStdBounds_spec (eps := inputs.lnEps) (x := x) hmodel hEps hSqrt)
-              have hln : ∀ j,
-                  lnRealOfInputs inputs q j =
-                    (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd := by
-                intro j; simp [lnRealOfInputs, Bounds.layerNormReal, hmodel, coeff, centered, μRat,
-                  hmu, invStd, x, add_comm, mul_assoc, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
-              have hln_fun :
-                  lnRealOfInputs inputs q =
-                    fun j => (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd := by
-                funext j; exact hln j
               have hbase :
-                  (kBase d : Real) =
-                    dotProduct (fun j => (inputs.wk j d : Real))
-                        (fun j => (inputs.ln1Beta j : Real)) +
-                      (inputs.bk d : Real) := by simp [kBase, kBaseArr, dotFin_cast]
+                  ∀ d,
+                    (kBase d : Real) =
+                      dotProduct (fun j => (inputs.wk j d : Real))
+                          (fun j => (inputs.ln1Beta j : Real)) +
+                        (inputs.bk d : Real) := by
+                intro d
+                simp [kBase, kBaseArr, dotFin_cast]
               have hcoeff :
-                  (kCoeff q d : Real) =
-                    dotProduct (fun j => (inputs.wk j d : Real)) (fun j => (coeff j : Real)) := by
-                simp [kCoeff, kCoeffArr, kCoeffRowTasks, Task.spawn, coeff, centered, μRat, x,
-                  dotFin_cast]
-              have hdot_add :
-                  dotProduct (fun j => (inputs.wk j d : Real))
-                      (fun j =>
-                        (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd) =
-                    dotProduct (fun j => (inputs.wk j d : Real))
-                        (fun j => (inputs.ln1Beta j : Real)) +
+                  ∀ q' d,
+                    (kCoeff q' d : Real) =
                       dotProduct (fun j => (inputs.wk j d : Real))
-                        (fun j => (coeff j : Real) * invStd) := by
-                    simpa [dotProduct, mul_add] using
-                      (Finset.sum_add_distrib (s := (Finset.univ : Finset (Fin dModel)))
-                        (f := fun j => (inputs.wk j d : Real) * (inputs.ln1Beta j : Real))
-                        (g := fun j => (inputs.wk j d : Real) * ((coeff j : Real) * invStd)))
-              have hdot_coeff :
-                  dotProduct (fun j => (inputs.wk j d : Real))
-                      (fun j => (coeff j : Real) * invStd) =
-                    dotProduct (fun j => (inputs.wk j d : Real)) (fun j => (coeff j : Real)) *
-                      invStd := by
-                simp [dotProduct, mul_assoc, Finset.sum_mul]
-              have hk_real :
-                  kRealOfInputs inputs q d =
-                    (kBase d : Real) + (kCoeff q d : Real) * invStd := by
-                calc
-                  kRealOfInputs inputs q d =
-                      dotProduct (fun j => (inputs.wk j d : Real))
-                          (fun j =>
-                            (inputs.ln1Beta j : Real) + (coeff j : Real) * invStd) +
-                        (inputs.bk d : Real) := by simp [kRealOfInputs, hln_fun]
-                  _ =
-                      dotProduct (fun j => (inputs.wk j d : Real))
-                          (fun j => (inputs.ln1Beta j : Real)) +
-                        dotProduct (fun j => (inputs.wk j d : Real)) (fun j => (coeff j : Real)) *
-                          invStd +
-                        (inputs.bk d : Real) := by simp [hdot_add, hdot_coeff, add_assoc]
-                  _ =
-                      (dotProduct (fun j => (inputs.wk j d : Real))
-                          (fun j => (inputs.ln1Beta j : Real)) +
-                        (inputs.bk d : Real)) +
-                        dotProduct (fun j => (inputs.wk j d : Real)) (fun j => (coeff j : Real)) *
-                          invStd := by ac_rfl
-                  _ = (kBase d : Real) + (kCoeff q d : Real) * invStd := by simp [hbase, hcoeff]
-              have hscale :
-                  let bounds := scaleInterval (kCoeff q d) (invStdLo q) (invStdHi q)
-                  (bounds.1 : Real) ≤ (kCoeff q d : Real) * invStd ∧
-                    (kCoeff q d : Real) * invStd ≤ (bounds.2 : Real) := by
-                exact scaleInterval_bounds_real (x := kCoeff q d) (lo := invStdLo q)
-                  (hi := invStdHi q) (y := invStd) hinv.1 hinv.2
-              have hlow :
-                  (kLo q d : Real) ≤ kRealOfInputs inputs q d := by
-                simpa [kLo, hk_real] using add_le_add_left hscale.1 (kBase d : Real)
-              have hhigh :
-                  kRealOfInputs inputs q d ≤ (kHi q d : Real) := by
-                simpa [kHi, hk_real] using add_le_add_left hscale.2 (kBase d : Real)
-              exact ⟨hlow, hhigh⟩
+                        (fun j => (lnCoeff q' j : Real)) := by
+                intro q' d
+                simpa [kCoeff, kCoeffArr, kCoeffRowTasks, coeffRowTasks, lnCoeff, Task.spawn] using
+                  (dotFin_cast (f := fun j => inputs.wk j d)
+                    (g := fun j =>
+                      inputs.ln1Gamma j * (inputs.embed q' j - mean (inputs.embed q'))))
+              have h := proj_bounds (w := inputs.wk) (b := inputs.bk) (base := kBase)
+                (coeff := kCoeff) hbase hcoeff q d
+              simpa [kLo, kHi, kRealOfInputs] using h
+            let scoresReal := scoresRealOfInputs inputs
+            have scoresReal_eq_base_of_not_masked :
+                ∀ q k, ¬ masked q k →
+                  scoresReal q k =
+                    (inputs.scale : Real) *
+                      dotProduct (fun d => qRealOfInputs inputs q d)
+                        (fun d => kRealOfInputs inputs k d) := by
+              intro q k hnot
+              by_cases hcausal : inputs.maskCausal
+              · have hnot_lt : ¬ q < k := by
+                  intro hlt
+                  exact hnot ⟨hcausal, hlt⟩
+                have hle : k ≤ q := le_of_not_gt hnot_lt
+                simp [scoresReal, scoresRealOfInputs, hcausal, hle]
+              · simp [scoresReal, scoresRealOfInputs, hcausal]
+            have scoresReal_eq_masked :
+                ∀ q k, masked q k → scoresReal q k = (inputs.maskValue : Real) := by
+              intro q k hmask
+              have hmask' : inputs.maskCausal = true ∧ q < k := by
+                simpa [masked] using hmask
+              have hle : ¬ k ≤ q := not_le_of_gt hmask'.2
+              simp [scoresReal, scoresRealOfInputs, hmask'.1, hle]
             have hscore_bounds :
-                ∀ q k, (scoreLo q k : Real) ≤ scoresRealOfInputs inputs q k ∧
-                  scoresRealOfInputs inputs q k ≤ (scoreHi q k : Real) := by
+                ∀ q k, (scoreLo q k : Real) ≤ scoresReal q k ∧
+                  scoresReal q k ≤ (scoreHi q k : Real) := by
               intro q k
-              let scoresReal := scoresRealOfInputs inputs
               let base :=
                 (inputs.scale : Real) *
                   dotProduct (fun d => qRealOfInputs inputs q d) (fun d => kRealOfInputs inputs k d)
@@ -741,67 +757,52 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   simpa [dotHi, dotRowTasks, Task.spawn, Array.getElem_ofFn]
                     using hspec.2
                 exact ⟨hlow', hhigh'⟩
-              by_cases hcausal : inputs.maskCausal
-              · by_cases hle : k ≤ q
-                · have hnot : ¬ q < k := not_lt_of_ge hle
-                  have hscore_eq : scoresReal q k = base := by
-                    simp [scoresReal, scoresRealOfInputs, hcausal, hle, base]
-                  by_cases hscale : 0 ≤ inputs.scale
-                  · have hscale_real : 0 ≤ (inputs.scale : Real) :=
-                      ratToReal_nonneg_of_nonneg hscale
-                    have hlow :=
-                      mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
-                    have hhigh :=
-                      mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
-                    constructor
-                    · simpa [scoresReal, scoreLo, masked, hcausal, hnot, hscale, hscore_eq, base]
-                        using hlow
-                    · simpa [scoresReal, scoreHi, masked, hcausal, hnot, hscale, hscore_eq, base]
-                        using hhigh
-                  · have hscale_nonpos : inputs.scale ≤ 0 :=
-                      le_of_lt (lt_of_not_ge hscale)
-                    have hscale_real : (inputs.scale : Real) ≤ 0 :=
-                      (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
-                    have hlow :=
-                      mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
-                    have hhigh :=
-                      mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
-                    constructor
-                    · simpa [scoresReal, scoreLo, masked, hcausal, hnot, hscale, hscore_eq, base]
-                        using hlow
-                    · simpa [scoresReal, scoreHi, masked, hcausal, hnot, hscale, hscore_eq, base]
-                        using hhigh
-                · have hlt : q < k := lt_of_not_ge hle
-                  constructor
-                  · simp [scoresRealOfInputs, scoreLo, masked, hcausal, hle, hlt]
-                  · simp [scoresRealOfInputs, scoreHi, masked, hcausal, hle, hlt]
-              · have hscore_eq : scoresReal q k = base := by
-                  simp [scoresReal, scoresRealOfInputs, hcausal, base]
+              have hscore_base_bounds (hnot : ¬ masked q k) :
+                  (scoreLo q k : Real) ≤ base ∧ base ≤ (scoreHi q k : Real) := by
                 by_cases hscale : 0 ≤ inputs.scale
                 · have hscale_real : 0 ≤ (inputs.scale : Real) :=
                     ratToReal_nonneg_of_nonneg hscale
-                  have hlow :=
-                    mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
-                  have hhigh :=
-                    mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
+                  have hlow := mul_le_mul_of_nonneg_left hdot_bounds.1 hscale_real
+                  have hhigh := mul_le_mul_of_nonneg_left hdot_bounds.2 hscale_real
                   constructor
-                  · simpa [scoresReal, scoreLo, masked, hcausal, hscale, hscore_eq, base]
-                      using hlow
-                  · simpa [scoresReal, scoreHi, masked, hcausal, hscale, hscore_eq, base]
-                      using hhigh
+                  · simpa [scoreLo, masked, hnot, hscale, base] using hlow
+                  · simpa [scoreHi, masked, hnot, hscale, base] using hhigh
                 · have hscale_nonpos : inputs.scale ≤ 0 :=
                     le_of_lt (lt_of_not_ge hscale)
                   have hscale_real : (inputs.scale : Real) ≤ 0 :=
                     (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
-                  have hlow :=
-                    mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
-                  have hhigh :=
-                    mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
+                  have hlow := mul_le_mul_of_nonpos_left hdot_bounds.2 hscale_real
+                  have hhigh := mul_le_mul_of_nonpos_left hdot_bounds.1 hscale_real
                   constructor
-                  · simpa [scoresReal, scoreLo, masked, hcausal, hscale, hscore_eq, base]
-                      using hlow
-                  · simpa [scoresReal, scoreHi, masked, hcausal, hscale, hscore_eq, base]
-                      using hhigh
+                  · simpa [scoreLo, masked, hnot, hscale, base] using hlow
+                  · simpa [scoreHi, masked, hnot, hscale, base] using hhigh
+              by_cases hcausal : inputs.maskCausal
+              · by_cases hle : k ≤ q
+                · have hnot : ¬ q < k := not_lt_of_ge hle
+                  have hnot_masked : ¬ masked q k := fun hmk => hnot hmk.2
+                  have hscore_eq : scoresReal q k = base :=
+                    scoresReal_eq_base_of_not_masked q k hnot_masked
+                  have hbase := hscore_base_bounds hnot_masked
+                  constructor
+                  · simpa [hscore_eq] using hbase.1
+                  · simpa [hscore_eq] using hbase.2
+                · have hlt : q < k := lt_of_not_ge hle
+                  have hmask : masked q k := ⟨hcausal, hlt⟩
+                  have hscore : scoresReal q k = (inputs.maskValue : Real) :=
+                    scoresReal_eq_masked q k hmask
+                  constructor
+                  ·
+                    simp [hscore, scoreLo, hmask]
+                  ·
+                    simp [hscore, scoreHi, hmask]
+              · have hnot_masked : ¬ masked q k := by
+                  simp [masked, hcausal]
+                have hscore_eq : scoresReal q k = base :=
+                  scoresReal_eq_base_of_not_masked q k hnot_masked
+                have hbase := hscore_base_bounds hnot_masked
+                constructor
+                · simpa [hscore_eq] using hbase.1
+                · simpa [hscore_eq] using hbase.2
             have hdot_diff_bounds :
                 ∀ q, q ∈ inputs.active → ∀ k, ¬ masked q k →
                   (dotDiffLo q k : Real) ≤
@@ -849,22 +850,22 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   hlo1 hhi1 hlo2 hhi2
               have hspecBase := hspec (splitDimsDiffBase q k)
               have hspecRef := hspec (splitDimsDiffRefined q k)
+              have hspecBase_bounds :
+                  (dotDiffLoBase q k : Real) ≤
+                      dotProduct (fun d => qRealOfInputs inputs q d)
+                        (fun d => kRealOfInputs inputs (inputs.prev q) d -
+                          kRealOfInputs inputs k d) ∧
+                    dotProduct (fun d => qRealOfInputs inputs q d)
+                        (fun d => kRealOfInputs inputs (inputs.prev q) d -
+                          kRealOfInputs inputs k d) ≤ (dotDiffHiBase q k : Real) := by
+                refine ⟨?_, ?_⟩
+                · simpa [dotDiffLoBase, dotDiffRowTasksBase, hq, hmask, Task.spawn,
+                    Array.getElem_ofFn] using hspecBase.1
+                · simpa [dotDiffHiBase, dotDiffRowTasksBase, hq, hmask, Task.spawn,
+                    Array.getElem_ofFn] using hspecBase.2
               cases hkey : worstKey q with
               | none =>
-                  have hlow' :
-                      (dotDiffLo q k : Real) ≤
-                          dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                              kRealOfInputs inputs k d) := by
-                    simpa [dotDiffLo, hkey, hq, dotDiffLoBase, dotDiffRowTasksBase, hmask,
-                      Task.spawn, Array.getElem_ofFn] using hspecBase.1
-                  have hhigh' :
-                      dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                              kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
-                    simpa [dotDiffHi, hkey, hq, dotDiffHiBase, dotDiffRowTasksBase, hmask,
-                      Task.spawn, Array.getElem_ofFn] using hspecBase.2
-                  exact ⟨hlow', hhigh'⟩
+                  simpa [dotDiffLo, dotDiffHi, hkey] using hspecBase_bounds
               | some k' =>
                   by_cases hk : k = k'
                   · have hlow' :
@@ -884,16 +885,13 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                           dotProduct (fun d => qRealOfInputs inputs q d)
                             (fun d => kRealOfInputs inputs (inputs.prev q) d -
                               kRealOfInputs inputs k d) := by
-                      simpa [dotDiffLo, hkey, hk, hq, dotDiffLoBase, dotDiffRowTasksBase, hmask,
-                        Task.spawn, Array.getElem_ofFn] using hspecBase.1
+                      simpa [dotDiffLo, hkey, hk] using hspecBase_bounds.1
                     have hhigh' :
                         dotProduct (fun d => qRealOfInputs inputs q d)
                               (fun d => kRealOfInputs inputs (inputs.prev q) d -
                                 kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
-                      simpa [dotDiffHi, hkey, hk, hq, dotDiffHiBase, dotDiffRowTasksBase, hmask,
-                        Task.spawn, Array.getElem_ofFn] using hspecBase.2
+                      simpa [dotDiffHi, hkey, hk] using hspecBase_bounds.2
                     exact ⟨hlow', hhigh'⟩
-            let scoresReal := scoresRealOfInputs inputs
             have hmarginAt_le :
                 ∀ q, q ∈ inputs.active → ∀ k, k ≠ inputs.prev q →
                   marginAt q ≤ scoreGapLo q k := by
@@ -940,11 +938,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 · have hscore_prev : (scoreLoPrev q : Real) ≤ scoresReal q (inputs.prev q) := by
                     have hprev_bounds := hscore_bounds q (inputs.prev q)
                     simpa [scoreLoPrev] using hprev_bounds.1
-                  have hmask' : inputs.maskCausal = true ∧ q < k := by
-                    simpa [masked] using hmask
-                  have hle : ¬ k ≤ q := not_le_of_gt hmask'.2
-                  have hscore_k : scoresReal q k = (inputs.maskValue : Real) := by
-                    simp [scoresReal, scoresRealOfInputs, hmask'.1, hle]
+                  have hscore_k : scoresReal q k = (inputs.maskValue : Real) :=
+                    scoresReal_eq_masked q k hmask
                   calc
                     scoresReal q k + (scoreGapLo q k : Real)
                         = (inputs.maskValue : Real) + (scoreLoPrev q : Real) -
@@ -976,25 +971,14 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                         (inputs.scale : Real) *
                           dotProduct (fun d => qRealOfInputs inputs q d)
                             (fun d => kRealOfInputs inputs (inputs.prev q) d) := by
-                    by_cases hcausal : inputs.maskCausal
-                    · have hlt_prev : ¬ q < inputs.prev q := by
-                        intro hlt
-                        exact hprevmask (by exact ⟨hcausal, hlt⟩)
-                      have hle_prev : inputs.prev q ≤ q := le_of_not_gt hlt_prev
-                      simp [scoresReal, scoresRealOfInputs, hcausal, hle_prev]
-                    · simp [scoresReal, scoresRealOfInputs, hcausal]
+                    simpa using
+                      (scoresReal_eq_base_of_not_masked q (inputs.prev q) hprevmask)
                   have hscore_k :
                       scoresReal q k =
                         (inputs.scale : Real) *
                           dotProduct (fun d => qRealOfInputs inputs q d)
                             (fun d => kRealOfInputs inputs k d) := by
-                    by_cases hcausal : inputs.maskCausal
-                    · have hlt : ¬ q < k := by
-                        intro hlt
-                        exact hmask (by exact ⟨hcausal, hlt⟩)
-                      have hle : k ≤ q := le_of_not_gt hlt
-                      simp [scoresReal, scoresRealOfInputs, hcausal, hle]
-                    · simp [scoresReal, scoresRealOfInputs, hcausal]
+                    simpa using (scoresReal_eq_base_of_not_masked q k hmask)
                   have hdot_sub :
                       dotProduct (fun d => qRealOfInputs inputs q d)
                           (fun d => kRealOfInputs inputs (inputs.prev q) d -
@@ -1004,7 +988,11 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                           dotProduct (fun d => qRealOfInputs inputs q d)
                             (fun d => kRealOfInputs inputs k d) := by
                     classical
-                    simp [dotProduct, mul_sub, Finset.sum_sub_distrib]
+                    simpa using
+                      (Nfp.Sound.Linear.dotProduct_sub_right
+                        (x := fun d => qRealOfInputs inputs q d)
+                        (y := fun d => kRealOfInputs inputs (inputs.prev q) d)
+                        (z := fun d => kRealOfInputs inputs k d))
                   have hscore_diff :
                       scoresReal q (inputs.prev q) - scoresReal q k =
                         (inputs.scale : Real) *
@@ -1405,13 +1393,28 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 oneHot_bounds_at := oneHot_bounds_at
                 value_bounds := hvals_bounds }
           · have : False := by
-              simp [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive] at hcore
+              have hnone :=
+                buildInductionCertFromHeadCore?_eq_none_of_not_active
+                  (inputs := inputs) hEps hSqrt hmodel hactive
+              have hcore' :
+                  (none : Option (InductionHeadCert seq)) = some c := by
+                exact hnone.symm.trans hcore
+              cases hcore'
             exact this.elim
       · have : False := by
-          simp [buildInductionCertFromHeadCore?, hEps, hSqrt] at hcore
+          have hnone :=
+            buildInductionCertFromHeadCore?_eq_none_of_not_sqrt (inputs := inputs) hEps hSqrt
+          have hcore' :
+              (none : Option (InductionHeadCert seq)) = some c := by
+            exact hnone.symm.trans hcore
+          cases hcore'
         exact this.elim
     · have : False := by
-        simp [buildInductionCertFromHeadCore?, hEps] at hcore
+        have hnone := buildInductionCertFromHeadCore?_eq_none_of_not_eps (inputs := inputs) hEps
+        have hcore' :
+            (none : Option (InductionHeadCert seq)) = some c := by
+          exact hnone.symm.trans hcore
+        cases hcore'
       exact this.elim
 end Sound
 end Nfp

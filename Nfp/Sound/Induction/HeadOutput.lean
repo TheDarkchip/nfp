@@ -1,5 +1,6 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+import Aesop
 import Nfp.Sound.Induction.CoreSound
 
 /-!
@@ -135,19 +136,35 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                     (hln j).1
                   have hhi : ∀ j, lnRealOfInputs inputs q j ≤ (lnHi q j : Real) := fun j =>
                     (hln j).2
-                  have hlow :=
-                    dotIntervalLower_le_dotProduct_real (v := fun j => inputs.wv j d)
-                      (lo := lnLo q) (hi := lnHi q) (x := lnRealOfInputs inputs q) hlo hhi
-                  have hhigh :=
-                    dotProduct_le_dotIntervalUpper_real (v := fun j => inputs.wv j d)
-                      (lo := lnLo q) (hi := lnHi q) (x := lnRealOfInputs inputs q) hlo hhi
+                  have hlow' :
+                      dotIntervalLower (fun j => inputs.wv j d) (lnLo q) (lnHi q) +
+                          (inputs.bv d : Real) ≤
+                        dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) +
+                          (inputs.bv d : Real) :=
+                    by
+                      simpa using
+                        dotIntervalLower_le_dotProduct_real_add
+                          (v := fun j => inputs.wv j d)
+                          (lo := lnLo q) (hi := lnHi q)
+                          (x := lnRealOfInputs inputs q) (b := (inputs.bv d : Real)) hlo hhi
+                  have hhigh' :
+                      dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) +
+                          (inputs.bv d : Real) ≤
+                        dotIntervalUpper (fun j => inputs.wv j d) (lnLo q) (lnHi q) +
+                          (inputs.bv d : Real) :=
+                    by
+                      simpa using
+                        dotProduct_le_dotIntervalUpper_real_add
+                          (v := fun j => inputs.wv j d)
+                          (lo := lnLo q) (hi := lnHi q)
+                          (x := lnRealOfInputs inputs q) (b := (inputs.bv d : Real)) hlo hhi
                   constructor
                   · simpa [vLo, vRealOfInputs, Bounds.cacheBound2_apply,
                       Bounds.dotIntervalLowerCachedRat_eq, ratToReal_add] using
-                      add_le_add_right hlow (inputs.bv d : Real)
+                      hlow'
                   · simpa [vHi, vRealOfInputs, Bounds.cacheBound2_apply,
                       Bounds.dotIntervalUpperCachedRat_eq, ratToReal_add] using
-                      add_le_add_right hhigh (inputs.bv d : Real)
+                      hhigh'
                 have hhead_bounds :
                     ∀ k i, (headValueLo k i : Real) ≤ headValueRealOfInputs inputs k i ∧
                       headValueRealOfInputs inputs k i ≤ (headValueHi k i : Real) := by
@@ -182,22 +199,22 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       (loVal i : Real) (hiVal i : Real)
                       (fun k => headValueRealOfInputs inputs k i) := by
                   intro i
+                  have hloVal : ∀ k, loVal i ≤ headValueLo k i := by
+                    intro k
+                    dsimp [loVal]
+                    refine (Finset.inf'_le_iff (s := univ) (H := huniv)
+                      (f := fun k => headValueLo k i) (a := headValueLo k i)).2 ?_
+                    exact ⟨k, by simp [univ], le_rfl⟩
+                  have hhiVal : ∀ k, headValueHi k i ≤ hiVal i := by
+                    intro k
+                    dsimp [hiVal]
+                    refine (Finset.le_sup'_iff (s := univ) (H := huniv)
+                      (f := fun k => headValueHi k i) (a := headValueHi k i)).2 ?_
+                    exact ⟨k, ⟨by simp [univ], le_rfl⟩⟩
                   refine { lo_le_hi := ?_, lo_le := ?_, le_hi := ?_ }
                   · rcases (Finset.univ_nonempty : univ.Nonempty) with ⟨k0, hk0⟩
-                    have hmem0 : k0 ∈ univ := hk0
-                    have hloRat : loVal i ≤ headValueLo k0 i := by
-                      change loVal i ≤ headValueLo k0 i
-                      dsimp [loVal]
-                      refine (Finset.inf'_le_iff (s := univ) (H := huniv)
-                        (f := fun k => headValueLo k i) (a := headValueLo k0 i)).2 ?_
-                      refine ⟨k0, hmem0, ?_⟩
-                      exact le_rfl
-                    have hhiRat : headValueHi k0 i ≤ hiVal i := by
-                      change headValueHi k0 i ≤ hiVal i
-                      dsimp [hiVal]
-                      refine (Finset.le_sup'_iff (s := univ) (H := huniv)
-                        (f := fun k => headValueHi k i) (a := headValueHi k0 i)).2 ?_
-                      exact ⟨k0, ⟨hmem0, le_rfl⟩⟩
+                    have hloRat : loVal i ≤ headValueLo k0 i := hloVal k0
+                    have hhiRat : headValueHi k0 i ≤ hiVal i := hhiVal k0
                     have hbounds := hhead_bounds k0 i
                     have hreal : (loVal i : Real) ≤ (hiVal i : Real) := by
                       refine le_trans (ratToReal_le_of_le hloRat) ?_
@@ -205,24 +222,11 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       exact le_trans hbounds.2 (ratToReal_le_of_le hhiRat)
                     exact hreal
                   · intro k
-                    have hmem : k ∈ univ := by simp [univ]
-                    have hloRat : loVal i ≤ headValueLo k i := by
-                      change loVal i ≤ headValueLo k i
-                      dsimp [loVal]
-                      refine (Finset.inf'_le_iff (s := univ) (H := huniv)
-                        (f := fun k => headValueLo k i) (a := headValueLo k i)).2 ?_
-                      refine ⟨k, hmem, ?_⟩
-                      exact le_rfl
+                    have hloRat : loVal i ≤ headValueLo k i := hloVal k
                     have hbounds := hhead_bounds k i
                     exact (ratToReal_le_of_le hloRat) |>.trans hbounds.1
                   · intro k
-                    have hmem : k ∈ univ := by simp [univ]
-                    have hhiRat : headValueHi k i ≤ hiVal i := by
-                      change headValueHi k i ≤ hiVal i
-                      dsimp [hiVal]
-                      refine (Finset.le_sup'_iff (s := univ) (H := huniv)
-                        (f := fun k => headValueHi k i) (a := headValueHi k i)).2 ?_
-                      exact ⟨k, ⟨hmem, le_rfl⟩⟩
+                    have hhiRat : headValueHi k i ≤ hiVal i := hhiVal k
                     have hbounds := hhead_bounds k i
                     exact hbounds.2.trans
                       (ratToReal_le_of_le hhiRat)

@@ -791,9 +791,7 @@ theorem headValueValsLo_spec {seq dModel dHead : Nat}
 def headValueValsLoCommonDenArray {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) : Array Rat :=
-  let dirHead := headValueDirHead inputs
-  Array.ofFn (fun k =>
-    Bounds.dotIntervalLowerCommonDen dirHead (vLo k) (vHi k))
+  headValueValsLoArray inputs vLo vHi
 
 /-- Unfold `headValueValsLoCommonDenArray` to its `Array.ofFn` definition. -/
 theorem headValueValsLoCommonDenArray_spec {seq dModel dHead : Nat}
@@ -867,9 +865,7 @@ theorem headValueValsHi_spec {seq dModel dHead : Nat}
 def headValueValsHiCommonDenArray {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) : Array Rat :=
-  let dirHead := headValueDirHead inputs
-  Array.ofFn (fun k =>
-    Bounds.dotIntervalUpperCommonDen dirHead (vLo k) (vHi k))
+  headValueValsHiArray inputs vLo vHi
 
 /-- Unfold `headValueValsHiCommonDenArray` to its `Array.ofFn` definition. -/
 theorem headValueValsHiCommonDenArray_spec {seq dModel dHead : Nat}

@@ -21,7 +21,6 @@ namespace Bounds
 
 open scoped BigOperators
 
-
 /-- Real-valued output of a transformer layer. -/
 noncomputable def transformerLayerReal {seq dModel dHead numHeads hidden : Nat} [NeZero seq]
     (eps : Rat) (layer : Model.Gpt2LayerSlice dModel hidden)
@@ -69,10 +68,7 @@ def transformerLayerBoundsPos {seq dModel dHead numHeads hidden : Nat} [NeZero s
     (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
   let positions := (Finset.univ : Finset (Fin seq))
   let hpos : positions.Nonempty := by
-    classical
-    have h : Nonempty (Fin seq) :=
-      ⟨⟨0, Nat.pos_of_ne_zero (NeZero.ne (n := seq))⟩⟩
-    exact (Finset.univ_nonempty_iff.mpr h)
+    simp [positions]
   let loCached := cacheBound2 lo
   let hiCached := cacheBound2 hi
   let base := intervalBoundsOn positions hpos loCached hiCached
@@ -109,10 +105,7 @@ theorem transformerLayerBoundsPos_spec {seq dModel dHead numHeads hidden : Nat} 
   intro bounds q i
   let positions := (Finset.univ : Finset (Fin seq))
   have hpos : positions.Nonempty := by
-    classical
-    have h : Nonempty (Fin seq) :=
-      ⟨⟨0, Nat.pos_of_ne_zero (NeZero.ne (n := seq))⟩⟩
-    exact (Finset.univ_nonempty_iff.mpr h)
+    simp [positions]
   let loCached := cacheBound2 lo
   let hiCached := cacheBound2 hi
   have hloCached : ∀ q i, (loCached q i : Real) ≤ x q i := by
@@ -147,11 +140,21 @@ theorem transformerLayerBoundsPos_spec {seq dModel dHead numHeads hidden : Nat} 
       layer.attnBias scores x q j
   have yLo : ∀ j, (loCached q j : Real) + (attn.1 j : Real) ≤ y j := by
     intro j
-    have hlow := add_le_add (hloCached q j) (hattn j).1
+    have hlow :
+        (loCached q j : Real) + (attn.1 j : Real) ≤
+          x q j +
+            attentionOutputReal eps layer.ln1Gamma layer.ln1Beta heads
+              layer.attnBias scores x q j := by
+      exact add_le_add (hloCached q j) (hattn j).1
     simpa [y] using hlow
   have yHi : ∀ j, y j ≤ (hiCached q j : Real) + (attn.2 j : Real) := by
     intro j
-    have hhigh := add_le_add (hhiCached q j) (hattn j).2
+    have hhigh :
+        x q j +
+            attentionOutputReal eps layer.ln1Gamma layer.ln1Beta heads
+              layer.attnBias scores x q j ≤
+          (hiCached q j : Real) + (attn.2 j : Real) := by
+      exact add_le_add (hhiCached q j) (hattn j).2
     simpa [y] using hhigh
   let yLoCached := cacheBound2 (fun q i => loCached q i + attnLo i)
   let yHiCached := cacheBound2 (fun q i => hiCached q i + attnHi i)

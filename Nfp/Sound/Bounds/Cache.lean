@@ -16,9 +16,7 @@ namespace Bounds
 def cacheBound {n : Nat} (f : Fin n → Rat) : Fin n → Rat :=
   let data : Thunk (Array Rat) := Thunk.mk (fun _ => Array.ofFn f)
   fun i => (Thunk.get data)[i.1]'(by
-    have hsize : (Thunk.get data).size = n := by
-      simp [Thunk.get, data]
-    simp [hsize])
+    simp [Thunk.get, data, i.isLt])
 
 /-- `cacheBound` preserves pointwise values. -/
 theorem cacheBound_apply {n : Nat} (f : Fin n → Rat) (i : Fin n) :
@@ -44,10 +42,8 @@ def cacheBoundTask {n : Nat} (f : Fin n → Rat) : Fin n → Rat :=
     Array.ofFn (fun i : Fin n =>
       Task.spawn (fun _ => f i))
   fun i =>
-    let hsize : tasks.size = n := by
-      simp [tasks]
     let t := tasks[i.1]'(by
-      simp [hsize, i.isLt])
+      simp [tasks, i.isLt])
     t.get
 
 /-- `cacheBoundTask` preserves pointwise values. -/
@@ -61,17 +57,12 @@ def cacheBound2 {m n : Nat} (f : Fin m → Fin n → Rat) : Fin m → Fin n → 
   let data : Thunk (Array (Thunk (Array Rat))) := Thunk.mk (fun _ =>
     Array.ofFn (fun q => Thunk.mk (fun _ => Array.ofFn (f q))))
   fun q i =>
-    let rowThunk := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
+    let rows := Thunk.get data
+    let rowThunk := rows[q.1]'(by
+      simp [rows, Thunk.get, data, q.isLt])
     let row := Thunk.get rowThunk
     row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowThunk, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
+      simp [row, rowThunk, rows, Thunk.get, data, i.isLt])
 
 /-- `cacheBound2` preserves pointwise values. -/
 theorem cacheBound2_apply {m n : Nat} (f : Fin m → Fin n → Rat) (q : Fin m) (i : Fin n) :
@@ -105,9 +96,7 @@ def cacheBound2TaskElem {m n : Nat} (f : Fin m → Fin n → Rat) : Fin m → Fi
     let row := (rowTasks[q.1]'(by
       simp [rowTasks, q.isLt]))
     let t := row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowTasks]
-      simp [hsize, i.isLt])
+      simp [row, rowTasks, i.isLt])
     t.get
 
 /-- `cacheBound2TaskElem` preserves pointwise values. -/
@@ -125,29 +114,19 @@ def cacheBoundPair2 {m n : Nat}
       let row := f q
       (Array.ofFn row.1, Array.ofFn row.2)))
   let lo : Fin m → Fin n → Rat := fun q i =>
-    let row := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
+    let rows := Thunk.get data
+    let row := rows[q.1]'(by
+      simp [rows, Thunk.get, data, q.isLt])
     let loRow := row.1
     loRow[i.1]'(by
-      have hsize : loRow.size = n := by
-        simp [loRow, row, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
+      simp [loRow, row, rows, Thunk.get, data, i.isLt])
   let hi : Fin m → Fin n → Rat := fun q i =>
-    let row := (Thunk.get data)[q.1]'(by
-      have hsize : (Thunk.get data).size = m := by
-        simp [Thunk.get, data]
-      rw [hsize]
-      exact q.isLt)
+    let rows := Thunk.get data
+    let row := rows[q.1]'(by
+      simp [rows, Thunk.get, data, q.isLt])
     let hiRow := row.2
     hiRow[i.1]'(by
-      have hsize : hiRow.size = n := by
-        simp [hiRow, row, Thunk.get, data, Array.getElem_ofFn]
-      rw [hsize]
-      exact i.isLt)
+      simp [hiRow, row, rows, Thunk.get, data, i.isLt])
   (lo, hi)
 
 /-- `cacheBoundPair2` preserves pointwise values (first component). -/
@@ -210,17 +189,13 @@ def cacheBoundPair2TaskElem {m n : Nat} (f : Fin m → Fin n → Rat × Rat) :
     let row := (rowTasks[q.1]'(by
       simp [rowTasks, q.isLt]))
     let t := row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowTasks]
-      simp [hsize, i.isLt])
+      simp [row, rowTasks, i.isLt])
     (t.get).1
   let hi : Fin m → Fin n → Rat := fun q i =>
     let row := (rowTasks[q.1]'(by
       simp [rowTasks, q.isLt]))
     let t := row[i.1]'(by
-      have hsize : row.size = n := by
-        simp [row, rowTasks]
-      simp [hsize, i.isLt])
+      simp [row, rowTasks, i.isLt])
     (t.get).2
   (lo, hi)
 

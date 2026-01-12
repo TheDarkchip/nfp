@@ -100,6 +100,24 @@ theorem dotFin_eq_dotProduct (n : Nat) (x y : Fin n → Rat) :
     dotFin n x y = dotProduct x y := by
   simp [dotFin_def, sumFin_eq_sum_univ, dotProduct]
 
+/-- Right-distribute dot products over subtraction (Real-valued). -/
+theorem dotProduct_sub_right {n : Nat} (x y z : Fin n → Real) :
+    dotProduct x (fun i => y i - z i) = dotProduct x y - dotProduct x z := by
+  classical
+  simp only [dotProduct, mul_sub, Finset.sum_sub_distrib]
+
+/-- Right-distribute dot products over addition (Real-valued). -/
+theorem dotProduct_add_right {n : Nat} (x y z : Fin n → Real) :
+    dotProduct x (fun i => y i + z i) = dotProduct x y + dotProduct x z := by
+  classical
+  simp only [dotProduct, mul_add, Finset.sum_add_distrib]
+
+/-- Pull a constant factor out of the right-hand side of a dot product. -/
+theorem dotProduct_mul_right {n : Nat} (x y : Fin n → Real) (a : Real) :
+    dotProduct x (fun i => y i * a) = dotProduct x y * a := by
+  classical
+  simp only [dotProduct, mul_assoc, Finset.sum_mul]
+
 end Linear
 
 end Sound

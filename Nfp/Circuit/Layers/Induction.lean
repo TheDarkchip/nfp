@@ -362,13 +362,14 @@ theorem inductionSpecApproxOn_of_oneHotApprox_valueRange
           simp [add_assoc]
       _ ≤ vals (prev q) + (∑ k ∈ others, weights q k) * (hi - lo) := by
           have h :=
-            add_le_add_right hsum_prev_le ((∑ k ∈ others, weights q k) * (hi - lo))
+            add_le_add_right hsum_prev_le
+              ((∑ k ∈ others, weights q k) * (hi - lo))
           simpa [add_comm, add_left_comm, add_assoc] using h
   have hupper :
       dotProduct (weights q) vals ≤ vals (prev q) + ε * (hi - lo) := by
     have hmul :
-        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) :=
-      mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
+        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) := by
+      exact mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
     calc
       dotProduct (weights q) vals =
           weights q (prev q) * vals (prev q) + ∑ k ∈ others, weights q k * vals k := hout_eq
@@ -378,7 +379,8 @@ theorem inductionSpecApproxOn_of_oneHotApprox_valueRange
           simpa [add_comm, add_left_comm, add_assoc] using h
       _ ≤ vals (prev q) + (∑ k ∈ others, weights q k) * (hi - lo) := hupper_mid
       _ ≤ vals (prev q) + ε * (hi - lo) := by
-          have h := add_le_add_left hmul (vals (prev q))
+          have h :=
+            add_le_add_left hmul (vals (prev q))
           simpa [add_comm, add_left_comm, add_assoc] using h
   have hprev_le :
       vals (prev q) ≤
@@ -420,8 +422,8 @@ theorem inductionSpecApproxOn_of_oneHotApprox_valueRange
       vals (prev q) - ε * (hi - lo) ≤
         vals (prev q) - (∑ k ∈ others, weights q k) * (hi - lo) := by
     have hmul :
-        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) :=
-      mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
+        (∑ k ∈ others, weights q k) * (hi - lo) ≤ ε * (hi - lo) := by
+      exact mul_le_mul_of_nonneg_right hsum_others_le hdiff_nonneg
     exact sub_le_sub_left hmul (vals (prev q))
   have hlow :
       vals (prev q) - ε * (hi - lo) ≤ dotProduct (weights q) vals := by

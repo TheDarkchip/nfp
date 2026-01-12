@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Bounds.LayerNorm
+import Nfp.Sound.Bounds.LayerNorm.MeanVariance
+import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
 
 /-!
 Inverse-standard-deviation bounds for LayerNorm.
@@ -53,6 +54,9 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
     simpa [varRat, variance_def x hne] using h
   have hvarEps_nonneg : 0 ≤ varEpsRat := by
     exact add_nonneg hvarRat_nonneg (le_of_lt heps)
+  have hsqrt_var : (sqrtLower varEpsRat : Real) ≤ Real.sqrt varEps := by
+    have h := sqrtLower_le_real_sqrt (q := varEpsRat) hvarEps_nonneg
+    simpa [hvarEps] using h
   have hsqrt_lower :
       (sqrtLowerBound : Real) ≤ Real.sqrt varEps := by
     have hsqrt_eps : (sqrtLower eps : Real) ≤ Real.sqrt varEps := by
@@ -64,14 +68,6 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
           le_add_of_nonneg_left hvar_nonneg
         simpa [varEps] using hle'
       exact le_trans hsqrt_eps' (Real.sqrt_le_sqrt hle)
-    have hsqrt_var : (sqrtLower varEpsRat : Real) ≤ Real.sqrt varEps := by
-      have hsqrt_var' :
-          (sqrtLower varEpsRat : Real) ≤ Real.sqrt (varEpsRat : Real) := by
-        have h := sqrtLower_le_real_sqrt (q := varEpsRat) hvarEps_nonneg
-        simpa using h
-      have hle : (varEpsRat : Real) ≤ varEps := by
-        simp [hvarEps]
-      exact le_trans hsqrt_var' (Real.sqrt_le_sqrt hle)
     have hmax :
         max (sqrtLower eps : Real) (sqrtLower varEpsRat : Real) ≤ Real.sqrt varEps :=
       (max_le_iff).2 ⟨hsqrt_eps, hsqrt_var⟩
@@ -111,11 +107,12 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
     simpa [invStdLower, ratDivDown, hupper_ne, one_div] using hinv_lower_real
   have hinv_upper : invStd ≤ (invStdUpper : Real) := by
     simpa [invStdUpper, ratDivUp, hlower_ne, one_div] using hinv_upper_real
+  have hbounds : bounds = (invStdLower, invStdUpper) := by
+    simp [bounds, invStdBounds, hne, varRat, varEpsRat, sqrtLowerBound, sqrtUpperBound,
+      invStdLower, invStdUpper]
   constructor
-  · simpa [bounds, invStdBounds, hne, varRat, varEpsRat, sqrtLowerBound, sqrtUpperBound,
-      invStdLower, invStdUpper] using hinv_lower
-  · simpa [bounds, invStdBounds, hne, varRat, varEpsRat, sqrtLowerBound, sqrtUpperBound,
-      invStdLower, invStdUpper] using hinv_upper
+  · simpa [hbounds] using hinv_lower
+  · simpa [hbounds] using hinv_upper
 
 end Bounds
 

@@ -17,7 +17,6 @@ namespace Nfp
 namespace Circuit
 
 open scoped BigOperators
-
 noncomputable section
 
 variable {seq : Nat}

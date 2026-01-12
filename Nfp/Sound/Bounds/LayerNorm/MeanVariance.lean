@@ -105,7 +105,8 @@ theorem abs_le_max_of_bounds {α : Type _} [Ring α] [LinearOrder α] [IsOrdered
   have hright : z ≤ max |a| |b| := by
     have hb : b ≤ |b| := by
       exact le_abs_self b
-    have hb' : b ≤ max |a| |b| := le_trans hb (le_max_right _ _)
+    have hb' : b ≤ max |a| |b| := by
+      exact le_trans hb (le_max_right _ _)
     exact le_trans hhi hb'
   exact (abs_le.mpr ⟨hleft, hright⟩)
 
@@ -123,13 +124,24 @@ theorem meanReal_def {n : Nat} (x : Fin n → Real) (h : n ≠ 0) :
     meanReal x = (∑ i, x i) / n := by
   simp [meanReal, h]
 
+/-- `sumRat` agrees with the real sum after casting. -/
+theorem sumRat_cast {n : Nat} (x : Fin n → Rat) :
+    (sumRat x : Real) = ∑ i, (x i : Real) := by
+  classical
+  simp [sumRat, Rat.cast_sum]
+
+/-- `meanReal` agrees with `meanRat` when `n ≠ 0`. -/
+theorem meanReal_eq_meanRat_of_ne {n : Nat} (x : Fin n → Rat) (hne : n ≠ 0) :
+    meanReal (fun i => (x i : Real)) = (meanRat x : Real) := by
+  classical
+  simp [meanReal, meanRat, sumRat_cast, hne]
+
 /-- `meanReal` agrees with `mean` after casting. -/
 theorem meanReal_eq_meanRat {n : Nat} (x : Fin n → Rat) :
     meanReal (fun i => (x i : Real)) = (meanRat x : Real) := by
   by_cases h : n = 0
   · simp [meanReal, meanRat, h]
-  · classical
-    simp [meanReal, meanRat, sumRat, h, Rat.cast_sum]
+  · simpa [h] using meanReal_eq_meanRat_of_ne (x := x) h
 
 /-- Mean is monotone under pointwise order (real inputs). -/
 theorem meanReal_le_meanReal {n : Nat} (x y : Fin n → Real) (hne : n ≠ 0)
@@ -190,7 +202,7 @@ theorem varianceReal_eq_varianceRat {n : Nat} (x : Fin n → Rat) :
   by_cases h : n = 0
   · simp [varianceReal, varianceRat, h]
   · classical
-    simp [varianceReal, varianceRat, h, meanReal_eq_meanRat, Rat.cast_sum]
+    simp [varianceReal, varianceRat, h, meanReal_eq_meanRat_of_ne (x := x) h, Rat.cast_sum]
 
 /-- Variance is nonnegative when `n ≠ 0`, interpreted in reals. -/
 theorem varianceRat_nonneg_real {n : Nat} (x : Fin n → Rat) (hne : n ≠ 0) :
@@ -203,8 +215,7 @@ theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Rat)
     (hne : n ≠ 0) (hbound : ∀ i, |x i| ≤ (bound : Real)) :
     |meanReal x| ≤ (bound : Real) := by
   classical
-  have hsum_abs :
-      |∑ i : Fin n, x i| ≤ ∑ i : Fin n, |x i| := by
+  have hsum_abs : |∑ i : Fin n, x i| ≤ ∑ i : Fin n, |x i| := by
     simpa using
       (Finset.abs_sum_le_sum_abs
         (f := fun i : Fin n => x i)
@@ -213,15 +224,13 @@ theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Rat)
     refine Finset.sum_le_sum ?_
     intro i _
     exact hbound i
-  have hsum_le : |∑ i : Fin n, x i| ≤ (n : Real) * (bound : Real) := by
+  have hsum_le : |∑ i : Fin n, x i| ≤ (bound : Real) * (n : Real) := by
     have hsum := le_trans hsum_abs hsum_bound
     simpa [Finset.sum_const, Finset.card_univ, mul_comm] using hsum
   have hpos : 0 < (n : Real) := by
     exact (Nat.cast_pos (α := Real)).2 (Nat.pos_of_ne_zero hne)
-  have hsum_le' : |∑ i : Fin n, x i| ≤ (bound : Real) * (n : Real) := by
-    simpa [mul_comm] using hsum_le
   have hdiv : |∑ i : Fin n, x i| / (n : Real) ≤ (bound : Real) := by
-    exact (div_le_iff₀ hpos).2 hsum_le'
+    exact (div_le_iff₀ hpos).2 hsum_le
   have habs_mean :
       |(∑ i : Fin n, x i) / (n : Real)| ≤ (bound : Real) := by
     simpa [abs_div, abs_of_nonneg (le_of_lt hpos)] using hdiv
