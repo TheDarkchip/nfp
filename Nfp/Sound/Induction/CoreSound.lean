@@ -388,20 +388,25 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
               else
                 (0 : Rat)
             let epsAt : Fin seq → Rat := fun q =>
-              if marginAt q < 0 then
-                (1 : Rat)
-              else
-                ratDivUp (seq - 1) (1 + marginAt q)
+              let other := otherKeys q
+              let total :=
+                other.sum (fun k =>
+                  let gap := scoreGapLo q k
+                  if gap < 0 then
+                    (1 : Rat)
+                  else
+                    ratDivUp 1 (1 + gap))
+              min (1 : Rat) total
             let margin : Rat :=
               if h : inputs.active.Nonempty then
                 inputs.active.inf' h marginAt
               else
                 (0 : Rat)
             let eps : Rat :=
-              if margin < 0 then
-                (1 : Rat)
+              if h : inputs.active.Nonempty then
+                inputs.active.sup' h epsAt
               else
-                ratDivUp (seq - 1) (1 + margin)
+                (0 : Rat)
             have hseq : (1 : Nat) ≤ seq :=
               Nat.succ_le_iff.mpr (Nat.pos_of_ne_zero (NeZero.ne seq))
             let dirHeadVec := dirHeadVecOfInputs inputs
@@ -1074,6 +1079,44 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                   _ = (marginAt q : Real) + scoresReal q k := by
                     simp [add_comm]
               exact hstep'.trans hscore'
+            have hepsAt :
+                ∀ q, epsAt q =
+                  min (1 : Rat)
+                    ((otherKeys q).sum (fun k =>
+                      if scoreGapLo q k < 0 then
+                        (1 : Rat)
+                      else
+                        ratDivUp 1 (1 + scoreGapLo q k))) := by
+              intro q
+              rfl
+            have oneHot_bounds_at :
+                ∀ q, q ∈ inputs.active →
+                  Layers.OneHotApproxBoundsOnActive (Val := Real) (epsAt q : Real)
+                    (fun q' => q' = q) inputs.prev weights := by
+              intro q hq
+              exact
+                Sound.oneHot_bounds_at_of_scoreGapLo
+                  (active := inputs.active)
+                  (prev := inputs.prev)
+                  (scoresReal := scoresReal)
+                  (scoreGapLo := scoreGapLo)
+                  (epsAt := epsAt)
+                  (hepsAt := hepsAt)
+                  (hscore_gap_real_at := hscore_gap_real_at)
+                  q hq
+            have hepsAt_le_eps :
+                ∀ q, q ∈ inputs.active → epsAt q ≤ eps := by
+              intro q hq
+              have hle :
+                  epsAt q ≤ inputs.active.sup' hactive epsAt := by
+                exact
+                  (Finset.le_sup'_iff (s := inputs.active) (H := hactive)
+                    (f := epsAt) (a := epsAt q)).2 ⟨q, hq, le_rfl⟩
+              simpa [eps, hactive] using hle
+            have hepsAt_le_eps_real :
+                ∀ q, q ∈ inputs.active → (epsAt q : Real) ≤ (eps : Real) := by
+              intro q hq
+              exact ratToReal_le_of_le (hepsAt_le_eps q hq)
             have hsoftmax_bounds :
                 Layers.SoftmaxMarginBoundsOn (Val := Real) (eps : Real) (margin : Real)
                   (fun q => q ∈ inputs.active) inputs.prev scoresReal weights := by
@@ -1093,190 +1136,18 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 simpa [weights] using
                   (Circuit.softmax_sum_one (scores := scoresReal q))
               · intro q hq
-                have hsum_others_le : (∑ k ∈ others q, weights q k) ≤ (eps : Real) := by
-                  by_cases hneg : margin < 0
-                  · have heps : (eps : Real) = 1 := by
-                      simp [eps, hneg]
-                    have hsubset : others q ⊆ (Finset.univ : Finset (Fin seq)) := by
-                      intro k hk
-                      simp
-                    have hnonneg :
-                        ∀ k ∈ (Finset.univ : Finset (Fin seq)), 0 ≤ weights q k := by
-                      intro k _
-                      simpa [weights] using
-                        (Circuit.softmax_nonneg (scores := scoresReal q) k)
-                    have hsum_le :
-                        (∑ k ∈ others q, weights q k) ≤
-                          ∑ k ∈ (Finset.univ : Finset (Fin seq)), weights q k :=
-                      Finset.sum_le_sum_of_subset_of_nonneg hsubset (by
-                        intro k hk _; exact hnonneg k hk)
-                    have hsum_one : (∑ k, weights q k) = 1 := by
-                      simpa [weights] using
-                        (Circuit.softmax_sum_one (scores := scoresReal q))
-                    simpa [heps, hsum_one] using hsum_le
-                  · have hnonneg : 0 ≤ margin := le_of_not_gt hneg
-                    have hnonneg_real : 0 ≤ (margin : Real) := by
-                      exact ratToReal_nonneg_of_nonneg hnonneg
-                    have hbound :
-                        ∀ k ∈ others q,
-                          weights q k ≤ (1 + (margin : Real))⁻¹ := by
-                      intro k hk
-                      have hkne : k ≠ inputs.prev q := (Finset.mem_erase.mp hk).1
-                      have hscore := hscore_margin_real q hq k hkne
-                      simpa [weights] using
-                        (Circuit.softmax_other_le_inv_one_add (scores := scoresReal q)
-                          (prev := inputs.prev q) (k := k) (m := (margin : Real))
-                          hnonneg_real hscore)
-                    have hsum_le :
-                        (∑ k ∈ others q, weights q k) ≤
-                          ∑ k ∈ others q, (1 + (margin : Real))⁻¹ :=
-                      Finset.sum_le_sum hbound
-                    have hsum_const :
-                        (∑ k ∈ others q, (1 + (margin : Real))⁻¹) =
-                          (others q).card * (1 + (margin : Real))⁻¹ := by
-                      simp
-                    have hcard : (others q).card = seq - 1 := by
-                      simp [others, Finset.card_erase_of_mem]
-                    have hsum_le' :
-                        (∑ k ∈ others q, weights q k) ≤
-                          (seq - 1 : Real) * (1 + (margin : Real))⁻¹ := by
-                      simpa [hcard, Nat.cast_sub hseq, Nat.cast_one] using
-                        (hsum_le.trans_eq hsum_const)
-                    have hpos : (0 : Rat) < 1 + margin := by
-                      have hone : (0 : Rat) < 1 := by
-                        exact zero_lt_one
-                      have hle : (1 : Rat) ≤ 1 + margin := by
-                        exact le_add_of_nonneg_right hnonneg
-                      exact lt_of_lt_of_le hone hle
-                    have hden : (1 + margin) ≠ 0 := by
-                      exact ne_of_gt hpos
-                    have hrat' := ratDivUp_ge_real (seq - 1) (1 + margin) hden
-                    have heps :
-                        (seq - 1 : Real) * (1 + (margin : Real))⁻¹ ≤ (eps : Real) := by
-                      simpa [eps, hneg, ratToReal, Rat.cast_div, Rat.cast_add,
-                        Rat.cast_natCast, div_eq_mul_inv] using hrat'
-                    exact le_trans hsum_le' heps
-                have hsum_eq :
-                    weights q (inputs.prev q) + ∑ k ∈ others q, weights q k = 1 := by
-                  have hsum' :
-                      weights q (inputs.prev q) + ∑ k ∈ others q, weights q k =
-                        ∑ k, weights q k := by
-                    simp [others]
-                  have hsum_one : (∑ k, weights q k) = 1 := by
-                    simpa [weights] using
-                      (Circuit.softmax_sum_one (scores := scoresReal q))
-                  calc
-                    weights q (inputs.prev q) + ∑ k ∈ others q, weights q k =
-                        ∑ k, weights q k := hsum'
-                    _ = 1 := hsum_one
-                have hsum_le' :
-                    weights q (inputs.prev q) + ∑ k ∈ others q, weights q k ≤
-                      weights q (inputs.prev q) + (eps : Real) := by
-                  simpa [add_comm, add_left_comm, add_assoc] using
-                    (add_le_add_left hsum_others_le (weights q (inputs.prev q)))
-                have hprev :
-                    1 ≤ weights q (inputs.prev q) + (eps : Real) := by
-                  simpa [hsum_eq] using hsum_le'
-                exact hprev
-              · intro q hq k hk
-                have hsum_others_le : (∑ j ∈ others q, weights q j) ≤ (eps : Real) := by
-                  by_cases hneg : margin < 0
-                  · have heps : (eps : Real) = 1 := by
-                      simp [eps, hneg]
-                    have hsubset : others q ⊆ (Finset.univ : Finset (Fin seq)) := by
-                      intro j hj
-                      simp
-                    have hnonneg :
-                        ∀ j ∈ (Finset.univ : Finset (Fin seq)), 0 ≤ weights q j := by
-                      intro j _
-                      simpa [weights] using
-                        (Circuit.softmax_nonneg (scores := scoresReal q) j)
-                    have hsum_le :
-                        (∑ j ∈ others q, weights q j) ≤
-                          ∑ j ∈ (Finset.univ : Finset (Fin seq)), weights q j :=
-                      Finset.sum_le_sum_of_subset_of_nonneg hsubset (by
-                        intro j hj _; exact hnonneg j hj)
-                    have hsum_one : (∑ j, weights q j) = 1 := by
-                      simpa [weights] using
-                        (Circuit.softmax_sum_one (scores := scoresReal q))
-                    simpa [heps, hsum_one] using hsum_le
-                  · have hnonneg : 0 ≤ margin := le_of_not_gt hneg
-                    have hnonneg_real : 0 ≤ (margin : Real) := by
-                      exact ratToReal_nonneg_of_nonneg hnonneg
-                    have hbound :
-                        ∀ j ∈ others q,
-                          weights q j ≤ (1 + (margin : Real))⁻¹ := by
-                      intro j hj
-                      have hjne : j ≠ inputs.prev q := (Finset.mem_erase.mp hj).1
-                      have hscore := hscore_margin_real q hq j hjne
-                      simpa [weights] using
-                        (Circuit.softmax_other_le_inv_one_add (scores := scoresReal q)
-                          (prev := inputs.prev q) (k := j) (m := (margin : Real))
-                          hnonneg_real hscore)
-                    have hsum_le :
-                        (∑ j ∈ others q, weights q j) ≤
-                          ∑ j ∈ others q, (1 + (margin : Real))⁻¹ :=
-                      Finset.sum_le_sum hbound
-                    have hsum_const :
-                        (∑ j ∈ others q, (1 + (margin : Real))⁻¹) =
-                          (others q).card * (1 + (margin : Real))⁻¹ := by
-                      simp
-                    have hcard : (others q).card = seq - 1 := by
-                      simp [others, Finset.card_erase_of_mem]
-                    have hsum_le' :
-                        (∑ j ∈ others q, weights q j) ≤
-                          (seq - 1 : Real) * (1 + (margin : Real))⁻¹ := by
-                      simpa [hcard, Nat.cast_sub hseq, Nat.cast_one] using
-                        (hsum_le.trans_eq hsum_const)
-                    have hpos : (0 : Rat) < 1 + margin := by
-                      have hone : (0 : Rat) < 1 := by
-                        exact zero_lt_one
-                      have hle : (1 : Rat) ≤ 1 + margin := by
-                        exact le_add_of_nonneg_right hnonneg
-                      exact lt_of_lt_of_le hone hle
-                    have hden : (1 + margin) ≠ 0 := by
-                      exact ne_of_gt hpos
-                    have hrat' := ratDivUp_ge_real (seq - 1) (1 + margin) hden
-                    have heps :
-                        (seq - 1 : Real) * (1 + (margin : Real))⁻¹ ≤ (eps : Real) := by
-                      simpa [eps, hneg, ratToReal, Rat.cast_div, Rat.cast_add,
-                        Rat.cast_natCast, div_eq_mul_inv] using hrat'
-                    exact le_trans hsum_le' heps
-                have hk' : k ∈ others q := by
-                  simp [others, hk]
-                have hnonneg :
-                    ∀ j ∈ others q, 0 ≤ weights q j := by
-                  intro j _
-                  simpa [weights] using
-                    (Circuit.softmax_nonneg (scores := scoresReal q) j)
+                have honehot := oneHot_bounds_at q hq
+                have hprev := honehot.prev_large q rfl
                 have hle :
-                    weights q k ≤ ∑ j ∈ others q, weights q j := by
-                  simpa using (Finset.single_le_sum hnonneg hk')
-                exact hle.trans hsum_others_le
-            have hepsAt :
-                ∀ q, epsAt q =
-                  if marginAt q < 0 then
-                    (1 : Rat)
-                  else
-                    ratDivUp (seq - 1) (1 + marginAt q) := by
-              intro q
-              rfl
-            have oneHot_bounds_at :
-                ∀ q, q ∈ inputs.active →
-                  Layers.OneHotApproxBoundsOnActive (Val := Real) (epsAt q : Real)
-                    (fun q' => q' = q) inputs.prev weights := by
-              intro q hq
-              exact
-                Sound.oneHot_bounds_at_of_marginAt
-                  (active := inputs.active)
-                  (prev := inputs.prev)
-                  (scoresReal := scoresReal)
-                  (marginAt := marginAt)
-                  (epsAt := epsAt)
-                  (hepsAt := hepsAt)
-                  (hseq := hseq)
-                  (hscore_margin_real_at := hscore_margin_real_at)
-                  q hq
+                    weights q (inputs.prev q) + (epsAt q : Real) ≤
+                      weights q (inputs.prev q) + (eps : Real) := by
+                  simpa [add_comm] using
+                    (add_le_add_right (hepsAt_le_eps_real q hq) (weights q (inputs.prev q)))
+                exact hprev.trans hle
+              · intro q hq k hk
+                have honehot := oneHot_bounds_at q hq
+                have hother := honehot.other_le q rfl k hk
+                exact hother.trans (hepsAt_le_eps_real q hq)
             have hdirHead :
                 dirHead = fun d => (dirHeadVecOfInputs inputs).get d := by
               simp [dirHead, dirHeadVec]

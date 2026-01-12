@@ -615,20 +615,25 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
     else
       (0 : Rat)
   let epsAt : Fin seq → Rat := fun q =>
-    if marginAt q < 0 then
-      (1 : Rat)
-    else
-      ratDivUp (seq - 1) (1 + marginAt q)
+    let other := otherKeys q
+    let total :=
+      other.sum (fun k =>
+        let gap := scoreGapLo q k
+        if gap < 0 then
+          (1 : Rat)
+        else
+          ratDivUp 1 (1 + gap))
+    min (1 : Rat) total
   let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
     else
       (0 : Rat)
   let eps : Rat :=
-    if margin < 0 then
-      (1 : Rat)
+    if h : inputs.active.Nonempty then
+      inputs.active.sup' h epsAt
     else
-      ratDivUp (seq - 1) (1 + margin)
+      (0 : Rat)
   let dirHeadVec := dirHeadVecOfInputs inputs
   let dirHead : Fin dHead → Rat := fun d => dirHeadVec.get d
   let wvDir : Fin dModel → Rat :=
