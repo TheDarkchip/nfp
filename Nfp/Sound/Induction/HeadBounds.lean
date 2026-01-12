@@ -42,7 +42,9 @@ private def reduceMaxArray (arr : Array Rat) : Rat :=
   let init := arr.getD 0 (0 : Rat)
   arr.foldl (fun acc x => max acc x) init
 
-private def reduceMinFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
+/-- Reduce a `Fin seq`-indexed function in parallel using chunked tasks. -/
+private def reduceFnTask [NeZero seq] (vals : Fin seq → Rat)
+    (combine : Rat → Rat → Rat) (combineTask : Task Rat → Task Rat → Task Rat) : Task Rat :=
   let n := seq
   if n = 0 then
     Task.pure (0 : Rat)
@@ -63,36 +65,45 @@ private def reduceMinFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
             init
           else
             let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
-            rest.foldl (fun acc i => min acc (vals (idxs.getD i defaultIdx))) init))
+            rest.foldl (fun acc i => combine acc (vals (idxs.getD i defaultIdx))) init))
     let init := chunkTasks.getD 0 defaultTask
     let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
-    rest.foldl (fun acc i => taskMin acc (chunkTasks.getD i defaultTask)) init
+    rest.foldl (fun acc i => combineTask acc (chunkTasks.getD i defaultTask)) init
+
+/-- Unfold `reduceFnTask` to its chunked-task definition. -/
+theorem reduceFnTask_spec [NeZero seq] (vals : Fin seq → Rat)
+    (combine : Rat → Rat → Rat) (combineTask : Task Rat → Task Rat → Task Rat) :
+    reduceFnTask (seq := seq) vals combine combineTask =
+      let n := seq
+      if n = 0 then
+        Task.pure (0 : Rat)
+      else
+        let chunkSize : Nat := 256
+        let chunks : Nat := (n + chunkSize - 1) / chunkSize
+        let hpos : 0 < seq := Nat.pos_of_ne_zero (by simpa using (NeZero.ne (n := seq)))
+        let defaultIdx : Fin seq := ⟨0, hpos⟩
+        let idxs : Array (Fin seq) := Array.ofFn (fun i : Fin seq => i)
+        let defaultTask : Task Rat := Task.pure (0 : Rat)
+        let chunkTasks : Array (Task Rat) :=
+          Array.ofFn (fun c : Fin chunks =>
+            Task.spawn (fun _ =>
+              let start := c.val * chunkSize
+              let stop := Nat.min n (start + chunkSize)
+              let init := vals (idxs.getD start defaultIdx)
+              if stop ≤ start + 1 then
+                init
+              else
+                let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
+                rest.foldl (fun acc i => combine acc (vals (idxs.getD i defaultIdx))) init))
+        let init := chunkTasks.getD 0 defaultTask
+        let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
+        rest.foldl (fun acc i => combineTask acc (chunkTasks.getD i defaultTask)) init := rfl
+
+private def reduceMinFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
+  reduceFnTask vals min taskMin
 
 private def reduceMaxFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
-  let n := seq
-  if n = 0 then
-    Task.pure (0 : Rat)
-  else
-    let chunkSize : Nat := 256
-    let chunks : Nat := (n + chunkSize - 1) / chunkSize
-    let hpos : 0 < seq := Nat.pos_of_ne_zero (by simpa using (NeZero.ne (n := seq)))
-    let defaultIdx : Fin seq := ⟨0, hpos⟩
-    let idxs : Array (Fin seq) := Array.ofFn (fun i : Fin seq => i)
-    let defaultTask : Task Rat := Task.pure (0 : Rat)
-    let chunkTasks : Array (Task Rat) :=
-      Array.ofFn (fun c : Fin chunks =>
-        Task.spawn (fun _ =>
-          let start := c.val * chunkSize
-          let stop := Nat.min n (start + chunkSize)
-          let init := vals (idxs.getD start defaultIdx)
-          if stop ≤ start + 1 then
-            init
-          else
-            let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
-            rest.foldl (fun acc i => max acc (vals (idxs.getD i defaultIdx))) init))
-    let init := chunkTasks.getD 0 defaultTask
-    let rest := (List.range (chunkTasks.size - 1)).map (fun i => i + 1)
-    rest.foldl (fun acc i => taskMax acc (chunkTasks.getD i defaultTask)) init
+  reduceFnTask vals max taskMax
 
 /-- Cached direction head for head inputs. -/
 private def dirHeadVecOfInputs {seq dModel dHead : Nat}
