@@ -1,5 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
+module
+
 import Nfp
 
 /-!
@@ -7,6 +9,8 @@ Axioms used by key definitions/lemmas.
 These `#print axioms` lines help ensure we only depend on a small set of axioms
 (ideally a subset of: `propext`, `Classical.choice`, `Quot.sound`).
 -/
+
+public section
 
 #print axioms Nfp.ProbVec.sum_mass
 #print axioms Nfp.ProbVec.pure
@@ -26,3 +30,5 @@ These `#print axioms` lines help ensure we only depend on a small set of axioms
 
 /-- Entrypoint for the axiom report build target. -/
 def main : IO Unit := pure ()
+
+end

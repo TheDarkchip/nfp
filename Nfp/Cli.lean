@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Cli
+module
+
+public import Cli
 import Nfp.IO
 
 /-!
 Minimal CLI surface for the NFP rewrite.
 -/
+
+public section
 
 open Cli
 
@@ -733,3 +737,5 @@ def main (args : List String) : IO UInt32 := do
   nfpCmd.validate args
 
 end Nfp
+
+end
