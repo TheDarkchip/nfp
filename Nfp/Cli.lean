@@ -25,6 +25,208 @@ def versionCmd : Cmd := `[Cli|
   "Print the NFP version."
 ]
 
+private def parseDirectionSpec (raw : String) : Except String (Nat × Nat) := do
+  let partsComma := raw.splitOn ","
+  let parts := if partsComma.length = 2 then partsComma else raw.splitOn ":"
+  match parts with
+  | [targetRaw, negativeRaw] =>
+      match targetRaw.toNat?, negativeRaw.toNat? with
+      | some target, some negative => pure (target, negative)
+      | _, _ => throw s!"direction must be two natural numbers (got '{raw}')"
+  | _ =>
+      throw s!"direction must look like \"target,negative\" (got '{raw}')"
+
+private def parseSplitPreset (raw : String) :
+    Except String (Option Nat × Option Nat × Option Nat × Option Nat) := do
+  let key := raw.toLower
+  match key with
+  | "balanced" | "default" => pure (none, none, none, none)
+  | "fast" => pure (some 0, some 0, some 0, some 0)
+  | "tight" => pure (some 4, some 4, some 2, some 16)
+  | _ =>
+      throw s!"unknown preset '{raw}' (expected: fast, balanced, tight)"
+
+private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) : IO UInt32 := do
+  let inputsPath? := (p.flag? "inputs").map (·.as! String)
+  let modelPath? := (p.flag? "model").map (·.as! String)
+  let layer? := (p.flag? "layer").map (·.as! Nat)
+  let head? := (p.flag? "head").map (·.as! Nat)
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let directionStr? := (p.flag? "direction").map (·.as! String)
+  let presetStr? := (p.flag? "preset").map (·.as! String)
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  let presetE :=
+    match presetStr? with
+    | none => Except.ok (none, none, none, none)
+    | some raw => parseSplitPreset raw
+  let directionE :=
+    match directionStr? with
+    | none => Except.ok none
+    | some raw => (parseDirectionSpec raw).map some
+  match presetE, directionE with
+  | Except.error msg, _ => fail msg
+  | _, Except.error msg => fail msg
+  | Except.ok ⟨splitBudgetQ?, splitBudgetK?, splitBudgetDiffBase?, splitBudgetDiffRefined?⟩,
+      Except.ok direction? =>
+      match inputsPath?, modelPath? with
+      | some inputsPath, none =>
+          if layer?.isSome || head?.isSome || period?.isSome then
+            fail "--layer/--head/--period are only valid with --model"
+          else if direction?.isSome then
+            fail "--direction is only valid with --model"
+          else if requireNonvacuous then
+            IO.runInductionCertifyHeadNonvacuous inputsPath minActive? minLogitDiffStr?
+              minMarginStr? maxEpsStr? timing? heartbeatMs?
+              splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+          else
+            IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
+              minMarginStr? maxEpsStr? timing? heartbeatMs?
+              splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+      | none, some modelPath =>
+          match layer?, head? with
+          | some layer, some head =>
+              match direction? with
+              | some ⟨dirTarget, dirNegative⟩ =>
+                  if requireNonvacuous then
+                    IO.runInductionCertifyHeadModelNonvacuous modelPath layer head dirTarget
+                      dirNegative period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                      timing? heartbeatMs?
+                      splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+                  else
+                    IO.runInductionCertifyHeadModel modelPath layer head dirTarget dirNegative
+                      period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                      timing? heartbeatMs?
+                      splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+              | none =>
+                  if requireNonvacuous then
+                    IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer head period?
+                      minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+                      splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+                  else
+                    IO.runInductionCertifyHeadModelAuto modelPath layer head period?
+                      minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+                      splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+          | _, _ =>
+              fail "--layer and --head are required with --model"
+      | none, none =>
+          fail "provide exactly one of --inputs or --model"
+      | some _, some _ =>
+          fail "provide exactly one of --inputs or --model"
+
+private def runInductionCertifySimple (p : Parsed) : IO UInt32 :=
+  runInductionCertifyUnified false p
+
+private def runInductionCertifyNonvacuousSimple (p : Parsed) : IO UInt32 :=
+  runInductionCertifyUnified true p
+
+private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
+  let inputsPath? := (p.flag? "inputs").map (·.as! String)
+  let modelPath? := (p.flag? "model").map (·.as! String)
+  let layer? := (p.flag? "layer").map (·.as! Nat)
+  let head? := (p.flag? "head").map (·.as! Nat)
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let directionStr? := (p.flag? "direction").map (·.as! String)
+  let outPath? := (p.flag? "out").map (·.as! String)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  let directionE :=
+    match directionStr? with
+    | none => Except.ok none
+    | some raw => (parseDirectionSpec raw).map some
+  match directionE with
+  | Except.error msg => fail msg
+  | Except.ok direction? =>
+      match inputsPath?, modelPath? with
+      | some inputsPath, none =>
+          if layer?.isSome || head?.isSome || period?.isSome then
+            fail "--layer/--head/--period are only valid with --model"
+          else if direction?.isSome then
+            fail "--direction is only valid with --model"
+          else
+            IO.runInductionHeadInterval inputsPath outPath?
+      | none, some modelPath =>
+          match layer?, head?, direction? with
+          | some layer, some head, some ⟨dirTarget, dirNegative⟩ =>
+              IO.runInductionHeadIntervalModel modelPath layer head dirTarget dirNegative period?
+                outPath?
+          | _, _, none =>
+              fail "--direction is required with --model (use \"target,negative\")"
+          | _, _, _ =>
+              fail "--layer and --head are required with --model"
+      | none, none =>
+          fail "provide exactly one of --inputs or --model"
+      | some _, some _ =>
+          fail "provide exactly one of --inputs or --model"
+
+/-- `nfp induction certify` subcommand (streamlined). -/
+def inductionCertifySimpleCmd : Cmd := `[Cli|
+  certify VIA runInductionCertifySimple;
+  "Check induction head certificates from inputs or a model file."
+  FLAGS:
+    inputs : String; "Path to the induction head input file (use either --inputs or --model)."
+    model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
+    layer : Nat; "Layer index for the induction head (required with --model)."
+    head : Nat; "Head index for the induction head (required with --model)."
+    period : Nat; "Optional prompt period override (model only; default: derive from tokens)."
+    direction : String; "Optional logit-diff direction as \"target,negative\" (model only). \
+                          When omitted with --model, direction is derived from tokens."
+    preset : String; "Split-budget preset: fast | balanced | tight (default: balanced)."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal; default: 0)."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+]
+
+/-- `nfp induction certify_nonvacuous` subcommand (streamlined). -/
+def inductionCertifyNonvacuousSimpleCmd : Cmd := `[Cli|
+  certify_nonvacuous VIA runInductionCertifyNonvacuousSimple;
+  "Require a strictly positive logit-diff bound from inputs or a model file."
+  FLAGS:
+    inputs : String; "Path to the induction head input file (use either --inputs or --model)."
+    model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
+    layer : Nat; "Layer index for the induction head (required with --model)."
+    head : Nat; "Head index for the induction head (required with --model)."
+    period : Nat; "Optional prompt period override (model only; default: derive from tokens)."
+    direction : String; "Optional logit-diff direction as \"target,negative\" (model only). \
+                          When omitted with --model, direction is derived from tokens."
+    preset : String; "Split-budget preset: fast | balanced | tight (default: balanced)."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal; default: 0)."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+]
+
+/-- `nfp induction interval` subcommand (streamlined). -/
+def inductionIntervalSimpleCmd : Cmd := `[Cli|
+  interval VIA runInductionIntervalSimple;
+  "Build head-output interval bounds from inputs or a model file."
+  FLAGS:
+    inputs : String; "Path to the induction head input file (use either --inputs or --model)."
+    model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
+    layer : Nat; "Layer index for the induction head (required with --model)."
+    head : Nat; "Head index for the induction head (required with --model)."
+    period : Nat; "Optional prompt period override (model only; default: derive from tokens)."
+    direction : String; "Required logit-diff direction as \"target,negative\" (model only)."
+    out : String; "Optional path to write the residual-interval certificate."
+]
+
 /-- Check induction certificates for induction heads. -/
 def runInductionCertify (p : Parsed) : IO UInt32 := do
   let scoresPath := p.flag! "scores" |>.as! String
@@ -477,10 +679,10 @@ def inductionHeadIntervalModelCmd : Cmd := `[Cli|
     out : String; "Optional path to write the residual-interval certificate."
 ]
 
-/-- Induction-head subcommands. -/
-def inductionCmd : Cmd := `[Cli|
-  induction NOOP;
-  "Induction-head utilities."
+/-- Advanced induction-head subcommands (full flag surface). -/
+def inductionAdvancedCmd : Cmd := `[Cli|
+  advanced NOOP;
+  "Advanced induction-head utilities (full flag set)."
   SUBCOMMANDS:
     inductionCertifyCmd;
     inductionCertifySoundCmd;
@@ -495,6 +697,17 @@ def inductionCmd : Cmd := `[Cli|
     inductionCertifyHeadModelAutoNonvacuousCmd;
     inductionHeadIntervalCmd;
     inductionHeadIntervalModelCmd
+]
+
+/-- Induction-head subcommands. -/
+def inductionCmd : Cmd := `[Cli|
+  induction NOOP;
+  "Induction-head utilities (streamlined). Use `nfp induction advanced --help` for full options."
+  SUBCOMMANDS:
+    inductionCertifySimpleCmd;
+    inductionCertifyNonvacuousSimpleCmd;
+    inductionIntervalSimpleCmd;
+    inductionAdvancedCmd
 ]
 
 /-- The root CLI command. -/
