@@ -2,7 +2,7 @@
 
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Nfp.Core.Basic
-import Nfp.Circuit.Cert
+import Nfp.Circuit.Cert.Basic
 import Nfp.Circuit.Layers.Induction
 
 /-!

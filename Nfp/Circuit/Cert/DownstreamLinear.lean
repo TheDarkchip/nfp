@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Nfp.Core.Basic
-import Nfp.Circuit.Cert
+import Nfp.Circuit.Cert.Basic
 
 /-!
 Downstream linear certificates for end-to-end induction bounds.

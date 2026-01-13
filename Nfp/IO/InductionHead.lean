@@ -356,10 +356,6 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
       timingPrint "timing: head build induction cert start"
       timingFlush
       let verboseTiming ← IO.getEnv "NFP_TIMING_VERBOSE"
-      let taskBenchEnv ← IO.getEnv "NFP_TASK_BENCH"
-      if taskBenchEnv.isSome then
-        let n := taskBenchEnv.bind String.toNat? |>.getD 1000
-        Nfp.IO.taskBench n
       if verboseTiming.isSome then
         timingPrint s!"timing: head dims seq={seq} dModel={dModel} dHead={dHead}"
         timingPrint s!"timing: head active card={inputs.active.card}"

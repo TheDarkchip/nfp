@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Nfp.Circuit.Combinators
-import Nfp.Circuit.Cert
+import Nfp.Circuit.Cert.Basic
 
 /-!
 Typed circuit wrappers and typed equivalence checking.

@@ -2,13 +2,7 @@
 
 import Nfp.Sound.Gpt2.HeadInputs
 import Nfp.Sound.Induction
-import Nfp.Sound.Induction.HeadBounds
-import Nfp.Sound.Induction.LogitDiff
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Bounds.Gelu
-import Nfp.Sound.Bounds.Mlp
-import Nfp.Sound.Bounds.Attention
-import Nfp.Sound.Bounds.Transformer
+import Nfp.Sound.Bounds
 import Nfp.Sound.Linear.FinFold
 
 /-!

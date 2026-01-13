@@ -5,7 +5,7 @@ import Nfp.Model.InductionHead
 import Nfp.Sound.Induction.HeadBounds
 
 /-!
-Small IO helpers for benchmarking task overhead and profiling slow phases.
+Small IO helpers for profiling slow phases.
 -/
 
 namespace Nfp
@@ -122,21 +122,6 @@ def timePure {α : Type} (label : String) (f : Unit → α) : IO α := do
 def flushStdout : IO Unit := do
   let h ← IO.getStdout
   h.flush
-
-/-- Measure task spawn/get overhead on this machine. -/
-def taskBench (n : Nat) : IO Unit := do
-  if n = 0 then
-    timingPrint "timing: task bench skipped (n=0)"
-    return
-  let t0 ← monoUsNow
-  let tasks := (List.range n).map (fun _ => Task.spawn (fun _ => ()))
-  for t in tasks do
-    let _ := t.get
-    pure ()
-  let t1 ← monoUsNow
-  let total := t1 - t0
-  let avg := total / n
-  timingPrint s!"timing: task bench n={n} total={total} us avg={avg} us"
 
 /-- Force a sample score-gap computation for timing. -/
 def timeHeadScoreSampleGap {seq dModel dHead : Nat}
