@@ -3,6 +3,7 @@
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 import Mathlib.Data.List.Range
 import Mathlib.Data.Real.Basic
+import Nfp.Circuit.Cert.ResidualInterval
 import Nfp.Model.Gpt2
 import Nfp.Sound.Bounds.Attention
 import Nfp.Sound.Bounds.LayerNorm
@@ -511,6 +512,50 @@ theorem gpt2ResidualIntervalBoundsActive_spec
     hlo hhi
   simpa [bounds, gpt2ResidualIntervalBoundsActive, final, baseLo, baseHi] using
     hbounds q hq i
+
+/-- Package GPT-2 residual bounds into a residual-interval certificate. -/
+theorem gpt2ResidualIntervalBoundsActive_sound
+    {seq dModel dHead numHeads hidden numLayers : Nat} [NeZero seq]
+    (active : Finset (Fin seq)) (hactive : active.Nonempty) (eps : Rat)
+    (layers : Fin numLayers → Model.Gpt2LayerSlice dModel hidden)
+    (heads : Fin numLayers → Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
+    (finalLn : Model.Gpt2FinalLayerNorm dModel)
+    (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
+    (embed : Fin seq → Fin dModel → Rat)
+    (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps) :
+    let bounds := gpt2ResidualIntervalBoundsActive active hactive eps layers heads finalLn embed
+    let cert : Circuit.ResidualIntervalCert dModel := { lo := bounds.1, hi := bounds.2 }
+    Circuit.ResidualIntervalBounds cert ∧
+      ∀ q, q ∈ active → ∀ i,
+        (cert.lo i : Real) ≤
+            transformerStackFinalReal eps finalLn layers heads scores
+              (fun q i => (embed q i : Real)) q i ∧
+          transformerStackFinalReal eps finalLn layers heads scores
+              (fun q i => (embed q i : Real)) q i ≤ (cert.hi i : Real) := by
+  classical
+  intro bounds cert
+  have hspec :
+      ∀ q, q ∈ active → ∀ i,
+        (bounds.1 i : Real) ≤
+            transformerStackFinalReal eps finalLn layers heads scores
+              (fun q i => (embed q i : Real)) q i ∧
+          transformerStackFinalReal eps finalLn layers heads scores
+              (fun q i => (embed q i : Real)) q i ≤ (bounds.2 i : Real) := by
+    simpa [bounds] using
+      (gpt2ResidualIntervalBoundsActive_spec (active := active) (hactive := hactive)
+        (eps := eps) (layers := layers) (heads := heads) (finalLn := finalLn)
+        (scores := scores) (embed := embed) (hne := hne) (heps := heps) (hsqrt := hsqrt))
+  have hbounds : Circuit.ResidualIntervalBounds cert := by
+    refine { lo_le_hi := ?_ }
+    intro i
+    rcases hactive with ⟨q0, hq0⟩
+    have hq := hspec q0 hq0 i
+    have hreal : (bounds.1 i : Real) ≤ (bounds.2 i : Real) := hq.1.trans hq.2
+    exact (ratToReal_le_iff (x := bounds.1 i) (y := bounds.2 i)).1 hreal
+  refine And.intro hbounds ?_
+  intro q hq i
+  have hq' := hspec q hq i
+  simpa [cert] using hq'
 
 end Bounds
 

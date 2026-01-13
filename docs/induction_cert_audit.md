@@ -72,6 +72,9 @@ Key assumptions and limitations:
   bounds to a direction lower bound on `headOutput + residual`, but full
   end-to-end model logits still require verified residual bounds through the
   rest of the stack.
+  We now have a theorem packaging GPT-2 residual interval bounds derived from
+  model slices into a sound `ResidualIntervalCert`, but it is not yet connected
+  to the head-level logit-diff contribution inside the full stack.
 
 ## Conclusion
 

@@ -20,6 +20,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `DownstreamLinearBounds`.
 - Residual-interval certificate soundness: `checkResidualIntervalCert` implies
   `ResidualIntervalBounds`.
+- GPT-2 residual interval bounds from model slices are sound for
+  `transformerStackFinalReal` on active positions (`gpt2ResidualIntervalBoundsActive_sound`).
 - Row-sum matrix norm bounds for `mulVec` under uniform input magnitude.
 - Tanh-GELU bounds and interval propagation through MLP layers.
 - Interval bounds for multi-head attention and full transformer-layer residual blocks.
