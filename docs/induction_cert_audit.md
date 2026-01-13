@@ -28,6 +28,10 @@ induction heads, and spell out the scope and limitations of that claim.
   `buildInductionLogitLowerBoundNonvacuous?` lift the head certificate to a
   logit-diff lower bound; the key lemma `logitDiffLowerBoundFromCert_le` shows
   the bound is sound on active queries (`Nfp/Sound/Induction/LogitDiff.lean`).
+- `logitDiffLowerBound_end_to_end_gpt2` combines head logit-diff bounds, head
+  output intervals, and GPT-2 stack output intervals to give a direction lower
+  bound on `transformerStackFinalReal`
+  (`Nfp/Sound/Induction/EndToEnd.lean`, `Nfp/Sound/Bounds/Transformer.lean`).
 
 ## Mechanistic mapping (Transformer Circuits)
 
@@ -77,7 +81,8 @@ Key assumptions and limitations:
   to the head-level logit-diff contribution inside the full stack.
   A new lemma composes head logit-diff bounds with *both* head-output intervals
   and downstream output intervals, yielding a sound lower bound on the direction
-  dot of the downstream output (via interval subtraction).
+  dot of the downstream output (via interval subtraction), and we now instantiate
+  this for GPT-2 stack outputs via `logitDiffLowerBound_end_to_end_gpt2`.
 
 ## Conclusion
 

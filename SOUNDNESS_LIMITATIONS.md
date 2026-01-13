@@ -29,6 +29,8 @@ It is intentionally brief and focused on the soundness boundary.
 - There is now a sound interval-composition lemma that combines head logit-diff bounds with
   head/output intervals via subtraction, but it does not model how head outputs propagate
   through subsequent LN/MLP blocks (so tight end-to-end claims remain open).
+- The GPT-2 end-to-end bound currently relies on these coarse intervals, so it can be
+  conservative or vacuous unless the downstream intervals are tightened.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
 - There is no bridge theorem connecting certificate validity to a full circuit/model semantics
   statement (for example, a formal statement about logits under a transformer block stack).

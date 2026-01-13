@@ -2,6 +2,7 @@
 
 import Nfp.Sound.Induction.Core
 import Nfp.Sound.Induction.CoreSound
+import Nfp.Sound.Induction.EndToEnd
 import Nfp.Sound.Induction.HeadOutput
 
 /-!

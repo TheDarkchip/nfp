@@ -23,6 +23,9 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `ResidualIntervalBounds`.
 - GPT-2 residual interval bounds from model slices are sound for
   `transformerStackFinalReal` on active positions (`gpt2ResidualIntervalBoundsActive_sound`).
+- End-to-end direction-dot lower bounds on `transformerStackFinalReal` can be derived by
+  composing head logit-diff bounds with head/output intervals
+  (`logitDiffLowerBound_end_to_end_gpt2`).
 - Row-sum matrix norm bounds for `mulVec` under uniform input magnitude.
 - Tanh-GELU bounds and interval propagation through MLP layers.
 - Interval bounds for multi-head attention and full transformer-layer residual blocks.

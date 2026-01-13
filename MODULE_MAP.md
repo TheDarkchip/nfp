@@ -165,6 +165,8 @@ but you **must** update this list in the same commit.
   - Helper lemmas for value-direction projections in the core soundness proof.
 - `Nfp/Sound/Induction/CoreDefs.lean`
   - Core definitions and soundness predicates for induction certificates.
+- `Nfp/Sound/Induction/EndToEnd.lean`
+  - End-to-end induction bounds combining head certificates with transformer-stack intervals.
 - `Nfp/Sound/Induction/HeadOutput.lean`
   - Head-output interval certificates built from induction head inputs.
 - `Nfp/Sound/Induction/HeadBounds.lean`

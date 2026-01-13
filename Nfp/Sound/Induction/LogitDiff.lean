@@ -4,7 +4,7 @@ import Aesop
 import Mathlib.Data.Vector.Basic
 import Nfp.Circuit.Cert.LogitDiff
 import Nfp.Sound.Bounds.MatrixNorm.Interval
-import Nfp.Sound.Induction
+import Nfp.Sound.Induction.HeadOutput
 
 /-!
 Logit-diff bounds derived from induction certificates.
