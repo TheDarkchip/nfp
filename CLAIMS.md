@@ -13,6 +13,9 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `buildInductionCertFromHeadCoreWith?` returns a certificate for the given inputs.
 - Logit-diff lower bound lemmas: `logitDiffLowerBound_le` and
   `logitDiffLowerBoundFromCert_le`.
+- Bridge lemmas composing head logit-diff bounds with head outputs and residual
+  interval bounds: `headLogitDiff_eq_direction_dot_headOutput` and
+  `logitDiffLowerBound_with_residual`.
 - Downstream linear certificate soundness: `checkDownstreamLinearCert` implies
   `DownstreamLinearBounds`.
 - Residual-interval certificate soundness: `checkResidualIntervalCert` implies
@@ -62,4 +65,5 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 
 - End-to-end claims about GPT-2 logits or Jacobians derived from certificates.
 - Sound, verified downstream bounds computed from GPT-2 weights inside Lean.
-- A bridge theorem connecting certificate validity to full circuit/model semantics.
+- A full end-to-end bridge from head certificates to full-model logit bounds
+  (beyond the head-output + residual-interval composition).

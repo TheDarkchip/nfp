@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
 import Aesop
+import Mathlib.Data.Vector.Basic
 import Nfp.Circuit.Cert.LogitDiff
+import Nfp.Sound.Bounds.MatrixNorm.Interval
 import Nfp.Sound.Induction
 
 /-!
@@ -16,11 +18,81 @@ open Nfp.Circuit
 
 variable {seq : Nat}
 
+section Direction
+
+variable {seq dModel dHead : Nat}
+
+/-- Direction projection of a single-key head output. -/
+theorem direction_dot_headValue_eq_valsReal
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) :
+    dotProduct (fun i => (inputs.direction i : Real))
+        (fun i => headValueRealOfInputs inputs k i) =
+      valsRealOfInputs inputs k := by
+  classical
+  let dir : Fin dModel → Real := fun i => (inputs.direction i : Real)
+  let v : Fin dHead → Real := fun d => vRealOfInputs inputs k d
+  have hswap :
+      ∑ i, dir i * ∑ d, (inputs.wo i d : Real) * v d =
+        ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
+    calc
+      ∑ i, dir i * ∑ d, (inputs.wo i d : Real) * v d
+          = ∑ i, ∑ d, dir i * ((inputs.wo i d : Real) * v d) := by
+            simp [Finset.mul_sum]
+      _ = ∑ d, ∑ i, dir i * ((inputs.wo i d : Real) * v d) := by
+            simpa using
+              (Finset.sum_comm (s := (Finset.univ : Finset (Fin dModel)))
+                (t := (Finset.univ : Finset (Fin dHead)))
+                (f := fun i d => dir i * ((inputs.wo i d : Real) * v d)))
+      _ = ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
+            refine Finset.sum_congr rfl ?_
+            intro d _
+            simp [mul_assoc, Finset.sum_mul]
+  have hdirHead :
+      ∀ d, ((dirHeadVecOfInputs inputs).get d : Real) =
+        ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
+    intro d
+    calc
+      ((dirHeadVecOfInputs inputs).get d : Real) =
+          ratToReal (Linear.dotFin dModel (fun i => inputs.wo i d)
+            (fun i => inputs.direction i)) := by
+          simp [dirHeadVecOfInputs, Vector.get, Vector.ofFn, ratToReal]
+      _ =
+          ratToReal (dotProduct (fun i => inputs.wo i d) (fun i => inputs.direction i)) := by
+          simp [Linear.dotFin_eq_dotProduct]
+      _ =
+          ∑ i, ratToReal (inputs.wo i d * inputs.direction i) := by
+          simp [dotProduct, Linear.ratToReal_sum_univ]
+      _ =
+          ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
+          simp [ratToReal]
+  calc
+    dotProduct dir (fun i => headValueRealOfInputs inputs k i)
+        = ∑ i, dir i *
+            ∑ d, (inputs.wo i d : Real) * v d := by
+          simp [dir, v, headValueRealOfInputs, dotProduct]
+    _ = ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
+          simp [hswap]
+    _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d := by
+          refine Finset.sum_congr rfl ?_
+          intro d _
+          have hdir :
+              ∑ i, dir i * (inputs.wo i d : Real) =
+                ((dirHeadVecOfInputs inputs).get d : Real) := by
+            calc
+              ∑ i, dir i * (inputs.wo i d : Real)
+                  = ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
+                    simp [dir, mul_comm]
+              _ = ((dirHeadVecOfInputs inputs).get d : Real) := by
+                    simpa using (hdirHead d).symm
+          simp [hdir]
+    _ = valsRealOfInputs inputs k := by
+          simp [valsRealOfInputs, v, dotProduct]
+
+end Direction
+
 section LogitDiffLowerBound
 
-variable {seq dModel dHead : Nat} [NeZero seq]
-
-section
+variable {seq dModel dHead : Nat}
 
 /-- Real-valued logit-diff contribution for a query. -/
 noncomputable def headLogitDiff (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -37,6 +109,10 @@ def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Rat :=
 /-- Lower bound computed from per-key weight bounds in an induction certificate. -/
 def logitDiffLowerBoundFromCertWeighted (c : InductionHeadCert seq) : Option Rat :=
   Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt c.values.valsLo
+
+section WithNeZero
+
+variable [NeZero seq]
 
 theorem logitDiffLowerBoundFromCert_le
     (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -469,7 +545,121 @@ def buildInductionLogitLowerBoundNonvacuous?
       · exact some ⟨base, hpos⟩
       · exact none
 
-end
+end WithNeZero
+
+/-! End-to-end lower bounds from head certificates plus residual intervals. -/
+
+/-- The head logit-diff equals the direction dot product of the head output. -/
+theorem headLogitDiff_eq_direction_dot_headOutput
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) :
+    headLogitDiff inputs q =
+      dotProduct (fun i => (inputs.direction i : Real))
+        (fun i => headOutput inputs q i) := by
+  classical
+  let dir : Fin dModel → Real := fun i => (inputs.direction i : Real)
+  let weights : Fin seq → Fin seq → Real := fun q k =>
+    Circuit.softmax (scoresRealOfInputs inputs q) k
+  have hswap :
+      dotProduct dir (fun i => headOutput inputs q i) =
+        ∑ k, weights q k * dotProduct dir (fun i => headValueRealOfInputs inputs k i) := by
+    calc
+      dotProduct dir (fun i => headOutput inputs q i)
+          = ∑ i, dir i * ∑ k, weights q k * headValueRealOfInputs inputs k i := by
+            simp [dir, headOutput, headOutputWithScores, weights, dotProduct]
+      _ = ∑ i, ∑ k, dir i * (weights q k * headValueRealOfInputs inputs k i) := by
+            simp [Finset.mul_sum]
+      _ = ∑ k, ∑ i, dir i * (weights q k * headValueRealOfInputs inputs k i) := by
+            simpa using
+              (Finset.sum_comm (s := (Finset.univ : Finset (Fin dModel)))
+                (t := (Finset.univ : Finset (Fin seq)))
+                (f := fun i k => dir i * (weights q k * headValueRealOfInputs inputs k i)))
+      _ = ∑ k, weights q k * ∑ i, dir i * headValueRealOfInputs inputs k i := by
+            refine Finset.sum_congr rfl ?_
+            intro k _
+            calc
+              ∑ i, dir i * (weights q k * headValueRealOfInputs inputs k i) =
+                  ∑ i, weights q k * (dir i * headValueRealOfInputs inputs k i) := by
+                    refine Finset.sum_congr rfl ?_
+                    intro i _
+                    simp [mul_assoc, mul_left_comm, mul_comm]
+              _ = weights q k * ∑ i, dir i * headValueRealOfInputs inputs k i := by
+                    simp [Finset.mul_sum]
+  have hsum :
+      dotProduct dir (fun i => headOutput inputs q i) =
+        ∑ k, weights q k * valsRealOfInputs inputs k := by
+    calc
+      dotProduct dir (fun i => headOutput inputs q i) =
+          ∑ k, weights q k * dotProduct dir (fun i => headValueRealOfInputs inputs k i) := hswap
+      _ = ∑ k, weights q k * valsRealOfInputs inputs k := by
+          refine Finset.sum_congr rfl ?_
+          intro k _
+          have hdir := direction_dot_headValue_eq_valsReal (inputs := inputs) (k := k)
+          exact congrArg (fun x => weights q k * x) (by simpa [dir] using hdir)
+  calc
+    headLogitDiff inputs q =
+        dotProduct (weights q) (valsRealOfInputs inputs) := by
+          simp [headLogitDiff, weights]
+    _ = ∑ k, weights q k * valsRealOfInputs inputs k := by
+          simp [dotProduct]
+    _ = dotProduct (fun i => (inputs.direction i : Real))
+          (fun i => headOutput inputs q i) := by
+          simpa [dir] using hsum.symm
+
+/-- Combine a head logit-diff bound with residual interval bounds. -/
+theorem logitDiffLowerBound_with_residual
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (lb : Rat)
+    (hlb : ∀ q, q ∈ inputs.active → (lb : Real) ≤ headLogitDiff inputs q)
+    (residual : Fin seq → Fin dModel → Real)
+    (lo hi : Fin dModel → Rat)
+    (hres : ∀ q, q ∈ inputs.active → ∀ i,
+      (lo i : Real) ≤ residual q i ∧ residual q i ≤ (hi i : Real)) :
+    ∀ q, q ∈ inputs.active →
+      (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
+        dotProduct (fun i => (inputs.direction i : Real))
+          (fun i => headOutput inputs q i + residual q i) := by
+  intro q hq
+  have hhead := hlb q hq
+  have hres' :
+      |dotProduct (fun i => (inputs.direction i : Real)) (residual q)| ≤
+        (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) := by
+    have hlo : ∀ i, (lo i : Real) ≤ residual q i := fun i => (hres q hq i).1
+    have hhi : ∀ i, residual q i ≤ (hi i : Real) := fun i => (hres q hq i).2
+    simpa using
+      (Bounds.abs_dotProduct_le_dotIntervalAbsBound_real
+        (v := inputs.direction) (lo := lo) (hi := hi) (x := residual q) hlo hhi)
+  have hres_lower :
+      -(Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
+        dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
+    exact (abs_le.mp hres').1
+  have hsum :
+      (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
+        headLogitDiff inputs q +
+          dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
+    have hsum' : (lb : Real) + -(Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
+        headLogitDiff inputs q +
+          dotProduct (fun i => (inputs.direction i : Real)) (residual q) :=
+      add_le_add hhead hres_lower
+    simpa [sub_eq_add_neg] using hsum'
+  calc
+    (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
+        headLogitDiff inputs q +
+          dotProduct (fun i => (inputs.direction i : Real)) (residual q) := hsum
+    _ =
+        dotProduct (fun i => (inputs.direction i : Real))
+          (fun i => headOutput inputs q i + residual q i) := by
+          have hdot :
+              dotProduct (fun i => (inputs.direction i : Real))
+                  (fun i => headOutput inputs q i + residual q i) =
+                dotProduct (fun i => (inputs.direction i : Real))
+                    (fun i => headOutput inputs q i) +
+                  dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
+            simpa using
+              (Linear.dotProduct_add_right
+                (x := fun i => (inputs.direction i : Real))
+                (y := fun i => headOutput inputs q i)
+                (z := residual q))
+          simp [headLogitDiff_eq_direction_dot_headOutput, hdot]
 
 end LogitDiffLowerBound
 

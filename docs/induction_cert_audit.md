@@ -68,17 +68,21 @@ Key assumptions and limitations:
   matrix represents the model’s logit map.
 - The active set is user-supplied and can be strict; bounds only hold for
   `q ∈ active`, not all positions.
-- The head-level certificate does not imply end-to-end behavior across blocks;
-  there is no formal bridge to full-model logits.
+- There is now a formal bridge from head logit-diff bounds plus residual interval
+  bounds to a direction lower bound on `headOutput + residual`, but full
+  end-to-end model logits still require verified residual bounds through the
+  rest of the stack.
 
 ## Conclusion
 
 Yes—**within the formal scope** of the current definitions, the proofs are
 enough to claim that we can certify induction-head behavior at the head level:
 they certify attention to a specified `prev` index and a logit-diff lower bound
-along a specified direction. What is still missing is a proof that those inputs
-correspond to the behavioral induction-head definition on actual sequences and
-that the certified head contribution scales to end-to-end model logits.
+along a specified direction. We now have a bridge that composes those bounds
+with residual interval bounds to certify `headOutput + residual`, but we still
+need a proof that the inputs correspond to the behavioral induction-head
+definition on actual sequences and that residual bounds are derived from full
+model semantics.
 
 ## Next steps
 
@@ -86,5 +90,5 @@ that the certified head contribution scales to end-to-end model logits.
   derived from unembedding (so the certified direction matches token-level claims).
 - Add a proof or verified derivation that the `prev` mapping corresponds to the
   induction pattern for a given prompt sequence.
-- Build a bridge theorem that lifts head-level certificates to block-level or
-  end-to-end logit bounds.
+- Extend the bridge to full transformer stacks by deriving residual interval
+  bounds from verified layer/block semantics.
