@@ -12,7 +12,7 @@ Rat values already avoid gcd normalization, so this module provides a
 lightweight alias and helper API used by older code paths.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -13,7 +13,7 @@ public import Nfp.Circuit.Layers.Softmax
 Per-query one-hot bounds derived from score margins.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

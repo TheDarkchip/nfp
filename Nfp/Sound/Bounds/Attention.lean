@@ -18,7 +18,7 @@ public import Nfp.Sound.Bounds.Mlp
 Interval bounds for multi-head attention and transformer layers.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -49,7 +49,7 @@ noncomputable def attentionOutputReal {seq dModel dHead numHeads : Nat} [NeZero 
   (∑ h, headProj h q i) + (attnBias i : Real)
 
 /-- Unfolding lemma for `attentionOutputReal`. -/
-theorem attentionOutputReal_def {seq dModel dHead numHeads : Nat} [NeZero seq]
+private theorem attentionOutputReal_def {seq dModel dHead numHeads : Nat} [NeZero seq]
     (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
     (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
     (attnBias : Fin dModel → Rat)

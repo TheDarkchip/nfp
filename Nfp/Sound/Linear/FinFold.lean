@@ -14,7 +14,7 @@ Tail-recursive folds and sums over `Fin`.
 These helpers keep sound computations stack-safe while remaining explicit.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -39,7 +39,7 @@ def sumFin (n : Nat) (f : Fin n → Rat) : Rat :=
   foldlFin n (fun acc i => acc + f i) 0
 
 /-- Tail-recursive sum over `Fin n` (alias for `sumFin`). -/
-def sumFinCommonDen (n : Nat) (f : Fin n → Rat) : Rat :=
+@[expose] def sumFinCommonDen (n : Nat) (f : Fin n → Rat) : Rat :=
   sumFin n f
 
 /-- `sumFin` as a left fold over the finite range list. -/
@@ -92,7 +92,7 @@ theorem sumFinCommonDen_eq_sumFin (n : Nat) (f : Fin n → Rat) :
     sumFinCommonDen n f = sumFin n f := rfl
 
 /-- Dot product over `Fin n` (Rat-valued). -/
-def dotFin (n : Nat) (x y : Fin n → Rat) : Rat :=
+@[expose] def dotFin (n : Nat) (x y : Fin n → Rat) : Rat :=
   sumFin n (fun i => x i * y i)
 
 /-- Unfolding lemma for `dotFin`. -/

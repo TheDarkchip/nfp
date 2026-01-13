@@ -20,7 +20,7 @@ public import Nfp.Sound.Linear.FinFold
 /-! Sound builders for induction certificates; recompute bounds inside Lean from exact inputs and
 derive softmax tolerances from score margins rather than trusting external weight dumps. -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 namespace Sound
@@ -246,7 +246,7 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   cert : InductionHeadCert seq
 
 /-- Build cached core quantities for induction-head certificates. -/
-def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
+@[expose] def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
     (cfg : InductionHeadSplitConfig)
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     InductionHeadCoreCache seq dModel dHead := by
@@ -814,6 +814,13 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     Option (InductionHeadCert seq) :=
   buildInductionCertFromHeadCoreWith? defaultInductionHeadSplitConfig inputs
+
+/-- Unfolding lemma for `buildInductionCertFromHeadCore?`. -/
+theorem buildInductionCertFromHeadCore?_def [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    buildInductionCertFromHeadCore? inputs =
+      buildInductionCertFromHeadCoreWith? defaultInductionHeadSplitConfig inputs := by
+  simp [buildInductionCertFromHeadCore?]
 
 /-- `buildInductionCertFromHeadCoreWith?` succeeds under the guard conditions. -/
 theorem buildInductionCertFromHeadCoreWith?_eq_some [NeZero seq] {dModel dHead : Nat}

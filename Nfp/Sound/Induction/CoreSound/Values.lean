@@ -12,7 +12,7 @@ These isolate the algebra needed to rewrite direction-value projections into
 dot products over cached `wvDir`/`bDir` terms.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

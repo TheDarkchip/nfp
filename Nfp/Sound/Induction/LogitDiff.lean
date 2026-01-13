@@ -12,7 +12,7 @@ public import Nfp.Sound.Induction.HeadOutput
 Logit-diff bounds derived from induction certificates.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -59,7 +59,7 @@ theorem direction_dot_headValue_eq_valsReal
       ((dirHeadVecOfInputs inputs).get d : Real) =
           ratToReal (Linear.dotFin dModel (fun i => inputs.wo i d)
             (fun i => inputs.direction i)) := by
-          simp [dirHeadVecOfInputs, Vector.get, Vector.ofFn, ratToReal]
+          simp [dirHeadVecOfInputs_get, ratToReal]
       _ =
           ratToReal (dotProduct (fun i => inputs.wo i d) (fun i => inputs.direction i)) := by
           simp [Linear.dotFin_eq_dotProduct]
@@ -73,7 +73,7 @@ theorem direction_dot_headValue_eq_valsReal
     dotProduct dir (fun i => headValueRealOfInputs inputs k i)
         = ∑ i, dir i *
             ∑ d, (inputs.wo i d : Real) * v d := by
-          simp [dir, v, headValueRealOfInputs, dotProduct]
+          simp [dir, v, headValueRealOfInputs_def, dotProduct]
     _ = ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
           simp [hswap]
     _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d := by
@@ -569,7 +569,7 @@ theorem headLogitDiff_eq_direction_dot_headOutput
     calc
       dotProduct dir (fun i => headOutput inputs q i)
           = ∑ i, dir i * ∑ k, weights q k * headValueRealOfInputs inputs k i := by
-            simp [dir, headOutput, headOutputWithScores, weights, dotProduct]
+            simp [dir, headOutput_def, headOutputWithScores_def, weights, dotProduct]
       _ = ∑ i, ∑ k, dir i * (weights q k * headValueRealOfInputs inputs k i) := by
             simp [Finset.mul_sum]
       _ = ∑ k, ∑ i, dir i * (weights q k * headValueRealOfInputs inputs k i) := by

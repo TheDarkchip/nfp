@@ -16,7 +16,7 @@ This module isolates the rational sqrt lower/upper bounds and their basic
 nonnegativity/positivity lemmas so the main LayerNorm bounds stay focused.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

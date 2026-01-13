@@ -12,7 +12,7 @@ Tanh-based GELU bounds for GPT-2 style MLPs.
 These bounds are used to propagate interval constraints through nonlinear gates.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

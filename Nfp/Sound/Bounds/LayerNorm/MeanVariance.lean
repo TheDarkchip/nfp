@@ -18,7 +18,7 @@ This module isolates the rational and real mean/variance definitions and their
 basic lemmas to keep `LayerNorm` bounds modular.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -16,7 +16,7 @@ Interval bounds for dot products and matrix-vector products.
 This module isolates interval-bound helpers used across downstream certificates.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -353,10 +353,10 @@ theorem dotIntervalLowerUpperCommonDen_eq {n : Nat} (v lo hi : Fin n → Rat) :
       (dotIntervalLowerCommonDen v lo hi, dotIntervalUpperCommonDen v lo hi) := by
   ext <;> simp only [dotIntervalLowerUpperCommonDen_fst, dotIntervalLowerUpperCommonDen_snd]
 
-theorem dotIntervalLowerUnnorm_eq {n : Nat} (v lo hi : Fin n → Rat) :
+private theorem dotIntervalLowerUnnorm_eq {n : Nat} (v lo hi : Fin n → Rat) :
     dotIntervalLowerUnnorm v lo hi = dotIntervalLower v lo hi := rfl
 
-theorem dotIntervalUpperUnnorm_eq {n : Nat} (v lo hi : Fin n → Rat) :
+private theorem dotIntervalUpperUnnorm_eq {n : Nat} (v lo hi : Fin n → Rat) :
     dotIntervalUpperUnnorm v lo hi = dotIntervalUpper v lo hi := rfl
 
 /-! Cached endpoints. -/

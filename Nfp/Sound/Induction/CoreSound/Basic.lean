@@ -4,7 +4,7 @@ module
 public import Nfp.Sound.Induction.Core
 public import Nfp.Sound.Induction.CoreSound.Values
 
-@[expose] public section
+public section
 
 namespace Nfp
 namespace Sound
@@ -77,8 +77,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     (inputs.ln1Beta j : Real) + (lnCoeff q j : Real) * invStd q := by
               intro q j
               have hmu := hmeanRat q
-              simp [lnRealOfInputs, Bounds.layerNormReal, hmodel, lnCoeff, hmu, invStd, add_comm,
-                mul_assoc, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
+              simp [lnRealOfInputs_def, Bounds.layerNormReal_def, hmodel, lnCoeff, hmu, invStd,
+                add_comm, mul_assoc, -mul_eq_mul_left_iff, -mul_eq_mul_right_iff]
             have hln_fun :
                 ∀ q,
                   lnRealOfInputs inputs q =
@@ -90,7 +90,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 ∀ q, (invStdLo q : Real) ≤ invStd q ∧ invStd q ≤ (invStdHi q : Real) := by
               intro q
               simpa [invStd, invStdLo, invStdHi, invStdBoundsArr, invStdBoundsTasks,
-                invStdBounds, Task.spawn, Array.getElem_ofFn] using
+                Bounds.invStdBounds_def, Task.spawn, Array.getElem_ofFn] using
                 (Bounds.invStdBounds_spec (eps := inputs.lnEps) (x := inputs.embed q)
                   hmodel hEps hSqrt)
             let qBaseArr : Array Rat :=
@@ -476,9 +476,12 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 prev := inputs.prev
                 values := valCert }
             have hcore' : buildInductionCertFromHeadCoreWith? cfg inputs = some cert := by
-              simp (config := { zeta := false }) only
-                [buildInductionCertFromHeadCoreWith?, hEps, hSqrt, hmodel, hactive]
-              rfl
+              have hcore'' :
+                  buildInductionCertFromHeadCoreWith? cfg inputs =
+                    some (buildInductionHeadCoreCacheWith cfg inputs).cert :=
+                buildInductionCertFromHeadCoreWith?_eq_some
+                  (cfg := cfg) (inputs := inputs) hEps hSqrt hmodel hactive
+              simpa using hcore''
             have hc : c = cert := by
               have hcert : cert = c := by
                 exact Option.some.inj (hcore'.symm.trans hcore)
@@ -492,8 +495,9 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 Bounds.layerNormBounds_spec (eps := inputs.lnEps)
                   (gamma := inputs.ln1Gamma) (beta := inputs.ln1Beta)
                   (x := inputs.embed q) hmodel hEps hSqrt
-              simpa [lnBounds, lnLo, lnHi, lnRealOfInputs, Bounds.cacheBoundPair2_apply_left,
-                Bounds.cacheBoundPair2_apply_right] using hln i
+              simpa [lnBounds, lnLo, lnHi, lnRealOfInputs_def,
+                Bounds.cacheBoundPair2_apply_left, Bounds.cacheBoundPair2_apply_right] using
+                hln i
             have dotFin_cast {n : Nat} (f g : Fin n → Rat) :
                 (Linear.dotFin n f g : Real) =
                   dotProduct (fun j => (f j : Real)) (fun j => (g j : Real)) := by
@@ -619,7 +623,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                       inputs.ln1Gamma j * (inputs.embed q' j - mean (inputs.embed q'))))
               have h := proj_bounds (w := inputs.wq) (b := inputs.bq) (base := qBase)
                 (coeff := qCoeff) hbase hcoeff q d
-              simpa [qLo, qHi, qRealOfInputs] using h
+              simpa [qLo, qHi, qRealOfInputs_def] using h
             have hk_bounds :
                 ∀ q d, (kLo q d : Real) ≤ kRealOfInputs inputs q d ∧
                   kRealOfInputs inputs q d ≤ (kHi q d : Real) := by
@@ -644,7 +648,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                       inputs.ln1Gamma j * (inputs.embed q' j - mean (inputs.embed q'))))
               have h := proj_bounds (w := inputs.wk) (b := inputs.bk) (base := kBase)
                 (coeff := kCoeff) hbase hcoeff q d
-              simpa [kLo, kHi, kRealOfInputs] using h
+              simpa [kLo, kHi, kRealOfInputs_def] using h
             let scoresReal := scoresRealOfInputs inputs
             have scoresReal_eq_base_of_not_masked :
                 ∀ q k, ¬ masked q k →
@@ -658,15 +662,15 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   intro hlt
                   exact hnot ⟨hcausal, hlt⟩
                 have hle : k ≤ q := le_of_not_gt hnot_lt
-                simp [scoresReal, scoresRealOfInputs, hcausal, hle]
-              · simp [scoresReal, scoresRealOfInputs, hcausal]
+                simp [scoresReal, scoresRealOfInputs_def, hcausal, hle]
+              · simp [scoresReal, scoresRealOfInputs_def, hcausal]
             have scoresReal_eq_masked :
                 ∀ q k, masked q k → scoresReal q k = (inputs.maskValue : Real) := by
               intro q k hmask
               have hmask' : inputs.maskCausal = true ∧ q < k := by
                 simpa [masked] using hmask
               have hle : ¬ k ≤ q := not_le_of_gt hmask'.2
-              simp [scoresReal, scoresRealOfInputs, hmask'.1, hle]
+              simp [scoresReal, scoresRealOfInputs_def, hmask'.1, hle]
             have hscore_bounds :
                 ∀ q k, (scoreLo q k : Real) ≤ scoresReal q k ∧
                   scoresReal q k ≤ (scoreHi q k : Real) := by
@@ -1303,10 +1307,11 @@ theorem buildInductionCertFromHeadCore?_sound
       (inputs : Model.InductionHeadInputs seq dModel dHead) (c : InductionHeadCert seq)
       (hcore : buildInductionCertFromHeadCore? inputs = some c) :
       InductionHeadCertSound inputs c := by
-  simpa [buildInductionCertFromHeadCore?] using
-    (buildInductionCertFromHeadCoreWith?_sound
-      (cfg := defaultInductionHeadSplitConfig) inputs c
-      (by
-        simpa [buildInductionCertFromHeadCore?] using hcore))
+  have hcore' :
+      buildInductionCertFromHeadCoreWith? defaultInductionHeadSplitConfig inputs = some c := by
+    simpa [buildInductionCertFromHeadCore?_def] using hcore
+  exact
+    buildInductionCertFromHeadCoreWith?_sound
+      (cfg := defaultInductionHeadSplitConfig) inputs c hcore'
 end Sound
 end Nfp

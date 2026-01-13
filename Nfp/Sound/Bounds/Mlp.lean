@@ -12,7 +12,7 @@ public import Nfp.Sound.Bounds.MatrixNorm
 Interval bounds for GPT-2 MLP blocks (linear + GELU + linear).
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

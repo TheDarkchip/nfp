@@ -12,7 +12,7 @@ This module isolates invStd bounds and their soundness proof to keep
 `LayerNorm/Basic.lean` below the style linter's file-length limit.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -30,6 +30,19 @@ def invStdBounds {n : Nat} (eps : Rat) (x : Fin n → Rat) : Rat × Rat :=
     let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEps)
     let sqrtUpperBound : Rat := sqrtUpper varEps
     (ratDivDown 1 sqrtUpperBound, ratDivUp 1 sqrtLowerBound)
+
+/-- Unfolding lemma for `invStdBounds`. -/
+theorem invStdBounds_def {n : Nat} (eps : Rat) (x : Fin n → Rat) :
+    invStdBounds eps x =
+      if n = 0 then
+        (0, 0)
+      else
+        let var : Rat := variance x
+        let varEps : Rat := var + eps
+        let sqrtLowerBound : Rat := max (sqrtLower eps) (sqrtLower varEps)
+        let sqrtUpperBound : Rat := sqrtUpper varEps
+        (ratDivDown 1 sqrtUpperBound, ratDivUp 1 sqrtLowerBound) := by
+  simp [invStdBounds]
 
 /-- `invStdBounds` soundness for real inverse-std terms. -/
 theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)

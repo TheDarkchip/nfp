@@ -21,7 +21,7 @@ These bounds are used to compute verified downstream error certificates
 from explicit Rat matrices.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

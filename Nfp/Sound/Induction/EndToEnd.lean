@@ -10,7 +10,7 @@ public import Nfp.Sound.Induction.LogitDiff
 End-to-end induction bounds that combine head certificates with transformer-stack intervals.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

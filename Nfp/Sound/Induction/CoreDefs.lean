@@ -3,7 +3,7 @@
 module
 
 public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-public import Mathlib.Data.Vector.Defs
+public import Batteries.Data.Vector.Lemmas
 public import Nfp.Circuit.Layers.Induction
 public import Nfp.Circuit.Layers.Softmax
 public import Nfp.Core.Basic
@@ -18,7 +18,7 @@ Core definitions for induction-head certificates.
 These definitions are shared across induction certificate builders and checkers.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -37,6 +37,13 @@ def dirHeadVecOfInputs {seq dModel dHead : Nat}
   Vector.ofFn (fun d : Fin dHead =>
     Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j))
 
+/-- Unfolding lemma for `dirHeadVecOfInputs`. -/
+theorem dirHeadVecOfInputs_get {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (d : Fin dHead) :
+    (dirHeadVecOfInputs inputs).get d =
+      Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j) := by
+  simp [dirHeadVecOfInputs]
+
 /-- Real-valued LayerNorm outputs for head inputs. -/
 noncomputable def lnRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin dModel → Real :=
@@ -47,7 +54,8 @@ noncomputable def lnRealOfInputs {seq dModel dHead : Nat}
 theorem lnRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (i : Fin dModel) :
     lnRealOfInputs inputs q i =
-      Bounds.layerNormReal inputs.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q) i := rfl
+      Bounds.layerNormReal inputs.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q) i := by
+  simp [lnRealOfInputs]
 
 /-- Real-valued query projections for head inputs. -/
 noncomputable def qRealOfInputs {seq dModel dHead : Nat}
@@ -60,7 +68,8 @@ theorem qRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     qRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wq j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bq d : Real) := rfl
+        (inputs.bq d : Real) := by
+  simp [qRealOfInputs]
 
 /-- Real-valued key projections for head inputs. -/
 noncomputable def kRealOfInputs {seq dModel dHead : Nat}
@@ -73,16 +82,17 @@ theorem kRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     kRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wk j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bk d : Real) := rfl
+        (inputs.bk d : Real) := by
+  simp [kRealOfInputs]
 
 /-- Real-valued value projections for head inputs. -/
-noncomputable def vRealOfInputs {seq dModel dHead : Nat}
+@[expose] noncomputable def vRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin dHead → Real :=
   fun q d =>
     dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) + (inputs.bv d : Real)
 
 /-- Unfolding lemma for `vRealOfInputs`. -/
-theorem vRealOfInputs_def {seq dModel dHead : Nat}
+private theorem vRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     vRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) +
@@ -116,7 +126,8 @@ theorem scoresRealOfInputs_def {seq dModel dHead : Nat}
         else
           (inputs.maskValue : Real)
       else
-        base := rfl
+        base := by
+  simp [scoresRealOfInputs]
 
 /-- Real-valued per-key head outputs in model space. -/
 noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
@@ -128,16 +139,17 @@ noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
 theorem headValueRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) (i : Fin dModel) :
     headValueRealOfInputs inputs k i =
-      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) := rfl
+      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) := by
+  simp [headValueRealOfInputs]
 
 /-- Real-valued direction scores for head inputs. -/
-noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
+@[expose] noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Real :=
   let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
   fun k => dotProduct dirHead (fun d => vRealOfInputs inputs k d)
 
 /-- Unfolding lemma for `valsRealOfInputs`. -/
-theorem valsRealOfInputs_def {seq dModel dHead : Nat}
+private theorem valsRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) :
     valsRealOfInputs inputs k =
       let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
@@ -188,7 +200,7 @@ def defaultInductionHeadSplitConfig : InductionHeadSplitConfig :=
     splitBudgetDiffRefined := 12 }
 
 /-- Unfolding lemma for `defaultInductionHeadSplitConfig`. -/
-theorem defaultInductionHeadSplitConfig_def :
+private theorem defaultInductionHeadSplitConfig_def :
     defaultInductionHeadSplitConfig =
       { splitBudgetQ := 2
         splitBudgetK := 2

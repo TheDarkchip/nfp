@@ -8,7 +8,7 @@ public import Nfp.Core.Basic
 Caching helpers for interval bounds.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

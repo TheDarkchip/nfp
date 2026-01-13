@@ -22,7 +22,7 @@ This module computes rational interval bounds for LayerNorm outputs and proves
 those bounds sound for real-valued LayerNorm semantics.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -81,6 +81,19 @@ noncomputable def layerNormReal {n : Nat}
     let varEps : Real := (varianceRat x : Real) + (eps : Real)
     let invStd : Real := (Real.sqrt varEps)⁻¹
     fun i => (gamma i : Real) * ((x i : Real) - μ) * invStd + (beta i : Real)
+
+/-- Unfolding lemma for `layerNormReal`. -/
+theorem layerNormReal_def {n : Nat}
+    (eps : Rat) (gamma beta : Fin n → Rat) (x : Fin n → Rat) :
+    layerNormReal eps gamma beta x =
+      if n = 0 then
+        fun _ => 0
+      else
+        let μ : Real := meanRat x
+        let varEps : Real := (varianceRat x : Real) + (eps : Real)
+        let invStd : Real := (Real.sqrt varEps)⁻¹
+        fun i => (gamma i : Real) * ((x i : Real) - μ) * invStd + (beta i : Real) := by
+  simp [layerNormReal]
 
 /-- Real-valued LayerNorm output for a real vector. -/
 noncomputable def layerNormRealOfReal {n : Nat}

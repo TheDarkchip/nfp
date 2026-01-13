@@ -9,7 +9,7 @@ public import Nfp.Sound.Induction.CoreSound
 Head-output interval certificates for induction heads.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -63,7 +63,8 @@ theorem headOutputWithScores_def (scores : Fin seq → Fin seq → Real)
       let weights : Fin seq → Fin seq → Real := fun q k =>
         Circuit.softmax (scores q) k
       let vals : Fin seq → Real := fun k => headValueRealOfInputs inputs k i
-      dotProduct (weights q) vals := rfl
+      dotProduct (weights q) vals := by
+  simp [headOutputWithScores]
 
 /-- Real-valued head output for a query and model dimension. -/
 def headOutput (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -74,7 +75,8 @@ def headOutput (inputs : Model.InductionHeadInputs seq dModel dHead)
 theorem headOutput_def (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) (i : Fin dModel) :
     headOutput inputs q i =
-      headOutputWithScores (scoresRealOfInputs inputs) inputs q i := rfl
+      headOutputWithScores (scoresRealOfInputs inputs) inputs q i := by
+  simp [headOutput]
 
 /-- Soundness predicate for head-output interval bounds. -/
 structure HeadOutputIntervalSound [NeZero seq]
@@ -138,7 +140,7 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                     Bounds.layerNormBounds_spec (eps := inputs.lnEps)
                       (gamma := inputs.ln1Gamma) (beta := inputs.ln1Beta)
                       (x := inputs.embed q) hmodel hEps hSqrt
-                  simpa [lnBounds, lnLo, lnHi, lnRealOfInputs] using hln i
+                  simpa [lnBounds, lnLo, lnHi, lnRealOfInputs_def] using hln i
                 have hv_bounds :
                     ∀ q d, (vLo q d : Real) ≤ vRealOfInputs inputs q d ∧
                       vRealOfInputs inputs q d ≤ (vHi q d : Real) := by
@@ -193,8 +195,8 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       (lo := vLo k) (hi := vHi k)
                       (x := fun d => vRealOfInputs inputs k d) hlo hhi
                   constructor
-                  · simpa [headValueLo, headValueRealOfInputs] using hlow
-                  · simpa [headValueHi, headValueRealOfInputs] using hhigh
+                  · simpa [headValueLo, headValueRealOfInputs_def] using hlow
+                  · simpa [headValueHi, headValueRealOfInputs_def] using hhigh
                 let scoresReal : Fin (Nat.succ n) → Fin (Nat.succ n) → Real :=
                   scoresRealOfInputs inputs
                 let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>

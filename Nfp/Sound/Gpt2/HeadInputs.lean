@@ -14,7 +14,7 @@ periodic prompt description. The construction is purely definitional and is
 captured by an explicit theorem, so the trusted core does not hide any logic.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -25,7 +25,7 @@ namespace Gpt2
 open Nfp.Model
 
 /-- Build induction-head inputs from a GPT-2 head slice and prompt period. -/
-def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
+@[expose] def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
     Model.InductionHeadInputs seq dModel dHead :=
   { scale := slice.scale

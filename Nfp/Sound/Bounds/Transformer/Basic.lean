@@ -16,7 +16,7 @@ public import Nfp.Sound.Linear.FinFold
 Interval bounds for transformer stacks and final LayerNorm outputs.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
