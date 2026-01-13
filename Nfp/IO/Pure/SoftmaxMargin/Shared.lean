@@ -26,37 +26,33 @@ structure ParseState (seq : Nat) where
   /-- Whether any active entries were parsed. -/
   activeSeen : Bool
   /-- Optional predecessor pointer per query. -/
-  prev : Fin seq → Option (Fin seq)
+  prev : Array (Option (Fin seq))
   /-- Optional score matrix entries. -/
-  scores : Fin seq → Fin seq → Option Rat
+  scores : Array (Array (Option Rat))
   /-- Optional weight matrix entries. -/
-  weights : Fin seq → Fin seq → Option Rat
+  weights : Array (Array (Option Rat))
 
 /-- Initialize a softmax-margin parse state. -/
 def initState (seq : Nat) : ParseState seq :=
+  let row : Array (Option Rat) := Array.replicate seq none
   { eps := none
     margin := none
     active := ∅
     activeSeen := false
-    prev := fun _ => none
-    scores := fun _ _ => none
-    weights := fun _ _ => none }
+    prev := Array.replicate seq none
+    scores := Array.replicate seq row
+    weights := Array.replicate seq row }
 
 /-- Set a predecessor entry from `(q, k)` tokens. -/
 def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) : Except String (ParseState seq) := do
-  if hq : q < seq then
+  if q < seq then
     if hk : k < seq then
-      let qFin : Fin seq := ⟨q, hq⟩
       let kFin : Fin seq := ⟨k, hk⟩
-      match st.prev qFin with
+      match st.prev[q]! with
       | some _ =>
           throw s!"duplicate prev entry for q={q}"
       | none =>
-          let prev' : Fin seq → Option (Fin seq) := fun q' =>
-            if q' = qFin then
-              some kFin
-            else
-              st.prev q'
+          let prev' := st.prev.set! q (some kFin)
           return { st with prev := prev' }
     else
       throw s!"prev index out of range: k={k}"
@@ -75,24 +71,17 @@ def setActive {seq : Nat} (st : ParseState seq) (q : Nat) : Except String (Parse
     throw s!"active index out of range: q={q}"
 
 /-- Insert a matrix entry for scores/weights. -/
-def setMatrixEntry {seq : Nat} (mat : Fin seq → Fin seq → Option Rat)
-    (q k : Nat) (v : Rat) : Except String (Fin seq → Fin seq → Option Rat) := do
-  if hq : q < seq then
-    if hk : k < seq then
-      let qFin : Fin seq := ⟨q, hq⟩
-      let kFin : Fin seq := ⟨k, hk⟩
-      match mat qFin kFin with
+def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
+    (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
+  if q < seq then
+    if k < seq then
+      let row := mat[q]!
+      match row[k]! with
       | some _ =>
           throw s!"duplicate matrix entry at ({q}, {k})"
       | none =>
-          let mat' : Fin seq → Fin seq → Option Rat := fun q' k' =>
-            if q' = qFin then
-              if k' = kFin then
-                some v
-              else
-                mat q' k'
-            else
-              mat q' k'
+          let row' := row.set! k (some v)
+          let mat' := mat.set! q row'
           return mat'
     else
       throw s!"index out of range: k={k}"
@@ -118,10 +107,12 @@ def parseLine {seq : Nat} (st : ParseState seq)
   | ["prev", q, k] =>
       setPrev st (← parseNat q) (← parseNat k)
   | ["score", q, k, val] =>
-      let mat ← setMatrixEntry st.scores (← parseNat q) (← parseNat k) (← parseRat val)
+      let mat ← setMatrixEntry (seq := seq) st.scores (← parseNat q) (← parseNat k)
+        (← parseRat val)
       return { st with scores := mat }
   | ["weight", q, k, val] =>
-      let mat ← setMatrixEntry st.weights (← parseNat q) (← parseNat k) (← parseRat val)
+      let mat ← setMatrixEntry (seq := seq) st.weights (← parseNat q) (← parseNat k)
+        (← parseRat val)
       return { st with weights := mat }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"

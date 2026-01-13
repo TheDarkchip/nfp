@@ -25,21 +25,21 @@ private def finalizeState {seq : Nat} (hpos : 0 < seq)
     match st.margin with
     | some v => pure v
     | none => throw "missing margin entry"
-  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q => (st.prev q).isSome) then
+  if !st.prev.all Option.isSome then
     throw "missing prev entries"
-  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
-      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.scores q k).isSome)) then
+  if !st.scores.all (fun row => row.all Option.isSome) then
     throw "missing score entries"
-  if !finsetAll (Finset.univ : Finset (Fin seq)) (fun q =>
-      finsetAll (Finset.univ : Finset (Fin seq)) (fun k => (st.weights q k).isSome)) then
+  if !st.weights.all (fun row => row.all Option.isSome) then
     throw "missing weight entries"
   let defaultPrev : Fin seq := ⟨0, hpos⟩
   let prevFun : Fin seq → Fin seq := fun q =>
-    (st.prev q).getD defaultPrev
+    (st.prev[q.1]!).getD defaultPrev
   let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
-    (st.scores q k).getD 0
+    let row := st.scores[q.1]!
+    (row[k.1]!).getD 0
   let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
-    (st.weights q k).getD 0
+    let row := st.weights[q.1]!
+    (row[k.1]!).getD 0
   let active :=
     if st.activeSeen then
       st.active

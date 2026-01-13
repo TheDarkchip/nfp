@@ -55,20 +55,100 @@ section
 local instance : Std.Commutative (α := Bool) (· && ·) := ⟨Bool.and_comm⟩
 local instance : Std.Associative (α := Bool) (· && ·) := ⟨Bool.and_assoc⟩
 
-/-- Boolean `all` over a finset. -/
-def finsetAll {β : Type v} (s : Finset β) (p : β → Bool) : Bool :=
-  s.fold (· && ·) true p
+/-- Boolean `all` over a finset (tail-recursive fold over the multiset). -/
+def finsetAll {β : Type v} (s : Finset β) (p : β → Bool) : Bool := by
+  classical
+  let f : Bool → β → Bool := fun acc a => acc && p a
+  have hf : RightCommutative f := by
+    refine ⟨?_⟩
+    intro b a c
+    calc
+      f (f b a) c = ((b && p a) && p c) := rfl
+      _ = (b && (p a && p c)) := by simp [Bool.and_assoc]
+      _ = (b && (p c && p a)) := by simp [Bool.and_comm]
+      _ = ((b && p c) && p a) := by simp [Bool.and_assoc]
+      _ = f (f b c) a := rfl
+  let _ : RightCommutative f := hf
+  exact Multiset.foldl (f := f) (b := true) s.1
 
 theorem finsetAll_eq_true_iff {β : Type v} {s : Finset β} {p : β → Bool} :
     finsetAll s p = true ↔ ∀ a ∈ s, p a = true := by
   classical
+  let f : Bool → β → Bool := fun acc a => acc && p a
+  have hf : RightCommutative f := by
+    refine ⟨?_⟩
+    intro b a c
+    calc
+      f (f b a) c = ((b && p a) && p c) := rfl
+      _ = (b && (p a && p c)) := by simp [Bool.and_assoc]
+      _ = (b && (p c && p a)) := by simp [Bool.and_comm]
+      _ = ((b && p c) && p a) := by simp [Bool.and_assoc]
+      _ = f (f b c) a := rfl
+  let _ : RightCommutative f := hf
+  have hfoldl :
+      ∀ (s : Multiset β) (acc : Bool),
+        Multiset.foldl (f := f) (b := acc) s = true ↔
+          acc = true ∧ Multiset.foldl (f := f) (b := true) s = true := by
+    intro s acc
+    revert acc
+    refine Multiset.induction_on s ?h0 ?hcons
+    · intro acc
+      simp [Multiset.foldl_zero]
+    · intro a s ih acc
+      have ih_acc :
+          Multiset.foldl (f := f) (b := acc && p a) s = true ↔
+            (acc && p a) = true ∧ Multiset.foldl (f := f) (b := true) s = true := by
+        simpa using (ih (acc := acc && p a))
+      have ih_pa :
+          Multiset.foldl (f := f) (b := p a) s = true ↔
+            p a = true ∧ Multiset.foldl (f := f) (b := true) s = true := by
+        simpa using (ih (acc := p a))
+      have hgoal :
+          Multiset.foldl (f := f) (b := acc && p a) s = true ↔
+            acc = true ∧ Multiset.foldl (f := f) (b := p a) s = true := by
+        constructor
+        · intro h
+          have haccpa := ih_acc.mp h
+          have haccpa' : acc = true ∧ p a = true := by
+            simpa [Bool.and_eq_true] using haccpa.1
+          have hacc : acc = true := haccpa'.1
+          have hpa : p a = true := haccpa'.2
+          have hfold : Multiset.foldl (f := f) (b := p a) s = true :=
+            ih_pa.mpr ⟨hpa, haccpa.2⟩
+          exact ⟨hacc, hfold⟩
+        · intro h
+          rcases h with ⟨hacc, hfold⟩
+          have hpa := ih_pa.mp hfold
+          have haccpa : (acc && p a) = true := by
+            simpa [Bool.and_eq_true] using And.intro hacc hpa.1
+          exact ih_acc.mpr ⟨haccpa, hpa.2⟩
+      simpa [Multiset.foldl_cons, f] using hgoal
   induction s using Finset.induction_on with
   | empty =>
-      simp [finsetAll]
+      simp [finsetAll, Multiset.foldl_zero]
   | @insert a s ha ih =>
-      have hfold : finsetAll (insert a s) p = true ↔ p a = true ∧ finsetAll s p = true := by
-        simp [finsetAll, ha, Bool.and_eq_true]
-      simp [hfold, ih]
+      have hfold :
+          finsetAll (insert a s) p = true ↔
+            p a = true ∧ finsetAll s p = true := by
+        have hval : (insert a s).1 = a ::ₘ s.1 := by
+          simpa using (Finset.insert_val_of_notMem (a := a) (s := s) ha)
+        calc
+          finsetAll (insert a s) p = true ↔
+              Multiset.foldl (f := f) (b := true) (insert a s).1 = true := by
+                simp [finsetAll, f]
+          _ ↔ Multiset.foldl (f := f) (b := true) (a ::ₘ s.1) = true := by
+                simp [hval]
+          _ ↔ Multiset.foldl (f := f) (b := f true a) s.1 = true := by
+                simp [Multiset.foldl_cons]
+          _ ↔ Multiset.foldl (f := f) (b := p a) s.1 = true := by
+                simp [f]
+          _ ↔ p a = true ∧ Multiset.foldl (f := f) (b := true) s.1 = true := by
+                simpa using (hfoldl (s := s.1) (acc := p a))
+          _ ↔ p a = true ∧ finsetAll s p = true := by
+                simp [finsetAll, f]
+      have hfold' :
+          finsetAll (insert a s) p = true ↔ p a = true ∧ finsetAll s p = true := hfold
+      simpa [Finset.forall_mem_insert, ih] using hfold'
 
 /-- Boolean check for interface equality. -/
 def sameInterface (C₁ C₂ : Circuit ι α) : Bool :=
