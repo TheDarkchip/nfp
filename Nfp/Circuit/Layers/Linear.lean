@@ -30,9 +30,17 @@ variable {Row Col : Type u}
 abbrev LinearNode (Row Col : Type u) : Type u := Sum Col Row
 
 /-- Rank function used to orient layer edges from inputs to outputs. -/
-@[expose] def linearRank : LinearNode Row Col → Nat
+def linearRank : LinearNode Row Col → Nat
   | Sum.inl _ => 0
   | Sum.inr _ => 1
+
+/-- Definitional characterization of `linearRank`. -/
+theorem linearRank_def (x : LinearNode Row Col) :
+    linearRank (Row := Row) (Col := Col) x =
+      match x with
+      | Sum.inl _ => 0
+      | Sum.inr _ => 1 := by
+  cases x <;> rfl
 
 section Dag
 

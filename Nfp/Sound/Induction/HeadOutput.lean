@@ -230,20 +230,25 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                     have hloRat : loVal i ≤ headValueLo k0 i := hloVal k0
                     have hhiRat : headValueHi k0 i ≤ hiVal i := hhiVal k0
                     have hbounds := hhead_bounds k0 i
+                    have hloReal : (loVal i : Real) ≤ (headValueLo k0 i : Real) := by
+                      simpa [ratToReal_def] using ratToReal_le_of_le hloRat
+                    have hhiReal : (headValueHi k0 i : Real) ≤ (hiVal i : Real) := by
+                      simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
                     have hreal : (loVal i : Real) ≤ (hiVal i : Real) := by
-                      refine le_trans (ratToReal_le_of_le hloRat) ?_
-                      refine le_trans hbounds.1 ?_
-                      exact le_trans hbounds.2 (ratToReal_le_of_le hhiRat)
+                      exact le_trans hloReal (le_trans hbounds.1 (le_trans hbounds.2 hhiReal))
                     exact hreal
                   · intro k
                     have hloRat : loVal i ≤ headValueLo k i := hloVal k
                     have hbounds := hhead_bounds k i
-                    exact (ratToReal_le_of_le hloRat) |>.trans hbounds.1
+                    have hloReal : (loVal i : Real) ≤ (headValueLo k i : Real) := by
+                      simpa [ratToReal_def] using ratToReal_le_of_le hloRat
+                    exact hloReal.trans hbounds.1
                   · intro k
                     have hhiRat : headValueHi k i ≤ hiVal i := hhiVal k
                     have hbounds := hhead_bounds k i
-                    exact hbounds.2.trans
-                      (ratToReal_le_of_le hhiRat)
+                    have hhiReal : (headValueHi k i : Real) ≤ (hiVal i : Real) := by
+                      simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
+                    exact hbounds.2.trans hhiReal
                 have hsoftmax :
                     Layers.SoftmaxMarginBoundsOn (Val := Real)
                       (cert.eps : Real) (cert.margin : Real)
@@ -302,7 +307,23 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                         headOutput inputs q i ≤ (hiOut i : Real) := by
                   intro q hq i
                   have hactive : activeSet.Nonempty := ⟨q, hq⟩
-                  have hspec := (happrox i) q hq
+                  have hspec :
+                      dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) ≤
+                          headValueRealOfInputs inputs (cert.prev q) i +
+                            (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) ∧
+                        headValueRealOfInputs inputs (cert.prev q) i ≤
+                          dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) +
+                            (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) := by
+                    have happrox' :
+                        ∀ q, q ∈ activeSet →
+                          dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) ≤
+                              headValueRealOfInputs inputs (cert.prev q) i +
+                                (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) ∧
+                            headValueRealOfInputs inputs (cert.prev q) i ≤
+                              dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) +
+                                (cert.eps : Real) * ((hiVal i : Real) - (loVal i : Real)) := by
+                      simpa [Layers.InductionSpecApproxOn_def] using (happrox i)
+                    exact happrox' q hq
                   have hout_def :
                       headOutput inputs q i =
                         dotProduct (weights q) (fun k => headValueRealOfInputs inputs k i) := by
@@ -346,20 +367,22 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                       hlower''
                   have hlo :
                       (loOut i : Real) ≤ (boundLoRat q i : Real) := by
-                    refine ratToReal_le_of_le ?_
-                    simpa [loOut, hactive] using
-                      (Finset.inf'_le
-                        (s := activeSet)
-                        (f := fun q => boundLoRat q i)
-                        (b := q) hq)
+                    have hloRat : loOut i ≤ boundLoRat q i := by
+                      simpa [loOut, hactive] using
+                        (Finset.inf'_le
+                          (s := activeSet)
+                          (f := fun q => boundLoRat q i)
+                          (b := q) hq)
+                    simpa [ratToReal_def] using ratToReal_le_of_le hloRat
                   have hhi :
                       (boundHiRat q i : Real) ≤ (hiOut i : Real) := by
-                    refine ratToReal_le_of_le ?_
-                    simpa [hiOut, hactive] using
-                      (Finset.le_sup'
-                        (s := activeSet)
-                        (f := fun q => boundHiRat q i)
-                        (b := q) hq)
+                    have hhiRat : boundHiRat q i ≤ hiOut i := by
+                      simpa [hiOut, hactive] using
+                        (Finset.le_sup'
+                          (s := activeSet)
+                          (f := fun q => boundHiRat q i)
+                          (b := q) hq)
+                    simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
                   exact ⟨le_trans hlo hlower, le_trans hupper hhi⟩
                 have hbounds : Circuit.ResidualIntervalBounds { lo := loOut, hi := hiOut } := by
                   refine { lo_le_hi := ?_ }
@@ -367,8 +390,9 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                   by_cases hactive : activeSet.Nonempty
                   · rcases hactive with ⟨q, hq⟩
                     have hout_i := hout q hq i
-                    exact (ratToReal_le_iff (x := loOut i) (y := hiOut i)).1
-                      (le_trans hout_i.1 hout_i.2)
+                    have hreal : ratToReal (loOut i) ≤ ratToReal (hiOut i) := by
+                      simpa [ratToReal_def] using le_trans hout_i.1 hout_i.2
+                    exact (ratToReal_le_iff (x := loOut i) (y := hiOut i)).1 hreal
                   · simp [loOut, hiOut, hactive]
                 let certOut : Circuit.ResidualIntervalCert dModel := { lo := loOut, hi := hiOut }
                 exact some

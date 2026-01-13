@@ -130,10 +130,10 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
       exact le_trans hgelu.2 hmax'
     by_cases hhi0 : 0 ≤ hi
     · have hhi0r : 0 ≤ (hi : Real) := by
-        exact ratToReal_nonneg_of_nonneg hhi0
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hhi0
       simpa [geluInterval, hhi0, max_eq_left hhi0r] using hmax
     · have hhi0r : (hi : Real) ≤ 0 := by
-        exact (ratToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
+        simpa [ratToReal_def] using (ratToReal_nonpos_iff (x := hi)).2 (le_of_not_ge hhi0)
       have hx0 : x ≤ 0 := le_trans hhi hhi0r
       have hmax' : max x 0 = 0 := max_eq_right hx0
       have hhi'' : geluTanh x ≤ (0 : Real) := by
@@ -141,7 +141,7 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
       simpa [geluInterval, hhi0, ratToReal_zero] using hhi''
   by_cases hlo0 : lo ≤ 0
   · have hlo0r : (lo : Real) ≤ 0 := by
-      exact (ratToReal_nonpos_iff (x := lo)).2 hlo0
+      simpa [ratToReal_def] using (ratToReal_nonpos_iff (x := lo)).2 hlo0
     have hmin : min (lo : Real) 0 ≤ min x 0 := min_le_min hlo le_rfl
     have hlo' : (lo : Real) ≤ geluTanh x := by
       have hmin' : (lo : Real) ≤ min x 0 := by
@@ -151,7 +151,7 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
     · simpa [geluInterval, hlo0] using hlo'
     · exact hupper
   · have hlo0r : 0 ≤ (lo : Real) := by
-      exact ratToReal_nonneg_of_nonneg (le_of_not_ge hlo0)
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg (le_of_not_ge hlo0)
     have hx0 : 0 ≤ x := le_trans hlo0r hlo
     have hmin' : min x 0 = 0 := min_eq_right hx0
     have hlo' : (0 : Real) ≤ geluTanh x := by

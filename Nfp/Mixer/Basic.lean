@@ -8,7 +8,7 @@ public import Nfp.Prob.Basic
 Row-stochastic mixers.
 -/
 
-@[expose] public section
+public section
 
 open scoped BigOperators
 

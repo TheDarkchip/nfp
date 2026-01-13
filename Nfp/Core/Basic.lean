@@ -13,7 +13,7 @@ public import Mathlib.Data.Real.Basic
 Basic shared definitions for the NFP rewrite.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -27,13 +27,27 @@ def defaultRatPrec : Int := 48
 def ratRoundDown (q : Rat) (_prec : Int := defaultRatPrec) : Rat :=
   q
 
+/-- Definitional characterization of `ratRoundDown`. -/
+theorem ratRoundDown_def (q : Rat) (prec : Int := defaultRatPrec) :
+    ratRoundDown q prec = q := by
+  rfl
+
 /-- Round a rational up (identity in the exact-rational refactor). -/
 def ratRoundUp (q : Rat) (_prec : Int := defaultRatPrec) : Rat :=
   q
 
+/-- Definitional characterization of `ratRoundUp`. -/
+theorem ratRoundUp_def (q : Rat) (prec : Int := defaultRatPrec) :
+    ratRoundUp q prec = q := by
+  rfl
+
 /-- Real cast of a rational value. -/
 def ratToReal (x : Rat) : Real :=
   (x : Real)
+
+/-- Definitional characterization of `ratToReal`. -/
+theorem ratToReal_def (x : Rat) : ratToReal x = (x : Real) := by
+  rfl
 
 @[simp] theorem ratToReal_zero : ratToReal 0 = 0 := by
   simp [ratToReal]
@@ -84,12 +98,22 @@ def ratDivDown (x y : Rat) (_prec : Int := defaultRatPrec) : Rat :=
   else
     x / y
 
+/-- Definitional characterization of `ratDivDown`. -/
+theorem ratDivDown_def (x y : Rat) (prec : Int := defaultRatPrec) :
+    ratDivDown x y prec = if y = 0 then 0 else x / y := by
+  rfl
+
 /-- Rational division with upward rounding (exact for rationals). -/
 def ratDivUp (x y : Rat) (_prec : Int := defaultRatPrec) : Rat :=
   if y = 0 then
     0
   else
     x / y
+
+/-- Definitional characterization of `ratDivUp`. -/
+theorem ratDivUp_def (x y : Rat) (prec : Int := defaultRatPrec) :
+    ratDivUp x y prec = if y = 0 then 0 else x / y := by
+  rfl
 
 theorem ratDivUp_ge (x y : Rat) (hy : y ≠ 0) :
     (x / y : Rat) ≤ (ratDivUp x y : Rat) := by

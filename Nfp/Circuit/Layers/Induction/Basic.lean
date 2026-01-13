@@ -6,6 +6,7 @@ public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 public import Mathlib.Algebra.BigOperators.Ring.Finset
 public import Mathlib.Algebra.Order.Monoid.Unbundled.Basic
 public import Mathlib.Algebra.Order.Ring.Defs
+import all Nfp.Circuit.Layers.Attention
 public import Nfp.Circuit.Layers.Attention
 
 /-!
@@ -69,7 +70,7 @@ end Spec
 
 section ApproxSpec
 
-variable {Val : Type v} [AddCommMonoid Val] [PartialOrder Val] [IsOrderedAddMonoid Val]
+variable {Val : Type v} [AddCommMonoid Val] [PartialOrder Val]
 variable {n : Nat}
 
 /-- Approximate induction-head spec: outputs are within `ε` of `prev` values. -/
@@ -79,10 +80,20 @@ def InductionSpecApprox (ε : Val)
   ∀ q, q ≠ 0 → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
 
 /-- Approximate induction-head spec restricted to active queries. -/
-@[expose] def InductionSpecApproxOn (ε : Val) (active : Fin (Nat.succ n) → Prop)
+def InductionSpecApproxOn (ε : Val) (active : Fin (Nat.succ n) → Prop)
     (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (out vals : Fin (Nat.succ n) → Val) : Prop :=
   ∀ q, active q → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
+
+/-- Definitional characterization of `InductionSpecApproxOn`. -/
+theorem InductionSpecApproxOn_def (ε : Val) (active : Fin (Nat.succ n) → Prop)
+    (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (out vals : Fin (Nat.succ n) → Val) :
+    InductionSpecApproxOn (Val := Val) (n := n) ε active prev out vals =
+      ∀ q, active q → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε := by
+  rfl
+
+variable [IsOrderedAddMonoid Val]
 
 /-- Exact induction spec implies the approximate spec for any nonnegative tolerance. -/
 theorem inductionSpecApprox_of_spec (ε : Val) (hε : 0 ≤ ε)
@@ -644,7 +655,7 @@ theorem attentionGate_out_eq_of_oneHot (scale : Val)
         (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) rec =
       attentionOutValues (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
         b h q d rec (prev q) := by
-  simp only [attentionGate]
+  simp only [attentionGate_out_def]
   change
     dotProduct
         (attentionOutWeights (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
@@ -732,7 +743,8 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
       Circuit.evalInput_eq_input (C := C) (input := inputAssign)
         (i := attnV (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
           (b, prev q, h, d)) hmem
-    simpa [inputAssign, I, attentionInterface, attnInputV] using h
+    simpa [inputAssign, I, attentionInterface, attentionInputEquiv_def,
+      Interface.toInputAssignment_def, attnInputV] using h
   have hvals :
       attentionOutValues (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
           b h q d (fun j _ => Circuit.evalInput C inputAssign j) (prev q) =
@@ -743,7 +755,7 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
     (attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax).eval
         input (b, q, h, d) =
       Circuit.evalInput C inputAssign (I.outputs (b, q, h, d)).1 := by
-        simp [TypedCircuit.eval, Interface.eval, C, I, inputAssign, attentionTyped]
+        simp [TypedCircuit.eval_def, Interface.eval_def, attentionTyped_def, C, I, inputAssign]
     _ = Circuit.evalInput C inputAssign
         (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) := by
         rfl

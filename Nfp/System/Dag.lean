@@ -10,7 +10,7 @@ public import Mathlib.Data.Finset.Basic
 Directed acyclic graph foundations.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -67,6 +67,11 @@ def relabel (G : Dag ι) (e : ι ≃ ι') : Dag ι' :=
       exact G.decAdj (e.symm a) (e.symm b)
     wf := by
       simpa using (InvImage.wf (f := e.symm) (h := G.wf)) }
+
+/-- Relabeling preserves adjacency via the equivalence. -/
+theorem relabel_rel_iff (G : Dag ι) (e : ι ≃ ι') (a b : ι') :
+    (G.relabel e).rel a b ↔ G.rel (e.symm a) (e.symm b) := by
+  rfl
 
 end Relabel
 

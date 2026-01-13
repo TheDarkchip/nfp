@@ -31,8 +31,13 @@ variable {Node : Type u} [Fintype Node] [DecidableEq Node]
 variable {Val : Type v} {Input : Type u_in} {Output : Type u_out}
 
 /-- Evaluate a typed circuit on a typed input. -/
-@[expose] def eval (T : TypedCircuit Node Val Input Output) (input : Input → Val) : Output → Val :=
+def eval (T : TypedCircuit Node Val Input Output) (input : Input → Val) : Output → Val :=
   T.interface.eval input
+
+/-- Definitional characterization of `TypedCircuit.eval`. -/
+theorem eval_def (T : TypedCircuit Node Val Input Output) (input : Input → Val) :
+    T.eval input = T.interface.eval input := by
+  rfl
 
 /-- Decide equivalence by enumerating typed inputs. -/
 def checkEquiv (T1 T2 : TypedCircuit Node Val Input Output)

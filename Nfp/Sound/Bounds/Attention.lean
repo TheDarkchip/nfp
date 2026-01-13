@@ -179,7 +179,7 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
         max |(lo i : Real)| |(hi i : Real)| ≤ (absBound : Real) := by
       have hsup' : ratToReal (max |lo i| |hi i|) ≤ ratToReal absBound :=
         ratToReal_le_of_le hsup
-      simpa [ratToReal_abs, ratToReal_max] using hsup'
+      simpa [ratToReal_abs, ratToReal_max, ratToReal_def] using hsup'
     exact le_trans hbound hsup_real
   have hln_bounds : ∀ q i, (lnLo i : Real) ≤ lnOut q i ∧ lnOut q i ≤ (lnHi i : Real) := by
     intro q i

@@ -9,7 +9,7 @@ public import Mathlib.Algebra.BigOperators.Ring.Finset
 Basic constructions on probability vectors.
 -/
 
-@[expose] public section
+public section
 
 open scoped BigOperators
 

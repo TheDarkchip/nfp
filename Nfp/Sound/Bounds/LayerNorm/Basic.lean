@@ -59,13 +59,15 @@ theorem scaleInterval_bounds_real {x lo hi : Rat} {y : Real}
     let bounds := scaleInterval x lo hi
     (bounds.1 : Real) ≤ (x : Real) * y ∧ (x : Real) * y ≤ (bounds.2 : Real) := by
   by_cases hx : 0 ≤ x
-  · have hx' : 0 ≤ (x : Real) := ratToReal_nonneg_of_nonneg hx
+  · have hx' : 0 ≤ (x : Real) := by
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hx
     have hbounds : (x : Real) * (lo : Real) ≤ (x : Real) * y ∧
         (x : Real) * y ≤ (x : Real) * (hi : Real) := by
       exact ⟨mul_le_mul_of_nonneg_left hlo hx', mul_le_mul_of_nonneg_left hhi hx'⟩
     simpa [scaleInterval, hx] using hbounds
   · have hx' : x ≤ 0 := le_of_lt (lt_of_not_ge hx)
-    have hx'' : (x : Real) ≤ 0 := (ratToReal_nonpos_iff (x := x)).2 hx'
+    have hx'' : (x : Real) ≤ 0 := by
+      simpa [ratToReal_def] using (ratToReal_nonpos_iff (x := x)).2 hx'
     have hbounds : (x : Real) * (hi : Real) ≤ (x : Real) * y ∧
         (x : Real) * y ≤ (x : Real) * (lo : Real) := by
       exact ⟨mul_le_mul_of_nonpos_left hhi hx'', mul_le_mul_of_nonpos_left hlo hx''⟩
@@ -157,14 +159,16 @@ theorem layerNormBounds_spec {n : Nat}
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   let invStd : Real := (Real.sqrt varEps)⁻¹
   have hmu : (μRat : Real) = μ := by
-    simp [μRat, μ, mean_def, hne, ratRoundDown]
+    simp [μRat, μ, mean_def, hne, ratRoundDown_def]
   have hvar : (varRat : Real) = (varianceRat x : Real) := by
-    simp [varRat, variance_def, hne, ratRoundDown]
+    simp [varRat, variance_def, hne, ratRoundDown_def]
   have hvarEps : (varEpsRat : Real) = varEps := by
     simp [varEpsRat, varEps, hvar]
   have hvar_nonneg : 0 ≤ (varianceRat x : Real) := varianceRat_nonneg_real x hne
+  have hvar_nonneg_real : 0 ≤ ratToReal (varianceRat x) := by
+    simpa [ratToReal_def] using hvar_nonneg
   have hvar_nonneg_rat : 0 ≤ varianceRat x := by
-    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hvar_nonneg
+    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hvar_nonneg_real
   have hvarRat_nonneg : 0 ≤ varRat := by
     have h := ratRoundDown_nonneg (q := varianceRat x) hvar_nonneg_rat
     simpa [varRat, variance_def x hne] using h
@@ -225,16 +229,16 @@ theorem layerNormBounds_spec {n : Nat}
   have hupper_ne : sqrtUpperBound ≠ 0 := ne_of_gt hsqrt_upper_pos_rat
   have hlower_ne : sqrtLowerBound ≠ 0 := ne_of_gt hsqrt_lower_pos_rat
   have hinv_lower : (invStdLower : Real) ≤ invStd := by
-    simpa [invStdLower, ratDivDown, hupper_ne, one_div] using hinv_lower_real
+    simpa [invStdLower, ratDivDown_def, hupper_ne, one_div] using hinv_lower_real
   have hinv_upper : invStd ≤ (invStdUpper : Real) := by
-    simpa [invStdUpper, ratDivUp, hlower_ne, one_div] using hinv_upper_real
+    simpa [invStdUpper, ratDivUp_def, hlower_ne, one_div] using hinv_upper_real
   have hlayer :
       layerNormReal eps gamma beta x i =
         (beta i : Real) + (coeff : Real) * invStd := by
     simp [layerNormReal, hne, coeff, centered, μ, hmu, invStd, varEps, add_comm, mul_assoc]
   by_cases hcoeff : 0 ≤ coeff
-  · have hcoeff_real : 0 ≤ (coeff : Real) :=
-      ratToReal_nonneg_of_nonneg hcoeff
+  · have hcoeff_real : 0 ≤ (coeff : Real) := by
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hcoeff
     have hlow_raw :
         (beta i : Real) + (coeff : Real) * (invStdLower : Real) ≤
           (beta i : Real) + (coeff : Real) * invStd := by
@@ -318,7 +322,8 @@ theorem invStd_le_invStdBound {n : Nat} (eps : Rat) (x : Fin n → Rat)
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := by
+      simpa [ratToReal_def] using ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   exact le_trans hinv_sqrt hinv_bound
 
@@ -369,7 +374,7 @@ theorem layerNormIntervalBounds_spec {n : Nat}
     have h0 : 0 ≤ centeredBound i := by
       dsimp [centeredBound]
       exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact ratToReal_nonneg_of_nonneg h0
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg h0
   have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound i : Real) := by
     have hmean_lo_real : (μLo : Real) ≤ μ := by
       have hmean_rat : (meanRat lo : Real) ≤ (meanRat x : Real) :=
@@ -389,14 +394,14 @@ theorem layerNormIntervalBounds_spec {n : Nat}
       have h2 : (lo i : Real) - μ ≤ (x i : Real) - μ := by
         exact sub_le_sub_right
           (by
-            exact ratToReal_le_of_le (hlo i))
+            simpa [ratToReal_def] using ratToReal_le_of_le (hlo i))
           μ
       exact le_trans h1 h2
     have hhi' : (x i : Real) - μ ≤ (hi i : Real) - (μLo : Real) := by
       have h1 : (x i : Real) - μ ≤ (hi i : Real) - μ := by
         exact sub_le_sub_right
           (by
-            exact ratToReal_le_of_le (hhi i))
+            simpa [ratToReal_def] using ratToReal_le_of_le (hhi i))
           μ
       have h2 : (hi i : Real) - μ ≤ (hi i : Real) - (μLo : Real) := by
         exact sub_le_sub_left hmean_lo_real (hi i : Real)
@@ -493,7 +498,7 @@ theorem layerNormAbsBounds_spec {n : Nat}
       meanReal_abs_le_bound (x := fun j => (x j : Real)) (bound := absBound) hne
         (by
           intro j
-          exact ratToReal_abs_le_of_le (habs j))
+          simpa [ratToReal_def] using ratToReal_abs_le_of_le (habs j))
     simpa [meanReal_eq_meanRat] using h
   have hbound_nonneg : 0 ≤ absBound := by
     have hposn : 0 < n := Nat.pos_of_ne_zero hne
@@ -507,14 +512,14 @@ theorem layerNormAbsBounds_spec {n : Nat}
   let invStd : Real := (Real.sqrt varEps)⁻¹
   have hcentered_abs : |(x i : Real) - μ| ≤ (centeredBound : Real) := by
     have hx : |(x i : Real)| ≤ (absBound : Real) := by
-      exact ratToReal_abs_le_of_le (habs i)
+      simpa [ratToReal_def] using ratToReal_abs_le_of_le (habs i)
     have hmu : |μ| ≤ (absBound : Real) := by
       simpa [μ] using hmean_abs_real
     have h12 : |(x i : Real) - μ| ≤ (absBound : Real) + (absBound : Real) :=
       abs_sub_le_double_bound hx hmu
     simpa [centeredBound, two_mul] using h12
   have hbound_nonneg_real : 0 ≤ (absBound : Real) := by
-    exact ratToReal_nonneg_of_nonneg hbound_nonneg
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hbound_nonneg
   have hcentered_nonneg : 0 ≤ (centeredBound : Real) := by
     have hsum := add_nonneg hbound_nonneg_real hbound_nonneg_real
     simpa [centeredBound, two_mul] using hsum
@@ -626,7 +631,8 @@ theorem layerNormAbsBounds_spec_real {n : Nat}
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := by
+      simpa [ratToReal_def] using ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound
@@ -723,7 +729,7 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
     have h0 : 0 ≤ centeredBound i := by
       dsimp [centeredBound]
       exact le_trans (abs_nonneg _) (le_max_left _ _)
-    exact ratToReal_nonneg_of_nonneg h0
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg h0
   have hcentered_abs : |x i - μ| ≤ (centeredBound i : Real) := by
     have hmean_lo_real : (μLo : Real) ≤ μ := by
       simpa [μLo, μ] using hmean_lo
@@ -765,7 +771,8 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
     simpa [invStd] using h
   have hinv_bound : (sqrtLower eps : Real)⁻¹ ≤ (invStdBound : Real) := by
     have hy : sqrtLower eps ≠ 0 := ne_of_gt hsqrt
-    have hdiv := ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
+    have hdiv := by
+      simpa [ratToReal_def] using ratDivUp_ge_real (x := 1) (y := sqrtLower eps) hy
     simpa [invStdBound, one_div] using hdiv
   have hinv : invStd ≤ (invStdBound : Real) := by
     exact le_trans hinv_sqrt hinv_bound

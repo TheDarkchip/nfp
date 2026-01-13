@@ -184,7 +184,7 @@ theorem layerNormAbsMlpBounds_spec {n hidden : Nat}
       have hsup' :
           ratToReal (max |lo j| |hi j|) ≤ ratToReal absBound :=
         ratToReal_le_of_le hsup
-      simpa [ratToReal_abs, ratToReal_max] using hsup'
+      simpa [ratToReal_abs, ratToReal_max, ratToReal_def] using hsup'
     exact le_trans hbound hsup_real
   have hln :=
     layerNormAbsBounds_spec_real eps gamma beta absBound x hne heps hsqrt habs

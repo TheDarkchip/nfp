@@ -555,7 +555,9 @@ theorem gpt2ResidualIntervalBoundsActive_sound
     rcases hactive with ⟨q0, hq0⟩
     have hq := hspec q0 hq0 i
     have hreal : (bounds.1 i : Real) ≤ (bounds.2 i : Real) := hq.1.trans hq.2
-    exact (ratToReal_le_iff (x := bounds.1 i) (y := bounds.2 i)).1 hreal
+    have hreal' : ratToReal (bounds.1 i) ≤ ratToReal (bounds.2 i) := by
+      simpa [ratToReal_def] using hreal
+    exact (ratToReal_le_iff (x := bounds.1 i) (y := bounds.2 i)).1 hreal'
   refine And.intro hbounds ?_
   intro q hq i
   have hq' := hspec q hq i

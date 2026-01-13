@@ -633,7 +633,7 @@ theorem dotIntervalLower2_le_dotProduct_real {n : Nat} (lo1 hi1 lo2 hi2 : Fin n 
   have hcast :
       (dotIntervalLower2 lo1 hi1 lo2 hi2 : Real) =
         ∑ j, (mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j) : Real) := by
-    simpa [dotIntervalLower2, ratToReal] using
+    simpa [dotIntervalLower2, ratToReal_def] using
       (Linear.ratToReal_sumFin
         (f := fun j => mulIntervalLower (lo1 j) (hi1 j) (lo2 j) (hi2 j)))
   have hsum :=
@@ -651,7 +651,7 @@ theorem dotProduct_le_dotIntervalUpper2_real {n : Nat} (lo1 hi1 lo2 hi2 : Fin n 
   have hcast :
       (dotIntervalUpper2 lo1 hi1 lo2 hi2 : Real) =
         ∑ j, (mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j) : Real) := by
-    simpa [dotIntervalUpper2, ratToReal] using
+    simpa [dotIntervalUpper2, ratToReal_def] using
       (Linear.ratToReal_sumFin
         (f := fun j => mulIntervalUpper (lo1 j) (hi1 j) (lo2 j) (hi2 j)))
   have hsum :=
@@ -766,21 +766,27 @@ theorem dotIntervalLower_le_dotProduct_real {n : Nat} (v lo hi : Fin n → Rat)
   have hcast :
       (dotIntervalLower v lo hi : Real) =
         ∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real) := by
-    simpa [dotIntervalLower, ratToReal_mul, ratToReal_if] using
-      (Linear.ratToReal_sumFin
-        (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j))
+    have hcast' :
+        ratToReal (dotIntervalLower v lo hi) =
+          ∑ j, if 0 ≤ v j then ratToReal (v j) * ratToReal (lo j) else
+            ratToReal (v j) * ratToReal (hi j) := by
+      simpa [dotIntervalLower, ratToReal_if, ratToReal_mul] using
+        (Linear.ratToReal_sumFin
+          (f := fun j => if 0 ≤ v j then v j * lo j else v j * hi j))
+    simpa [ratToReal_def] using hcast'
   have hsum :
       (∑ j, if 0 ≤ v j then (v j : Real) * (lo j : Real) else (v j : Real) * (hi j : Real)) ≤
         ∑ j, (v j : Real) * x j := by
     refine Finset.sum_le_sum ?_
     intro j _
     by_cases hv : 0 ≤ v j
-    · have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
+    · have hv' : (0 : Real) ≤ (v j : Real) := by
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hv
       have hmul : (v j : Real) * (lo j : Real) ≤ (v j : Real) * x j := by
         exact mul_le_mul_of_nonneg_left (hlo j) hv'
       simpa [hv] using hmul
     · have hv' : (v j : Real) ≤ 0 := by
-        exact (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
+        simpa [ratToReal_def] using (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
       have hmul : (v j : Real) * (hi j : Real) ≤ (v j : Real) * x j := by
         exact mul_le_mul_of_nonpos_left (hhi j) hv'
       simpa [hv] using hmul
@@ -804,21 +810,27 @@ theorem dotProduct_le_dotIntervalUpper_real {n : Nat} (v lo hi : Fin n → Rat)
   have hcast :
       (dotIntervalUpper v lo hi : Real) =
         ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
-    simpa [dotIntervalUpper, ratToReal_mul, ratToReal_if] using
-      (Linear.ratToReal_sumFin
-        (f := fun j => if 0 ≤ v j then v j * hi j else v j * lo j))
+    have hcast' :
+        ratToReal (dotIntervalUpper v lo hi) =
+          ∑ j, if 0 ≤ v j then ratToReal (v j) * ratToReal (hi j) else
+            ratToReal (v j) * ratToReal (lo j) := by
+      simpa [dotIntervalUpper, ratToReal_if, ratToReal_mul] using
+        (Linear.ratToReal_sumFin
+          (f := fun j => if 0 ≤ v j then v j * hi j else v j * lo j))
+    simpa [ratToReal_def] using hcast'
   have hsum :
       ∑ j, (v j : Real) * x j ≤
         ∑ j, if 0 ≤ v j then (v j : Real) * (hi j : Real) else (v j : Real) * (lo j : Real) := by
     refine Finset.sum_le_sum ?_
     intro j _
     by_cases hv : 0 ≤ v j
-    · have hv' : (0 : Real) ≤ (v j : Real) := ratToReal_nonneg_of_nonneg hv
+    · have hv' : (0 : Real) ≤ (v j : Real) := by
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hv
       have hmul : (v j : Real) * x j ≤ (v j : Real) * (hi j : Real) := by
         exact mul_le_mul_of_nonneg_left (hhi j) hv'
       simpa [hv] using hmul
     · have hv' : (v j : Real) ≤ 0 := by
-        exact (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
+        simpa [ratToReal_def] using (ratToReal_nonpos_iff (x := v j)).2 (le_of_not_ge hv)
       have hmul : (v j : Real) * x j ≤ (v j : Real) * (lo j : Real) := by
         exact mul_le_mul_of_nonpos_left (hlo j) hv'
       simpa [hv] using hmul
@@ -852,10 +864,10 @@ theorem abs_le_intervalAbsBound_real {n : Nat} (lo hi : Fin n → Rat) (x : Fin 
     constructor
     · have hleft : |lo i| ≤ intervalAbsBound lo hi := by
         exact le_trans (le_max_left _ _) (max_abs_le_intervalAbsBound lo hi i)
-      exact ratToReal_abs_le_of_le hleft
+      simpa [ratToReal_def] using ratToReal_abs_le_of_le hleft
     · have hright : |hi i| ≤ intervalAbsBound lo hi := by
         exact le_trans (le_max_right _ _) (max_abs_le_intervalAbsBound lo hi i)
-      exact ratToReal_abs_le_of_le hright
+      simpa [ratToReal_def] using ratToReal_abs_le_of_le hright
   exact le_trans hbound hsup_real
 
 theorem abs_dotProduct_le_dotIntervalAbsBound_real {n : Nat} (v lo hi : Fin n → Rat)

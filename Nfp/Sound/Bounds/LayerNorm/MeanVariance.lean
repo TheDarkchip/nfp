@@ -169,7 +169,7 @@ theorem meanRat_le_meanRat_real {n : Nat} (x y : Fin n → Rat) (hne : n ≠ 0)
       meanReal (fun i => (x i : Real)) ≤ meanReal (fun i => (y i : Real)) := by
     refine meanReal_le_meanReal (x := fun i => (x i : Real)) (y := fun i => (y i : Real)) hne ?_
     intro i
-    exact ratToReal_le_of_le (hxy i)
+    simpa [ratToReal_def] using ratToReal_le_of_le (hxy i)
   simpa [meanReal_eq_meanRat] using hreal
 
 /-- Variance of a real vector (defaults to `0` when `n = 0`). -/

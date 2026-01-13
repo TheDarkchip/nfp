@@ -9,7 +9,7 @@ public import Mathlib.Data.Fintype.BigOperators
 Probability vectors on finite types.
 -/
 
-@[expose] public section
+public section
 
 open scoped BigOperators
 

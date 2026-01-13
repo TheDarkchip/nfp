@@ -307,13 +307,13 @@ theorem sqrtLowerBase_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     have hden_nonneg : 0 ≤ (b + 1 : Real) := by exact_mod_cast (Nat.zero_le (b + 1))
     exact div_nonneg hnum_nonneg hden_nonneg
   have hq_nonneg : 0 ≤ (q : Real) := by
-    exact ratToReal_nonneg_of_nonneg hq
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hq
   have hle : (a : Real) / (b + 1 : Real) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
   have hdown :
       (sqrtLowerBase q : Real) ≤ (a : Real) / (b + 1 : Real) := by
     have hdown' :
-        ratToReal (ratRoundDown ((a : Rat) / (b + 1))) ≤
+        (ratRoundDown ((a : Rat) / (b + 1)) : Real) ≤
           (a : Real) / (b + 1 : Real) := by
       simpa using ratRoundDown_le_real ((a : Rat) / (b + 1))
     simpa [sqrtLowerBase, num, den, a, b] using hdown'
@@ -364,7 +364,7 @@ theorem real_sqrt_le_sqrtUpperBase {q : Rat} (hq : 0 ≤ q) :
       (a + 1 : Real) / (b : Real) ≤ (sqrtUpperBase q : Real) := by
     have hup' :
         (a + 1 : Real) / (b : Real) ≤
-          ratToReal (ratRoundUp ((a + 1 : Rat) / b)) := by
+          (ratRoundUp ((a + 1 : Rat) / b) : Real) := by
       simpa using real_le_ratRoundUp ((a + 1 : Rat) / b)
     simpa [sqrtUpperBase, num, den, a, b] using hup'
   exact le_trans hle hup
@@ -406,13 +406,13 @@ theorem sqrtLowerAlt_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
     have hden_nonneg : 0 ≤ (den : Real) := by exact_mod_cast (Nat.zero_le den)
     exact div_nonneg hnum_nonneg hden_nonneg
   have hq_nonneg : 0 ≤ (q : Real) := by
-    exact ratToReal_nonneg_of_nonneg hq
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hq
   have hle : (a : Real) / (den : Real) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
   have hdown :
       (sqrtLowerAlt q : Real) ≤ (a : Real) / (den : Real) := by
     have hdown' :
-        ratToReal (ratRoundDown ((a : Rat) / den)) ≤
+        (ratRoundDown ((a : Rat) / den) : Real) ≤
           (a : Real) / (den : Real) := by
       simpa using ratRoundDown_le_real ((a : Rat) / den)
     simpa [sqrtLowerAlt, num, den, a] using hdown'
@@ -477,14 +477,14 @@ theorem sqrtLowerScaled_le_real_sqrt {q : Rat} (hq : 0 ≤ q) :
       exact mul_nonneg (le_of_lt hden_pos) (le_of_lt hscale_pos)
     exact div_nonneg hnum_nonneg hden_nonneg
   have hq_nonneg : 0 ≤ (q : Real) := by
-    exact ratToReal_nonneg_of_nonneg hq
+    simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hq
   have hle :
       (a : Real) / ((den : Real) * (scale : Real)) ≤ Real.sqrt (q : Real) :=
     (Real.le_sqrt hnonneg hq_nonneg).2 hsq
   have hdown :
       (sqrtLowerScaled q : Real) ≤ (a : Real) / ((den : Real) * (scale : Real)) := by
     have hdown' :
-        ratToReal (ratRoundDown ((a : Rat) / (den * scale))) ≤
+        (ratRoundDown ((a : Rat) / (den * scale)) : Real) ≤
           (a : Real) / ((den : Real) * (scale : Real)) := by
       simpa using ratRoundDown_le_real ((a : Rat) / (den * scale))
     simpa [sqrtLowerScaled, num, den, scale, a] using hdown'
@@ -533,7 +533,7 @@ theorem real_sqrt_le_sqrtUpperAlt {q : Rat} (hq : 0 ≤ q) :
       (a + 1 : Real) / (den : Real) ≤ (sqrtUpperAlt q : Real) := by
     have hup' :
         (a + 1 : Real) / (den : Real) ≤
-          ratToReal (ratRoundUp ((a + 1 : Rat) / den)) := by
+          (ratRoundUp ((a + 1 : Rat) / den) : Real) := by
       simpa using real_le_ratRoundUp ((a + 1 : Rat) / den)
     simpa [sqrtUpperAlt, num, den, a] using hup'
   exact le_trans hle hup
@@ -599,7 +599,7 @@ theorem real_sqrt_le_sqrtUpperScaled {q : Rat} (hq : 0 ≤ q) :
       (a + 1 : Real) / ((den : Real) * (scale : Real)) ≤ (sqrtUpperScaled q : Real) := by
     have hup' :
         (a + 1 : Real) / ((den : Real) * (scale : Real)) ≤
-          ratToReal (ratRoundUp ((a + 1 : Rat) / (den * scale))) := by
+          (ratRoundUp ((a + 1 : Rat) / (den * scale)) : Real) := by
       simpa using real_le_ratRoundUp ((a + 1 : Rat) / (den * scale))
     simpa [sqrtUpperScaled, num, den, scale, a] using hup'
   exact le_trans hle hup

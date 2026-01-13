@@ -70,8 +70,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 ∀ q, (mean (inputs.embed q) : Real) = meanRat (inputs.embed q) := by
               intro q
               have hmu_rat : mean (inputs.embed q) = meanRat (inputs.embed q) := by
-                simp [mean_def, hmodel, ratRoundDown]
-              simpa [ratToReal] using congrArg ratToReal hmu_rat
+                simp [mean_def, hmodel, ratRoundDown_def]
+              simpa [ratToReal_def] using congrArg ratToReal hmu_rat
             have hln_affine :
                 ∀ q j,
                   lnRealOfInputs inputs q j =
@@ -719,7 +719,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   (scoreLo q k : Real) ≤ base ∧ base ≤ (scoreHi q k : Real) := by
                 by_cases hscale : 0 ≤ inputs.scale
                 · have hscale_real : 0 ≤ (inputs.scale : Real) :=
-                    ratToReal_nonneg_of_nonneg hscale
+                    by
+                      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hscale
                   have hdot := hdot_bounds hnot
                   have hlow := mul_le_mul_of_nonneg_left hdot.1 hscale_real
                   have hhigh := mul_le_mul_of_nonneg_left hdot.2 hscale_real
@@ -729,7 +730,9 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 · have hscale_nonpos : inputs.scale ≤ 0 :=
                     le_of_lt (lt_of_not_ge hscale)
                   have hscale_real : (inputs.scale : Real) ≤ 0 :=
-                    (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
+                    by
+                      simpa [ratToReal_def] using
+                        (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
                   have hdot := hdot_bounds hnot
                   have hlow := mul_le_mul_of_nonpos_left hdot.2 hscale_real
                   have hhigh := mul_le_mul_of_nonpos_left hdot.1 hscale_real
@@ -917,14 +920,17 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                               kRealOfInputs inputs k d) := by
                     by_cases hscale : 0 ≤ inputs.scale
                     · have hscale_real : 0 ≤ (inputs.scale : Real) :=
-                        ratToReal_nonneg_of_nonneg hscale
+                        by
+                          simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hscale
                       have hle := mul_le_mul_of_nonneg_left hdiff.1 hscale_real
                       simpa [scoreGapLo, scoreGapLoRaw, Bounds.cacheBound2_apply,
                         hprevmask, hmask, hscale] using hle
                     · have hscale_nonpos : inputs.scale ≤ 0 :=
                         le_of_lt (lt_of_not_ge hscale)
                       have hscale_real : (inputs.scale : Real) ≤ 0 :=
-                        (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
+                        by
+                          simpa [ratToReal_def] using
+                            (ratToReal_nonpos_iff (x := inputs.scale)).2 hscale_nonpos
                       have hle := mul_le_mul_of_nonpos_left hdiff.2 hscale_real
                       simpa [scoreGapLo, scoreGapLoRaw, Bounds.cacheBound2_apply,
                         hprevmask, hmask, hscale] using hle
@@ -1023,7 +1029,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
               have hmargin_le : marginAt q ≤ scoreGapLo q k :=
                 hmarginAt_le q hq k hk
               have hmargin_le_real : (marginAt q : Real) ≤ (scoreGapLo q k : Real) :=
-                ratToReal_le_of_le hmargin_le
+                by
+                  simpa [ratToReal_def] using ratToReal_le_of_le hmargin_le
               have hscore_gap := hscore_gap_real_at q hq k hk
               have hstep := add_le_add_right hmargin_le_real (scoresReal q k)
               have hstep' :
@@ -1043,7 +1050,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     (f := marginAt) (a := marginAt q)).2 ⟨q, hmem, le_rfl⟩
                 simpa [margin, hnonempty] using hle
               have hmargin_le_real : (margin : Real) ≤ (marginAt q : Real) :=
-                ratToReal_le_of_le hmargin_le
+                by
+                  simpa [ratToReal_def] using ratToReal_le_of_le hmargin_le
               have hscore := hscore_margin_real_at q hq k hk
               have hscore' :
                   (marginAt q : Real) + scoresReal q k ≤ scoresReal q (inputs.prev q) := by
@@ -1129,7 +1137,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
             have hepsAt_le_eps_real :
                 ∀ q, q ∈ inputs.active → (epsAt q : Real) ≤ (eps : Real) := by
               intro q hq
-              exact ratToReal_le_of_le (hepsAt_le_eps q hq)
+              simpa [ratToReal_def] using ratToReal_le_of_le (hepsAt_le_eps q hq)
             have hsoftmax_bounds :
                 Layers.SoftmaxMarginBoundsOn (Val := Real) (eps : Real) (margin : Real)
                   (fun q => q ∈ inputs.active) inputs.prev scoresReal weights := by
@@ -1237,7 +1245,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     dsimp [lo]
                     refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
                       (f := valsLo) (a := valsLo k0)).2 ⟨k0, hmem0, le_rfl⟩
-                  exact ratToReal_le_of_le hloRat
+                  simpa [ratToReal_def] using ratToReal_le_of_le hloRat
                 have hvals :
                     (valCert.valsLo k0 : Real) ≤ valsRealOfInputs inputs k0 ∧
                       valsRealOfInputs inputs k0 ≤ (valCert.valsHi k0 : Real) := by
@@ -1248,18 +1256,20 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     dsimp [hi]
                     refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
                       (f := valsHi) (a := valsHi k0)).2 ⟨k0, ⟨hmem0, le_rfl⟩⟩
-                  exact ratToReal_le_of_le hhiRat
+                  simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
                 have hreal :
                     (valCert.lo : Real) ≤ (valCert.hi : Real) :=
                   le_trans hlo (le_trans hvals.1 (le_trans hvals.2 hhi))
-                exact (ratToReal_le_iff (x := valCert.lo) (y := valCert.hi)).1 hreal
+                have hreal' : ratToReal valCert.lo ≤ ratToReal valCert.hi := by
+                  simpa [ratToReal_def] using hreal
+                exact (ratToReal_le_iff (x := valCert.lo) (y := valCert.hi)).1 hreal'
               · intro k
                 have hloRat : valCert.lo ≤ valCert.valsLo k := by
                   change lo ≤ valsLo k
                   dsimp [lo]
                   refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
                     (f := valsLo) (a := valsLo k)).2 ⟨k, by simp [univ], le_rfl⟩
-                exact ratToReal_le_of_le hloRat
+                simpa [ratToReal_def] using ratToReal_le_of_le hloRat
               · intro k
                 exact hvals_bounds_at k
               · intro k
@@ -1268,7 +1278,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   dsimp [hi]
                   refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
                     (f := valsHi) (a := valsHi k)).2 ⟨k, by simp [univ], le_rfl⟩
-                exact ratToReal_le_of_le hhiRat
+                simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
             exact
               { softmax_bounds := hsoftmax_bounds
                 oneHot_bounds_at := oneHot_bounds_at

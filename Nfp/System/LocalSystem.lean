@@ -10,7 +10,7 @@ public import Nfp.System.Dag
 Local mixing systems on finite DAGs.
 -/
 
-@[expose] public section
+public section
 
 open scoped BigOperators
 

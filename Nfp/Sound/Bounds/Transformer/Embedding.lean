@@ -59,8 +59,8 @@ theorem embeddingIntervalBounds_spec {seq dModel : Nat} [NeZero seq]
       (q := q) (hq := by simp)
     simpa [bounds, embeddingIntervalBounds, fin_univ_nonempty] using h
   constructor
-  · exact ratToReal_le_of_le hbounds.1
-  · exact ratToReal_le_of_le hbounds.2
+  · simpa [ratToReal_def] using ratToReal_le_of_le hbounds.1
+  · simpa [ratToReal_def] using ratToReal_le_of_le hbounds.2
 
 /-- Interval bounds across a finite set of positions for an embedding map. -/
 def embeddingIntervalBoundsOn {seq dModel : Nat} [NeZero seq]
@@ -84,8 +84,8 @@ theorem embeddingIntervalBoundsOn_spec {seq dModel : Nat} [NeZero seq]
       (f := fun k => x k i) (q := q) (hq := hq)
     simpa [bounds, embeddingIntervalBoundsOn] using h
   constructor
-  · exact ratToReal_le_of_le hbounds.1
-  · exact ratToReal_le_of_le hbounds.2
+  · simpa [ratToReal_def] using ratToReal_le_of_le hbounds.1
+  · simpa [ratToReal_def] using ratToReal_le_of_le hbounds.2
 
 /-- Collapse per-position interval bounds over a finite set of positions. -/
 def intervalBoundsOn {seq dModel : Nat} [NeZero seq]
@@ -119,11 +119,11 @@ theorem intervalBoundsOn_spec {seq dModel : Nat} [NeZero seq]
   constructor
   · have hmin_real :
         (bounds.1 i : Real) ≤ (lo q i : Real) := by
-      exact ratToReal_le_of_le hmin
+      simpa [ratToReal_def] using ratToReal_le_of_le hmin
     exact le_trans hmin_real hlo'
   · have hmax_real :
         (hi q i : Real) ≤ (bounds.2 i : Real) := by
-      exact ratToReal_le_of_le hmax
+      simpa [ratToReal_def] using ratToReal_le_of_le hmax
     exact le_trans hhi' hmax_real
 
 end Bounds

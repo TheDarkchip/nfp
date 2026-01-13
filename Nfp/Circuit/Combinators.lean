@@ -33,8 +33,7 @@ def relabel (C : Circuit Node Val) (e : _root_.Equiv Node Node') : Circuit Node'
   refine C.gate (e.symm i) ?_
   intro j h
   refine rec (e j) ?_
-  change C.dag.rel (e.symm (e j)) (e.symm i)
-  simpa using h
+  simpa [Dag.relabel_rel_iff] using h
 
 namespace Interface
 

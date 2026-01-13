@@ -73,7 +73,7 @@ theorem oneHot_bounds_at_of_marginAt
       simpa [heps, hsum_one] using hsum_le
     · have hnonneg : 0 ≤ marginAt q := le_of_not_gt hneg
       have hnonneg_real : 0 ≤ (marginAt q : Real) := by
-        exact ratToReal_nonneg_of_nonneg hnonneg
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hnonneg
       have hbound :
           ∀ k ∈ others q,
             weights q k ≤ (1 + (marginAt q : Real))⁻¹ := by
@@ -113,7 +113,7 @@ theorem oneHot_bounds_at_of_marginAt
             (seq - 1 : Real) * (1 + (marginAt q : Real))⁻¹ ≤
               (ratDivUp (seq - 1) (1 + marginAt q) : Real) := by
           have hrat' := ratDivUp_ge_real (seq - 1) (1 + marginAt q) hden
-          simpa [ratToReal, Rat.cast_div, Rat.cast_add, Rat.cast_natCast,
+          simpa [ratToReal_def, Rat.cast_div, Rat.cast_add, Rat.cast_natCast,
             div_eq_mul_inv] using hrat'
         simpa [hepsAt, hneg] using hrat
       exact le_trans hsum_le' heps
@@ -227,7 +227,7 @@ theorem oneHot_bounds_at_of_scoreGapLo
       simpa [bound, hneg] using hle
     · have hnonneg : 0 ≤ scoreGapLo q k := le_of_not_gt hneg
       have hnonneg_real : 0 ≤ (scoreGapLo q k : Real) := by
-        exact ratToReal_nonneg_of_nonneg hnonneg
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hnonneg
       have hscore := hscore_gap_real_at q hq k hkne
       have hsoft :
           weights q k ≤ 1 / (1 + (scoreGapLo q k : Real)) := by
@@ -244,12 +244,12 @@ theorem oneHot_bounds_at_of_scoreGapLo
       have hrat :
           1 / (1 + (scoreGapLo q k : Real)) ≤
             ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) := by
-        simpa [ratToReal] using
+        simpa [ratToReal_def] using
           (ratDivUp_ge_real 1 (1 + scoreGapLo q k) hden)
       have hbound' :
           weights q k ≤ ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) :=
         hsoft.trans hrat
-      simpa [bound, hneg] using hbound'
+      simpa [bound, hneg, ratToReal_def] using hbound'
   have hsum_others_le : (∑ k ∈ others q, weights q k) ≤ (epsAt q : Real) := by
     have hsum_le :
         (∑ k ∈ others q, weights q k) ≤
@@ -267,7 +267,7 @@ theorem oneHot_bounds_at_of_scoreGapLo
           ratToReal (epsAt q) = ratToReal (min 1 ((others q).sum bound)) := by
         exact congrArg ratToReal h'
       -- Avoid rewriting the erased-sum into a difference.
-      simpa [ratToReal_min, ratToReal, Rat.cast_sum] using h''
+      simpa [ratToReal_min, ratToReal_def, Rat.cast_sum] using h''
     simpa [hepsAtReal] using hsum_le_min
   refine
     { nonneg := ?_
@@ -344,7 +344,7 @@ theorem weight_bound_at_of_scoreGapLo
     simpa [hweightBoundAt q k hk, hneg] using hle
   · have hnonneg : 0 ≤ scoreGapLo q k := le_of_not_gt hneg
     have hnonneg_real : 0 ≤ (scoreGapLo q k : Real) := by
-      exact ratToReal_nonneg_of_nonneg hnonneg
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hnonneg
     have hscore := hscore_gap_real_at q hq k hk
     have hsoft :
         Circuit.softmax (scoresReal q) k ≤ 1 / (1 + (scoreGapLo q k : Real)) := by
@@ -361,12 +361,12 @@ theorem weight_bound_at_of_scoreGapLo
     have hrat :
         1 / (1 + (scoreGapLo q k : Real)) ≤
           ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) := by
-      simpa [ratToReal] using
+      simpa [ratToReal_def] using
         (ratDivUp_ge_real 1 (1 + scoreGapLo q k) hden)
     have hbound' :
         Circuit.softmax (scoresReal q) k ≤ ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) :=
       hsoft.trans hrat
-    simpa [hweightBoundAt q k hk, hneg] using hbound'
+    simpa [hweightBoundAt q k hk, hneg, ratToReal_def] using hbound'
 
 end Sound
 

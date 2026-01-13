@@ -59,7 +59,7 @@ theorem direction_dot_headValue_eq_valsReal
       ((dirHeadVecOfInputs inputs).get d : Real) =
           ratToReal (Linear.dotFin dModel (fun i => inputs.wo i d)
             (fun i => inputs.direction i)) := by
-          simp [dirHeadVecOfInputs_get, ratToReal]
+          simp [dirHeadVecOfInputs_get, ratToReal_def]
       _ =
           ratToReal (dotProduct (fun i => inputs.wo i d) (fun i => inputs.direction i)) := by
           simp [Linear.dotFin_eq_dotProduct]
@@ -68,7 +68,7 @@ theorem direction_dot_headValue_eq_valsReal
           simp [dotProduct, Linear.ratToReal_sum_univ]
       _ =
           ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
-          simp [ratToReal]
+          simp [ratToReal_def]
   calc
     dotProduct dir (fun i => headValueRealOfInputs inputs k i)
         = ∑ i, dir i *
@@ -151,7 +151,7 @@ theorem logitDiffLowerBoundFromCert_le
         simpa [logitDiffLowerBoundFromCert] using hbound
       have hboundReal :
           (lb : Real) ≤ valsLoPrev - (c.epsAt q : Real) * (valsLoPrev - lo) := by
-        simpa [ratToReal_sub, ratToReal_mul] using ratToReal_le_of_le hboundRat
+        simpa [ratToReal_sub, ratToReal_mul, ratToReal_def] using ratToReal_le_of_le hboundRat
       have hweights_nonneg : ∀ k, 0 ≤ weights q k :=
         hsound.softmax_bounds.nonneg q hq
       have hweights := hsound.oneHot_bounds_at q hq
@@ -307,7 +307,7 @@ theorem logitDiffLowerBoundFromCertWeighted_le
                 (c.weightBoundAt q k : Real) *
                   max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)))) := by
         simpa [valsLoPrevRat, valsLoPrev, ratToReal_sub, ratToReal_mul, ratToReal_max,
-          ratToReal, Rat.cast_sum] using ratToReal_le_of_le hboundRat
+          ratToReal_def, Rat.cast_sum] using ratToReal_le_of_le hboundRat
       have hweights_nonneg : ∀ k, 0 ≤ weights q k :=
         hsound.softmax_bounds.nonneg q hq
       have hweights := hsound.oneHot_bounds_at q hq

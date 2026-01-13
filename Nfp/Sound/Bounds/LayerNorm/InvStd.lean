@@ -60,12 +60,14 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
   let invStdUpper : Rat := ratDivUp 1 sqrtLowerBound
   let varEps : Real := (varianceRat x : Real) + (eps : Real)
   have hvar : (varRat : Real) = (varianceRat x : Real) := by
-    simp [varRat, variance_def, hne, ratRoundDown]
+    simp [varRat, variance_def, hne, ratRoundDown_def]
   have hvarEps : (varEpsRat : Real) = varEps := by
     simp [varEpsRat, varEps, hvar]
   have hvar_nonneg : 0 ≤ (varianceRat x : Real) := varianceRat_nonneg_real x hne
   have hvar_nonneg_rat : 0 ≤ varianceRat x := by
-    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hvar_nonneg
+    have hvar_nonneg_real : 0 ≤ ratToReal (varianceRat x) := by
+      simpa [ratToReal_def] using hvar_nonneg
+    exact (ratToReal_nonneg_iff (x := varianceRat x)).1 hvar_nonneg_real
   have hvarRat_nonneg : 0 ≤ varRat := by
     have h := ratRoundDown_nonneg (q := varianceRat x) hvar_nonneg_rat
     simpa [varRat, variance_def x hne] using h
@@ -121,9 +123,9 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
   have hupper_ne : sqrtUpperBound ≠ 0 := ne_of_gt hsqrt_upper_pos_rat
   have hlower_ne : sqrtLowerBound ≠ 0 := ne_of_gt hsqrt_lower_pos_rat
   have hinv_lower : (invStdLower : Real) ≤ invStd := by
-    simpa [invStdLower, ratDivDown, hupper_ne, one_div] using hinv_lower_real
+    simpa [invStdLower, ratDivDown_def, hupper_ne, one_div] using hinv_lower_real
   have hinv_upper : invStd ≤ (invStdUpper : Real) := by
-    simpa [invStdUpper, ratDivUp, hlower_ne, one_div] using hinv_upper_real
+    simpa [invStdUpper, ratDivUp_def, hlower_ne, one_div] using hinv_upper_real
   have hbounds : bounds = (invStdLower, invStdUpper) := by
     simp [bounds, invStdBounds, hne, varRat, varEpsRat, sqrtLowerBound, sqrtUpperBound,
       invStdLower, invStdUpper]

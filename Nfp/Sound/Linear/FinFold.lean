@@ -79,7 +79,7 @@ theorem sumFin_eq_sum_univ {n : Nat} (f : Fin n → Rat) :
 theorem ratToReal_sum_univ {n : Nat} (f : Fin n → Rat) :
     ratToReal (∑ i, f i) = ∑ i, ratToReal (f i) := by
   classical
-  simp [ratToReal]
+  simp [ratToReal_def]
 
 /-- Casting a rational `sumFin` to `Real` commutes with summation. -/
 theorem ratToReal_sumFin {n : Nat} (f : Fin n → Rat) :

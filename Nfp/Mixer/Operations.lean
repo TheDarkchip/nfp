@@ -10,7 +10,7 @@ public import Mathlib.Algebra.BigOperators.Ring.Finset
 Mixer operations (pushforward, composition, identity).
 -/
 
-@[expose] public section
+public section
 
 open scoped BigOperators
 
