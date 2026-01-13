@@ -7,7 +7,7 @@ import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
 Inverse-standard-deviation bounds for LayerNorm.
 
 This module isolates invStd bounds and their soundness proof to keep
-`LayerNorm.lean` below the style linter's file-length limit.
+`LayerNorm/Basic.lean` below the style linter's file-length limit.
 -/
 
 namespace Nfp
