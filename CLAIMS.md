@@ -55,7 +55,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 - `nfp induction advanced certify_end_to_end_model` derives the unembedding direction from an
   `NFP_BINARY_V1` model file, computes a downstream error bound from either a supplied
   residual-interval certificate or a verified model-derived interval, and composes it with the
-  head-level logit-diff lower bound.
+  head-level logit-diff lower bound (optionally using `--layer/--head` to add head-output
+  interval bounds for a tighter end-to-end check).
 
 ## Untrusted / heuristic
 

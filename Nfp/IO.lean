@@ -491,9 +491,10 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
     (loaded from disk or derived from the model). -/
 def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (modelPath : System.FilePath)
-    (residualIntervalPath? : Option System.FilePath) (minActive? : Option Nat)
-    (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
-    (maxEpsStr? : Option String) : IO UInt32 := do
+    (residualIntervalPath? : Option System.FilePath)
+    (layer? : Option Nat) (head? : Option Nat) (period? : Option Nat)
+    (minActive? : Option Nat) (minLogitDiffStr? : Option String)
+    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -629,6 +630,19 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                           if residualOk then
                                             let dirPos := dirSpec.target
                                             let dirNeg := dirSpec.negative
+                                            if layer?.isSome != head?.isSome then
+                                              IO.eprintln
+                                                "error: --layer and --head must be provided \
+                                                together"
+                                              return 2
+                                            let headChoice? : Option (Nat × Nat) :=
+                                              match layer?, head? with
+                                              | some layer, some head => some (layer, head)
+                                              | _, _ => none
+                                            if period?.isSome && headChoice?.isNone then
+                                              IO.eprintln
+                                                "warning: --period ignored without \
+                                                --layer/--head"
                                             let colTargetE ←
                                               timePure "read unembed column target" (fun () =>
                                                 NfptPure.readUnembedColumn
@@ -650,36 +664,127 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                     let dirVec :
                                                         Fin header.modelDim → Rat :=
                                                       fun i => colTarget i - colNeg i
+                                                    let dotIntervalAbs :=
+                                                      Sound.Bounds.dotIntervalAbsBound
+                                                    let intervalErrorFromHead? :
+                                                        Model.InductionHeadInputs
+                                                          seq header.modelDim header.headDim →
+                                                        ResidualIntervalCert header.modelDim →
+                                                        Option Rat :=
+                                                      fun inputs residual => by
+                                                        classical
+                                                        match hseq0 : seq with
+                                                        | 0 => exact none
+                                                        | Nat.succ n =>
+                                                            let _ : NeZero seq := by
+                                                              exact ⟨by simp [hseq0]⟩
+                                                            match
+                                                              Sound.buildHeadOutputIntervalFromHead?
+                                                                inputs with
+                                                            | none => exact none
+                                                            | some result =>
+                                                                exact some
+                                                                  (dotIntervalAbs
+                                                                    dirVec
+                                                                    (fun i =>
+                                                                      residual.lo i -
+                                                                        result.cert.hi i)
+                                                                    (fun i =>
+                                                                      residual.hi i -
+                                                                        result.cert.lo i))
                                                     let downstreamError ←
                                                       timePure "downstream error" (fun () =>
-                                                        Sound.Bounds.dotIntervalAbsBound
+                                                        dotIntervalAbs
                                                           dirVec
                                                           residualCert'.lo
                                                           residualCert'.hi)
                                                     let finalLB := logitDiffLB - downstreamError
+                                                    let intervalError? ←
+                                                      match headChoice? with
+                                                      | none => pure none
+                                                      | some (layer, head) => do
+                                                          let inputsE ←
+                                                            timePure "read head inputs" (fun () =>
+                                                              NfptPure.readInductionHeadInputs
+                                                                data start header layer head
+                                                                dirPos dirNeg period?)
+                                                          match inputsE with
+                                                          | Except.error msg =>
+                                                              IO.eprintln s!"warning: {msg}"
+                                                              pure none
+                                                          | Except.ok inputs =>
+                                                              let inputs' :
+                                                                  Model.InductionHeadInputs
+                                                                    seq header.modelDim
+                                                                    header.headDim := by
+                                                                simpa [hseq] using inputs
+                                                              let inputsAligned :
+                                                                  Model.InductionHeadInputs
+                                                                    seq header.modelDim
+                                                                    header.headDim :=
+                                                                { inputs' with
+                                                                  active := cert.active
+                                                                  prev := cert.prev }
+                                                              let intervalError? ←
+                                                                timePure
+                                                                  "head output interval"
+                                                                  (fun () =>
+                                                                    intervalErrorFromHead?
+                                                                      inputsAligned
+                                                                      residualCert')
+                                                              match intervalError? with
+                                                              | none =>
+                                                                  IO.eprintln
+                                                                    "warning: head output interval \
+                                                                    rejected"
+                                                                  pure none
+                                                              | some intervalError =>
+                                                                  pure (some intervalError)
+                                                    let intervalLB? :=
+                                                      intervalError?.map (fun err =>
+                                                        logitDiffLB - err)
+                                                    let effectiveLB :=
+                                                      match intervalLB? with
+                                                      | some intervalLB => max finalLB intervalLB
+                                                      | none => finalLB
                                                     let violation? : Option Rat :=
                                                       match effectiveMinLogitDiff with
                                                       | none => none
                                                       | some minLogitDiff =>
-                                                          if finalLB < minLogitDiff then
+                                                          if effectiveLB < minLogitDiff then
                                                             some minLogitDiff
                                                           else
                                                             none
                                                     match violation? with
                                                     | some minLogitDiff =>
                                                         IO.eprintln
-                                                          s!"error: end-to-end logitDiffLB \
-                                                          {finalLB} below minimum \
+                                                          s!"error: end-to-end bound \
+                                                          {effectiveLB} below minimum \
                                                           {minLogitDiff}"
                                                         return (2 : UInt32)
                                                     | none =>
-                                                        IO.println
-                                                          s!"ok: end-to-end induction \
-                                                          bound certified (seq={seq}, \
-                                                          active={activeCount}, \
-                                                          logitDiffLB={logitDiffLB}, \
-                                                          downstreamError={downstreamError}, \
-                                                          finalLB={finalLB})"
+                                                        match intervalLB? with
+                                                        | none =>
+                                                            IO.println
+                                                              s!"ok: end-to-end induction \
+                                                              bound certified (seq={seq}, \
+                                                              active={activeCount}, \
+                                                              logitDiffLB={logitDiffLB}, \
+                                                              downstreamError={downstreamError}, \
+                                                              finalLB={finalLB})"
+                                                        | some intervalLB =>
+                                                            let intervalError :=
+                                                              logitDiffLB - intervalLB
+                                                            IO.println
+                                                              s!"ok: end-to-end induction \
+                                                              bound certified (seq={seq}, \
+                                                              active={activeCount}, \
+                                                              logitDiffLB={logitDiffLB}, \
+                                                              downstreamError={downstreamError}, \
+                                                              finalLB={finalLB}, \
+                                                              intervalError={intervalError}, \
+                                                              intervalLB={intervalLB}, \
+                                                              effectiveLB={effectiveLB})"
                                                         return 0
                                           else
                                             IO.eprintln

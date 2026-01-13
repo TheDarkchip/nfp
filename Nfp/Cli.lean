@@ -345,12 +345,15 @@ def runInductionCertifyEndToEndModel (p : Parsed) : IO UInt32 := do
   let valuesPath := p.flag! "values" |>.as! String
   let modelPath := p.flag! "model" |>.as! String
   let residualIntervalPath? := (p.flag? "residual-interval").map (·.as! String)
+  let layer? := (p.flag? "layer").map (·.as! Nat)
+  let head? := (p.flag? "head").map (·.as! Nat)
+  let period? := (p.flag? "period").map (·.as! Nat)
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   IO.runInductionCertifyEndToEndModel scoresPath valuesPath modelPath residualIntervalPath?
-    minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+    layer? head? period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
 
 /-- `nfp induction certify_end_to_end_model` subcommand. -/
 def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
@@ -362,6 +365,9 @@ def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
     model : String; "Path to the NFP_BINARY_V1 model file."
     "residual-interval" : String; "Optional path to a residual-interval certificate file \
                                     (defaults to deriving from the model)."
+    layer : Nat; "Optional layer index for a head-output interval bound (requires --head)."
+    head : Nat; "Optional head index for a head-output interval bound (requires --layer)."
+    period : Nat; "Optional prompt period override when reading head inputs."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
