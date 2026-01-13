@@ -103,7 +103,7 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
 ## 3. Workflow Expectations (How to make changes)
 
 ### 3.1 Before coding
-- Identify the right module (see `MODULE_MAP.md`).
+- Identify the right module.
 - Skim the top docstring / main definitions in that module.
 - Look for existing lemmas and naming patterns to match.
 
@@ -172,12 +172,6 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
 
 ---
 
-## 5. Module Map (Where Things Live)
-
-The module map lives in `MODULE_MAP.md`.
-
----
-
 ## 6. Axioms & Trust Boundary
 
 This repo treats “axioms creep” as a serious regression.
@@ -202,7 +196,6 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] New nontrivial definitions/theorems have short, accurate docstrings.
 - [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are
   preserved and, where possible, explicitly proved.
-- [ ] Module map in `MODULE_MAP.md` is accurate (updated in the same commit if needed).
 - [ ] If CLI behavior changed: `lake build nfp --wfail` succeeds and basic `nfp ... --help` works.
 
 ## Landing the Plane (Session Completion)
