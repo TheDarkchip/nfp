@@ -246,7 +246,7 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   cert : InductionHeadCert seq
 
 /-- Build cached core quantities for induction-head certificates. -/
-@[expose] def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
+def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
     (cfg : InductionHeadSplitConfig)
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     InductionHeadCoreCache seq dModel dHead := by
