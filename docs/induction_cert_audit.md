@@ -75,6 +75,9 @@ Key assumptions and limitations:
   We now have a theorem packaging GPT-2 residual interval bounds derived from
   model slices into a sound `ResidualIntervalCert`, but it is not yet connected
   to the head-level logit-diff contribution inside the full stack.
+  A new lemma composes head logit-diff bounds with *both* head-output intervals
+  and downstream output intervals, yielding a sound lower bound on the direction
+  dot of the downstream output (via interval subtraction).
 
 ## Conclusion
 

@@ -15,7 +15,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `logitDiffLowerBoundFromCert_le`.
 - Bridge lemmas composing head logit-diff bounds with head outputs and residual
   interval bounds: `headLogitDiff_eq_direction_dot_headOutput` and
-  `logitDiffLowerBound_with_residual`.
+  `logitDiffLowerBound_with_residual`, plus interval-composition
+  `logitDiffLowerBound_with_output_intervals`.
 - Downstream linear certificate soundness: `checkDownstreamLinearCert` implies
   `DownstreamLinearBounds`.
 - Residual-interval certificate soundness: `checkResidualIntervalCert` implies

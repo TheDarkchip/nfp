@@ -26,6 +26,9 @@ It is intentionally brief and focused on the soundness boundary.
   `certify_head_model` with `period? = none`, `prev` is derived from tokens and is the maximal
   prior match, but other inputs (head-input files or explicit periods) still rely on supplied
   `prev` maps. The chosen direction still assumes the unembedding columns encode token logits.
+- There is now a sound interval-composition lemma that combines head logit-diff bounds with
+  head/output intervals via subtraction, but it does not model how head outputs propagate
+  through subsequent LN/MLP blocks (so tight end-to-end claims remain open).
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
 - There is no bridge theorem connecting certificate validity to a full circuit/model semantics
   statement (for example, a formal statement about logits under a transformer block stack).
