@@ -9,6 +9,14 @@ induction heads, and spell out the scope and limitations of that claim.
   (`lnEps > 0`, `sqrtLower lnEps > 0`, `dModel ≠ 0`, `active.Nonempty`), so the
   computation is only claimed when these preconditions hold
   (`Nfp/Sound/Induction/Core.lean`).
+- `buildInductionHeadInputs_def` shows the model-derived head inputs are
+  definitional: `prev`/`active` are computed from tokens (or a fixed period),
+  and the `direction` vector is the unembedding-column difference for the
+  provided target/negative token ids (`Nfp/IO/NfptPure.lean`).
+- `buildInductionHeadInputs_prev_spec_of_active` and
+  `prevOfTokens_spec_of_active` prove that when `period? = none`,
+  every active query has a maximal prior matching token in `prev`
+  (`Nfp/IO/NfptPure.lean`, `Nfp/Model/InductionPrompt.lean`).
 - `buildInductionCertFromHeadWith?` wraps the core computation and returns
   a proof-carrying certificate `⟨c, InductionHeadCertSound inputs c⟩`
   (`Nfp/Sound/Induction/HeadOutput.lean`).
@@ -51,11 +59,13 @@ head-level bounds hold. They are **not** sufficient for a global claim that a
 head “is an induction head” without additional assumptions.
 
 Key assumptions and limitations:
-- `prev` is an input, not a derived fact: the proofs assume it is the intended
-  prefix-matching index. There is no theorem linking `prev` to token identity.
-- `directionSpec` is metadata only. The certificate proves a logit-diff bound
-  for the provided `direction` vector; it does not prove that vector equals the
-  model’s actual target-minus-negative unembedding direction.
+- For `certify_head_model` with `period? = none`, `prev`/`active` are derived
+  from tokens and `prev` is the maximal prior match. For head-input files or
+  when `period?` is set explicitly, `prev` remains a user-supplied input.
+- The certificate proves a logit-diff bound along the supplied `direction`
+  vector. For model-derived inputs, this vector is the target-minus-negative
+  unembedding column difference, but we still assume that the unembedding
+  matrix represents the model’s logit map.
 - The active set is user-supplied and can be strict; bounds only hold for
   `q ∈ active`, not all positions.
 - The head-level certificate does not imply end-to-end behavior across blocks;

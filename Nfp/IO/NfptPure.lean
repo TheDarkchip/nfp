@@ -589,16 +589,15 @@ def readUnembedColumn (data : ByteArray) (start : Nat) (h : NfptHeader) (col : N
     throw s!"column out of range: {col}"
 
 /-- Read induction-head inputs directly from the model binary. -/
-def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
-    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) :
-    Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
-  let scale ← scaleOfHeadDim h.headDim
-  let tokens ← readTokens data start h
-  let embed ← readEmbeddings data start h
-  let weights ← readHeadWeights data start h layer head
-  let (attnBias, ln1Gamma, ln1Beta) ← readLayerAttnBiasLn1 data start h layer
-  let colTarget ← readUnembedColumn data start h dirTarget
-  let colNegative ← readUnembedColumn data start h dirNegative
+def buildInductionHeadInputs (h : NfptHeader) (scale : Rat)
+    (tokens : Fin h.seqLen → Nat)
+    (embed : Fin h.seqLen → Fin h.modelDim → Rat)
+    (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
+    (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
+    (dirTarget dirNegative : Nat)
+    (colTarget colNegative : Fin h.modelDim → Rat)
+    (period? : Option Nat) :
+    Model.InductionHeadInputs h.seqLen h.modelDim h.headDim :=
   let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
   let directionSpec : Circuit.DirectionSpec :=
     { target := dirTarget, negative := dirNegative }
@@ -610,26 +609,137 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
     match period? with
     | some period => Model.prevOfPeriod (seq := h.seqLen) period
     | none => Model.prevOfTokens (seq := h.seqLen) tokens
-  pure
-    { scale := scale
-      active := active
-      prev := prev
-      embed := embed
-      lnEps := h.layerNormEps
-      ln1Gamma := ln1Gamma
-      ln1Beta := ln1Beta
-      wq := weights.wq
-      bq := weights.bq
-      wk := weights.wk
-      bk := weights.bk
-      wv := weights.wv
-      bv := weights.bv
-      wo := weights.wo
-      attnBias := attnBias
-      maskCausal := true
-      maskValue := (-10000 : Rat)
-      directionSpec := directionSpec
-      direction := direction }
+  { scale := scale
+    active := active
+    prev := prev
+    embed := embed
+    lnEps := h.layerNormEps
+    ln1Gamma := ln1Gamma
+    ln1Beta := ln1Beta
+    wq := weights.wq
+    bq := weights.bq
+    wk := weights.wk
+    bk := weights.bk
+    wv := weights.wv
+    bv := weights.bv
+    wo := weights.wo
+    attnBias := attnBias
+    maskCausal := true
+    maskValue := (-10000 : Rat)
+    directionSpec := directionSpec
+    direction := direction }
+
+/-- Definitional characterization of `buildInductionHeadInputs`. -/
+theorem buildInductionHeadInputs_def (h : NfptHeader) (scale : Rat)
+    (tokens : Fin h.seqLen → Nat)
+    (embed : Fin h.seqLen → Fin h.modelDim → Rat)
+    (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
+    (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
+    (dirTarget dirNegative : Nat)
+    (colTarget colNegative : Fin h.modelDim → Rat)
+    (period? : Option Nat) :
+    buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+        dirTarget dirNegative colTarget colNegative period? =
+      { scale := scale
+        active :=
+          match period? with
+          | some period => Model.activeOfPeriod (seq := h.seqLen) period
+          | none => Model.activeOfTokens (seq := h.seqLen) tokens
+        prev :=
+          match period? with
+          | some period => Model.prevOfPeriod (seq := h.seqLen) period
+          | none => Model.prevOfTokens (seq := h.seqLen) tokens
+        embed := embed
+        lnEps := h.layerNormEps
+        ln1Gamma := ln1Gamma
+        ln1Beta := ln1Beta
+        wq := weights.wq
+        bq := weights.bq
+        wk := weights.wk
+        bk := weights.bk
+        wv := weights.wv
+        bv := weights.bv
+        wo := weights.wo
+        attnBias := attnBias
+        maskCausal := true
+        maskValue := (-10000 : Rat)
+        directionSpec := { target := dirTarget, negative := dirNegative }
+        direction := fun i => colTarget i - colNegative i } := rfl
+
+/-- `buildInductionHeadInputs` uses the supplied direction ids and columns. -/
+theorem buildInductionHeadInputs_direction_def (h : NfptHeader) (scale : Rat)
+    (tokens : Fin h.seqLen → Nat)
+    (embed : Fin h.seqLen → Fin h.modelDim → Rat)
+    (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
+    (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
+    (dirTarget dirNegative : Nat)
+    (colTarget colNegative : Fin h.modelDim → Rat)
+    (period? : Option Nat) :
+    let inputs :=
+      buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+        dirTarget dirNegative colTarget colNegative period?
+    inputs.directionSpec = { target := dirTarget, negative := dirNegative } ∧
+      inputs.direction = fun i => colTarget i - colNegative i := by
+  simp [buildInductionHeadInputs]
+
+/-- `buildInductionHeadInputs` derives `prev`/`active` from tokens or a fixed period. -/
+theorem buildInductionHeadInputs_prev_active_def (h : NfptHeader) (scale : Rat)
+    (tokens : Fin h.seqLen → Nat)
+    (embed : Fin h.seqLen → Fin h.modelDim → Rat)
+    (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
+    (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
+    (dirTarget dirNegative : Nat)
+    (colTarget colNegative : Fin h.modelDim → Rat)
+    (period? : Option Nat) :
+    let inputs :=
+      buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+        dirTarget dirNegative colTarget colNegative period?
+    inputs.active =
+        (match period? with
+        | some period => Model.activeOfPeriod (seq := h.seqLen) period
+        | none => Model.activeOfTokens (seq := h.seqLen) tokens) ∧
+    inputs.prev =
+        (match period? with
+        | some period => Model.prevOfPeriod (seq := h.seqLen) period
+        | none => Model.prevOfTokens (seq := h.seqLen) tokens) := by
+  simp [buildInductionHeadInputs]
+
+/-- Active queries pick the maximal matching prior token when `period? = none`. -/
+theorem buildInductionHeadInputs_prev_spec_of_active (h : NfptHeader) (scale : Rat)
+    (tokens : Fin h.seqLen → Nat)
+    (embed : Fin h.seqLen → Fin h.modelDim → Rat)
+    (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
+    (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
+    (dirTarget dirNegative : Nat)
+    (colTarget colNegative : Fin h.modelDim → Rat) :
+    ∀ {q},
+        q ∈ (buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+              dirTarget dirNegative colTarget colNegative none).active →
+          let p :=
+            (buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+              dirTarget dirNegative colTarget colNegative none).prev q
+          p < q ∧ tokens p = tokens q ∧
+            ∀ k, k < q → tokens k = tokens q → k ≤ p := by
+  intro q hq
+  have hq' : q ∈ Model.activeOfTokens (seq := h.seqLen) tokens := by
+    simpa [buildInductionHeadInputs] using hq
+  have hspec := Model.prevOfTokens_spec_of_active (tokens := tokens) (q := q) hq'
+  simpa [buildInductionHeadInputs] using hspec
+
+/-- Read induction-head inputs directly from the model binary. -/
+def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) :
+    Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
+  let scale ← scaleOfHeadDim h.headDim
+  let tokens ← readTokens data start h
+  let embed ← readEmbeddings data start h
+  let weights ← readHeadWeights data start h layer head
+  let (attnBias, ln1Gamma, ln1Beta) ← readLayerAttnBiasLn1 data start h layer
+  let colTarget ← readUnembedColumn data start h dirTarget
+  let colNegative ← readUnembedColumn data start h dirNegative
+  pure <|
+    buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
+      dirTarget dirNegative colTarget colNegative period?
 
 end NfptPure
 

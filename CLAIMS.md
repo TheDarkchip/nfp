@@ -33,9 +33,11 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   verifies the resulting induction certificate (experimental, potentially slow).
 - `nfp induction advanced certify_head_model` reads a model binary, derives head inputs in Lean,
   and verifies the resulting induction certificate (includes attention projection biases and
-  derives `prev`/active from the stored token sequence by default).
+  derives `prev`/active from the stored token sequence by default, and builds the logit-diff
+  direction vector from the target/negative unembedding columns).
 - `nfp induction advanced certify_head_model_auto` derives the logit-diff direction from the
-  prompt tokens stored in the model file before running the same head-input checker.
+  prompt tokens stored in the model file before running the same head-input checker (the
+  direction vector still uses the unembedding columns).
 - `nfp induction advanced certify_end_to_end` composes a head-level logit-diff lower bound with
   a downstream error certificate (arithmetic consistency only).
 - `nfp induction advanced certify_end_to_end_matrix` computes a downstream bound from a matrix

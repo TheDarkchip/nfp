@@ -22,8 +22,10 @@ It is intentionally brief and focused on the soundness boundary.
   requires `head_dim` to be a perfect square to represent the scale as an exact rational.
 - The `certify_head_model_auto` path derives the logit-diff direction from the stored prompt
   tokens using a heuristic; use explicit direction tokens for fixed claims.
-- The certification does not prove that `prev` corresponds to the behavioral induction pattern,
-  nor that the chosen direction matches a task-specific target/negative logit semantics.
+- The certification does not yet prove end-to-end behavioral induction claims. For
+  `certify_head_model` with `period? = none`, `prev` is derived from tokens and is the maximal
+  prior match, but other inputs (head-input files or explicit periods) still rely on supplied
+  `prev` maps. The chosen direction still assumes the unembedding columns encode token logits.
 - Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
 - There is no bridge theorem connecting certificate validity to a full circuit/model semantics
   statement (for example, a formal statement about logits under a transformer block stack).
