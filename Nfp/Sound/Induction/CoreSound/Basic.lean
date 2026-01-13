@@ -1,6 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import Nfp.Sound.Induction.Core
-import Nfp.Sound.Induction.CoreSound.Values
+module
+
+public import Nfp.Sound.Induction.Core
+public import Nfp.Sound.Induction.CoreSound.Values
+
+@[expose] public section
+
 namespace Nfp
 namespace Sound
 open scoped BigOperators

@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Combinators
-import Nfp.Circuit.Cert.Basic
+module
+
+public import Nfp.Circuit.Combinators
+public import Nfp.Circuit.Cert.Basic
 
 /-!
 Typed circuit wrappers and typed equivalence checking.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

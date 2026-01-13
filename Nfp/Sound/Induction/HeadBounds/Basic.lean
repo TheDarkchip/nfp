@@ -1,20 +1,24 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Mathlib.Data.Finset.Basic
-import Mathlib.Data.List.Range
-import Mathlib.Data.Vector.Defs
-import Nfp.Model.InductionHead
-import Nfp.Sound.Bounds.Attention
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Nfp.Core.Basic
+public import Mathlib.Data.Finset.Basic
+public import Mathlib.Data.List.Range
+public import Mathlib.Data.Vector.Defs
+public import Nfp.Model.InductionHead
+public import Nfp.Sound.Bounds.Attention
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Helper bounds for head-induction certificate construction.
 
 These are pure precomputations that are useful for profiling and staging.
 -/
+
+public section
 
 namespace Nfp
 
@@ -126,7 +130,7 @@ private def reduceFnChunked [NeZero seq] (vals : Fin seq → Rat)
     rest.foldl (fun acc i => combine acc (chunkVals.getD i 0)) init
 
 /-- Unfold `reduceFnChunked` to its chunked sequential definition. -/
-theorem reduceFnChunked_spec [NeZero seq] (vals : Fin seq → Rat)
+private theorem reduceFnChunked_spec [NeZero seq] (vals : Fin seq → Rat)
     (combine : Rat → Rat → Rat) :
     reduceFnChunked (seq := seq) vals combine =
       let n := seq
@@ -181,7 +185,7 @@ private def reduceFnTask [NeZero seq] (vals : Fin seq → Rat)
     rest.foldl (fun acc i => combineTask acc (chunkTasks.getD i defaultTask)) init
 
 /-- Unfold `reduceFnTask` to its chunked-task definition. -/
-theorem reduceFnTask_spec [NeZero seq] (vals : Fin seq → Rat)
+private theorem reduceFnTask_spec [NeZero seq] (vals : Fin seq → Rat)
     (combine : Rat → Rat → Rat) (combineTask : Task Rat → Task Rat → Task Rat) :
     reduceFnTask (seq := seq) vals combine combineTask =
       let n := seq
@@ -220,7 +224,7 @@ private def reduceMinFnChunked [NeZero seq] (vals : Fin seq → Rat) : Rat :=
   reduceFnChunked vals min
 
 /-- Unfold `reduceMinFnChunked` to `reduceFnChunked` with `min`. -/
-theorem reduceMinFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
+private theorem reduceMinFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
     reduceMinFnChunked vals = reduceFnChunked vals min := rfl
 
 /-- Chunked sequential maximum over a `Fin seq`-indexed function. -/
@@ -228,11 +232,11 @@ private def reduceMaxFnChunked [NeZero seq] (vals : Fin seq → Rat) : Rat :=
   reduceFnChunked vals max
 
 /-- Unfold `reduceMaxFnChunked` to `reduceFnChunked` with `max`. -/
-theorem reduceMaxFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
+private theorem reduceMaxFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
     reduceMaxFnChunked vals = reduceFnChunked vals max := rfl
 
 /-- The chunked parallel min-reduction task returns the sequential chunked result. -/
-theorem reduceMinFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
+private theorem reduceMinFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
     (reduceMinFnTask vals).get = reduceMinFnChunked vals := by
   classical
   have hseq : seq ≠ 0 := NeZero.ne (n := seq)
@@ -240,7 +244,7 @@ theorem reduceMinFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
     Task.spawn, foldl_taskMin_get_eq, task_getD_ofFn]
 
 /-- The chunked parallel max-reduction task returns the sequential chunked result. -/
-theorem reduceMaxFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
+private theorem reduceMaxFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
     (reduceMaxFnTask vals).get = reduceMaxFnChunked vals := by
   classical
   have hseq : seq ≠ 0 := NeZero.ne (n := seq)
@@ -260,7 +264,7 @@ def headLnBounds [NeZero seq] {dModel dHead : Nat}
   Bounds.cacheBoundPair2 (fun q =>
     Bounds.layerNormBounds inputs.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q))
 
-theorem headLnBounds_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headLnBounds_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     headLnBounds inputs =
       Bounds.cacheBoundPair2 (fun q =>
@@ -327,7 +331,7 @@ def headQKVBounds [NeZero seq] {dModel dHead : Nat}
     qAbs := qAbs
     kAbs := kAbs }
 
-theorem headQKVBounds_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headQKVBounds_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (lnLo lnHi : Fin seq → Fin dModel → Rat) :
     headQKVBounds inputs lnLo lnHi =
@@ -573,7 +577,7 @@ def headScoreBoundsFromDotAbs [NeZero seq] {dModel dHead : Nat}
     margin := margin
     eps := eps }
 
-theorem headScoreBoundsFromDotAbs_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headScoreBoundsFromDotAbs_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (dotAbs : Fin seq → Fin seq → Rat) :
   headScoreBoundsFromDotAbs inputs dotAbs =
@@ -725,7 +729,7 @@ def headScoreBoundsFromIntervals [NeZero seq] {dModel dHead : Nat}
         inputs.scale * dotLo q k
   headScoreBoundsFromCaches inputs dotAbs scoreLo scoreHi
 
-theorem headScoreBoundsFromIntervals_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headScoreBoundsFromIntervals_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (qLo qHi kLo kHi : Fin seq → Fin dHead → Rat) :
     headScoreBoundsFromIntervals inputs qLo qHi kLo kHi =
@@ -777,7 +781,7 @@ def headScoreBounds [NeZero seq] {dModel dHead : Nat}
   headScoreBoundsFromDotAbs inputs (fun q k =>
     Linear.dotFin dHead (fun d => qAbs q d) (fun d => kAbs k d))
 
-theorem headScoreBounds_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headScoreBounds_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (qAbs kAbs : Fin seq → Fin dHead → Rat) :
     headScoreBounds inputs qAbs kAbs =
@@ -903,7 +907,7 @@ def headValueDirHead {seq dModel dHead : Nat}
   let dirHeadVec := dirHeadVecOfInputs inputs
   fun d => dirHeadVec.get d
 
-theorem headValueDirHead_spec {seq dModel dHead : Nat}
+private theorem headValueDirHead_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     headValueDirHead inputs =
       let dirHeadVec := dirHeadVecOfInputs inputs
@@ -918,7 +922,7 @@ def headValueValsLoArray {seq dModel dHead : Nat}
     Bounds.dotIntervalLowerCommonDen dirHead (vLo k) (vHi k))
 
 /-- Unfold `headValueValsLoArray` to its `Array.ofFn` definition. -/
-theorem headValueValsLoArray_spec {seq dModel dHead : Nat}
+private theorem headValueValsLoArray_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsLoArray inputs vLo vHi =
@@ -933,7 +937,7 @@ def headValueValsLo {seq dModel dHead : Nat}
   let arr := headValueValsLoArray inputs vLo vHi
   fun k => arr.getD k.1 (0 : Rat)
 
-theorem headValueValsLo_spec {seq dModel dHead : Nat}
+private theorem headValueValsLo_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsLo inputs vLo vHi =
@@ -947,7 +951,7 @@ def headValueValsLoCommonDenArray {seq dModel dHead : Nat}
   headValueValsLoArray inputs vLo vHi
 
 /-- Unfold `headValueValsLoCommonDenArray` to its `Array.ofFn` definition. -/
-theorem headValueValsLoCommonDenArray_spec {seq dModel dHead : Nat}
+private theorem headValueValsLoCommonDenArray_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsLoCommonDenArray inputs vLo vHi =
@@ -962,7 +966,7 @@ def headValueValsLoCommonDen {seq dModel dHead : Nat}
   let arr := headValueValsLoCommonDenArray inputs vLo vHi
   fun k => arr.getD k.1 (0 : Rat)
 
-theorem headValueValsLoCommonDen_spec {seq dModel dHead : Nat}
+private theorem headValueValsLoCommonDen_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsLoCommonDen inputs vLo vHi =
@@ -992,7 +996,7 @@ def headValueValsHiArray {seq dModel dHead : Nat}
     Bounds.dotIntervalUpperCommonDen dirHead (vLo k) (vHi k))
 
 /-- Unfold `headValueValsHiArray` to its `Array.ofFn` definition. -/
-theorem headValueValsHiArray_spec {seq dModel dHead : Nat}
+private theorem headValueValsHiArray_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsHiArray inputs vLo vHi =
@@ -1007,7 +1011,7 @@ def headValueValsHi {seq dModel dHead : Nat}
   let arr := headValueValsHiArray inputs vLo vHi
   fun k => arr.getD k.1 (0 : Rat)
 
-theorem headValueValsHi_spec {seq dModel dHead : Nat}
+private theorem headValueValsHi_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsHi inputs vLo vHi =
@@ -1021,7 +1025,7 @@ def headValueValsHiCommonDenArray {seq dModel dHead : Nat}
   headValueValsHiArray inputs vLo vHi
 
 /-- Unfold `headValueValsHiCommonDenArray` to its `Array.ofFn` definition. -/
-theorem headValueValsHiCommonDenArray_spec {seq dModel dHead : Nat}
+private theorem headValueValsHiCommonDenArray_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsHiCommonDenArray inputs vLo vHi =
@@ -1036,7 +1040,7 @@ def headValueValsHiCommonDen {seq dModel dHead : Nat}
   let arr := headValueValsHiCommonDenArray inputs vLo vHi
   fun k => arr.getD k.1 (0 : Rat)
 
-theorem headValueValsHiCommonDen_spec {seq dModel dHead : Nat}
+private theorem headValueValsHiCommonDen_spec {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueValsHiCommonDen inputs vLo vHi =
@@ -1062,25 +1066,25 @@ def headValueLoArray (valsLo : Array Rat) : Rat :=
   reduceMinArray valsLo
 
 /-- Unfold `headValueLoArray` to its reduction helper. -/
-theorem headValueLoArray_spec (valsLo : Array Rat) :
+private theorem headValueLoArray_spec (valsLo : Array Rat) :
     headValueLoArray valsLo = reduceMinArray valsLo := rfl
 
 /-- Global lower value bound from cached per-key values. -/
 def headValueLo [NeZero seq] (valsLo : Fin seq → Rat) : Rat :=
   headValueLoArray (Array.ofFn valsLo)
 
-theorem headValueLo_spec [NeZero seq] (valsLo : Fin seq → Rat) :
+private theorem headValueLo_spec [NeZero seq] (valsLo : Fin seq → Rat) :
     headValueLo valsLo = headValueLoArray (Array.ofFn valsLo) := rfl
 
 /-- Task wrapper for `headValueLo`. -/
 def headValueLoTask [NeZero seq] (valsLo : Fin seq → Rat) : Task Rat :=
   reduceMinFnTask valsLo
 
-theorem headValueLoTask_spec [NeZero seq] (valsLo : Fin seq → Rat) :
+private theorem headValueLoTask_spec [NeZero seq] (valsLo : Fin seq → Rat) :
     headValueLoTask valsLo = reduceMinFnTask valsLo := rfl
 
 /-- Chunked task reduction agrees with the sequential chunked value bound. -/
-theorem headValueLoTask_get_eq [NeZero seq] (valsLo : Fin seq → Rat) :
+private theorem headValueLoTask_get_eq [NeZero seq] (valsLo : Fin seq → Rat) :
     (headValueLoTask valsLo).get = reduceMinFnChunked valsLo := by
   simp [headValueLoTask_spec, reduceMinFnTask_get_eq]
 
@@ -1089,25 +1093,25 @@ def headValueHiArray (valsHi : Array Rat) : Rat :=
   reduceMaxArray valsHi
 
 /-- Unfold `headValueHiArray` to its reduction helper. -/
-theorem headValueHiArray_spec (valsHi : Array Rat) :
+private theorem headValueHiArray_spec (valsHi : Array Rat) :
     headValueHiArray valsHi = reduceMaxArray valsHi := rfl
 
 /-- Global upper value bound from cached per-key values. -/
 def headValueHi [NeZero seq] (valsHi : Fin seq → Rat) : Rat :=
   headValueHiArray (Array.ofFn valsHi)
 
-theorem headValueHi_spec [NeZero seq] (valsHi : Fin seq → Rat) :
+private theorem headValueHi_spec [NeZero seq] (valsHi : Fin seq → Rat) :
     headValueHi valsHi = headValueHiArray (Array.ofFn valsHi) := rfl
 
 /-- Task wrapper for `headValueHi`. -/
 def headValueHiTask [NeZero seq] (valsHi : Fin seq → Rat) : Task Rat :=
   reduceMaxFnTask valsHi
 
-theorem headValueHiTask_spec [NeZero seq] (valsHi : Fin seq → Rat) :
+private theorem headValueHiTask_spec [NeZero seq] (valsHi : Fin seq → Rat) :
     headValueHiTask valsHi = reduceMaxFnTask valsHi := rfl
 
 /-- Chunked task reduction agrees with the sequential chunked value bound. -/
-theorem headValueHiTask_get_eq [NeZero seq] (valsHi : Fin seq → Rat) :
+private theorem headValueHiTask_get_eq [NeZero seq] (valsHi : Fin seq → Rat) :
     (headValueHiTask valsHi).get = reduceMaxFnChunked valsHi := by
   simp [headValueHiTask_spec, reduceMaxFnTask_get_eq]
 
@@ -1148,7 +1152,7 @@ def headValueBounds [NeZero seq] {dModel dHead : Nat}
   let valsHiArr := headValueValsHiArray inputs vLo vHi
   headValueBoundsOfArrays valsLoArr valsHiArr
 
-theorem headValueBounds_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headValueBounds_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueBounds inputs vLo vHi =
@@ -1170,7 +1174,7 @@ def headValueBoundsTask [NeZero seq] {dModel dHead : Nat}
     Task.map (fun valsHiArr => headValueBoundsOfArrays valsLoArr valsHiArr) valsHiTask)
 
 /-- Unfold `headValueBoundsTask` to its task graph. -/
-theorem headValueBoundsTask_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headValueBoundsTask_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueBoundsTask inputs vLo vHi =
@@ -1191,7 +1195,7 @@ def headValueBoundsCommonDen [NeZero seq] {dModel dHead : Nat}
   let valsHiArr := headValueValsHiCommonDenArray inputs vLo vHi
   headValueBoundsOfArrays valsLoArr valsHiArr
 
-theorem headValueBoundsCommonDen_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headValueBoundsCommonDen_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueBoundsCommonDen inputs vLo vHi =
@@ -1213,7 +1217,7 @@ def headValueBoundsCommonDenTask [NeZero seq] {dModel dHead : Nat}
     Task.map (fun valsHiArr => headValueBoundsOfArrays valsLoArr valsHiArr) valsHiTask)
 
 /-- Unfold `headValueBoundsCommonDenTask` to its task graph. -/
-theorem headValueBoundsCommonDenTask_spec [NeZero seq] {dModel dHead : Nat}
+private theorem headValueBoundsCommonDenTask_spec [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (vLo vHi : Fin seq → Fin dHead → Rat) :
     headValueBoundsCommonDenTask inputs vLo vHi =

@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Insert
-import Nfp.IO.Pure.Basic
-import Nfp.Model.InductionHead
+module
+
+public import Mathlib.Data.Finset.Insert
+public import Nfp.IO.Pure.Basic
+public import Nfp.Model.InductionHead
 
 /-!
 Parsing helpers for induction-head input payloads from UTF-8 bytes.
 -/
+
+public section
 
 namespace Nfp
 
@@ -71,7 +75,7 @@ private def parseNatBytesSpec (data : ByteArray) (t : ByteToken) : Except String
 private def parseNatBytes (data : ByteArray) (t : ByteToken) : Except String Nat :=
   parseNatBytesSpec data t
 
-theorem parseNatBytes_eq_spec (data : ByteArray) (t : ByteToken) :
+private theorem parseNatBytes_eq_spec (data : ByteArray) (t : ByteToken) :
     parseNatBytes data t = parseNatBytesSpec data t := by
   rfl
 
@@ -90,7 +94,7 @@ private def parseIntBytesSpec (data : ByteArray) (t : ByteToken) : Except String
 private def parseIntBytes (data : ByteArray) (t : ByteToken) : Except String Int :=
   parseIntBytesSpec data t
 
-theorem parseIntBytes_eq_spec (data : ByteArray) (t : ByteToken) :
+private theorem parseIntBytes_eq_spec (data : ByteArray) (t : ByteToken) :
     parseIntBytes data t = parseIntBytesSpec data t := by
   rfl
 
@@ -121,7 +125,7 @@ private def parseRatBytesSpec (data : ByteArray) (t : ByteToken) : Except String
 private def parseRatBytes (data : ByteArray) (t : ByteToken) : Except String Rat :=
   parseRatBytesSpec data t
 
-theorem parseRatBytes_eq_spec (data : ByteArray) (t : ByteToken) :
+private theorem parseRatBytes_eq_spec (data : ByteArray) (t : ByteToken) :
     parseRatBytes data t = parseRatBytesSpec data t := by
   rfl
 

@@ -1,18 +1,22 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.List.Range
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Data.Vector.Defs
-import Nfp.IO.NfptPure
-import Nfp.IO.Timing
-import Nfp.Model.Gpt2
-import Nfp.Sound.Bounds.Transformer
-import Nfp.Sound.Induction
-import Nfp.Sound.Induction.HeadBounds
+module
+
+public import Mathlib.Data.List.Range
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Data.Vector.Defs
+public import Nfp.IO.NfptPure
+public import Nfp.IO.Timing
+public import Nfp.Model.Gpt2
+public import Nfp.Sound.Bounds.Transformer
+public import Nfp.Sound.Induction
+public import Nfp.Sound.Induction.HeadBounds
 
 /-!
 IO derivations that build certificates from model binaries.
 -/
+
+public section
 
 namespace Nfp
 

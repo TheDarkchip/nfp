@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Layers.Linear
+module
+
+public import Nfp.Circuit.Layers.Linear
 
 /-!
 Tensor-shaped layer builders (batched linear and affine layers).
 -/
+
+@[expose] public section
 
 namespace Nfp
 

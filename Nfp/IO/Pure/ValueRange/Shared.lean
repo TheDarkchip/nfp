@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Cert.ValueRange
-import Nfp.IO.Pure.Basic
+module
+
+public import Nfp.Circuit.Cert.ValueRange
+public import Nfp.IO.Pure.Basic
 
 /-!
 Shared parsing helpers for value-range payloads.
 -/
+
+public section
 
 namespace Nfp
 

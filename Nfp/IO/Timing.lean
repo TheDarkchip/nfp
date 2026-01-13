@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.List.Range
-import Nfp.Model.InductionHead
-import Nfp.Sound.Induction.HeadBounds
+module
+
+public import Mathlib.Data.List.Range
+public import Nfp.Model.InductionHead
+public import Nfp.Sound.Induction.HeadBounds
 
 /-!
 Small IO helpers for profiling slow phases.
 -/
+
+public section
 
 namespace Nfp
 

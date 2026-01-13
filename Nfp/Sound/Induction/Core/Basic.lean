@@ -1,22 +1,27 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Field.Basic
-import Nfp.Core.Basic
-import Mathlib.Data.Finset.Lattice.Fold
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Circuit.Cert.SoftmaxMargin
-import Nfp.Circuit.Cert.ValueRange
-import Nfp.Sound.Bounds.Attention
-import Nfp.Sound.Bounds.Cache
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.LayerNorm.InvStd
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Induction.CoreDefs
-import Nfp.Sound.Induction.OneHot
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Algebra.Order.Field.Basic
+public import Nfp.Core.Basic
+public import Mathlib.Data.Finset.Lattice.Fold
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.Circuit.Cert.SoftmaxMargin
+public import Nfp.Circuit.Cert.ValueRange
+public import Nfp.Sound.Bounds.Attention
+public import Nfp.Sound.Bounds.Cache
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.LayerNorm.InvStd
+public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Sound.Induction.CoreDefs
+public import Nfp.Sound.Induction.OneHot
+public import Nfp.Sound.Linear.FinFold
 /-! Sound builders for induction certificates; recompute bounds inside Lean from exact inputs and
 derive softmax tolerances from score margins rather than trusting external weight dumps. -/
+
+@[expose] public section
+
 namespace Nfp
 namespace Sound
 open scoped BigOperators

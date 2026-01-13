@@ -1,13 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Nfp.Circuit.Cert.Basic
+module
+
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Cert.Basic
 
 /-!
 Residual-stream bound certificates.
 
 These certificates record per-coordinate absolute bounds for residual vectors.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

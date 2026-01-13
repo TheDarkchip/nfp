@@ -1,16 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Ring.Abs
-import Mathlib.Data.Fintype.Basic
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Data.Real.Basic
-import Nfp.Circuit.Cert.DownstreamLinear
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Core.Basic
-import Nfp.Sound.Bounds.MatrixNorm.Interval
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Fin
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Algebra.Order.Ring.Abs
+public import Mathlib.Data.Fintype.Basic
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Data.Real.Basic
+public import Nfp.Circuit.Cert.DownstreamLinear
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.Core.Basic
+public import Nfp.Sound.Bounds.MatrixNorm.Interval
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Row-sum matrix norms for downstream linear certificates.
@@ -18,6 +20,8 @@ Row-sum matrix norms for downstream linear certificates.
 These bounds are used to compute verified downstream error certificates
 from explicit Rat matrices.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

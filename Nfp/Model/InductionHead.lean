@@ -1,8 +1,10 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Basic
-import Nfp.Core.Basic
-import Nfp.Circuit.Cert.ValueRange
+module
+
+public import Mathlib.Data.Finset.Basic
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Cert.ValueRange
 
 /-!
 Exact inputs for induction-head scoring and value-direction computations.
@@ -10,6 +12,8 @@ Exact inputs for induction-head scoring and value-direction computations.
 These structures store exact rational inputs (embeddings and weights) for a
 single attention head. They are intended to be consumed by sound builders.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

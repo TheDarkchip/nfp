@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.IO.Pure
+module
+
+public import Nfp.IO.Pure
 
 /-!
 Small shared helpers for IO parsing.
 -/
+
+public section
 
 namespace Nfp
 

@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Bounds.LayerNorm.MeanVariance
-import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
+module
+
+public import Nfp.Sound.Bounds.LayerNorm.MeanVariance
+public import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
 
 /-!
 Inverse-standard-deviation bounds for LayerNorm.
@@ -9,6 +11,8 @@ Inverse-standard-deviation bounds for LayerNorm.
 This module isolates invStd bounds and their soundness proof to keep
 `LayerNorm/Basic.lean` below the style linter's file-length limit.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

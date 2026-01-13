@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Cert.ResidualBound
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.IO.Pure.Basic
+module
+
+public import Nfp.Circuit.Cert.ResidualBound
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.IO.Pure.Basic
 
 /-!
 Pure parsing helpers for residual-bound and residual-interval certificates.
 -/
+
+public section
 
 namespace Nfp
 

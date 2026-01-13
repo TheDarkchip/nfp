@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Compose
-import Nfp.Circuit.Layers.Attention
+module
+
+public import Nfp.Circuit.Compose
+public import Nfp.Circuit.Layers.Attention
 
 /-!
 Transformer block wiring built from sequential composition and residual links.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Nfp.Circuit.Cert.Basic
+module
+
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Cert.Basic
 
 /-!
 Downstream linear certificates for end-to-end induction bounds.
@@ -10,6 +12,8 @@ These certificates record a nonnegative error bound computed externally.
 The checker only verifies arithmetic consistency (`error = gain * inputBound`)
 and nonnegativity of the reported quantities.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

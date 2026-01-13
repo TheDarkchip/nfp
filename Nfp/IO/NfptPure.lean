@@ -1,16 +1,20 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.List.Range
-import Nfp.Core.Basic
-import Nfp.Model.Gpt2
-import Nfp.Model.InductionHead
-import Nfp.Model.InductionPrompt
+module
+
+public import Mathlib.Data.List.Range
+public import Nfp.Core.Basic
+public import Nfp.Model.Gpt2
+public import Nfp.Model.InductionHead
+public import Nfp.Model.InductionPrompt
 
 /-!
 Pure parsing utilities for `NFP_BINARY_V1` model files.
 
 These helpers parse headers and extract selected weight slices as rational values.
 -/
+
+public section
 
 namespace Nfp
 
@@ -630,7 +634,7 @@ def buildInductionHeadInputs (h : NfptHeader) (scale : Rat)
     direction := direction }
 
 /-- Definitional characterization of `buildInductionHeadInputs`. -/
-theorem buildInductionHeadInputs_def (h : NfptHeader) (scale : Rat)
+private theorem buildInductionHeadInputs_def (h : NfptHeader) (scale : Rat)
     (tokens : Fin h.seqLen → Nat)
     (embed : Fin h.seqLen → Fin h.modelDim → Rat)
     (weights : Model.Gpt2HeadWeights h.modelDim h.headDim)
@@ -702,7 +706,7 @@ theorem buildInductionHeadInputs_prev_active_def (h : NfptHeader) (scale : Rat)
         (match period? with
         | some period => Model.prevOfPeriod (seq := h.seqLen) period
         | none => Model.prevOfTokens (seq := h.seqLen) tokens) := by
-  simp [buildInductionHeadInputs]
+  constructor <;> rfl
 
 /-- Active queries pick the maximal matching prior token when `period? = none`. -/
 theorem buildInductionHeadInputs_prev_spec_of_active (h : NfptHeader) (scale : Rat)

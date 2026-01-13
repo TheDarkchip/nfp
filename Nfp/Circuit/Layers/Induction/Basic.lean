@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.BigOperators.Ring.Finset
-import Mathlib.Algebra.Order.Monoid.Unbundled.Basic
-import Mathlib.Algebra.Order.Ring.Defs
-import Nfp.Circuit.Layers.Attention
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Algebra.BigOperators.Ring.Finset
+public import Mathlib.Algebra.Order.Monoid.Unbundled.Basic
+public import Mathlib.Algebra.Order.Ring.Defs
+public import Nfp.Circuit.Layers.Attention
 
 /-!
 Induction-head specifications for attention cores.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

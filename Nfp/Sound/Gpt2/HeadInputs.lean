@@ -1,8 +1,10 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Model.Gpt2
-import Nfp.Model.InductionHead
-import Nfp.Model.InductionPrompt
+module
+
+public import Nfp.Model.Gpt2
+public import Nfp.Model.InductionHead
+public import Nfp.Model.InductionPrompt
 
 /-!
 Sound builder for GPT-2 induction head inputs.
@@ -11,6 +13,8 @@ This converts exact GPT-2 head slices into `InductionHeadInputs` using a
 periodic prompt description. The construction is purely definitional and is
 captured by an explicit theorem, so the trusted core does not hide any logic.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

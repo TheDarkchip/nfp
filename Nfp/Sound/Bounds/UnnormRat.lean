@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Nfp.Core.Basic
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Unnormalized rational arithmetic.
@@ -9,6 +11,8 @@ Unnormalized rational arithmetic.
 Rat values already avoid gcd normalization, so this module provides a
 lightweight alias and helper API used by older code paths.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

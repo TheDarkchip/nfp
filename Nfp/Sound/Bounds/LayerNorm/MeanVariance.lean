@@ -1,13 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Algebra.Order.Ring.Basic
-import Mathlib.Data.Rat.BigOperators
-import Mathlib.Data.Rat.Cast.Order
-import Nfp.Core.Basic
+module
+
+public import Mathlib.Algebra.BigOperators.Fin
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Algebra.Order.Field.Basic
+public import Mathlib.Algebra.Order.Ring.Basic
+public import Mathlib.Data.Rat.BigOperators
+public import Mathlib.Data.Rat.Cast.Order
+public import Nfp.Core.Basic
 
 /-!
 Mean/variance helpers for LayerNorm bounds.
@@ -15,6 +17,8 @@ Mean/variance helpers for LayerNorm bounds.
 This module isolates the rational and real mean/variance definitions and their
 basic lemmas to keep `LayerNorm` bounds modular.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

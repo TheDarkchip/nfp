@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Cert.SoftmaxMargin
-import Nfp.IO.Pure.SoftmaxMargin.Shared
+module
+
+public import Nfp.Circuit.Cert.SoftmaxMargin
+public import Nfp.IO.Pure.SoftmaxMargin.Shared
 
 /-!
 Pure parsing helpers for raw softmax-margin inputs.
 -/
+
+public section
 
 namespace Nfp
 

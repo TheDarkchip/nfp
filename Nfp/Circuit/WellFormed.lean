@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Basic
+module
+
+public import Nfp.Circuit.Basic
 
 /-!
 Well-formedness conditions for circuits.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Nfp.Core.Basic
-import Nfp.Sound.Bounds.Gelu
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Nfp.Core.Basic
+public import Nfp.Sound.Bounds.Gelu
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.MatrixNorm
 
 /-!
 Interval bounds for GPT-2 MLP blocks (linear + GELU + linear).
 -/
+
+@[expose] public section
 
 namespace Nfp
 

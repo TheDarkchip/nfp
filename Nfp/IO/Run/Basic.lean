@@ -1,27 +1,31 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.IO.Checks
-import Nfp.IO.Derive
-import Nfp.IO.HeadScore
-import Nfp.IO.InductionHead
-import Nfp.IO.Loaders
-import Nfp.IO.NfptPure
-import Nfp.IO.Timing
-import Nfp.IO.Util
-import Nfp.Circuit.Cert.DownstreamLinear
-import Nfp.Circuit.Cert.LogitDiff
-import Nfp.Circuit.Cert.ResidualBound
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Bounds.Transformer
-import Nfp.Sound.Induction
-import Nfp.Sound.Induction.HeadBounds
-import Nfp.Sound.Induction.LogitDiff
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Nfp.IO.Checks
+public import Nfp.IO.Derive
+public import Nfp.IO.HeadScore
+public import Nfp.IO.InductionHead
+public import Nfp.IO.Loaders
+public import Nfp.IO.NfptPure
+public import Nfp.IO.Timing
+public import Nfp.IO.Util
+public import Nfp.Circuit.Cert.DownstreamLinear
+public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.Circuit.Cert.ResidualBound
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Sound.Bounds.Transformer
+public import Nfp.Sound.Induction
+public import Nfp.Sound.Induction.HeadBounds
+public import Nfp.Sound.Induction.LogitDiff
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 IO entrypoints used by the CLI.
 -/
+
+public section
 
 namespace Nfp
 namespace IO

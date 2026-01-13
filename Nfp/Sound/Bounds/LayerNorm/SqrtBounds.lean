@@ -1,11 +1,13 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Algebra.Order.Ring.Basic
-import Mathlib.Data.Nat.Sqrt
-import Mathlib.Data.Real.Sqrt
-import Mathlib.Data.Rat.Cast.Order
-import Nfp.Core.Basic
+module
+
+public import Mathlib.Algebra.Order.Field.Basic
+public import Mathlib.Algebra.Order.Ring.Basic
+public import Mathlib.Data.Nat.Sqrt
+public import Mathlib.Data.Real.Sqrt
+public import Mathlib.Data.Rat.Cast.Order
+public import Nfp.Core.Basic
 
 /-!
 Square-root bounds for LayerNorm intervals.
@@ -13,6 +15,8 @@ Square-root bounds for LayerNorm intervals.
 This module isolates the rational sqrt lower/upper bounds and their basic
 nonnegativity/positivity lemmas so the main LayerNorm bounds stay focused.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

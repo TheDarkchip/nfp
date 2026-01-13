@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
+module
+
+public import Nfp.Core.Basic
 
 /-!
 Caching helpers for interval bounds.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

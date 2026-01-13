@@ -1,21 +1,25 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.List.Range
-import Nfp.IO.Pure
-import Nfp.IO.NfptPure
-import Nfp.IO.HeadScore
-import Nfp.IO.Timing
-import Nfp.IO.Util
-import Nfp.Circuit.Cert.LogitDiff
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Sound.Induction
-import Nfp.Sound.Induction.HeadBounds
-import Nfp.Sound.Induction.LogitDiff
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Data.List.Range
+public import Nfp.IO.Pure
+public import Nfp.IO.NfptPure
+public import Nfp.IO.HeadScore
+public import Nfp.IO.Timing
+public import Nfp.IO.Util
+public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.Sound.Induction
+public import Nfp.Sound.Induction.HeadBounds
+public import Nfp.Sound.Induction.LogitDiff
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 IO helpers for induction-head certificate construction.
 -/
+
+public section
 
 namespace Nfp
 

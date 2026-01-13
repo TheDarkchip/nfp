@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Cert.DownstreamLinear
-import Nfp.IO.Pure.Basic
+module
+
+public import Nfp.Circuit.Cert.DownstreamLinear
+public import Nfp.IO.Pure.Basic
 
 /-!
 Pure parsing helpers for downstream linear and matrix payloads.
 -/
+
+public section
 
 namespace Nfp
 

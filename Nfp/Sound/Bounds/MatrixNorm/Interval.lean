@@ -1,18 +1,22 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Ring.Abs
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Data.Real.Basic
-import Nfp.Core.Basic
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Fin
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Algebra.Order.Ring.Abs
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Data.Real.Basic
+public import Nfp.Core.Basic
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Interval bounds for dot products and matrix-vector products.
 
 This module isolates interval-bound helpers used across downstream certificates.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

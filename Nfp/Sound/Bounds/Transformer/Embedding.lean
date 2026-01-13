@@ -1,13 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Nfp.Core.Basic
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Nfp.Core.Basic
 
 /-!
 Embedding interval bounds for transformer stacks.
 
 This module isolates per-position and per-set embedding bounds.
 -/
+
+public section
 
 namespace Nfp
 

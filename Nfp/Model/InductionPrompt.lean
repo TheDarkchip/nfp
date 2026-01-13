@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Max
-import Mathlib.Data.Fintype.Basic
+module
+
+public import Mathlib.Data.Finset.Max
+public import Mathlib.Data.Fintype.Basic
 
 /-!
 Helpers for induction-style prompts.
@@ -10,6 +12,8 @@ These are small, deterministic utilities for constructing the `prev` map and
 active-query set from a fixed period. They keep the prompt bookkeeping
 separate from the model weights.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

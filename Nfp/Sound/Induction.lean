@@ -1,12 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Induction.Core
-import Nfp.Sound.Induction.CoreSound
-import Nfp.Sound.Induction.EndToEnd
-import Nfp.Sound.Induction.HeadBounds
-import Nfp.Sound.Induction.HeadOutput
-import Nfp.Sound.Induction.LogitDiff
-import Nfp.Sound.Induction.OneHot
+module
+
+public import Nfp.Sound.Induction.Core
+public import Nfp.Sound.Induction.CoreSound
+public import Nfp.Sound.Induction.EndToEnd
+public import Nfp.Sound.Induction.HeadBounds
+public import Nfp.Sound.Induction.HeadOutput
+public import Nfp.Sound.Induction.LogitDiff
+public import Nfp.Sound.Induction.OneHot
 
 /-!
 Sound builders for induction certificates.

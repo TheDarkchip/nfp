@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.IO.Pure
-import Nfp.Circuit.Cert.LogitDiff
-import Nfp.Circuit.Cert.DownstreamLinear
-import Nfp.Circuit.Cert.ResidualBound
-import Nfp.Circuit.Cert.ResidualInterval
+module
+
+public import Nfp.IO.Pure
+public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.Circuit.Cert.DownstreamLinear
+public import Nfp.Circuit.Cert.ResidualBound
+public import Nfp.Circuit.Cert.ResidualInterval
 
 /-!
 IO loaders for certificates and raw inputs.
 -/
+
+public section
 
 namespace Nfp
 

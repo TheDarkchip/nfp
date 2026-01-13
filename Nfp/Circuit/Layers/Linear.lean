@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Logic.Embedding.Basic
-import Nfp.Circuit.Basic
-import Nfp.Circuit.Gates.Linear
-import Nfp.Circuit.Typed
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Logic.Embedding.Basic
+public import Nfp.Circuit.Basic
+public import Nfp.Circuit.Gates.Linear
+public import Nfp.Circuit.Typed
 
 /-!
 Linear and affine layer circuits.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

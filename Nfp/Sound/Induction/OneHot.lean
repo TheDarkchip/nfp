@@ -1,15 +1,19 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Data.Rat.BigOperators
-import Nfp.Core.Basic
-import Nfp.Circuit.Layers.Induction
-import Nfp.Circuit.Layers.Softmax
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Data.Rat.BigOperators
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Layers.Induction
+public import Nfp.Circuit.Layers.Softmax
 
 /-!
 Per-query one-hot bounds derived from score margins.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

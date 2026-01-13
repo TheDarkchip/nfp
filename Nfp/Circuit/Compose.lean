@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Disjoint
-import Mathlib.Data.Fintype.Sum
-import Mathlib.Data.Sum.Order
-import Mathlib.Logic.Embedding.Basic
-import Nfp.Circuit.Typed
+module
+
+public import Mathlib.Data.Finset.Disjoint
+public import Mathlib.Data.Fintype.Sum
+public import Mathlib.Data.Sum.Order
+public import Mathlib.Logic.Embedding.Basic
+public import Nfp.Circuit.Typed
 
 /-!
 Combinators for composing typed circuits (sequential and residual wiring).
 -/
+
+@[expose] public section
 
 namespace Nfp
 

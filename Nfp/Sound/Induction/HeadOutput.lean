@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Aesop
-import Nfp.Sound.Induction.CoreSound
+module
+
+public import Aesop
+public import Nfp.Sound.Induction.CoreSound
 
 /-!
 Head-output interval certificates for induction heads.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

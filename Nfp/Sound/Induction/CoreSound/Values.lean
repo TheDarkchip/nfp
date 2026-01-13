@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Nfp.Sound.Induction.CoreDefs
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Nfp.Sound.Induction.CoreDefs
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Helper lemmas for value-direction bounds in induction-head soundness.
@@ -9,6 +11,8 @@ Helper lemmas for value-direction bounds in induction-head soundness.
 These isolate the algebra needed to rewrite direction-value projections into
 dot products over cached `wvDir`/`bDir` terms.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

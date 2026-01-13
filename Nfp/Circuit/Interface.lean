@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Semantics
+module
+
+public import Nfp.Circuit.Semantics
 
 /-!
 Typed input/output interfaces for circuits.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

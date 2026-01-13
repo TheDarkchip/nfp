@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Fold
-import Mathlib.Data.Finset.Insert
-import Mathlib.Data.Fintype.Pi
-import Nfp.Circuit.Interface
-import Nfp.Circuit.Semantics
+module
+
+public import Mathlib.Data.Finset.Fold
+public import Mathlib.Data.Finset.Insert
+public import Mathlib.Data.Fintype.Pi
+public import Nfp.Circuit.Interface
+public import Nfp.Circuit.Semantics
 
 /-!
 Circuit equivalence and a finite checker.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

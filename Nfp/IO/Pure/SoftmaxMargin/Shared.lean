@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Insert
-import Nfp.IO.Pure.Basic
+module
+
+public import Mathlib.Data.Finset.Insert
+public import Nfp.IO.Pure.Basic
 
 /-!
 Shared parsing helpers for softmax-margin payloads.
 -/
+
+public section
 
 namespace Nfp
 

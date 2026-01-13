@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Aesop
-import Mathlib.Data.Vector.Basic
-import Nfp.Circuit.Cert.LogitDiff
-import Nfp.Sound.Bounds.MatrixNorm.Interval
-import Nfp.Sound.Induction.HeadOutput
+module
+
+public import Aesop
+public import Mathlib.Data.Vector.Basic
+public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.Sound.Bounds.MatrixNorm.Interval
+public import Nfp.Sound.Induction.HeadOutput
 
 /-!
 Logit-diff bounds derived from induction certificates.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

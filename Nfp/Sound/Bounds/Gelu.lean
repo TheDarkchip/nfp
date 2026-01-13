@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Order.Ring.Abs
-import Mathlib.Analysis.Complex.Trigonometric
-import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
-import Nfp.Core.Basic
+module
+
+public import Mathlib.Algebra.Order.Ring.Abs
+public import Mathlib.Analysis.Complex.Trigonometric
+public import Mathlib.Analysis.SpecialFunctions.Trigonometric.Basic
+public import Nfp.Core.Basic
 
 /-!
 Tanh-based GELU bounds for GPT-2 style MLPs.
 These bounds are used to propagate interval constraints through nonlinear gates.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

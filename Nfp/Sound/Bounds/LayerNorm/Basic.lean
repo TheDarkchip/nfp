@@ -1,17 +1,19 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Algebra.Order.Field.Basic
-import Mathlib.Algebra.Order.Ring.Basic
-import Mathlib.Data.Real.Sqrt
-import Mathlib.Data.Rat.BigOperators
-import Mathlib.Data.Rat.Cast.Order
-import Nfp.Core.Basic
-import Nfp.Sound.Bounds.LayerNorm.MeanVariance
-import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Fin
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Algebra.Order.Field.Basic
+public import Mathlib.Algebra.Order.Ring.Basic
+public import Mathlib.Data.Real.Sqrt
+public import Mathlib.Data.Rat.BigOperators
+public import Mathlib.Data.Rat.Cast.Order
+public import Nfp.Core.Basic
+public import Nfp.Sound.Bounds.LayerNorm.MeanVariance
+public import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 LayerNorm interval bounds for rational inputs.
@@ -19,6 +21,8 @@ LayerNorm interval bounds for rational inputs.
 This module computes rational interval bounds for LayerNorm outputs and proves
 those bounds sound for real-valued LayerNorm semantics.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

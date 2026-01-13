@@ -1,18 +1,22 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Data.List.Range
-import Mathlib.Data.Real.Basic
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Model.Gpt2
-import Nfp.Sound.Bounds.Attention
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.Transformer.Embedding
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Data.List.Range
+public import Mathlib.Data.Real.Basic
+public import Nfp.Circuit.Cert.ResidualInterval
+public import Nfp.Model.Gpt2
+public import Nfp.Sound.Bounds.Attention
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.Transformer.Embedding
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Interval bounds for transformer stacks and final LayerNorm outputs.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

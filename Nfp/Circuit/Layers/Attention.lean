@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Logic.Embedding.Basic
-import Nfp.Circuit.Layers.Heads
-import Nfp.Circuit.Layers.Tensor
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Logic.Embedding.Basic
+public import Nfp.Circuit.Layers.Heads
+public import Nfp.Circuit.Layers.Tensor
 
 /-!
 QKV and output projection wiring for attention layers, plus attention score/mixing core.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

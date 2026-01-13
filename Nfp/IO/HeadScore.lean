@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Nfp.Core.Basic
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Pure helpers for building cached dot-abs functions for head scoring.
 -/
+
+public section
 
 namespace Nfp
 
@@ -31,7 +35,7 @@ def dotAbsFromQKV {seq dHead : Nat}
         simp [row, cache, rowTasks, Task.spawn]
       simp [hrow, k.isLt])
 
-theorem dotAbsFromQKV_spec {seq dHead : Nat}
+private theorem dotAbsFromQKV_spec {seq dHead : Nat}
     (qAbs kAbs : Fin seq → Fin dHead → Rat) :
     dotAbsFromQKV qAbs kAbs =
       let rowTasks : Array (Task (Array Rat)) :=

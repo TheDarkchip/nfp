@@ -1,20 +1,24 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Field
-import Mathlib.Algebra.BigOperators.Ring.Finset
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Data.Real.Basic
-import Nfp.Circuit.Layers.Softmax
-import Nfp.Core.Basic
-import Nfp.Model.Gpt2
-import Nfp.Sound.Bounds.Cache
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Bounds.Mlp
+module
+
+public import Mathlib.Algebra.BigOperators.Field
+public import Mathlib.Algebra.BigOperators.Ring.Finset
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Data.Real.Basic
+public import Nfp.Circuit.Layers.Softmax
+public import Nfp.Core.Basic
+public import Nfp.Model.Gpt2
+public import Nfp.Sound.Bounds.Cache
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Sound.Bounds.Mlp
 
 /-!
 Interval bounds for multi-head attention and transformer layers.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Logic.Equiv.Basic
-import Nfp.Circuit.Interface
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Logic.Equiv.Basic
+public import Nfp.Circuit.Interface
 
 /-!
 Circuit combinators such as relabeling.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

@@ -1,16 +1,20 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Fin
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Data.Rat.BigOperators
-import Batteries.Data.Fin.Fold
-import Nfp.Core.Basic
+module
+
+public import Mathlib.Algebra.BigOperators.Fin
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Data.Rat.BigOperators
+public import Batteries.Data.Fin.Fold
+public import Nfp.Core.Basic
 
 /-!
 Tail-recursive folds and sums over `Fin`.
 
 These helpers keep sound computations stack-safe while remaining explicit.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

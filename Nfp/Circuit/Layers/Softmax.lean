@@ -1,9 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Field
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
-import Mathlib.Analysis.Complex.Exponential
-import Mathlib.Data.Finset.Card
+module
+
+public import Mathlib.Algebra.BigOperators.Field
+public import Mathlib.Algebra.Order.BigOperators.Group.Finset
+public import Mathlib.Analysis.Complex.Exponential
+public import Mathlib.Data.Finset.Card
 
 /-!
 Real-valued softmax utilities and margin-based bounds.
@@ -11,6 +13,8 @@ Real-valued softmax utilities and margin-based bounds.
 These lemmas provide the analytical bridge from score gaps to softmax weight
 upper bounds.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

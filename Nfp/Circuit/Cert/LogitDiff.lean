@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Mathlib.Data.Finset.Image
-import Nfp.Circuit.Layers.Induction
+module
+
+public import Nfp.Core.Basic
+public import Mathlib.Data.Finset.Image
+public import Nfp.Circuit.Layers.Induction
 
 /-!
 Lower bounds for logit-diff contributions from induction-style heads.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

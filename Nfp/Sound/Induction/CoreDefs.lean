@@ -1,20 +1,24 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Data.Vector.Defs
-import Nfp.Circuit.Layers.Induction
-import Nfp.Circuit.Layers.Softmax
-import Nfp.Core.Basic
-import Nfp.Model.InductionHead
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Mathlib.Data.Vector.Defs
+public import Nfp.Circuit.Layers.Induction
+public import Nfp.Circuit.Layers.Softmax
+public import Nfp.Core.Basic
+public import Nfp.Model.InductionHead
+public import Nfp.Sound.Bounds.LayerNorm
+public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Core definitions for induction-head certificates.
 
 These definitions are shared across induction certificate builders and checkers.
 -/
+
+@[expose] public section
 
 namespace Nfp
 

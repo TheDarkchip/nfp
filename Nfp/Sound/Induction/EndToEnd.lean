@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Bounds.Transformer
-import Nfp.Sound.Induction.HeadOutput
-import Nfp.Sound.Induction.LogitDiff
+module
+
+public import Nfp.Sound.Bounds.Transformer
+public import Nfp.Sound.Induction.HeadOutput
+public import Nfp.Sound.Induction.LogitDiff
 
 /-!
 End-to-end induction bounds that combine head certificates with transformer-stack intervals.
 -/
+
+@[expose] public section
 
 namespace Nfp
 
