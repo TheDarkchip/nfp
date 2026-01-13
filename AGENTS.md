@@ -170,6 +170,16 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
   - update all call sites,
   - leave a brief comment (or commit message rationale).
 
+### 4.5 Mathlib Module Structure (Local Baseline)
+Based on `.lake/packages/mathlib` in this workspace:
+- Use module headers (`module`) in Lean source files, with `public import` in the header.
+- Keep imports minimal; add only what the file directly uses.
+- Put exported declarations in a `public section`; otherwise they remain private to the module.
+- Do not expose bodies by default; use `@[expose] public section` only when downstream unfolding is required.
+- Prefer explicit `*_def` lemmas over exposing bodies when you just need definitional rewriting.
+- Avoid `import all` unless a proof truly needs the private scope; keep such imports local and documented.
+- Keep aggregator modules (e.g., `Nfp.Core`, `Nfp.Sound`) as thin reexports.
+
 ---
 
 ## 6. Axioms & Trust Boundary
