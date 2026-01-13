@@ -90,7 +90,7 @@ theorem direction_dot_headValue_eq_valsReal
                     simpa using (hdirHead d).symm
           simp [hdir]
     _ = valsRealOfInputs inputs k := by
-          simp [valsRealOfInputs, v, dotProduct]
+          simp [valsRealOfInputs_def, v, dotProduct]
 
 end Direction
 

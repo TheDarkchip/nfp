@@ -173,10 +173,10 @@ def buildHeadOutputIntervalFromHead? [NeZero seq]
                           (lo := lnLo q) (hi := lnHi q)
                           (x := lnRealOfInputs inputs q) (b := (inputs.bv d : Real)) hlo hhi
                   constructor
-                  · simpa [vLo, vRealOfInputs, Bounds.cacheBound2_apply,
+                  · simpa [vLo, vRealOfInputs_def, Bounds.cacheBound2_apply,
                       Bounds.dotIntervalLowerCachedRat_eq, ratToReal_add] using
                       hlow'
-                  · simpa [vHi, vRealOfInputs, Bounds.cacheBound2_apply,
+                  · simpa [vHi, vRealOfInputs_def, Bounds.cacheBound2_apply,
                       Bounds.dotIntervalUpperCachedRat_eq, ratToReal_add] using
                       hhigh'
                 have hhead_bounds :

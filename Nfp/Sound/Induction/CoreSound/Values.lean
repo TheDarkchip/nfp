@@ -124,7 +124,7 @@ theorem valsReal_eq_of_dir (inputs : Model.InductionHeadInputs seq dModel dHead)
           (fun d =>
             dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs k) +
               (inputs.bv d : Real)) := by
-      simp [valsRealOfInputs, vRealOfInputs, hdirHead_real]
+      simp [valsRealOfInputs_def, vRealOfInputs_def, hdirHead_real]
     _ =
         dotProduct (fun d => (dirHead d : Real))
             (fun d => dotProduct (fun j => (inputs.wv j d : Real))

@@ -25,7 +25,7 @@ namespace Gpt2
 open Nfp.Model
 
 /-- Build induction-head inputs from a GPT-2 head slice and prompt period. -/
-@[expose] def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
+def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
     Model.InductionHeadInputs seq dModel dHead :=
   { scale := slice.scale
@@ -70,7 +70,8 @@ theorem buildInductionHeadInputs_def {seq dModel dHead vocab : Nat}
         maskCausal := true
         maskValue := (-10000 : Rat)
         directionSpec := slice.direction.spec
-        direction := slice.directionVec } := rfl
+        direction := slice.directionVec } := by
+  simp [buildInductionHeadInputs]
 
 end Gpt2
 

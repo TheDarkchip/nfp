@@ -39,7 +39,7 @@ def sumFin (n : Nat) (f : Fin n → Rat) : Rat :=
   foldlFin n (fun acc i => acc + f i) 0
 
 /-- Tail-recursive sum over `Fin n` (alias for `sumFin`). -/
-@[expose] def sumFinCommonDen (n : Nat) (f : Fin n → Rat) : Rat :=
+def sumFinCommonDen (n : Nat) (f : Fin n → Rat) : Rat :=
   sumFin n f
 
 /-- `sumFin` as a left fold over the finite range list. -/
@@ -89,15 +89,17 @@ theorem ratToReal_sumFin {n : Nat} (f : Fin n → Rat) :
 
 /-- `sumFinCommonDen` agrees with `sumFin`. -/
 theorem sumFinCommonDen_eq_sumFin (n : Nat) (f : Fin n → Rat) :
-    sumFinCommonDen n f = sumFin n f := rfl
+    sumFinCommonDen n f = sumFin n f := by
+  simp [sumFinCommonDen]
 
 /-- Dot product over `Fin n` (Rat-valued). -/
-@[expose] def dotFin (n : Nat) (x y : Fin n → Rat) : Rat :=
+def dotFin (n : Nat) (x y : Fin n → Rat) : Rat :=
   sumFin n (fun i => x i * y i)
 
 /-- Unfolding lemma for `dotFin`. -/
 theorem dotFin_def (n : Nat) (x y : Fin n → Rat) :
-    dotFin n x y = sumFin n (fun i => x i * y i) := rfl
+    dotFin n x y = sumFin n (fun i => x i * y i) := by
+  simp [dotFin]
 
 /-- `dotFin` matches `dotProduct`. -/
 theorem dotFin_eq_dotProduct (n : Nat) (x y : Fin n → Rat) :

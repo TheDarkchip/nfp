@@ -86,17 +86,18 @@ theorem kRealOfInputs_def {seq dModel dHead : Nat}
   simp [kRealOfInputs]
 
 /-- Real-valued value projections for head inputs. -/
-@[expose] noncomputable def vRealOfInputs {seq dModel dHead : Nat}
+noncomputable def vRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin dHead → Real :=
   fun q d =>
     dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) + (inputs.bv d : Real)
 
 /-- Unfolding lemma for `vRealOfInputs`. -/
-private theorem vRealOfInputs_def {seq dModel dHead : Nat}
+theorem vRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     vRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bv d : Real) := rfl
+        (inputs.bv d : Real) := by
+  simp [vRealOfInputs]
 
 /-- Real-valued attention scores for head inputs. -/
 noncomputable def scoresRealOfInputs {seq dModel dHead : Nat}
@@ -143,17 +144,18 @@ theorem headValueRealOfInputs_def {seq dModel dHead : Nat}
   simp [headValueRealOfInputs]
 
 /-- Real-valued direction scores for head inputs. -/
-@[expose] noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
+noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Real :=
   let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
   fun k => dotProduct dirHead (fun d => vRealOfInputs inputs k d)
 
 /-- Unfolding lemma for `valsRealOfInputs`. -/
-private theorem valsRealOfInputs_def {seq dModel dHead : Nat}
+theorem valsRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) :
     valsRealOfInputs inputs k =
       let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
-      dotProduct dirHead (fun d => vRealOfInputs inputs k d) := rfl
+      dotProduct dirHead (fun d => vRealOfInputs inputs k d) := by
+  simp [valsRealOfInputs]
 
 /-- Interval data for direction values. -/
 structure ValueInterval (seq : Nat) where
