@@ -965,7 +965,7 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cfg : Sound.InductionHeadSplitConfig)
     (minActive? : Option Nat) (minLogitDiff? : Option Rat)
-    (minMargin maxEps : Rat) : IO UInt32 := do
+    (minMargin? : Option Rat) (maxEps : Rat) : IO UInt32 := do
   match seq with
   | 0 =>
       IO.eprintln "error: seq must be positive"
@@ -1015,20 +1015,58 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             IO.eprintln
               s!"error: active queries {activeCount} below minimum {minActive}"
             return 2
-          if cert.margin < minMargin then
-            IO.eprintln
-              s!"error: margin {ratToString cert.margin} \
-              below minimum {ratToString minMargin}"
-            return 2
           if maxEps < cert.eps then
             IO.eprintln
               s!"error: eps {ratToString cert.eps} above maximum {ratToString maxEps}"
             return 2
+          let marginViolation? : Option Rat :=
+            match minMargin? with
+            | none => none
+            | some minMargin =>
+                if cert.margin < minMargin then
+                  some minMargin
+                else
+                  none
+          match marginViolation? with
+          | some minMargin =>
+              IO.eprintln
+                s!"error: margin {ratToString cert.margin} \
+                below minimum {ratToString minMargin}"
+              return 2
+          | none => pure ()
           logTiming "start: head logit-diff lower bound"
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
-          let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
+          let logitDiffLB0? ← timePure "head: logit-diff lower bound" (fun () =>
             Sound.logitDiffLowerBoundFromCert cert)
+          let needsWeighted : Bool :=
+            match logitDiffLB0? with
+            | none => true
+            | some lb0 =>
+                if lb0 ≤ 0 then
+                  true
+                else
+                  match minLogitDiff? with
+                  | some minLogitDiff => lb0 < minLogitDiff
+                  | none => false
+          let logitDiffWeighted? ←
+            if needsWeighted then
+              timePure "head: logit-diff lower bound weighted" (fun () =>
+                Sound.logitDiffLowerBoundFromCertWeighted cert)
+            else
+              pure none
+          let logitDiffLB? : Option Rat :=
+            match logitDiffLB0?, logitDiffWeighted? with
+            | some lb0, some lb1 => some (max lb0 lb1)
+            | some lb0, none => some lb0
+            | none, some lb1 => some lb1
+            | none, none => none
+          let boundLabel : String :=
+            match logitDiffLB0?, logitDiffWeighted? with
+            | some _, some _ => "max"
+            | none, some _ => "weighted"
+            | some _, none => "eps"
+            | none, none => "none"
           logTiming "done: head logit-diff lower bound"
           match logitDiffLB? with
           | none =>
@@ -1040,19 +1078,27 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
                   s!"error: logitDiffLB {ratToString logitDiffLB} \
                   is not strictly positive"
                 return 2
-              match minLogitDiff? with
+              let violation? : Option Rat :=
+                match minLogitDiff? with
+                | none => none
+                | some minLogitDiff =>
+                    if logitDiffLB < minLogitDiff then
+                      some minLogitDiff
+                    else
+                      none
+              match violation? with
               | some minLogitDiff =>
-                  if logitDiffLB < minLogitDiff then
-                    IO.eprintln
-                      s!"error: logitDiffLB {ratToString logitDiffLB} \
-                      below minimum {ratToString minLogitDiff}"
-                    return 2
+                  IO.eprintln
+                    s!"error: logitDiffLB {ratToString logitDiffLB} \
+                    below minimum {ratToString minLogitDiff}"
+                  return 2
               | none => pure ()
               let tol := cert.eps * (cert.values.hi - cert.values.lo)
               IO.println
                 s!"ok: nonvacuous induction bound certified \
                 (seq={seq}, active={activeCount}, \
-                tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB})"
+                tol={ratToString tol}, logitDiffLB={ratToString logitDiffLB}, \
+                bound={boundLabel})"
               return 0
 
 /-- Build and check induction certificates from exact head inputs. -/
@@ -1114,7 +1160,6 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? => do
-      let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsedInputs ← timePhase "load head inputs" <|
         loadInductionHeadInputs inputsPath
@@ -1124,7 +1169,7 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
           return 1
       | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
           checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
-            minMargin maxEps
+            minMargin? maxEps
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
@@ -1199,7 +1244,6 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
-      let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
       timingPrint "timing: read model file start"
@@ -1221,7 +1265,7 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
               return 1
           | Except.ok inputs =>
               checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
-                minMargin maxEps
+                minMargin? maxEps
 
 /-- Heuristic logit-diff direction derived from prompt tokens. -/
 private def deriveDirectionFromTokens {seq : Nat} (tokens : Fin seq → Nat) :
@@ -1341,7 +1385,6 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
-      let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       logTiming "start: read model file"
       timingPrint "timing: read model file start"
@@ -1377,7 +1420,7 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
                       return 1
                   | Except.ok inputs =>
                       checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
-                        minMargin maxEps
+                        minMargin? maxEps
 
 /-- Build head-output interval bounds from exact head inputs. -/
 def runInductionHeadInterval (inputsPath : System.FilePath)

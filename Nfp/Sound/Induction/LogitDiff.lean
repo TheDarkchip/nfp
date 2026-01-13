@@ -34,6 +34,10 @@ def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Rat :=
   Circuit.logitDiffLowerBoundAtLo c.active c.prev c.epsAt
     c.values.lo c.values.valsLo
 
+/-- Lower bound computed from per-key weight bounds in an induction certificate. -/
+def logitDiffLowerBoundFromCertWeighted (c : InductionHeadCert seq) : Option Rat :=
+  Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt c.values.valsLo
+
 theorem logitDiffLowerBoundFromCert_le
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (c : InductionHeadCert seq) (hsound : InductionHeadCertSound inputs c)
@@ -180,6 +184,222 @@ theorem logitDiffLowerBoundFromCert_le
               valsLoPrev - sumOthers * (valsLoPrev - lo) := hsub_le
           _ = weights q (c.prev q) * valsLoPrev + sumOthers * lo := by
               simp [hsplit]
+          _ ≤ dotProduct (weights q) vals := hdot_ge'
+      have hle : (lb : Real) ≤ dotProduct (weights q) vals :=
+        le_trans hboundReal hdot_lower
+      simpa [headLogitDiff, weights, vals] using hle
+
+/-- The weighted per-key logit-diff lower bound is sound on active queries. -/
+theorem logitDiffLowerBoundFromCertWeighted_le
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (c : InductionHeadCert seq) (hsound : InductionHeadCertSound inputs c)
+    {lb : Rat} (hbound : logitDiffLowerBoundFromCertWeighted c = some lb)
+    {q : Fin seq} (hq : q ∈ c.active) :
+    (lb : Real) ≤ headLogitDiff inputs q := by
+  classical
+  cases seq with
+  | zero =>
+      cases (NeZero.ne (n := (0 : Nat)) rfl)
+  | succ n =>
+      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
+        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
+      let others : Finset (Fin (Nat.succ n)) :=
+        (Finset.univ : Finset (Fin (Nat.succ n))).erase (c.prev q)
+      let valsLoPrevRat : Rat := c.values.valsLo (c.prev q)
+      let valsLoPrev : Real := (valsLoPrevRat : Real)
+      have hboundRat :
+          lb ≤ valsLoPrevRat -
+            (others.sum (fun k =>
+              c.weightBoundAt q k * max (0 : Rat) (valsLoPrevRat - c.values.valsLo k))) := by
+        refine
+          Circuit.logitDiffLowerBoundWeightedAt_le
+            (active := c.active)
+            (prev := c.prev)
+            (weightBoundAt := c.weightBoundAt)
+            (valsLo := c.values.valsLo)
+            q hq lb ?_
+        simpa [logitDiffLowerBoundFromCertWeighted] using hbound
+      have hboundReal :
+          (lb : Real) ≤
+            valsLoPrev -
+              (others.sum (fun k =>
+                (c.weightBoundAt q k : Real) *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)))) := by
+        simpa [valsLoPrevRat, valsLoPrev, ratToReal_sub, ratToReal_mul, ratToReal_max,
+          ratToReal, Rat.cast_sum] using ratToReal_le_of_le hboundRat
+      have hweights_nonneg : ∀ k, 0 ≤ weights q k :=
+        hsound.softmax_bounds.nonneg q hq
+      have hweights := hsound.oneHot_bounds_at q hq
+      have hsum_decomp :
+          weights q (c.prev q) + ∑ k ∈ others, weights q k = ∑ k, weights q k := by
+        simp [others]
+      have hsum :
+          weights q (c.prev q) + ∑ k ∈ others, weights q k = 1 := by
+        calc
+          weights q (c.prev q) + ∑ k ∈ others, weights q k = ∑ k, weights q k := hsum_decomp
+          _ = 1 := hweights.sum_one q rfl
+      have hvalsLo_prev : valsLoPrev ≤ vals (c.prev q) := by
+        exact (hsound.value_bounds.vals_bounds (c.prev q)).1
+      have hvals_lower :
+          ∀ k,
+            valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤ vals k := by
+        intro k
+        by_cases hle : valsLoPrev ≤ (c.values.valsLo k : Real)
+        · have hdiff : valsLoPrev - (c.values.valsLo k : Real) ≤ 0 := sub_nonpos.mpr hle
+          have hmax :
+              max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) = 0 := by
+            simp [hdiff]
+          have hvals_lo : (c.values.valsLo k : Real) ≤ vals k :=
+            (hsound.value_bounds.vals_bounds k).1
+          have hvals_prev : valsLoPrev ≤ vals k := le_trans hle hvals_lo
+          simpa [hmax] using hvals_prev
+        · have hlt : (c.values.valsLo k : Real) < valsLoPrev := lt_of_not_ge hle
+          have hdiff_nonneg : 0 ≤ valsLoPrev - (c.values.valsLo k : Real) :=
+            le_of_lt (sub_pos.mpr hlt)
+          have hmax :
+              max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) =
+                valsLoPrev - (c.values.valsLo k : Real) := by
+            simp [hdiff_nonneg]
+          have hvals_lo : (c.values.valsLo k : Real) ≤ vals k :=
+            (hsound.value_bounds.vals_bounds k).1
+          simpa [hmax] using hvals_lo
+      have hsum_vals_ge :
+          ∑ k ∈ others, weights q k *
+              (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) ≤
+            ∑ k ∈ others, weights q k * vals k := by
+        refine Finset.sum_le_sum ?_
+        intro k hk
+        exact
+          mul_le_mul_of_nonneg_left
+            (hvals_lower k)
+            (hweights_nonneg k)
+      have hsum_prod :
+          weights q (c.prev q) * vals (c.prev q) +
+              ∑ k ∈ others, weights q k * vals k =
+            ∑ k, weights q k * vals k := by
+        simp [others]
+      have hout_eq :
+          dotProduct (weights q) vals =
+            weights q (c.prev q) * vals (c.prev q) +
+              ∑ k ∈ others, weights q k * vals k := by
+        simpa [dotProduct] using hsum_prod.symm
+      have hprev_lo :
+          weights q (c.prev q) * valsLoPrev ≤
+            weights q (c.prev q) * vals (c.prev q) := by
+        exact mul_le_mul_of_nonneg_left hvalsLo_prev (hweights_nonneg (c.prev q))
+      have hdot_ge' :
+          weights q (c.prev q) * valsLoPrev +
+              ∑ k ∈ others, weights q k *
+                (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) ≤
+            dotProduct (weights q) vals := by
+        have hle :
+            weights q (c.prev q) * valsLoPrev +
+                ∑ k ∈ others, weights q k *
+                  (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) ≤
+              weights q (c.prev q) * vals (c.prev q) +
+                ∑ k ∈ others, weights q k * vals k := by
+          exact add_le_add hprev_lo hsum_vals_ge
+        simpa [hout_eq, add_comm, add_left_comm, add_assoc] using hle
+      have hsum_weights :
+          (∑ k ∈ others, weights q k * valsLoPrev) =
+            (∑ k ∈ others, weights q k) * valsLoPrev := by
+        have hsum_mul :
+            (∑ k ∈ others, weights q k) * valsLoPrev =
+              ∑ k ∈ others, weights q k * valsLoPrev := by
+          simpa using
+            (Finset.sum_mul (s := others) (f := fun k => weights q k) (a := valsLoPrev))
+        exact hsum_mul.symm
+      have hsum_split :
+          ∑ k ∈ others, weights q k *
+              (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) =
+            (∑ k ∈ others, weights q k) * valsLoPrev -
+              ∑ k ∈ others, weights q k *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+        calc
+          ∑ k ∈ others, weights q k *
+              (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) =
+              ∑ k ∈ others,
+                (weights q k * valsLoPrev -
+                  weights q k * max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) := by
+                simp [mul_sub]
+          _ =
+              (∑ k ∈ others, weights q k * valsLoPrev) -
+                ∑ k ∈ others, weights q k *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+                simp [Finset.sum_sub_distrib]
+          _ =
+              (∑ k ∈ others, weights q k) * valsLoPrev -
+                ∑ k ∈ others, weights q k *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+                simp [hsum_weights]
+      have hsplit :
+          weights q (c.prev q) * valsLoPrev +
+              ∑ k ∈ others, weights q k *
+                (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) =
+            valsLoPrev -
+              ∑ k ∈ others, weights q k *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+        calc
+          weights q (c.prev q) * valsLoPrev +
+              ∑ k ∈ others, weights q k *
+                (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) =
+              weights q (c.prev q) * valsLoPrev +
+                ((∑ k ∈ others, weights q k) * valsLoPrev -
+                  ∑ k ∈ others, weights q k *
+                    max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) := by
+                simp [hsum_split]
+          _ =
+              (weights q (c.prev q) + ∑ k ∈ others, weights q k) * valsLoPrev -
+                ∑ k ∈ others, weights q k *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+                ring
+          _ =
+              valsLoPrev -
+                ∑ k ∈ others, weights q k *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+                simp [hsum]
+      have hweight_bound :
+          ∀ k ∈ others, weights q k ≤ (c.weightBoundAt q k : Real) := by
+        intro k hk
+        have hk' : k ≠ c.prev q := (Finset.mem_erase.mp hk).1
+        exact hsound.weight_bounds_at q hq k hk'
+      have hsum_gap_le :
+          ∑ k ∈ others, weights q k *
+              max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤
+            ∑ k ∈ others, (c.weightBoundAt q k : Real) *
+              max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+        refine Finset.sum_le_sum ?_
+        intro k hk
+        have hnonneg :
+            0 ≤ max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) :=
+          le_max_left _ _
+        exact mul_le_mul_of_nonneg_right (hweight_bound k hk) hnonneg
+      have hsub_le :
+          valsLoPrev -
+              ∑ k ∈ others, (c.weightBoundAt q k : Real) *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤
+            valsLoPrev -
+              ∑ k ∈ others, weights q k *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := by
+        exact sub_le_sub_left hsum_gap_le valsLoPrev
+      have hdot_lower :
+          valsLoPrev -
+              ∑ k ∈ others, (c.weightBoundAt q k : Real) *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤
+            dotProduct (weights q) vals := by
+        calc
+          valsLoPrev -
+              ∑ k ∈ others, (c.weightBoundAt q k : Real) *
+                max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤
+              valsLoPrev -
+                ∑ k ∈ others, weights q k *
+                  max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) := hsub_le
+          _ =
+              weights q (c.prev q) * valsLoPrev +
+                ∑ k ∈ others, weights q k *
+                  (valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real))) := by
+                simpa using hsplit.symm
           _ ≤ dotProduct (weights q) vals := hdot_ge'
       have hle : (lb : Real) ≤ dotProduct (weights q) vals :=
         le_trans hboundReal hdot_lower

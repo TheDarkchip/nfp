@@ -30,6 +30,63 @@ private def taskMin (t1 t2 : Task Rat) : Task Rat :=
 private def taskMax (t1 t2 : Task Rat) : Task Rat :=
   Task.bind t1 (fun v1 => Task.map (fun v2 => max v1 v2) t2)
 
+/-! Small lemmas for extracting `get` from task folds. -/
+
+/-- `taskMin` exposes its `get` as a plain `min` on task results. -/
+private theorem taskMin_get (t1 t2 : Task Rat) :
+    (taskMin t1 t2).get = min t1.get t2.get := by
+  rfl
+
+/-- `taskMax` exposes its `get` as a plain `max` on task results. -/
+private theorem taskMax_get (t1 t2 : Task Rat) :
+    (taskMax t1 t2).get = max t1.get t2.get := by
+  rfl
+
+/-- Pull `get` through a `List.foldl` when the step is `get`-compatible. -/
+private theorem foldl_task_get_eq {α β : Type} (step : Task β → α → Task β) (step' : β → α → β)
+    (hstep : ∀ acc a, (step acc a).get = step' acc.get a) :
+    ∀ (xs : List α) (acc : Task β),
+      (List.foldl step acc xs).get = List.foldl step' acc.get xs
+  | [], acc => rfl
+  | x :: xs, acc => by
+      simpa [List.foldl, hstep] using foldl_task_get_eq step step' hstep xs (step acc x)
+
+/-- `List.foldl` over `taskMin` exposes a fold over `min` on task results. -/
+private theorem foldl_taskMin_get_eq {α : Type} (f : α → Task Rat) (xs : List α)
+    (init : Task Rat) :
+    (List.foldl (fun acc a => taskMin acc (f a)) init xs).get =
+      List.foldl (fun acc a => min acc (f a).get) init.get xs := by
+  refine
+    foldl_task_get_eq
+      (step := fun acc a => taskMin acc (f a))
+      (step' := fun acc a => min acc (f a).get)
+      (hstep := ?_)
+      xs init
+  intro acc a
+  simp [taskMin_get]
+
+/-- `List.foldl` over `taskMax` exposes a fold over `max` on task results. -/
+private theorem foldl_taskMax_get_eq {α : Type} (f : α → Task Rat) (xs : List α)
+    (init : Task Rat) :
+    (List.foldl (fun acc a => taskMax acc (f a)) init xs).get =
+      List.foldl (fun acc a => max acc (f a).get) init.get xs := by
+  refine
+    foldl_task_get_eq
+      (step := fun acc a => taskMax acc (f a))
+      (step' := fun acc a => max acc (f a).get)
+      (hstep := ?_)
+      xs init
+  intro acc a
+  simp [taskMax_get]
+
+/-- `Array.get?` + `Option.getD` followed by `Task.get` agrees with `getD` on values. -/
+private theorem task_getD_ofFn {n : Nat} (f : Fin n → Rat) (i : Nat) :
+    ((Array.ofFn fun c => ({ get := f c } : Task Rat))[i]?.getD { get := (0 : Rat) }).get =
+      (Array.ofFn f)[i]?.getD (0 : Rat) := by
+  by_cases h : i < n
+  · simp [h, Array.size_ofFn]
+  · simp [h, Array.size_ofFn]
+
 /-! Helpers for reducing cached arrays without extra allocation. -/
 
 /-- Reduce an array of rational bounds to its minimum (defaulting to `0` on empty arrays). -/
@@ -41,6 +98,59 @@ private def reduceMinArray (arr : Array Rat) : Rat :=
 private def reduceMaxArray (arr : Array Rat) : Rat :=
   let init := arr.getD 0 (0 : Rat)
   arr.foldl (fun acc x => max acc x) init
+
+/-- Reduce a `Fin seq`-indexed function using the chunked sequential algorithm. -/
+private def reduceFnChunked [NeZero seq] (vals : Fin seq → Rat)
+    (combine : Rat → Rat → Rat) : Rat :=
+  let n := seq
+  if n = 0 then
+    (0 : Rat)
+  else
+    let chunkSize : Nat := 256
+    let chunks : Nat := (n + chunkSize - 1) / chunkSize
+    let hpos : 0 < seq := Nat.pos_of_ne_zero (by simpa using (NeZero.ne (n := seq)))
+    let defaultIdx : Fin seq := ⟨0, hpos⟩
+    let idxs : Array (Fin seq) := Array.ofFn (fun i : Fin seq => i)
+    let chunkVals : Array Rat :=
+      Array.ofFn (fun c : Fin chunks =>
+        let start := c.val * chunkSize
+        let stop := Nat.min n (start + chunkSize)
+        let init := vals (idxs.getD start defaultIdx)
+        if stop ≤ start + 1 then
+          init
+        else
+          let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
+          rest.foldl (fun acc i => combine acc (vals (idxs.getD i defaultIdx))) init)
+    let init := chunkVals.getD 0 (0 : Rat)
+    let rest := (List.range (chunkVals.size - 1)).map (fun i => i + 1)
+    rest.foldl (fun acc i => combine acc (chunkVals.getD i 0)) init
+
+/-- Unfold `reduceFnChunked` to its chunked sequential definition. -/
+theorem reduceFnChunked_spec [NeZero seq] (vals : Fin seq → Rat)
+    (combine : Rat → Rat → Rat) :
+    reduceFnChunked (seq := seq) vals combine =
+      let n := seq
+      if n = 0 then
+        (0 : Rat)
+      else
+        let chunkSize : Nat := 256
+        let chunks : Nat := (n + chunkSize - 1) / chunkSize
+        let hpos : 0 < seq := Nat.pos_of_ne_zero (by simpa using (NeZero.ne (n := seq)))
+        let defaultIdx : Fin seq := ⟨0, hpos⟩
+        let idxs : Array (Fin seq) := Array.ofFn (fun i : Fin seq => i)
+        let chunkVals : Array Rat :=
+          Array.ofFn (fun c : Fin chunks =>
+            let start := c.val * chunkSize
+            let stop := Nat.min n (start + chunkSize)
+            let init := vals (idxs.getD start defaultIdx)
+            if stop ≤ start + 1 then
+              init
+            else
+              let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
+              rest.foldl (fun acc i => combine acc (vals (idxs.getD i defaultIdx))) init)
+        let init := chunkVals.getD 0 (0 : Rat)
+        let rest := (List.range (chunkVals.size - 1)).map (fun i => i + 1)
+        rest.foldl (fun acc i => combine acc (chunkVals.getD i 0)) init := rfl
 
 /-- Reduce a `Fin seq`-indexed function in parallel using chunked tasks. -/
 private def reduceFnTask [NeZero seq] (vals : Fin seq → Rat)
@@ -104,6 +214,38 @@ private def reduceMinFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
 
 private def reduceMaxFnTask [NeZero seq] (vals : Fin seq → Rat) : Task Rat :=
   reduceFnTask vals max taskMax
+
+/-- Chunked sequential minimum over a `Fin seq`-indexed function. -/
+private def reduceMinFnChunked [NeZero seq] (vals : Fin seq → Rat) : Rat :=
+  reduceFnChunked vals min
+
+/-- Unfold `reduceMinFnChunked` to `reduceFnChunked` with `min`. -/
+theorem reduceMinFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
+    reduceMinFnChunked vals = reduceFnChunked vals min := rfl
+
+/-- Chunked sequential maximum over a `Fin seq`-indexed function. -/
+private def reduceMaxFnChunked [NeZero seq] (vals : Fin seq → Rat) : Rat :=
+  reduceFnChunked vals max
+
+/-- Unfold `reduceMaxFnChunked` to `reduceFnChunked` with `max`. -/
+theorem reduceMaxFnChunked_spec [NeZero seq] (vals : Fin seq → Rat) :
+    reduceMaxFnChunked vals = reduceFnChunked vals max := rfl
+
+/-- The chunked parallel min-reduction task returns the sequential chunked result. -/
+theorem reduceMinFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
+    (reduceMinFnTask vals).get = reduceMinFnChunked vals := by
+  classical
+  have hseq : seq ≠ 0 := NeZero.ne (n := seq)
+  simp [reduceMinFnTask, reduceMinFnChunked, reduceFnTask, reduceFnChunked, hseq,
+    Task.spawn, foldl_taskMin_get_eq, task_getD_ofFn]
+
+/-- The chunked parallel max-reduction task returns the sequential chunked result. -/
+theorem reduceMaxFnTask_get_eq [NeZero seq] (vals : Fin seq → Rat) :
+    (reduceMaxFnTask vals).get = reduceMaxFnChunked vals := by
+  classical
+  have hseq : seq ≠ 0 := NeZero.ne (n := seq)
+  simp [reduceMaxFnTask, reduceMaxFnChunked, reduceFnTask, reduceFnChunked, hseq,
+    Task.spawn, foldl_taskMax_get_eq, task_getD_ofFn]
 
 /-- Cached direction head for head inputs. -/
 private def dirHeadVecOfInputs {seq dModel dHead : Nat}
@@ -937,6 +1079,11 @@ def headValueLoTask [NeZero seq] (valsLo : Fin seq → Rat) : Task Rat :=
 theorem headValueLoTask_spec [NeZero seq] (valsLo : Fin seq → Rat) :
     headValueLoTask valsLo = reduceMinFnTask valsLo := rfl
 
+/-- Chunked task reduction agrees with the sequential chunked value bound. -/
+theorem headValueLoTask_get_eq [NeZero seq] (valsLo : Fin seq → Rat) :
+    (headValueLoTask valsLo).get = reduceMinFnChunked valsLo := by
+  simp [headValueLoTask_spec, reduceMinFnTask_get_eq]
+
 /-- Global upper value bound from an array of per-key values. -/
 def headValueHiArray (valsHi : Array Rat) : Rat :=
   reduceMaxArray valsHi
@@ -958,6 +1105,11 @@ def headValueHiTask [NeZero seq] (valsHi : Fin seq → Rat) : Task Rat :=
 
 theorem headValueHiTask_spec [NeZero seq] (valsHi : Fin seq → Rat) :
     headValueHiTask valsHi = reduceMaxFnTask valsHi := rfl
+
+/-- Chunked task reduction agrees with the sequential chunked value bound. -/
+theorem headValueHiTask_get_eq [NeZero seq] (valsHi : Fin seq → Rat) :
+    (headValueHiTask valsHi).get = reduceMaxFnChunked valsHi := by
+  simp [headValueHiTask_spec, reduceMaxFnTask_get_eq]
 
 /-- Build `HeadValueBounds` from precomputed arrays. -/
 private def headValueBoundsOfArrays {seq dModel dHead : Nat}
