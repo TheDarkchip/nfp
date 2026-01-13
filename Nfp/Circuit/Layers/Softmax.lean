@@ -14,7 +14,7 @@ These lemmas provide the analytical bridge from score gaps to softmax weight
 upper bounds.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -8,7 +8,7 @@ public import Nfp.System.Dag
 Circuit foundations: a DAG with designated inputs/outputs and gate semantics.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

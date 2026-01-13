@@ -10,7 +10,7 @@ public import Nfp.Circuit.Interface
 Circuit combinators such as relabeling.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

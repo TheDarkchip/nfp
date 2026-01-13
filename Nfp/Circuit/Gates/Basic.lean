@@ -10,7 +10,7 @@ public import Mathlib.Data.Fintype.BigOperators
 Basic gate combinators for aggregating parent values.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

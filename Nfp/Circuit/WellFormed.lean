@@ -8,7 +8,7 @@ public import Nfp.Circuit.Basic
 Well-formedness conditions for circuits.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

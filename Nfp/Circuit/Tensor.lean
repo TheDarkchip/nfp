@@ -8,7 +8,7 @@ public import Mathlib.Data.Matrix.Basic
 Typed tensor indices and tensor aliases.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

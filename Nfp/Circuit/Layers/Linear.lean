@@ -12,7 +12,7 @@ public import Nfp.Circuit.Typed
 Linear and affine layer circuits.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -30,7 +30,7 @@ variable {Row Col : Type u}
 abbrev LinearNode (Row Col : Type u) : Type u := Sum Col Row
 
 /-- Rank function used to orient layer edges from inputs to outputs. -/
-def linearRank : LinearNode Row Col → Nat
+@[expose] def linearRank : LinearNode Row Col → Nat
   | Sum.inl _ => 0
   | Sum.inr _ => 1
 

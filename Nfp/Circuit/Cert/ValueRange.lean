@@ -11,7 +11,7 @@ public import Nfp.Circuit.Layers.Induction
 Value-range certificates for attention value vectors.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -13,7 +13,7 @@ active-query set from a fixed period. They keep the prompt bookkeeping
 separate from the model weights.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

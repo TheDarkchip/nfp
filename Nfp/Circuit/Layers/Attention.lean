@@ -12,7 +12,7 @@ public import Nfp.Circuit.Layers.Tensor
 QKV and output projection wiring for attention layers, plus attention score/mixing core.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -485,7 +485,7 @@ end Dag
 section Inputs
 
 /-- Input nodes for the attention core. -/
-def attentionInputs : Finset (AttentionNode Batch seq heads dim) :=
+@[expose] def attentionInputs : Finset (AttentionNode Batch seq heads dim) :=
   (Finset.univ : Finset (AttentionInput Batch seq heads dim)).map Embedding.inl
 
 open scoped Classical in
@@ -513,7 +513,7 @@ theorem not_mem_attentionInputs_inr (s : Sum (ScoreIndex Batch seq heads)
 
 open scoped Classical in
 /-- Input labels correspond to input nodes in the attention core. -/
-def attentionInputEquiv :
+@[expose] def attentionInputEquiv :
     AttentionInput Batch seq heads dim ≃
       { i // i ∈ attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) } :=
   { toFun := fun a =>
@@ -545,7 +545,7 @@ end Inputs
 section Outputs
 
 /-- Output nodes for the attention core. -/
-def attentionOutputs : Finset (AttentionNode Batch seq heads dim) :=
+@[expose] def attentionOutputs : Finset (AttentionNode Batch seq heads dim) :=
   (Finset.univ : Finset (AttentionOutput Batch seq heads dim)).map
     { toFun := attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
       inj' := by
@@ -594,7 +594,7 @@ theorem not_mem_attentionOutputs_weight (w : WeightIndex Batch seq heads) :
 
 open scoped Classical in
 /-- Output labels correspond to output nodes in the attention core. -/
-def attentionOutputEquiv :
+@[expose] def attentionOutputEquiv :
     AttentionOutput Batch seq heads dim ≃
       { i // i ∈ attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) } :=
   { toFun := fun o =>
@@ -647,7 +647,7 @@ section Circuits
 variable [DecidableEq Batch]
 
 /-- Gate semantics for attention score/mixing circuits. -/
-def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+@[expose] def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
     ∀ i,
       (∀ j,
           (attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)).rel j i →
@@ -707,7 +707,7 @@ def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val
               exact dotProduct weights vals
 
 /-- Circuit for attention score/mixing. -/
-def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+@[expose] def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
     Circuit (AttentionNode Batch seq heads dim) Val :=
   { dag := attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     inputs := attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
@@ -716,7 +716,7 @@ def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → 
       attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax }
 
 /-- Typed interface for attention score/mixing circuits. -/
-def attentionInterface (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+@[expose] def attentionInterface (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
     Interface
       (attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax)
       (AttentionInput Batch seq heads dim) (AttentionOutput Batch seq heads dim) :=
@@ -730,7 +730,7 @@ section Typed
 variable [DecidableEq Batch]
 
 /-- Typed attention score/mixing circuit. -/
-def attentionTyped (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+@[expose] def attentionTyped (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
     TypedCircuit (AttentionNode Batch seq heads dim) Val
       (AttentionInput Batch seq heads dim) (AttentionOutput Batch seq heads dim) :=
   { circuit := attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)

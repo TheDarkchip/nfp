@@ -10,7 +10,7 @@ public import Nfp.Circuit.Layers.Reshape
 Head split/merge combinators for transformer-style shapes.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

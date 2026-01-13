@@ -8,7 +8,7 @@ public import Nfp.Circuit.Layers.Linear
 Tensor-shaped layer builders (batched linear and affine layers).
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

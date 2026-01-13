@@ -9,7 +9,7 @@ public import Nfp.Circuit.Cert.Basic
 Typed circuit wrappers and typed equivalence checking.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -31,7 +31,7 @@ variable {Node : Type u} [Fintype Node] [DecidableEq Node]
 variable {Val : Type v} {Input : Type u_in} {Output : Type u_out}
 
 /-- Evaluate a typed circuit on a typed input. -/
-def eval (T : TypedCircuit Node Val Input Output) (input : Input → Val) : Output → Val :=
+@[expose] def eval (T : TypedCircuit Node Val Input Output) (input : Input → Val) : Output → Val :=
   T.interface.eval input
 
 /-- Decide equivalence by enumerating typed inputs. -/

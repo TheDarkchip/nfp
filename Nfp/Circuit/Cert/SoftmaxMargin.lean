@@ -11,7 +11,7 @@ public import Nfp.Circuit.Layers.Induction
 Softmax-margin certificates for approximate one-hot attention weights.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

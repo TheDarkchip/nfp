@@ -12,7 +12,7 @@ public import Nfp.Circuit.Typed
 Combinators for composing typed circuits (sequential and residual wiring).
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -9,7 +9,7 @@ public import Nfp.Circuit.Layers.Attention
 Transformer block wiring built from sequential composition and residual links.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

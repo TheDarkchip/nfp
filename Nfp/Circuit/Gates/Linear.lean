@@ -8,7 +8,7 @@ public import Mathlib.Data.Matrix.Mul
 Linear and affine gate combinators built from `Matrix.mulVec`.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

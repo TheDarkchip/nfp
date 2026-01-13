@@ -8,7 +8,7 @@ public import Nfp.Circuit.Basic
 Evaluation semantics for finite circuits.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

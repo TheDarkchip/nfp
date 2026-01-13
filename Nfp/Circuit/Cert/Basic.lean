@@ -12,7 +12,7 @@ public import Nfp.Circuit.Semantics
 Circuit equivalence and a finite checker.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -28,7 +28,7 @@ def SameInterface (C₁ C₂ : Circuit ι α) : Prop :=
   C₁.inputs = C₂.inputs ∧ C₁.outputs = C₂.outputs
 
 /-- `SameInterface` is decidable. -/
-instance (C₁ C₂ : Circuit ι α) : Decidable (SameInterface C₁ C₂) := by
+private instance (C₁ C₂ : Circuit ι α) : Decidable (SameInterface C₁ C₂) := by
   dsimp [SameInterface]
   infer_instance
 

@@ -11,7 +11,7 @@ Residual-stream interval certificates.
 These certificates record per-coordinate lower/upper bounds for residual vectors.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

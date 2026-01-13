@@ -12,7 +12,7 @@ public import Nfp.Circuit.Layers.Attention
 Induction-head specifications for attention cores.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
@@ -79,7 +79,7 @@ def InductionSpecApprox (ε : Val)
   ∀ q, q ≠ 0 → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε
 
 /-- Approximate induction-head spec restricted to active queries. -/
-def InductionSpecApproxOn (ε : Val) (active : Fin (Nat.succ n) → Prop)
+@[expose] def InductionSpecApproxOn (ε : Val) (active : Fin (Nat.succ n) → Prop)
     (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (out vals : Fin (Nat.succ n) → Val) : Prop :=
   ∀ q, active q → out q ≤ vals (prev q) + ε ∧ vals (prev q) ≤ out q + ε

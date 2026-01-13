@@ -13,7 +13,7 @@ These structures store exact rational inputs (embeddings and weights) for a
 single attention head. They are intended to be consumed by sound builders.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

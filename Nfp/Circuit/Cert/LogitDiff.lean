@@ -10,7 +10,7 @@ public import Nfp.Circuit.Layers.Induction
 Lower bounds for logit-diff contributions from induction-style heads.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

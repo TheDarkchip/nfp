@@ -13,7 +13,7 @@ MLP/LayerNorm parameters needed to build `InductionHeadInputs` and downstream
 bound computations.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

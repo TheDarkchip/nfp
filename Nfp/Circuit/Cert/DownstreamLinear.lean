@@ -13,7 +13,7 @@ The checker only verifies arithmetic consistency (`error = gain * inputBound`)
 and nonnegativity of the reported quantities.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

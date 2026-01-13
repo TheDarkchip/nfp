@@ -9,7 +9,7 @@ public import Nfp.Circuit.Typed
 Reshape combinators for product-typed circuit interfaces.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 

@@ -11,7 +11,7 @@ Residual-stream bound certificates.
 These certificates record per-coordinate absolute bounds for residual vectors.
 -/
 
-@[expose] public section
+public section
 
 namespace Nfp
 
