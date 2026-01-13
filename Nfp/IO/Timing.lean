@@ -27,7 +27,9 @@ structure TimingConfig where
   stdout? : Option Bool
   /-- Optional heartbeat interval override (ms). -/
   heartbeatMs? : Option UInt32
+  deriving Inhabited
 
+/-- Mutable timing configuration (overrides environment defaults). -/
 initialize timingConfig : IO.Ref TimingConfig ←
   IO.mkRef { stdout? := none, heartbeatMs? := none }
 

@@ -165,6 +165,32 @@ structure ValueIntervalBounds {seq : Nat} (vals : Fin seq → Real)
   /-- `hi` is above every upper bound. -/
   valsHi_le_hi : ∀ k, (c.valsHi k : Real) ≤ (c.hi : Real)
 
+/-- Split-budget knobs for sign-splitting bounds in induction-head certificates. -/
+structure InductionHeadSplitConfig where
+  /-- Split budget for query dims. -/
+  splitBudgetQ : Nat
+  /-- Split budget for key dims. -/
+  splitBudgetK : Nat
+  /-- Split budget for base diff dims. -/
+  splitBudgetDiffBase : Nat
+  /-- Split budget for refined diff dims. -/
+  splitBudgetDiffRefined : Nat
+
+/-- Default split budgets for induction-head sign-splitting bounds. -/
+def defaultInductionHeadSplitConfig : InductionHeadSplitConfig :=
+  { splitBudgetQ := 2
+    splitBudgetK := 2
+    splitBudgetDiffBase := 0
+    splitBudgetDiffRefined := 12 }
+
+/-- Unfolding lemma for `defaultInductionHeadSplitConfig`. -/
+theorem defaultInductionHeadSplitConfig_def :
+    defaultInductionHeadSplitConfig =
+      { splitBudgetQ := 2
+        splitBudgetK := 2
+        splitBudgetDiffBase := 0
+        splitBudgetDiffRefined := 12 } := rfl
+
 /-- Sound induction-certificate payload built from exact head inputs. -/
 structure InductionHeadCert (seq : Nat) where
   /-- Weight tolerance. -/

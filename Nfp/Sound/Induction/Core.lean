@@ -241,7 +241,8 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   cert : InductionHeadCert seq
 
 /-- Build cached core quantities for induction-head certificates. -/
-def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
+def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     InductionHeadCoreCache seq dModel dHead := by
   classical
@@ -376,10 +377,10 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       simp [hsize])
   let masked : Fin seq → Fin seq → Prop := fun q k =>
     inputs.maskCausal = true ∧ q < k
-  let splitBudgetQ : Nat := 2
-  let splitBudgetK : Nat := 2
-  let splitBudgetDiffBase : Nat := 0
-  let splitBudgetDiffRefined : Nat := 12
+  let splitBudgetQ : Nat := cfg.splitBudgetQ
+  let splitBudgetK : Nat := cfg.splitBudgetK
+  let splitBudgetDiffBase : Nat := cfg.splitBudgetDiffBase
+  let splitBudgetDiffRefined : Nat := cfg.splitBudgetDiffRefined
   let splitDimsQ : Fin seq → List (Fin dHead) := fun q =>
     let ambig :=
       (List.finRange dHead).filter (fun d => decide (qLo q d < 0 ∧ 0 < qHi q d))
@@ -758,6 +759,12 @@ def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
       valCert := valCert
       cert := cert }
 
+/-- Build cached core quantities for induction-head certificates using the default split budgets. -/
+def buildInductionHeadCoreCache [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    InductionHeadCoreCache seq dModel dHead :=
+  buildInductionHeadCoreCacheWith defaultInductionHeadSplitConfig inputs
+
 /-- The cached certificate is built from cache fields. -/
 theorem buildInductionHeadCoreCache_cert_eq [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
@@ -771,7 +778,8 @@ theorem buildInductionHeadCoreCache_cert_eq [NeZero seq] {dModel dHead : Nat}
         values := (buildInductionHeadCoreCache inputs).valCert } := by
   rfl
 /-- Build induction certificates from exact head inputs (core computation). -/
-def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
+def buildInductionCertFromHeadCoreWith? [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     Option (InductionHeadCert seq) := by
   classical
@@ -780,10 +788,69 @@ def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
     · by_cases hmodel : dModel = 0
       · exact none
       · by_cases hactive : inputs.active.Nonempty
-        · exact some (buildInductionHeadCoreCache inputs).cert
+        · exact some (buildInductionHeadCoreCacheWith cfg inputs).cert
         · exact none
     · exact none
   · exact none
+
+/-- Build induction certificates from exact head inputs using the default split budgets. -/
+def buildInductionCertFromHeadCore? [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    Option (InductionHeadCert seq) :=
+  buildInductionCertFromHeadCoreWith? defaultInductionHeadSplitConfig inputs
+
+/-- `buildInductionCertFromHeadCoreWith?` succeeds under the guard conditions. -/
+theorem buildInductionCertFromHeadCoreWith?_eq_some [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (hEps : 0 < inputs.lnEps) (hSqrt : 0 < sqrtLower inputs.lnEps)
+    (hmodel : dModel ≠ 0) (hactive : inputs.active.Nonempty) :
+    buildInductionCertFromHeadCoreWith? cfg inputs =
+      some (buildInductionHeadCoreCacheWith cfg inputs).cert := by
+  classical
+  simp [buildInductionCertFromHeadCoreWith?, hEps, hSqrt, hmodel, hactive]
+
+/-- `buildInductionCertFromHeadCoreWith?` fails when `dModel = 0`. -/
+theorem buildInductionCertFromHeadCoreWith?_eq_none_of_model_eq_zero
+    [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (hEps : 0 < inputs.lnEps) (hSqrt : 0 < sqrtLower inputs.lnEps)
+    (hmodel : dModel = 0) :
+    buildInductionCertFromHeadCoreWith? cfg inputs = none := by
+  classical
+  simp [buildInductionCertFromHeadCoreWith?, hEps, hSqrt, hmodel]
+
+/-- `buildInductionCertFromHeadCoreWith?` fails when `active` is empty. -/
+theorem buildInductionCertFromHeadCoreWith?_eq_none_of_not_active
+    [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (hEps : 0 < inputs.lnEps) (hSqrt : 0 < sqrtLower inputs.lnEps)
+    (hmodel : dModel ≠ 0) (hactive : ¬inputs.active.Nonempty) :
+    buildInductionCertFromHeadCoreWith? cfg inputs = none := by
+  classical
+  simp [buildInductionCertFromHeadCoreWith?, hEps, hSqrt, hmodel, hactive]
+
+/-- `buildInductionCertFromHeadCoreWith?` fails when the sqrt lower bound is nonpositive. -/
+theorem buildInductionCertFromHeadCoreWith?_eq_none_of_not_sqrt
+    [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (hEps : 0 < inputs.lnEps) (hSqrt : ¬0 < sqrtLower inputs.lnEps) :
+    buildInductionCertFromHeadCoreWith? cfg inputs = none := by
+  classical
+  simp [buildInductionCertFromHeadCoreWith?, hEps, hSqrt]
+
+/-- `buildInductionCertFromHeadCoreWith?` fails when `lnEps` is nonpositive. -/
+theorem buildInductionCertFromHeadCoreWith?_eq_none_of_not_eps
+    [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (hEps : ¬0 < inputs.lnEps) :
+    buildInductionCertFromHeadCoreWith? cfg inputs = none := by
+  classical
+  simp [buildInductionCertFromHeadCoreWith?, hEps]
 
 /-- `buildInductionCertFromHeadCore?` succeeds under the guard conditions. -/
 theorem buildInductionCertFromHeadCore?_eq_some [NeZero seq] {dModel dHead : Nat}
@@ -793,7 +860,10 @@ theorem buildInductionCertFromHeadCore?_eq_some [NeZero seq] {dModel dHead : Nat
     buildInductionCertFromHeadCore? inputs =
       some (buildInductionHeadCoreCache inputs).cert := by
   classical
-  simp [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive]
+  simpa [buildInductionCertFromHeadCore?, buildInductionHeadCoreCache] using
+    (buildInductionCertFromHeadCoreWith?_eq_some
+      (cfg := defaultInductionHeadSplitConfig) (inputs := inputs)
+      hEps hSqrt hmodel hactive)
 
 /-- `buildInductionCertFromHeadCore?` fails when `dModel = 0`. -/
 theorem buildInductionCertFromHeadCore?_eq_none_of_model_eq_zero [NeZero seq] {dModel dHead : Nat}
@@ -802,7 +872,9 @@ theorem buildInductionCertFromHeadCore?_eq_none_of_model_eq_zero [NeZero seq] {d
     (hmodel : dModel = 0) :
     buildInductionCertFromHeadCore? inputs = none := by
   classical
-  simp [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel]
+  simpa [buildInductionCertFromHeadCore?] using
+    (buildInductionCertFromHeadCoreWith?_eq_none_of_model_eq_zero
+      (cfg := defaultInductionHeadSplitConfig) (inputs := inputs) hEps hSqrt hmodel)
 
 /-- `buildInductionCertFromHeadCore?` fails when `active` is empty. -/
 theorem buildInductionCertFromHeadCore?_eq_none_of_not_active [NeZero seq] {dModel dHead : Nat}
@@ -811,7 +883,9 @@ theorem buildInductionCertFromHeadCore?_eq_none_of_not_active [NeZero seq] {dMod
     (hmodel : dModel ≠ 0) (hactive : ¬inputs.active.Nonempty) :
     buildInductionCertFromHeadCore? inputs = none := by
   classical
-  simp [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive]
+  simpa [buildInductionCertFromHeadCore?] using
+    (buildInductionCertFromHeadCoreWith?_eq_none_of_not_active
+      (cfg := defaultInductionHeadSplitConfig) (inputs := inputs) hEps hSqrt hmodel hactive)
 
 /-- `buildInductionCertFromHeadCore?` fails when the sqrt lower bound is nonpositive. -/
 theorem buildInductionCertFromHeadCore?_eq_none_of_not_sqrt [NeZero seq] {dModel dHead : Nat}
@@ -819,7 +893,9 @@ theorem buildInductionCertFromHeadCore?_eq_none_of_not_sqrt [NeZero seq] {dModel
     (hEps : 0 < inputs.lnEps) (hSqrt : ¬0 < sqrtLower inputs.lnEps) :
     buildInductionCertFromHeadCore? inputs = none := by
   classical
-  simp [buildInductionCertFromHeadCore?, hEps, hSqrt]
+  simpa [buildInductionCertFromHeadCore?] using
+    (buildInductionCertFromHeadCoreWith?_eq_none_of_not_sqrt
+      (cfg := defaultInductionHeadSplitConfig) (inputs := inputs) hEps hSqrt)
 
 /-- `buildInductionCertFromHeadCore?` fails when `lnEps` is nonpositive. -/
 theorem buildInductionCertFromHeadCore?_eq_none_of_not_eps [NeZero seq] {dModel dHead : Nat}
@@ -827,7 +903,9 @@ theorem buildInductionCertFromHeadCore?_eq_none_of_not_eps [NeZero seq] {dModel 
     (hEps : ¬0 < inputs.lnEps) :
     buildInductionCertFromHeadCore? inputs = none := by
   classical
-  simp [buildInductionCertFromHeadCore?, hEps]
+  simpa [buildInductionCertFromHeadCore?] using
+    (buildInductionCertFromHeadCoreWith?_eq_none_of_not_eps
+      (cfg := defaultInductionHeadSplitConfig) (inputs := inputs) hEps)
 
 end Sound
 end Nfp

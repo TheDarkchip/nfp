@@ -19,14 +19,22 @@ open Nfp.Sound.Bounds
 variable {seq : Nat}
 
 /-- Build and certify induction certificates from exact head inputs. -/
-def buildInductionCertFromHead? [NeZero seq] {dModel dHead : Nat}
+def buildInductionCertFromHeadWith? [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
     (inputs : Model.InductionHeadInputs seq dModel dHead) :
     Option {c : InductionHeadCert seq // InductionHeadCertSound inputs c} := by
   classical
-  cases hcore : buildInductionCertFromHeadCore? inputs with
+  cases hcore : buildInductionCertFromHeadCoreWith? cfg inputs with
   | none => exact none
   | some c =>
-      exact some ⟨c, buildInductionCertFromHeadCore?_sound inputs c hcore⟩
+      exact some ⟨c, buildInductionCertFromHeadCoreWith?_sound (cfg := cfg) inputs c hcore⟩
+
+/-- Build and certify induction certificates from exact head inputs using the default split
+budgets. -/
+def buildInductionCertFromHead? [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    Option {c : InductionHeadCert seq // InductionHeadCertSound inputs c} :=
+  buildInductionCertFromHeadWith? defaultInductionHeadSplitConfig inputs
 
 section HeadOutputInterval
 

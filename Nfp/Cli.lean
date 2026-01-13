@@ -178,8 +178,13 @@ def runInductionCertifyHead (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
     minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
 def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
@@ -190,8 +195,13 @@ def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHeadNonvacuous inputsPath minActive? minLogitDiffStr?
     minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head` subcommand. -/
 def inductionCertifyHeadCmd : Cmd := `[Cli|
@@ -207,6 +217,12 @@ def inductionCertifyHeadCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
@@ -223,6 +239,12 @@ def inductionCertifyHeadNonvacuousCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction certify_head_model` subcommand. -/
@@ -239,8 +261,13 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHeadModel modelPath layer head dirTarget dirNegative period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
@@ -256,8 +283,13 @@ def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHeadModelNonvacuous modelPath layer head dirTarget dirNegative period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_model_auto` subcommand. -/
 def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
@@ -271,8 +303,13 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHeadModelAuto modelPath layer head period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
@@ -286,8 +323,13 @@ def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
   IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer head period?
     minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_model` subcommand. -/
 def inductionCertifyHeadModelCmd : Cmd := `[Cli|
@@ -308,6 +350,12 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
@@ -329,6 +377,12 @@ def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction certify_head_model_auto` subcommand. -/
@@ -349,6 +403,12 @@ def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
@@ -369,6 +429,12 @@ def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
 ]
 
 /-- `nfp induction head_interval` subcommand. -/

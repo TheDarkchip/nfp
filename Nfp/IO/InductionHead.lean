@@ -37,6 +37,16 @@ private def configureTiming (timing? : Option Nat) (heartbeatMs? : Option Nat) :
         setTimingStdout true
   | none => pure ()
 
+private def splitConfigFromOptions
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    Sound.InductionHeadSplitConfig :=
+  let base := Sound.defaultInductionHeadSplitConfig
+  { base with
+    splitBudgetQ := splitBudgetQ?.getD base.splitBudgetQ
+    splitBudgetK := splitBudgetK?.getD base.splitBudgetK
+    splitBudgetDiffBase := splitBudgetDiffBase?.getD base.splitBudgetDiffBase
+    splitBudgetDiffRefined := splitBudgetDiffRefined?.getD base.splitBudgetDiffRefined }
+
 open Nfp.Circuit
 
 private def valueBoundsModeFromEnv : IO (Option Bool) := do
@@ -332,6 +342,7 @@ private def headScoreBoundsFromQAbsKAbsTimed {seq dModel dHead : Nat} [NeZero se
 
 private def checkInductionHeadInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cfg : Sound.InductionHeadSplitConfig)
     (minActive? : Option Nat) (minLogitDiff? : Option Rat)
     (minMargin maxEps : Rat) : IO UInt32 := do
   match seq with
@@ -720,7 +731,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
         let tValsHi1 ← monoUsNow
         timingPrint s!"timing: breakdown value valsHi force {tValsHi1 - tValsHi0} us"
         timingFlush
-        let heartbeatMs ← heartbeatMs
+        let heartbeatMsProgress ← heartbeatMs
         let taskMin (t1 t2 : Task Rat) : Task Rat :=
           Task.bind t1 (fun v1 => Task.map (fun v2 => min v1 v2) t2)
         let taskMax (t1 t2 : Task Rat) : Task Rat :=
@@ -744,11 +755,11 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 else
                   let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
                   rest.foldl (fun acc i => taskMin acc (tasks.getD i defaultTask)) init)
-            if heartbeatMs ≠ 0 then
+            if heartbeatMsProgress ≠ 0 then
               let mut finished := 0
               let mut remaining := chunkTasks.size
               while finished < remaining do
-                IO.sleep heartbeatMs
+                IO.sleep heartbeatMsProgress
                 let mut count := 0
                 for t in chunkTasks do
                   if (← IO.hasFinished t) then
@@ -780,11 +791,11 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
                 else
                   let rest := (List.range (stop - start - 1)).map (fun i => start + i + 1)
                   rest.foldl (fun acc i => taskMax acc (tasks.getD i defaultTask)) init)
-            if heartbeatMs ≠ 0 then
+            if heartbeatMsProgress ≠ 0 then
               let mut finished := 0
               let mut remaining := chunkTasks.size
               while finished < remaining do
-                IO.sleep heartbeatMs
+                IO.sleep heartbeatMsProgress
                 let mut count := 0
                 for t in chunkTasks do
                   if (← IO.hasFinished t) then
@@ -861,7 +872,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             (Option { c : Sound.InductionHeadCert seq //
               Sound.InductionHeadCertSound inputs c }) :=
         Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
-          match Sound.buildInductionCertFromHead? inputs with
+          match Sound.buildInductionCertFromHeadWith? cfg inputs with
           | none => none
           | some ⟨cert, hcert⟩ =>
               let _ := cert.active.card
@@ -952,6 +963,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
 
 private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cfg : Sound.InductionHeadSplitConfig)
     (minActive? : Option Nat) (minLogitDiff? : Option Rat)
     (minMargin maxEps : Rat) : IO UInt32 := do
   match seq with
@@ -970,7 +982,7 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             (Option { c : Sound.InductionHeadCert seq //
               Sound.InductionHeadCertSound inputs c }) :=
         Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
-          match Sound.buildInductionCertFromHead? inputs with
+          match Sound.buildInductionCertFromHeadWith? cfg inputs with
           | none => none
           | some ⟨cert, hcert⟩ =>
               let _ := cert.active.card
@@ -1047,8 +1059,12 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
 def runInductionCertifyHead (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1072,14 +1088,18 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
           IO.eprintln s!"error: {msg}"
           return 1
       | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
-          checkInductionHeadInputs inputs minActive? minLogitDiff? minMargin maxEps
+          checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff? minMargin maxEps
 
 /-- Build and check a strictly positive induction logit-diff bound from head inputs. -/
 def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1103,15 +1123,20 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
           IO.eprintln s!"error: {msg}"
           return 1
       | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
-          checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff? minMargin maxEps
+          checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
+            minMargin maxEps
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1147,15 +1172,19 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
               IO.eprintln s!"error: {msg}"
               return 1
           | Except.ok inputs =>
-              checkInductionHeadInputs inputs minActive? minLogitDiff? minMargin maxEps
+              checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff? minMargin maxEps
 
 /-- Build and check a strictly positive induction logit-diff bound from a model binary. -/
 def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1191,7 +1220,8 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
               IO.eprintln s!"error: {msg}"
               return 1
           | Except.ok inputs =>
-              checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff? minMargin maxEps
+              checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
+                minMargin maxEps
 
 /-- Heuristic logit-diff direction derived from prompt tokens. -/
 private def deriveDirectionFromTokens {seq : Nat} (tokens : Fin seq → Nat) :
@@ -1227,8 +1257,12 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
     (layer head : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1278,7 +1312,7 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
                       IO.eprintln s!"error: {msg}"
                       return 1
                   | Except.ok inputs =>
-                      checkInductionHeadInputs inputs minActive? minLogitDiff?
+                      checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff?
                         minMargin maxEps
 
 /-- Build and check a strictly positive induction logit-diff bound from a model binary, deriving
@@ -1287,8 +1321,12 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
     (layer head : Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (timing? : Option Nat) (heartbeatMs? : Option Nat) : IO UInt32 := do
+    (timing? : Option Nat) (heartbeatMs? : Option Nat)
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    IO UInt32 := do
   configureTiming timing? heartbeatMs?
+  let splitCfg :=
+    splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1338,7 +1376,7 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
                       IO.eprintln s!"error: {msg}"
                       return 1
                   | Except.ok inputs =>
-                      checkInductionHeadInputsNonvacuous inputs minActive? minLogitDiff?
+                      checkInductionHeadInputsNonvacuous inputs splitCfg minActive? minLogitDiff?
                         minMargin maxEps
 
 /-- Build head-output interval bounds from exact head inputs. -/

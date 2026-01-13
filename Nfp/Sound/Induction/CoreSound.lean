@@ -11,10 +11,11 @@ set_option maxHeartbeats 5000000 in
 -- The soundness proof expands many cached bounds; extra heartbeats avoid spurious timeouts.
 set_option synthInstance.maxHeartbeats 200000 in
 -- Instance search also touches the expanded caches; allow more room to avoid timeouts.
-/-- Soundness for `buildInductionCertFromHeadCore?`. -/
-theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
+/-- Soundness for `buildInductionCertFromHeadCoreWith?`. -/
+theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : Nat}
+      (cfg : InductionHeadSplitConfig)
       (inputs : Model.InductionHeadInputs seq dModel dHead) (c : InductionHeadCert seq)
-      (hcore : buildInductionCertFromHeadCore? inputs = some c) :
+      (hcore : buildInductionCertFromHeadCoreWith? cfg inputs = some c) :
       InductionHeadCertSound inputs c := by
     classical
     by_cases hEps : 0 < inputs.lnEps
@@ -22,8 +23,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
       · by_cases hmodel : dModel = 0
         · have : False := by
             have hnone :=
-              buildInductionCertFromHeadCore?_eq_none_of_model_eq_zero
-                (inputs := inputs) hEps hSqrt hmodel
+              buildInductionCertFromHeadCoreWith?_eq_none_of_model_eq_zero
+                (cfg := cfg) (inputs := inputs) hEps hSqrt hmodel
             have hcore' :
                 (none : Option (InductionHeadCert seq)) = some c := by
               exact hnone.symm.trans hcore
@@ -167,10 +168,10 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 simp [kAbsMaxArr])
             let masked : Fin seq → Fin seq → Prop := fun q k =>
               inputs.maskCausal = true ∧ q < k
-            let splitBudgetQ : Nat := 2
-            let splitBudgetK : Nat := 2
-            let splitBudgetDiffBase : Nat := 0
-            let splitBudgetDiffRefined : Nat := 12
+            let splitBudgetQ : Nat := cfg.splitBudgetQ
+            let splitBudgetK : Nat := cfg.splitBudgetK
+            let splitBudgetDiffBase : Nat := cfg.splitBudgetDiffBase
+            let splitBudgetDiffRefined : Nat := cfg.splitBudgetDiffRefined
             let top2ByScore :
                 (Fin dHead → Rat) → List (Fin dHead) → List (Fin dHead) := fun score ambig =>
               let step
@@ -458,9 +459,9 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 active := inputs.active
                 prev := inputs.prev
                 values := valCert }
-            have hcore' : buildInductionCertFromHeadCore? inputs = some cert := by
+            have hcore' : buildInductionCertFromHeadCoreWith? cfg inputs = some cert := by
               simp (config := { zeta := false }) only
-                [buildInductionCertFromHeadCore?, hEps, hSqrt, hmodel, hactive]
+                [buildInductionCertFromHeadCoreWith?, hEps, hSqrt, hmodel, hactive]
               rfl
             have hc : c = cert := by
               have hcert : cert = c := by
@@ -1254,8 +1255,8 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
                 value_bounds := hvals_bounds }
           · have : False := by
               have hnone :=
-                buildInductionCertFromHeadCore?_eq_none_of_not_active
-                  (inputs := inputs) hEps hSqrt hmodel hactive
+                buildInductionCertFromHeadCoreWith?_eq_none_of_not_active
+                  (cfg := cfg) (inputs := inputs) hEps hSqrt hmodel hactive
               have hcore' :
                   (none : Option (InductionHeadCert seq)) = some c := by
                 exact hnone.symm.trans hcore
@@ -1263,18 +1264,33 @@ theorem buildInductionCertFromHeadCore?_sound [NeZero seq] {dModel dHead : Nat}
             exact this.elim
       · have : False := by
           have hnone :=
-            buildInductionCertFromHeadCore?_eq_none_of_not_sqrt (inputs := inputs) hEps hSqrt
+            buildInductionCertFromHeadCoreWith?_eq_none_of_not_sqrt
+              (cfg := cfg) (inputs := inputs) hEps hSqrt
           have hcore' :
               (none : Option (InductionHeadCert seq)) = some c := by
             exact hnone.symm.trans hcore
           cases hcore'
         exact this.elim
     · have : False := by
-        have hnone := buildInductionCertFromHeadCore?_eq_none_of_not_eps (inputs := inputs) hEps
+        have hnone :=
+          buildInductionCertFromHeadCoreWith?_eq_none_of_not_eps
+            (cfg := cfg) (inputs := inputs) hEps
         have hcore' :
             (none : Option (InductionHeadCert seq)) = some c := by
           exact hnone.symm.trans hcore
         cases hcore'
       exact this.elim
+
+/-- Soundness for `buildInductionCertFromHeadCore?`. -/
+theorem buildInductionCertFromHeadCore?_sound
+      [NeZero seq] {dModel dHead : Nat}
+      (inputs : Model.InductionHeadInputs seq dModel dHead) (c : InductionHeadCert seq)
+      (hcore : buildInductionCertFromHeadCore? inputs = some c) :
+      InductionHeadCertSound inputs c := by
+  simpa [buildInductionCertFromHeadCore?] using
+    (buildInductionCertFromHeadCoreWith?_sound
+      (cfg := defaultInductionHeadSplitConfig) inputs c
+      (by
+        simpa [buildInductionCertFromHeadCore?] using hcore))
 end Sound
 end Nfp
