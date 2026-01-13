@@ -7,6 +7,7 @@ defaultTargets = ["Nfp"]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 autoImplicit = false
 relaxedAutoImplicit = false
+experimental.module = true
 weak.linter.mathlibStandardSet = true
 maxSynthPendingDepth = 3
 linter.unusedVariables = true

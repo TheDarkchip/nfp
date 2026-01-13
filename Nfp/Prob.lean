@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Prob.Basic
-import Nfp.Prob.Operations
+module
+
+public import Nfp.Prob.Basic
+public import Nfp.Prob.Operations
 
 /-!
 Probability vectors.

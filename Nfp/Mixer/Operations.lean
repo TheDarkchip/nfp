@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Mixer.Basic
-import Nfp.Prob.Operations
-import Mathlib.Algebra.BigOperators.Ring.Finset
+module
+
+public import Nfp.Mixer.Basic
+public import Nfp.Prob.Operations
+public import Mathlib.Algebra.BigOperators.Ring.Finset
 
 /-!
 Mixer operations (pushforward, composition, identity).
 -/
+
+@[expose] public section
 
 open scoped BigOperators
 
@@ -55,3 +59,5 @@ def id (ι : Type u) [Fintype ι] [DecidableEq ι] : Mixer ι ι :=
 
 end Mixer
 end Nfp
+
+end

@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Prob.Basic
-import Mathlib.Algebra.BigOperators.Ring.Finset
+module
+
+public import Nfp.Prob.Basic
+public import Mathlib.Algebra.BigOperators.Ring.Finset
 
 /-!
 Basic constructions on probability vectors.
 -/
+
+@[expose] public section
 
 open scoped BigOperators
 
@@ -43,3 +47,5 @@ def mix (a b : Mass) (h : a + b = 1) (p q : ProbVec ι) : ProbVec ι :=
 
 end ProbVec
 end Nfp
+
+end

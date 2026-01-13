@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Fintype.BigOperators
-import Nfp.Mixer.Basic
-import Nfp.System.Dag
+module
+
+public import Mathlib.Data.Fintype.BigOperators
+public import Nfp.Mixer.Basic
+public import Nfp.System.Dag
 
 /-!
 Local mixing systems on finite DAGs.
 -/
+
+@[expose] public section
 
 open scoped BigOperators
 
@@ -68,3 +72,5 @@ theorem eval_eq (L : LocalSystem ι) (input : ι → Mass) (i : ι) :
 end LocalSystem
 
 end Nfp
+
+end

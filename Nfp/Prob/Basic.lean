@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core
-import Mathlib.Data.Fintype.BigOperators
+module
+
+public import Nfp.Core
+public import Mathlib.Data.Fintype.BigOperators
 
 /-!
 Probability vectors on finite types.
 -/
+
+@[expose] public section
 
 open scoped BigOperators
 
@@ -31,3 +35,5 @@ instance : CoeFun (ProbVec ι) (fun _ => ι → Mass) := ⟨ProbVec.mass⟩
 end ProbVec
 
 end Nfp
+
+end

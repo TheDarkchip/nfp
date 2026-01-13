@@ -1,12 +1,19 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.NNReal.Basic
-import Mathlib.Data.Rat.Cast.Lemmas
-import Mathlib.Data.Rat.Cast.Order
+module
+
+public import Mathlib.Algebra.Order.Group.Unbundled.Abs
+public import Mathlib.Data.NNReal.Defs
+public import Mathlib.Data.NNReal.Basic
+public import Mathlib.Data.Rat.Cast.Lemmas
+public import Mathlib.Data.Rat.Cast.Order
+public import Mathlib.Data.Real.Basic
 
 /-!
 Basic shared definitions for the NFP rewrite.
 -/
+
+@[expose] public section
 
 namespace Nfp
 
@@ -155,3 +162,5 @@ theorem ratToReal_abs_le_of_le {x y : Rat} (h : |x| ≤ y) :
   simp [ratToReal]
 
 end Nfp
+
+end

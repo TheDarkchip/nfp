@@ -1,11 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Combinatorics.Digraph.Basic
-import Mathlib.Data.Finset.Basic
+module
+
+public import Mathlib.Combinatorics.Digraph.Basic
+public import Mathlib.Data.Fintype.Defs
+public import Mathlib.Data.Finset.Basic
 
 /-!
 Directed acyclic graph foundations.
 -/
+
+@[expose] public section
 
 namespace Nfp
 
@@ -68,3 +73,5 @@ end Relabel
 end Dag
 
 end Nfp
+
+end
