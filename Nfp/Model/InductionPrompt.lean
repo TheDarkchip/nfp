@@ -50,6 +50,40 @@ theorem mem_activeOfTokens {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq} 
     q ∈ activeOfTokens tokens ↔ ∃ k, k.val < q.val ∧ tokens k = tokens q := by
   simp [activeOfTokens]
 
+/-- If a prior matching token exists, `prevOfTokens` picks a matching index and is maximal. -/
+theorem prevOfTokens_spec {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
+    (h : ∃ k, k < q ∧ tokens k = tokens q) :
+    let p := prevOfTokens tokens q
+    p < q ∧ tokens p = tokens q ∧
+      ∀ k, k < q → tokens k = tokens q → k ≤ p := by
+  classical
+  let candidates : Finset (Fin seq) :=
+    (Finset.univ : Finset (Fin seq)).filter (fun k =>
+      k < q ∧ tokens k = tokens q)
+  have hnonempty : candidates.Nonempty := by
+    rcases h with ⟨k, hk, htok⟩
+    exact ⟨k, by simp [candidates, hk, htok]⟩
+  by_cases h' : candidates.Nonempty
+  · have hmem : Finset.max' candidates h' ∈ candidates :=
+      Finset.max'_mem candidates h'
+    have hcond :
+        Finset.max' candidates h' < q ∧
+          tokens (Finset.max' candidates h') = tokens q := by
+      have hmem' := (Finset.mem_filter.1 hmem).2
+      simpa using hmem'
+    have hmax :
+        ∀ k, k < q → tokens k = tokens q →
+          k ≤ Finset.max' candidates h' := by
+      intro k hk htok
+      have hk_mem : k ∈ candidates := by
+        simp [candidates, hk, htok]
+      have hk_mem' : k ∈ (candidates : Set (Fin seq)) := by
+        simpa using hk_mem
+      exact (Finset.isGreatest_max' (s := candidates) h').2 hk_mem'
+    simpa [prevOfTokens, candidates, h'] using
+      And.intro hcond.1 (And.intro hcond.2 hmax)
+  · exact (h' hnonempty).elim
+
 end Model
 
 end Nfp
