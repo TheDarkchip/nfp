@@ -1,9 +1,11 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Gpt2.HeadInputs
-import Nfp.Sound.Induction
-import Nfp.Sound.Bounds
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Nfp.Sound.Gpt2.HeadInputs
+public import Nfp.Sound.Induction
+public import Nfp.Sound.Bounds
+public import Nfp.Sound.Linear.FinFold
 
 /-!
 Sound certificate builders and verified helpers.
