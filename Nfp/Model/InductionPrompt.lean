@@ -84,6 +84,18 @@ theorem prevOfTokens_spec {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
       And.intro hcond.1 (And.intro hcond.2 hmax)
   · exact (h' hnonempty).elim
 
+/-- Active queries imply the `prevOfTokens` maximal-match specification. -/
+theorem prevOfTokens_spec_of_active {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
+    (hq : q ∈ activeOfTokens tokens) :
+    let p := prevOfTokens tokens q
+    p < q ∧ tokens p = tokens q ∧
+      ∀ k, k < q → tokens k = tokens q → k ≤ p := by
+  have h := (mem_activeOfTokens (tokens := tokens) (q := q)).1 hq
+  rcases h with ⟨k, hk, htok⟩
+  have hk' : k < q := by
+    exact (Fin.lt_def).2 hk
+  exact prevOfTokens_spec (tokens := tokens) (q := q) ⟨k, hk', htok⟩
+
 end Model
 
 end Nfp
