@@ -446,10 +446,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
               min (1 : Rat) total
             let epsAt : Fin seq → Rat :=
               Bounds.cacheBoundThunk epsAtBase
-            let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
-              min (weightBoundAtBaseCached q k) (epsAt q)
-            let weightBoundAt : Fin seq → Fin seq → Rat :=
-              Bounds.cacheBound2 weightBoundAtClampedBase
+            let weightBoundAt : Fin seq → Fin seq → Rat := weightBoundAtBaseCached
             let margin : Rat :=
               if h : inputs.active.Nonempty then
                 inputs.active.inf' h marginAt
@@ -1096,10 +1093,9 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
               simp [weightBoundAtBase, hk]
             have hweightBoundAt :
                 ∀ q k,
-                  weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) := by
+                  weightBoundAt q k = weightBoundAtBase q k := by
               intro q k
-              simp [weightBoundAt, weightBoundAtClampedBase, weightBoundAtBaseCached,
-                Bounds.cacheBound2_apply, Bounds.cacheBound2Task_apply]
+              simp [weightBoundAt, weightBoundAtBaseCached, Bounds.cacheBound2Task_apply]
             have hepsAt :
                 ∀ q, epsAt q =
                   min (1 : Rat)
@@ -1159,25 +1155,16 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     (hweightBoundAt := hweightBoundAtBase)
                     (hscore_gap_real_at := hscore_gap_real_at)
                     q hq k hk
-              have hbound_eps :
-                  weights q k ≤ (epsAt q : Real) := by
-                have honehot := oneHot_bounds_at q hq
-                exact honehot.other_le q rfl k hk
-              have hbound_min :
-                  weights q k ≤ min (weightBoundAtBase q k : Real) (epsAt q : Real) := by
-                exact le_min hbound_base hbound_eps
               have hweightBoundAt_real :
                   (weightBoundAt q k : Real) =
-                    min (weightBoundAtBase q k : Real) (epsAt q : Real) := by
-                have hmin :
-                    weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) :=
+                    (weightBoundAtBase q k : Real) := by
+                have hbase : weightBoundAt q k = weightBoundAtBase q k :=
                   hweightBoundAt q k
-                have hmin' :
-                    ratToReal (weightBoundAt q k) =
-                      ratToReal (min (weightBoundAtBase q k) (epsAt q)) :=
-                  congrArg ratToReal hmin
-                simpa [ratToReal_min, ratToReal_def] using hmin'
-              simpa [hweightBoundAt_real] using hbound_min
+                have hbase' :
+                    ratToReal (weightBoundAt q k) = ratToReal (weightBoundAtBase q k) :=
+                  congrArg ratToReal hbase
+                simpa [ratToReal_def] using hbase'
+              simpa [hweightBoundAt_real] using hbound_base
             have hepsAt_le_eps :
                 ∀ q, q ∈ inputs.active → epsAt q ≤ eps := by
               intro q hq

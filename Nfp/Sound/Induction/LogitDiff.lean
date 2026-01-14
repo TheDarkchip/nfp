@@ -137,7 +137,24 @@ def logitDiffLowerBoundFromCache (c : InductionHeadCert seq) (cache : LogitDiffC
 /-- Weighted logit-diff lower bound from a shared cache. -/
 def logitDiffLowerBoundWeightedFromCache (c : InductionHeadCert seq) (cache : LogitDiffCache seq) :
     Option Rat :=
-  Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt cache.valsLo
+  let others : Fin seq → Finset (Fin seq) := fun q =>
+    (Finset.univ : Finset (Fin seq)).erase (c.prev q)
+  let gapBase : Fin seq → Rat := fun q =>
+    (others q).sum (fun k =>
+      let diff := cache.valsLo (c.prev q) - cache.valsLo k
+      let diffPos := max (0 : Rat) diff
+      if diffPos = 0 then
+        0
+      else
+        c.weightBoundAt q k * diffPos)
+  let gap : Fin seq → Rat := Bounds.cacheBoundTask gapBase
+  if h : c.active.Nonempty then
+    let f : Fin seq → Rat := fun q => cache.valsLo (c.prev q) - gap q
+    let img := c.active.image f
+    have himg : img.Nonempty := h.image f
+    some (Finset.min' img himg)
+  else
+    none
 
 /-- `logitDiffLowerBoundFromCache` matches the cached default computation. -/
 theorem logitDiffLowerBoundFromCache_eq (c : InductionHeadCert seq) :
@@ -148,7 +165,12 @@ theorem logitDiffLowerBoundFromCache_eq (c : InductionHeadCert seq) :
 theorem logitDiffLowerBoundWeightedFromCache_eq (c : InductionHeadCert seq) :
     logitDiffLowerBoundWeightedFromCache c (logitDiffCache c) =
       logitDiffLowerBoundFromCertWeighted c := by
-  rfl
+  classical
+  unfold logitDiffLowerBoundWeightedFromCache logitDiffLowerBoundFromCertWeighted logitDiffCache
+  have hvals : Bounds.cacheBoundTask c.values.valsLo = c.values.valsLo := by
+    funext k
+    simp [Bounds.cacheBoundTask_apply]
+  simp [hvals, Bounds.cacheBoundTask_apply, logitDiffLowerBoundWeightedAt_def]
 
 /-- Best available logit-diff lower bound from an induction certificate. -/
 def logitDiffLowerBoundFromCertBest (c : InductionHeadCert seq) : Option Rat :=

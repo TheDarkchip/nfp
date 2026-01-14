@@ -86,6 +86,34 @@ def logitDiffLowerBoundWeightedAt (active : Finset (Fin seq))
   else
     exact none
 
+/-- Unfolding lemma for `logitDiffLowerBoundWeightedAt`. -/
+theorem logitDiffLowerBoundWeightedAt_def (active : Finset (Fin seq))
+    (prev : Fin seq → Fin seq)
+    (weightBoundAt : Fin seq → Fin seq → Rat)
+    (valsLo : Fin seq → Rat) :
+    logitDiffLowerBoundWeightedAt active prev weightBoundAt valsLo =
+      by
+        classical
+        if h : active.Nonempty then
+          let others : Fin seq → Finset (Fin seq) := fun q =>
+            (Finset.univ : Finset (Fin seq)).erase (prev q)
+          let gap : Fin seq → Rat := fun q =>
+            (others q).sum (fun k =>
+              let diff := valsLo (prev q) - valsLo k
+              let diffPos := max (0 : Rat) diff
+              if diffPos = 0 then
+                0
+              else
+                weightBoundAt q k * diffPos)
+          let f : Fin seq → Rat := fun q => valsLo (prev q) - gap q
+          let img := active.image f
+          have himg : img.Nonempty := h.image f
+          exact some (Finset.min' img himg)
+        else
+          exact none := by
+  classical
+  rfl
+
 /-- The computed lower bound is below every active `prev` value minus the tolerance gap. -/
 theorem logitDiffLowerBound_le (active : Finset (Fin seq))
     (prev : Fin seq → Fin seq)
