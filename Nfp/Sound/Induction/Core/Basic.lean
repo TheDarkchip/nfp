@@ -653,14 +653,16 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
         (1 : Rat)
       else
         ratDivUp 1 (1 + gap)
-  let weightBoundAt : Fin seq → Fin seq → Rat :=
-    Bounds.cacheBound2 weightBoundAtBase
   let epsAtBase : Fin seq → Rat := fun q =>
     let other := otherKeys q
-    let total := other.sum (fun k => weightBoundAt q k)
+    let total := other.sum (fun k => weightBoundAtBase q k)
     min (1 : Rat) total
   let epsAt : Fin seq → Rat :=
     Bounds.cacheBoundThunk epsAtBase
+  let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
+    min (weightBoundAtBase q k) (epsAt q)
+  let weightBoundAt : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2 weightBoundAtClampedBase
   let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
@@ -792,6 +794,20 @@ theorem buildInductionHeadCoreCache_cert_eq [NeZero seq] {dModel dHead : Nat}
         active := inputs.active
         prev := inputs.prev
         values := (buildInductionHeadCoreCache inputs).valCert } := by
+  rfl
+
+/-- The cached certificate is built from cache fields (custom split config). -/
+theorem buildInductionHeadCoreCacheWith_cert_eq [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+  (buildInductionHeadCoreCacheWith cfg inputs).cert =
+      { eps := (buildInductionHeadCoreCacheWith cfg inputs).eps
+        epsAt := (buildInductionHeadCoreCacheWith cfg inputs).epsAt
+        weightBoundAt := (buildInductionHeadCoreCacheWith cfg inputs).weightBoundAt
+        margin := (buildInductionHeadCoreCacheWith cfg inputs).margin
+        active := inputs.active
+        prev := inputs.prev
+        values := (buildInductionHeadCoreCacheWith cfg inputs).valCert } := by
   rfl
 /-- Build induction certificates from exact head inputs (core computation). -/
 def buildInductionCertFromHeadCoreWith? [NeZero seq] {dModel dHead : Nat}

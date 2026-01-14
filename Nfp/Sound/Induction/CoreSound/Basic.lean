@@ -427,14 +427,16 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   (1 : Rat)
                 else
                   ratDivUp 1 (1 + gap)
-            let weightBoundAt : Fin seq → Fin seq → Rat :=
-              Bounds.cacheBound2 weightBoundAtBase
             let epsAtBase : Fin seq → Rat := fun q =>
               let other := otherKeys q
-              let total := other.sum (fun k => weightBoundAt q k)
+              let total := other.sum (fun k => weightBoundAtBase q k)
               min (1 : Rat) total
             let epsAt : Fin seq → Rat :=
               Bounds.cacheBoundThunk epsAtBase
+            let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
+              min (weightBoundAtBase q k) (epsAt q)
+            let weightBoundAt : Fin seq → Fin seq → Rat :=
+              Bounds.cacheBound2 weightBoundAtClampedBase
             let margin : Rat :=
               if h : inputs.active.Nonempty then
                 inputs.active.inf' h marginAt
@@ -482,7 +484,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     some (buildInductionHeadCoreCacheWith cfg inputs).cert :=
                 buildInductionCertFromHeadCoreWith?_eq_some
                   (cfg := cfg) (inputs := inputs) hEps hSqrt hmodel hactive
-              simpa using hcore''
+              simpa [buildInductionHeadCoreCacheWith_cert_eq] using hcore''
             have hc : c = cert := by
               have hcert : cert = c := by
                 exact Option.some.inj (hcore'.symm.trans hcore)
@@ -1065,16 +1067,21 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   _ = (marginAt q : Real) + scoresReal q k := by
                     simp [add_comm]
               exact hstep'.trans hscore'
-            have hweightBoundAt :
+            have hweightBoundAtBase :
                 ∀ q k, k ≠ inputs.prev q →
-                  weightBoundAt q k =
+                  weightBoundAtBase q k =
                     if scoreGapLo q k < 0 then
                       (1 : Rat)
                     else
                       ratDivUp 1 (1 + scoreGapLo q k) := by
               intro q k hk
-              simpa [weightBoundAt, weightBoundAtBase, hk] using
-                (Bounds.cacheBound2_apply (f := weightBoundAtBase) q k)
+              simp [weightBoundAtBase, hk]
+            have hweightBoundAt :
+                ∀ q k,
+                  weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) := by
+              intro q k
+              simpa [weightBoundAt, weightBoundAtClampedBase] using
+                (Bounds.cacheBound2_apply (f := weightBoundAtClampedBase) q k)
             have hepsAt :
                 ∀ q, epsAt q =
                   min (1 : Rat)
@@ -1085,7 +1092,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                         ratDivUp 1 (1 + scoreGapLo q k))) := by
               intro q
               have hsum :
-                  (otherKeys q).sum (fun k => weightBoundAt q k) =
+                  (otherKeys q).sum (fun k => weightBoundAtBase q k) =
                     (otherKeys q).sum (fun k =>
                       if scoreGapLo q k < 0 then
                         (1 : Rat)
@@ -1094,7 +1101,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 refine Finset.sum_congr rfl ?_
                 intro k hk
                 have hk' : k ≠ inputs.prev q := (Finset.mem_erase.mp hk).1
-                simp [hweightBoundAt q k hk']
+                simp [hweightBoundAtBase q k hk']
               simpa [epsAt, epsAtBase, hsum] using
                 (Bounds.cacheBoundThunk_apply (f := epsAtBase) q)
             have oneHot_bounds_at :
@@ -1116,16 +1123,37 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 ∀ q, q ∈ inputs.active → ∀ k, k ≠ inputs.prev q →
                   weights q k ≤ (weightBoundAt q k : Real) := by
               intro q hq k hk
-              exact
-                Sound.weight_bound_at_of_scoreGapLo
-                  (active := inputs.active)
-                  (prev := inputs.prev)
-                  (scoresReal := scoresReal)
-                  (scoreGapLo := scoreGapLo)
-                  (weightBoundAt := weightBoundAt)
-                  (hweightBoundAt := hweightBoundAt)
-                  (hscore_gap_real_at := hscore_gap_real_at)
-                  q hq k hk
+              have hbound_base :
+                  weights q k ≤ (weightBoundAtBase q k : Real) := by
+                exact
+                  Sound.weight_bound_at_of_scoreGapLo
+                    (active := inputs.active)
+                    (prev := inputs.prev)
+                    (scoresReal := scoresReal)
+                    (scoreGapLo := scoreGapLo)
+                    (weightBoundAt := weightBoundAtBase)
+                    (hweightBoundAt := hweightBoundAtBase)
+                    (hscore_gap_real_at := hscore_gap_real_at)
+                    q hq k hk
+              have hbound_eps :
+                  weights q k ≤ (epsAt q : Real) := by
+                have honehot := oneHot_bounds_at q hq
+                exact honehot.other_le q rfl k hk
+              have hbound_min :
+                  weights q k ≤ min (weightBoundAtBase q k : Real) (epsAt q : Real) := by
+                exact le_min hbound_base hbound_eps
+              have hweightBoundAt_real :
+                  (weightBoundAt q k : Real) =
+                    min (weightBoundAtBase q k : Real) (epsAt q : Real) := by
+                have hmin :
+                    weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) :=
+                  hweightBoundAt q k
+                have hmin' :
+                    ratToReal (weightBoundAt q k) =
+                      ratToReal (min (weightBoundAtBase q k) (epsAt q)) :=
+                  congrArg ratToReal hmin
+                simpa [ratToReal_min, ratToReal_def] using hmin'
+              simpa [hweightBoundAt_real] using hbound_min
             have hepsAt_le_eps :
                 ∀ q, q ∈ inputs.active → epsAt q ≤ eps := by
               intro q hq

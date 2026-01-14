@@ -215,7 +215,7 @@ structure InductionHeadCert (seq : Nat) where
   eps : Rat
   /-- Per-query weight tolerance derived from local margins. -/
   epsAt : Fin seq → Rat
-  /-- Per-key weight bounds derived from score gaps. -/
+  /-- Per-key weight bounds derived from score gaps, clamped by `epsAt`. -/
   weightBoundAt : Fin seq → Fin seq → Rat
   /-- Score margin used to justify the weight tolerance. -/
   margin : Rat

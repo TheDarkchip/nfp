@@ -928,8 +928,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
           let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
-            Circuit.logitDiffLowerBound cert.active cert.prev cert.eps
-              cert.values.lo cert.values.hi cert.values.valsLo)
+            Sound.logitDiffLowerBoundFromCertBest cert)
           logTiming "done: head logit-diff lower bound"
           let effectiveMinLogitDiff :=
             match minLogitDiff? with

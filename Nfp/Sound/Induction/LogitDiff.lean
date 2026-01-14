@@ -114,6 +114,14 @@ def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Rat :=
 def logitDiffLowerBoundFromCertWeighted (c : InductionHeadCert seq) : Option Rat :=
   Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt c.values.valsLo
 
+/-- Best available logit-diff lower bound from an induction certificate. -/
+def logitDiffLowerBoundFromCertBest (c : InductionHeadCert seq) : Option Rat :=
+  match logitDiffLowerBoundFromCert c, logitDiffLowerBoundFromCertWeighted c with
+  | some lb0, some lb1 => some (max lb0 lb1)
+  | some lb0, none => some lb0
+  | none, some lb1 => some lb1
+  | none, none => none
+
 section WithNeZero
 
 variable [NeZero seq]
@@ -484,6 +492,43 @@ theorem logitDiffLowerBoundFromCertWeighted_le
       have hle : (lb : Real) ≤ dotProduct (weights q) vals :=
         le_trans hboundReal hdot_lower
       simpa [headLogitDiff, weights, vals] using hle
+
+/-- The best available logit-diff lower bound is sound on active queries. -/
+theorem logitDiffLowerBoundFromCertBest_le
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (c : InductionHeadCert seq) (hsound : InductionHeadCertSound inputs c)
+    {lb : Rat} (hbound : logitDiffLowerBoundFromCertBest c = some lb)
+    {q : Fin seq} (hq : q ∈ c.active) :
+    (lb : Real) ≤ headLogitDiff inputs q := by
+  classical
+  cases h0 : logitDiffLowerBoundFromCert c with
+  | none =>
+      cases h1 : logitDiffLowerBoundFromCertWeighted c with
+      | none =>
+          simp [logitDiffLowerBoundFromCertBest, h0, h1] at hbound
+      | some lb1 =>
+          have hbound' : lb1 = lb := by
+            simpa [logitDiffLowerBoundFromCertBest, h0, h1] using hbound
+          cases hbound'
+          exact logitDiffLowerBoundFromCertWeighted_le inputs c hsound h1 hq
+  | some lb0 =>
+      cases h1 : logitDiffLowerBoundFromCertWeighted c with
+      | none =>
+          have hbound' : lb0 = lb := by
+            simpa [logitDiffLowerBoundFromCertBest, h0, h1] using hbound
+          cases hbound'
+          exact logitDiffLowerBoundFromCert_le inputs c hsound h0 hq
+      | some lb1 =>
+          have hbound' : max lb0 lb1 = lb := by
+            simpa [logitDiffLowerBoundFromCertBest, h0, h1] using hbound
+          cases hbound'
+          have h0le : (lb0 : Real) ≤ headLogitDiff inputs q :=
+            logitDiffLowerBoundFromCert_le inputs c hsound h0 hq
+          have h1le : (lb1 : Real) ≤ headLogitDiff inputs q :=
+            logitDiffLowerBoundFromCertWeighted_le inputs c hsound h1 hq
+          have hmax : max (lb0 : Real) (lb1 : Real) ≤ headLogitDiff inputs q :=
+            max_le_iff.mpr ⟨h0le, h1le⟩
+          simpa [ratToReal_max, ratToReal_def] using hmax
 
 /-- Certified logit-diff lower bound derived from exact head inputs. -/
 structure InductionLogitLowerBoundResult
