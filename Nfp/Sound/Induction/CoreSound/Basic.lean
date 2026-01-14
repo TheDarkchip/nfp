@@ -352,52 +352,63 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
               Bounds.cacheBound2 scoreGapLoBaseRaw
             let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
               (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
-            let worstKeyRaw : Fin seq → Option (Fin seq) := fun q =>
-              if hq : q ∈ inputs.active then
-                let ks := finRangeSeq.filter (fun k => decide (k ≠ inputs.prev q))
-                match ks with
-                | [] => none
-                | k :: ks =>
-                    let step (best : Rat × Fin seq) (k : Fin seq) :=
-                      let s := scoreGapLoBase q k
-                      if s ≤ best.1 then (s, k) else best
-                    some (ks.foldl step (scoreGapLoBase q k, k)).2
+            let worstKey : Fin seq → Option (Fin seq) :=
+              if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
+                fun _ => none
               else
-                none
-            let worstKeyArr : Array (Thunk (Option (Fin seq))) :=
-              Array.ofFn (fun q => Thunk.mk (fun _ => worstKeyRaw q))
-            let worstKey : Fin seq → Option (Fin seq) := fun q =>
-              let t := worstKeyArr[q.1]'(by
-                simp [worstKeyArr, q.isLt])
-              Thunk.get t
-            let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
-              match worstKey q with
-              | some k' =>
-                  if hk : k = k' then
-                    let dimsQ := splitDimsQ q
-                    let dimsDiff := splitDimsDiffRefined q k
-                    let prev := inputs.prev q
-                    (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-                      (fun d => qLo q d) (fun d => qHi q d)
-                      (fun d => kLo prev d - kHi k d)
-                      (fun d => kHi prev d - kLo k d)).1
+                let worstKeyRaw : Fin seq → Option (Fin seq) := fun q =>
+                  if hq : q ∈ inputs.active then
+                    let ks := finRangeSeq.filter (fun k => decide (k ≠ inputs.prev q))
+                    match ks with
+                    | [] => none
+                    | k :: ks =>
+                        let step (best : Rat × Fin seq) (k : Fin seq) :=
+                          let s := scoreGapLoBase q k
+                          if s ≤ best.1 then (s, k) else best
+                        some (ks.foldl step (scoreGapLoBase q k, k)).2
                   else
-                    dotDiffLoBase q k
-              | none => dotDiffLoBase q k
-            let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
-              match worstKey q with
-              | some k' =>
-                  if hk : k = k' then
-                    let dimsQ := splitDimsQ q
-                    let dimsDiff := splitDimsDiffRefined q k
-                    let prev := inputs.prev q
-                    (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-                      (fun d => qLo q d) (fun d => qHi q d)
-                      (fun d => kLo prev d - kHi k d)
-                      (fun d => kHi prev d - kLo k d)).2
-                  else
-                    dotDiffHiBase q k
-              | none => dotDiffHiBase q k
+                    none
+                let worstKeyArr : Array (Thunk (Option (Fin seq))) :=
+                  Array.ofFn (fun q => Thunk.mk (fun _ => worstKeyRaw q))
+                fun q =>
+                  let t := worstKeyArr[q.1]'(by
+                    simp [worstKeyArr, q.isLt])
+                  Thunk.get t
+            let dotDiffLoHi : (Fin seq → Fin seq → Rat) × (Fin seq → Fin seq → Rat) :=
+              if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
+                (dotDiffLoBase, dotDiffHiBase)
+              else
+                let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
+                  match worstKey q with
+                  | some k' =>
+                      if hk : k = k' then
+                        let dimsQ := splitDimsQ q
+                        let dimsDiff := splitDimsDiffRefined q k
+                        let prev := inputs.prev q
+                        (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                          (fun d => qLo q d) (fun d => qHi q d)
+                          (fun d => kLo prev d - kHi k d)
+                          (fun d => kHi prev d - kLo k d)).1
+                      else
+                        dotDiffLoBase q k
+                  | none => dotDiffLoBase q k
+                let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
+                  match worstKey q with
+                  | some k' =>
+                      if hk : k = k' then
+                        let dimsQ := splitDimsQ q
+                        let dimsDiff := splitDimsDiffRefined q k
+                        let prev := inputs.prev q
+                        (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                          (fun d => qLo q d) (fun d => qHi q d)
+                          (fun d => kLo prev d - kHi k d)
+                          (fun d => kHi prev d - kLo k d)).2
+                      else
+                        dotDiffHiBase q k
+                  | none => dotDiffHiBase q k
+                (dotDiffLo, dotDiffHi)
+            let dotDiffLo : Fin seq → Fin seq → Rat := dotDiffLoHi.1
+            let dotDiffHi : Fin seq → Fin seq → Rat := dotDiffLoHi.2
             let scoreGapLoRaw : Fin seq → Fin seq → Rat := fun q k =>
               if masked q (inputs.prev q) then
                 scoreLoPrev q - scoreHi q k
@@ -427,16 +438,18 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   (1 : Rat)
                 else
                   ratDivUp 1 (1 + gap)
+            let weightBoundAtBaseCached : Fin seq → Fin seq → Rat :=
+              Bounds.cacheBound2Task weightBoundAtBase
             let epsAtBase : Fin seq → Rat := fun q =>
               let other := otherKeys q
-              let total := other.sum (fun k => weightBoundAtBase q k)
+              let total := other.sum (fun k => weightBoundAtBaseCached q k)
               min (1 : Rat) total
             let epsAt : Fin seq → Rat :=
               Bounds.cacheBoundThunk epsAtBase
             let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
-              min (weightBoundAtBase q k) (epsAt q)
+              min (weightBoundAtBaseCached q k) (epsAt q)
             let weightBoundAt : Fin seq → Fin seq → Rat :=
-              Bounds.cacheBound2Task weightBoundAtClampedBase
+              Bounds.cacheBound2 weightBoundAtClampedBase
             let margin : Rat :=
               if h : inputs.active.Nonempty then
                 inputs.active.inf' h marginAt
@@ -826,35 +839,40 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                     Array.getElem_ofFn] using hspecBase.1
                 · simpa [dotDiffHiBase, dotDiffRowTasksBase, hq, hmask, Task.spawn,
                     Array.getElem_ofFn] using hspecBase.2
-              cases hkey : worstKey q with
-              | none =>
-                  simpa [dotDiffLo, dotDiffHi, hkey] using hspecBase_bounds
-              | some k' =>
-                  by_cases hk : k = k'
-                  · have hlow' :
-                      (dotDiffLo q k : Real) ≤
-                          dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                              kRealOfInputs inputs k d) := by
-                      simpa [dotDiffLo, hkey, hk] using hspecRef.1
-                    have hhigh' :
-                        dotProduct (fun d => qRealOfInputs inputs q d)
+              by_cases hbudget : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase
+              · simpa [dotDiffLo, dotDiffHi, dotDiffLoHi, hbudget] using hspecBase_bounds
+              · cases hkey : worstKey q with
+                | none =>
+                    simpa [dotDiffLo, dotDiffHi, dotDiffLoHi, hbudget, hkey] using
+                      hspecBase_bounds
+                | some k' =>
+                    by_cases hk : k = k'
+                    · have hlow' :
+                        (dotDiffLo q k : Real) ≤
+                            dotProduct (fun d => qRealOfInputs inputs q d)
                               (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                                kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
-                      simpa [dotDiffHi, hkey, hk] using hspecRef.2
-                    exact ⟨hlow', hhigh'⟩
-                  · have hlow' :
-                      (dotDiffLo q k : Real) ≤
+                                kRealOfInputs inputs k d) := by
+                        simpa [dotDiffLo, dotDiffLoHi, hbudget, hkey, hk] using hspecRef.1
+                      have hhigh' :
                           dotProduct (fun d => qRealOfInputs inputs q d)
-                            (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                              kRealOfInputs inputs k d) := by
-                      simpa [dotDiffLo, hkey, hk] using hspecBase_bounds.1
-                    have hhigh' :
-                        dotProduct (fun d => qRealOfInputs inputs q d)
+                                (fun d => kRealOfInputs inputs (inputs.prev q) d -
+                                  kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
+                        simpa [dotDiffHi, dotDiffLoHi, hbudget, hkey, hk] using hspecRef.2
+                      exact ⟨hlow', hhigh'⟩
+                    · have hlow' :
+                        (dotDiffLo q k : Real) ≤
+                            dotProduct (fun d => qRealOfInputs inputs q d)
                               (fun d => kRealOfInputs inputs (inputs.prev q) d -
-                                kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
-                      simpa [dotDiffHi, hkey, hk] using hspecBase_bounds.2
-                    exact ⟨hlow', hhigh'⟩
+                                kRealOfInputs inputs k d) := by
+                        simpa [dotDiffLo, dotDiffLoHi, hbudget, hkey, hk] using
+                          hspecBase_bounds.1
+                      have hhigh' :
+                          dotProduct (fun d => qRealOfInputs inputs q d)
+                                (fun d => kRealOfInputs inputs (inputs.prev q) d -
+                                  kRealOfInputs inputs k d) ≤ (dotDiffHi q k : Real) := by
+                        simpa [dotDiffHi, dotDiffLoHi, hbudget, hkey, hk] using
+                          hspecBase_bounds.2
+                      exact ⟨hlow', hhigh'⟩
             have hmarginAt_le :
                 ∀ q, q ∈ inputs.active → ∀ k, k ≠ inputs.prev q →
                   marginAt q ≤ scoreGapLo q k := by
@@ -1080,8 +1098,8 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 ∀ q k,
                   weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) := by
               intro q k
-              simpa [weightBoundAt, weightBoundAtClampedBase] using
-                (Bounds.cacheBound2Task_apply (f := weightBoundAtClampedBase) q k)
+              simp [weightBoundAt, weightBoundAtClampedBase, weightBoundAtBaseCached,
+                Bounds.cacheBound2_apply, Bounds.cacheBound2Task_apply]
             have hepsAt :
                 ∀ q, epsAt q =
                   min (1 : Rat)
@@ -1092,6 +1110,12 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                         ratDivUp 1 (1 + scoreGapLo q k))) := by
               intro q
               have hsum :
+                  (otherKeys q).sum (fun k => weightBoundAtBaseCached q k) =
+                    (otherKeys q).sum (fun k => weightBoundAtBase q k) := by
+                refine Finset.sum_congr rfl ?_
+                intro k hk
+                simp [weightBoundAtBaseCached, Bounds.cacheBound2Task_apply]
+              have hsum' :
                   (otherKeys q).sum (fun k => weightBoundAtBase q k) =
                     (otherKeys q).sum (fun k =>
                       if scoreGapLo q k < 0 then
@@ -1102,7 +1126,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                 intro k hk
                 have hk' : k ≠ inputs.prev q := (Finset.mem_erase.mp hk).1
                 simp [hweightBoundAtBase q k hk']
-              simpa [epsAt, epsAtBase, hsum] using
+              simpa [epsAt, epsAtBase, hsum, hsum'] using
                 (Bounds.cacheBoundThunk_apply (f := epsAtBase) q)
             have oneHot_bounds_at :
                 ∀ q, q ∈ inputs.active →

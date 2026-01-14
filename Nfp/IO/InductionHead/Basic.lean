@@ -913,7 +913,17 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
           let logitCache := Nfp.Sound.logitDiffCache cert
-          profileLogitDiffWeighted cert logitCache
+          let profiling ← logitDiffProfileEnabled
+          if profiling then
+            profileLogitDiffWeighted cert logitCache
+          else
+            pure ()
+          let weightedTask? : Option (Task (Option Rat)) :=
+            if profiling then
+              none
+            else
+              some (Task.spawn (fun _ =>
+                Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache))
           let logitDiffLB0? ← timePureWithHeartbeat
             "head: logit-diff lower bound unweighted" (fun () =>
               Nfp.Sound.logitDiffLowerBoundFromCache cert logitCache)
@@ -929,9 +939,15 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
                   | none => false
           let logitDiffWeighted? ←
             if needsWeighted then
-              timePureWithHeartbeat
-                "head: logit-diff lower bound weighted" (fun () =>
-                  Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache)
+              match weightedTask? with
+              | some task =>
+                  timePureWithHeartbeat
+                    "head: logit-diff lower bound weighted" (fun () =>
+                      task.get)
+              | none =>
+                  timePureWithHeartbeat
+                    "head: logit-diff lower bound weighted" (fun () =>
+                      Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache)
             else
               pure none
           let logitDiffLB? : Option Rat :=

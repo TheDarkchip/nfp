@@ -74,7 +74,11 @@ def logitDiffLowerBoundWeightedAt (active : Finset (Fin seq))
     let gap : Fin seq → Rat := fun q =>
       (others q).sum (fun k =>
         let diff := valsLo (prev q) - valsLo k
-        weightBoundAt q k * max (0 : Rat) diff)
+        let diffPos := max (0 : Rat) diff
+        if hdiff : diffPos = 0 then
+          0
+        else
+          weightBoundAt q k * diffPos)
     let f : Fin seq → Rat := fun q => valsLo (prev q) - gap q
     let img := active.image f
     have himg : img.Nonempty := h.image f
@@ -166,7 +170,10 @@ theorem logitDiffLowerBoundWeightedAt_le (active : Finset (Fin seq))
   let gap : Fin seq → Rat := fun q =>
     (others q).sum (fun k =>
       let diff := valsLo (prev q) - valsLo k
-      weightBoundAt q k * max (0 : Rat) diff)
+      if hdiff : max (0 : Rat) diff = 0 then
+        0
+      else
+        weightBoundAt q k * max (0 : Rat) diff)
   let f : Fin seq → Rat := fun q => valsLo (prev q) - gap q
   have hbound' : (active.image f).min' (hnonempty.image f) = lb := by
     simpa [logitDiffLowerBoundWeightedAt, hnonempty, f, gap, others] using hbound
@@ -177,13 +184,25 @@ theorem logitDiffLowerBoundWeightedAt_le (active : Finset (Fin seq))
     Finset.min'_le _ _ hmem
   have hmin' : lb ≤ f q := by
     simpa [hbound'] using hmin
-  have hmin'' :
+  have hgap_eq :
+      gap q =
+        (others q).sum (fun k =>
+          weightBoundAt q k * max (0 : Rat) (valsLo (prev q) - valsLo k)) := by
+    classical
+    dsimp [gap]
+    refine Finset.sum_congr rfl ?_
+    intro k hk
+    by_cases hdiff : max (0 : Rat) (valsLo (prev q) - valsLo k) = 0
+    · simp [hdiff]
+    · simp [hdiff]
+  have hmin'' : lb ≤ valsLo (prev q) - gap q := by
+    simpa [f] using hmin'
+  have hmin''' :
       lb ≤ valsLo (prev q) -
         (others q).sum (fun k =>
-          let diff := valsLo (prev q) - valsLo k
-          weightBoundAt q k * max (0 : Rat) diff) := by
-    simpa [f, gap] using hmin'
-  simpa [others] using hmin''
+          weightBoundAt q k * max (0 : Rat) (valsLo (prev q) - valsLo k)) := by
+    simpa [hgap_eq] using hmin''
+  simpa [others] using hmin'''
 
 end Circuit
 

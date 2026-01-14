@@ -578,52 +578,64 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
     Bounds.cacheBound2 scoreGapLoBaseRaw
   let otherKeys : Fin seq → Finset (Fin seq) := fun q =>
     (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
-  let worstKeyRaw : Fin seq → Option (Fin seq) := fun q =>
-    if hq : q ∈ inputs.active then
-      let ks := finRangeSeq.filter (fun k => decide (k ≠ inputs.prev q))
-      match ks with
-      | [] => none
-      | k :: ks =>
-          let step (best : Rat × Fin seq) (k : Fin seq) :=
-            let s := scoreGapLoBase q k
-            if s ≤ best.1 then (s, k) else best
-          some (ks.foldl step (scoreGapLoBase q k, k)).2
+  -- Skip worst-key refinement when base/refined budgets match to avoid duplicate score-gap work.
+  let worstKey : Fin seq → Option (Fin seq) :=
+    if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
+      fun _ => none
     else
-      none
-  let worstKeyArr : Array (Thunk (Option (Fin seq))) :=
-    Array.ofFn (fun q => Thunk.mk (fun _ => worstKeyRaw q))
-  let worstKey : Fin seq → Option (Fin seq) := fun q =>
-    let t := worstKeyArr[q.1]'(by
-      simp [worstKeyArr, q.isLt])
-    Thunk.get t
-  let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
-    match worstKey q with
-    | some k' =>
-        if hk : k = k' then
-          let dimsQ := splitDimsQ q
-          let dimsDiff := splitDimsDiffRefined q k
-          let prev := inputs.prev q
-          (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-            (fun d => qLo q d) (fun d => qHi q d)
-            (fun d => kLo prev d - kHi k d)
-            (fun d => kHi prev d - kLo k d)).1
+      let worstKeyRaw : Fin seq → Option (Fin seq) := fun q =>
+        if hq : q ∈ inputs.active then
+          let ks := finRangeSeq.filter (fun k => decide (k ≠ inputs.prev q))
+          match ks with
+          | [] => none
+          | k :: ks =>
+              let step (best : Rat × Fin seq) (k : Fin seq) :=
+                let s := scoreGapLoBase q k
+                if s ≤ best.1 then (s, k) else best
+              some (ks.foldl step (scoreGapLoBase q k, k)).2
         else
-          dotDiffLoBase q k
-    | none => dotDiffLoBase q k
-  let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
-    match worstKey q with
-    | some k' =>
-        if hk : k = k' then
-          let dimsQ := splitDimsQ q
-          let dimsDiff := splitDimsDiffRefined q k
-          let prev := inputs.prev q
-          (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-            (fun d => qLo q d) (fun d => qHi q d)
-            (fun d => kLo prev d - kHi k d)
-            (fun d => kHi prev d - kLo k d)).2
-        else
-          dotDiffHiBase q k
-    | none => dotDiffHiBase q k
+          none
+      let worstKeyArr : Array (Thunk (Option (Fin seq))) :=
+        Array.ofFn (fun q => Thunk.mk (fun _ => worstKeyRaw q))
+      fun q =>
+        let t := worstKeyArr[q.1]'(by
+          simp [worstKeyArr, q.isLt])
+        Thunk.get t
+  let dotDiffLoHi : (Fin seq → Fin seq → Rat) × (Fin seq → Fin seq → Rat) :=
+    if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
+      (dotDiffLoBase, dotDiffHiBase)
+    else
+      let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
+        match worstKey q with
+        | some k' =>
+            if hk : k = k' then
+              let dimsQ := splitDimsQ q
+              let dimsDiff := splitDimsDiffRefined q k
+              let prev := inputs.prev q
+              (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                (fun d => qLo q d) (fun d => qHi q d)
+                (fun d => kLo prev d - kHi k d)
+                (fun d => kHi prev d - kLo k d)).1
+            else
+              dotDiffLoBase q k
+        | none => dotDiffLoBase q k
+      let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
+        match worstKey q with
+        | some k' =>
+            if hk : k = k' then
+              let dimsQ := splitDimsQ q
+              let dimsDiff := splitDimsDiffRefined q k
+              let prev := inputs.prev q
+              (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+                (fun d => qLo q d) (fun d => qHi q d)
+                (fun d => kLo prev d - kHi k d)
+                (fun d => kHi prev d - kLo k d)).2
+            else
+              dotDiffHiBase q k
+        | none => dotDiffHiBase q k
+      (dotDiffLo, dotDiffHi)
+  let dotDiffLo : Fin seq → Fin seq → Rat := dotDiffLoHi.1
+  let dotDiffHi : Fin seq → Fin seq → Rat := dotDiffLoHi.2
   let scoreGapLoRaw : Fin seq → Fin seq → Rat := fun q k =>
     if masked q (inputs.prev q) then
       scoreLoPrev q - scoreHi q k
@@ -653,16 +665,18 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
         (1 : Rat)
       else
         ratDivUp 1 (1 + gap)
+  let weightBoundAtBaseCached : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2Task weightBoundAtBase
   let epsAtBase : Fin seq → Rat := fun q =>
     let other := otherKeys q
-    let total := other.sum (fun k => weightBoundAtBase q k)
+    let total := other.sum (fun k => weightBoundAtBaseCached q k)
     min (1 : Rat) total
   let epsAt : Fin seq → Rat :=
     Bounds.cacheBoundThunk epsAtBase
   let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
-    min (weightBoundAtBase q k) (epsAt q)
+    min (weightBoundAtBaseCached q k) (epsAt q)
   let weightBoundAt : Fin seq → Fin seq → Rat :=
-    Bounds.cacheBound2Task weightBoundAtClampedBase
+    Bounds.cacheBound2 weightBoundAtClampedBase
   let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
