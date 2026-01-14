@@ -924,16 +924,46 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           let tol := cert.eps * (cert.values.hi - cert.values.lo)
           timingPrint "timing: head tol done"
           timingFlush
-          logTiming "start: head logit-diff lower bound"
-          timingPrint "timing: head logit-diff lower bound start"
-          timingFlush
-          let logitDiffLB? ← timePure "head: logit-diff lower bound" (fun () =>
-            Sound.logitDiffLowerBoundFromCertBest cert)
-          logTiming "done: head logit-diff lower bound"
           let effectiveMinLogitDiff :=
             match minLogitDiff? with
             | some v => some v
             | none => some (0 : Rat)
+          let logitCache := Nfp.Sound.logitDiffCache cert
+          logTiming "start: head logit-diff lower bound"
+          timingPrint "timing: head logit-diff lower bound start"
+          timingFlush
+          let logitDiffLB0? ← timePureWithHeartbeat
+            "head: logit-diff lower bound unweighted" (fun () =>
+              Nfp.Sound.logitDiffLowerBoundFromCache cert logitCache)
+          let logitDiffLB? ←
+            match logitDiffLB0? with
+            | none => pure none
+            | some lb0 =>
+                match effectiveMinLogitDiff with
+                | some minLogitDiff =>
+                    if lb0 >= minLogitDiff then
+                      timingPrint "timing: head logit-diff weighted skipped"
+                      timingFlush
+                      pure (some lb0)
+                    else
+                      let lb1? ← timePureWithHeartbeat
+                        "head: logit-diff lower bound weighted" (fun () =>
+                          Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache)
+                      let lb :=
+                        match lb1? with
+                        | some lb1 => max lb0 lb1
+                        | none => lb0
+                      pure (some lb)
+                | none =>
+                    let lb1? ← timePureWithHeartbeat
+                      "head: logit-diff lower bound weighted" (fun () =>
+                        Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache)
+                    let lb :=
+                      match lb1? with
+                      | some lb1 => max lb0 lb1
+                      | none => lb0
+                    pure (some lb)
+          logTiming "done: head logit-diff lower bound"
           match logitDiffLB? with
           | none =>
               IO.eprintln "error: empty active set for logit-diff bound"
@@ -1036,8 +1066,10 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
           logTiming "start: head logit-diff lower bound"
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
-          let logitDiffLB0? ← timePure "head: logit-diff lower bound" (fun () =>
-            Sound.logitDiffLowerBoundFromCert cert)
+          let logitCache := Nfp.Sound.logitDiffCache cert
+          let logitDiffLB0? ← timePureWithHeartbeat
+            "head: logit-diff lower bound unweighted" (fun () =>
+              Nfp.Sound.logitDiffLowerBoundFromCache cert logitCache)
           let needsWeighted : Bool :=
             match logitDiffLB0? with
             | none => true
@@ -1050,8 +1082,9 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
                   | none => false
           let logitDiffWeighted? ←
             if needsWeighted then
-              timePure "head: logit-diff lower bound weighted" (fun () =>
-                Sound.logitDiffLowerBoundFromCertWeighted cert)
+              timePureWithHeartbeat
+                "head: logit-diff lower bound weighted" (fun () =>
+                  Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache)
             else
               pure none
           let logitDiffLB? : Option Rat :=

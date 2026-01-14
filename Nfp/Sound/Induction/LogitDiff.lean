@@ -107,12 +107,48 @@ noncomputable def headLogitDiff (inputs : Model.InductionHeadInputs seq dModel d
 
 /-- Lower bound computed from the per-key lower bounds in an induction certificate. -/
 def logitDiffLowerBoundFromCert (c : InductionHeadCert seq) : Option Rat :=
-  Circuit.logitDiffLowerBoundAtLo c.active c.prev c.epsAt
-    c.values.lo c.values.valsLo
+  let epsAt := Bounds.cacheBoundTask c.epsAt
+  let valsLo := Bounds.cacheBoundTask c.values.valsLo
+  Circuit.logitDiffLowerBoundAtLo c.active c.prev epsAt
+    c.values.lo valsLo
 
 /-- Lower bound computed from per-key weight bounds in an induction certificate. -/
 def logitDiffLowerBoundFromCertWeighted (c : InductionHeadCert seq) : Option Rat :=
-  Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt c.values.valsLo
+  let valsLo := Bounds.cacheBoundTask c.values.valsLo
+  Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt valsLo
+
+/-- Cached eps and value lower bounds for logit-diff computations. -/
+structure LogitDiffCache (seq : Nat) where
+  /-- Per-query eps bounds. -/
+  epsAt : Fin seq → Rat
+  /-- Per-key value lower bounds. -/
+  valsLo : Fin seq → Rat
+
+/-- Build a shared cache for logit-diff computations from a certificate. -/
+def logitDiffCache (c : InductionHeadCert seq) : LogitDiffCache seq :=
+  { epsAt := Bounds.cacheBoundTask c.epsAt
+    valsLo := Bounds.cacheBoundTask c.values.valsLo }
+
+/-- Unweighted logit-diff lower bound from a shared cache. -/
+def logitDiffLowerBoundFromCache (c : InductionHeadCert seq) (cache : LogitDiffCache seq) :
+    Option Rat :=
+  Circuit.logitDiffLowerBoundAtLo c.active c.prev cache.epsAt c.values.lo cache.valsLo
+
+/-- Weighted logit-diff lower bound from a shared cache. -/
+def logitDiffLowerBoundWeightedFromCache (c : InductionHeadCert seq) (cache : LogitDiffCache seq) :
+    Option Rat :=
+  Circuit.logitDiffLowerBoundWeightedAt c.active c.prev c.weightBoundAt cache.valsLo
+
+/-- `logitDiffLowerBoundFromCache` matches the cached default computation. -/
+theorem logitDiffLowerBoundFromCache_eq (c : InductionHeadCert seq) :
+    logitDiffLowerBoundFromCache c (logitDiffCache c) = logitDiffLowerBoundFromCert c := by
+  rfl
+
+/-- `logitDiffLowerBoundWeightedFromCache` matches the cached default computation. -/
+theorem logitDiffLowerBoundWeightedFromCache_eq (c : InductionHeadCert seq) :
+    logitDiffLowerBoundWeightedFromCache c (logitDiffCache c) =
+      logitDiffLowerBoundFromCertWeighted c := by
+  rfl
 
 /-- Best available logit-diff lower bound from an induction certificate. -/
 def logitDiffLowerBoundFromCertBest (c : InductionHeadCert seq) : Option Rat :=
@@ -140,26 +176,33 @@ theorem logitDiffLowerBoundFromCert_le
       let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
         Circuit.softmax (scoresRealOfInputs inputs q) k
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
+      let epsAt := Bounds.cacheBoundTask c.epsAt
+      let valsLo := Bounds.cacheBoundTask c.values.valsLo
       let others : Finset (Fin (Nat.succ n)) :=
         (Finset.univ : Finset (Fin (Nat.succ n))).erase (c.prev q)
       let sumOthers : Real := ∑ k ∈ others, weights q k
       let valsLoPrev : Real := (c.values.valsLo (c.prev q) : Real)
       let lo : Real := (c.values.lo : Real)
       have hboundRat :
-          lb ≤ c.values.valsLo (c.prev q) -
-            c.epsAt q * (c.values.valsLo (c.prev q) - c.values.lo) := by
+          lb ≤ valsLo (c.prev q) -
+            epsAt q * (valsLo (c.prev q) - c.values.lo) := by
         refine
           Circuit.logitDiffLowerBoundAtLo_le
             (active := c.active)
             (prev := c.prev)
-            (epsAt := c.epsAt)
+            (epsAt := epsAt)
             (lo := c.values.lo)
-            (valsLo := c.values.valsLo)
+            (valsLo := valsLo)
             q hq lb ?_
         simpa [logitDiffLowerBoundFromCert] using hbound
+      have hboundRat' :
+          lb ≤ c.values.valsLo (c.prev q) -
+            c.epsAt q * (c.values.valsLo (c.prev q) - c.values.lo) := by
+        simpa [epsAt, valsLo, Bounds.cacheBoundTask_apply] using hboundRat
       have hboundReal :
           (lb : Real) ≤ valsLoPrev - (c.epsAt q : Real) * (valsLoPrev - lo) := by
-        simpa [ratToReal_sub, ratToReal_mul, ratToReal_def] using ratToReal_le_of_le hboundRat
+        simpa [ratToReal_sub, ratToReal_mul, ratToReal_def] using
+          ratToReal_le_of_le hboundRat'
       have hweights_nonneg : ∀ k, 0 ≤ weights q k :=
         hsound.softmax_bounds.nonneg q hq
       have hweights := hsound.oneHot_bounds_at q hq
@@ -292,22 +335,28 @@ theorem logitDiffLowerBoundFromCertWeighted_le
       let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
         Circuit.softmax (scoresRealOfInputs inputs q) k
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
+      let valsLoCached := Bounds.cacheBoundTask c.values.valsLo
       let others : Finset (Fin (Nat.succ n)) :=
         (Finset.univ : Finset (Fin (Nat.succ n))).erase (c.prev q)
-      let valsLoPrevRat : Rat := c.values.valsLo (c.prev q)
+      let valsLoPrevRat : Rat := valsLoCached (c.prev q)
       let valsLoPrev : Real := (valsLoPrevRat : Real)
       have hboundRat :
           lb ≤ valsLoPrevRat -
             (others.sum (fun k =>
-              c.weightBoundAt q k * max (0 : Rat) (valsLoPrevRat - c.values.valsLo k))) := by
+              c.weightBoundAt q k * max (0 : Rat) (valsLoPrevRat - valsLoCached k))) := by
         refine
           Circuit.logitDiffLowerBoundWeightedAt_le
             (active := c.active)
             (prev := c.prev)
             (weightBoundAt := c.weightBoundAt)
-            (valsLo := c.values.valsLo)
+            (valsLo := valsLoCached)
             q hq lb ?_
         simpa [logitDiffLowerBoundFromCertWeighted] using hbound
+      have hboundRat' :
+          lb ≤ valsLoPrevRat -
+            (others.sum (fun k =>
+              c.weightBoundAt q k * max (0 : Rat) (valsLoPrevRat - c.values.valsLo k))) := by
+        simpa [valsLoCached, valsLoPrevRat, Bounds.cacheBoundTask_apply] using hboundRat
       have hboundReal :
           (lb : Real) ≤
             valsLoPrev -
@@ -315,7 +364,7 @@ theorem logitDiffLowerBoundFromCertWeighted_le
                 (c.weightBoundAt q k : Real) *
                   max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)))) := by
         simpa [valsLoPrevRat, valsLoPrev, ratToReal_sub, ratToReal_mul, ratToReal_max,
-          ratToReal_def, Rat.cast_sum] using ratToReal_le_of_le hboundRat
+          ratToReal_def, Rat.cast_sum] using ratToReal_le_of_le hboundRat'
       have hweights_nonneg : ∀ k, 0 ≤ weights q k :=
         hsound.softmax_bounds.nonneg q hq
       have hweights := hsound.oneHot_bounds_at q hq
@@ -328,7 +377,8 @@ theorem logitDiffLowerBoundFromCertWeighted_le
           weights q (c.prev q) + ∑ k ∈ others, weights q k = ∑ k, weights q k := hsum_decomp
           _ = 1 := hweights.sum_one q rfl
       have hvalsLo_prev : valsLoPrev ≤ vals (c.prev q) := by
-        exact (hsound.value_bounds.vals_bounds (c.prev q)).1
+        have hvals := (hsound.value_bounds.vals_bounds (c.prev q)).1
+        simpa [valsLoPrev, valsLoPrevRat, valsLoCached, Bounds.cacheBoundTask_apply] using hvals
       have hvals_lower :
           ∀ k,
             valsLoPrev - max (0 : Real) (valsLoPrev - (c.values.valsLo k : Real)) ≤ vals k := by

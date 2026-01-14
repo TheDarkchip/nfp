@@ -436,7 +436,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
             let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
               min (weightBoundAtBase q k) (epsAt q)
             let weightBoundAt : Fin seq → Fin seq → Rat :=
-              Bounds.cacheBound2 weightBoundAtClampedBase
+              Bounds.cacheBound2Task weightBoundAtClampedBase
             let margin : Rat :=
               if h : inputs.active.Nonempty then
                 inputs.active.inf' h marginAt
@@ -1081,7 +1081,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                   weightBoundAt q k = min (weightBoundAtBase q k) (epsAt q) := by
               intro q k
               simpa [weightBoundAt, weightBoundAtClampedBase] using
-                (Bounds.cacheBound2_apply (f := weightBoundAtClampedBase) q k)
+                (Bounds.cacheBound2Task_apply (f := weightBoundAtClampedBase) q k)
             have hepsAt :
                 ∀ q, epsAt q =
                   min (1 : Rat)

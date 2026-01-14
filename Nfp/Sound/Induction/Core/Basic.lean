@@ -662,7 +662,7 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
   let weightBoundAtClampedBase : Fin seq → Fin seq → Rat := fun q k =>
     min (weightBoundAtBase q k) (epsAt q)
   let weightBoundAt : Fin seq → Fin seq → Rat :=
-    Bounds.cacheBound2 weightBoundAtClampedBase
+    Bounds.cacheBound2Task weightBoundAtClampedBase
   let margin : Rat :=
     if h : inputs.active.Nonempty then
       inputs.active.inf' h marginAt
