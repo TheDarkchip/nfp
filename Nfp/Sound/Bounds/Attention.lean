@@ -162,6 +162,8 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
   let sumHi : Fin dModel → Rat := fun j => ∑ h, headHi h j
   let headValue : Fin numHeads → Fin seq → Fin dHead → Real := fun h k d =>
     dotProduct (fun j => ((heads h).wv j d : Real)) (lnOut k) + (heads h).bv d
+  let softmaxWeights : Fin numHeads → Circuit.SoftmaxWeights seq := fun h =>
+    Circuit.softmaxWeights (scores h)
   let headWeights : Fin numHeads → Fin seq → Fin seq → Real := fun h q k =>
     Circuit.softmax (scores h q) k
   let headOutput : Fin numHeads → Fin seq → Fin dHead → Real := fun h q d =>
@@ -215,9 +217,11 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
         headValue h k d ≤ (vHi h d : Real) := fun k => (hvals k d).2
     have hnonneg : ∀ k, 0 ≤ headWeights h q k := by
       intro k
-      exact Circuit.softmax_nonneg (scores h q) k
+      simpa [headWeights, softmaxWeights, Circuit.softmaxWeights_weights] using
+        (softmaxWeights h).nonneg q k
     have hsum : ∑ k, headWeights h q k = 1 := by
-      simpa [headWeights] using Circuit.softmax_sum_one (scores h q)
+      simpa [headWeights, softmaxWeights, Circuit.softmaxWeights_weights] using
+        (softmaxWeights h).sum_one q
     have h := dotProduct_bounds_of_weights (lo := (vLo h d : Real)) (hi := (vHi h d : Real))
       (vals := fun k => headValue h k d) (w := headWeights h q)
       hlo' hhi' hnonneg hsum

@@ -1018,6 +1018,7 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
                         hgap_add
                       _ = scoresReal q (inputs.prev q) := hcancel
                   exact hgap_add'
+            let softmaxWeights := Circuit.softmaxWeights scoresReal
             let weights : Fin seq → Fin seq → Real := fun q k =>
               Circuit.softmax (scoresReal q) k
             let others : Fin seq → Finset (Fin seq) := fun q =>
@@ -1151,11 +1152,11 @@ theorem buildInductionCertFromHeadCoreWith?_sound [NeZero seq] {dModel dHead : N
               · intro q hq k hk
                 exact hscore_margin_real q hq k hk
               · intro q _ k
-                simpa [weights] using
-                  (Circuit.softmax_nonneg (scores := scoresReal q) k)
+                simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+                  softmaxWeights.nonneg q k
               · intro q _
-                simpa [weights] using
-                  (Circuit.softmax_sum_one (scores := scoresReal q))
+                simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+                  softmaxWeights.sum_one q
               · intro q hq
                 have honehot := oneHot_bounds_at q hq
                 have hprev := honehot.prev_large q rfl

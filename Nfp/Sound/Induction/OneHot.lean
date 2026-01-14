@@ -46,17 +46,18 @@ theorem oneHot_bounds_at_of_marginAt
         (fun q k => Circuit.softmax (scoresReal q) k) := by
   classical
   intro q hq
+  let softmaxWeights := Circuit.softmaxWeights scoresReal
   let weights : Fin seq → Fin seq → Real := fun q k =>
     Circuit.softmax (scoresReal q) k
   let others : Fin seq → Finset (Fin seq) := fun q =>
     (Finset.univ : Finset (Fin seq)).erase (prev q)
   have hweights_nonneg : ∀ k, 0 ≤ weights q k := by
     intro k
-    simpa [weights] using
-      (Circuit.softmax_nonneg (scores := scoresReal q) k)
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.nonneg q k
   have hsum_one : (∑ k, weights q k) = 1 := by
-    simpa [weights] using
-      (Circuit.softmax_sum_one (scores := scoresReal q))
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.sum_one q
   have hsum_others_le : (∑ k ∈ others q, weights q k) ≤ (epsAt q : Real) := by
     by_cases hneg : marginAt q < 0
     · have heps : (epsAt q : Real) = 1 := by
@@ -124,12 +125,10 @@ theorem oneHot_bounds_at_of_marginAt
       other_le := ?_ }
   · intro q' hq' k
     subst q'
-    change 0 ≤ Circuit.softmax (scoresReal q) k
-    exact Circuit.softmax_nonneg (scores := scoresReal q) k
+    exact hweights_nonneg k
   · intro q' hq'
     subst q'
-    change (∑ k, Circuit.softmax (scoresReal q) k) = 1
-    exact Circuit.softmax_sum_one (scores := scoresReal q)
+    exact hsum_one
   · intro q' hq'
     subst q'
     have hsum_eq :
@@ -189,6 +188,7 @@ theorem oneHot_bounds_at_of_scoreGapLo
         (fun q k => Circuit.softmax (scoresReal q) k) := by
   classical
   intro q hq
+  let softmaxWeights := Circuit.softmaxWeights scoresReal
   let weights : Fin seq → Fin seq → Real := fun q k =>
     Circuit.softmax (scoresReal q) k
   let others : Fin seq → Finset (Fin seq) := fun q =>
@@ -200,11 +200,11 @@ theorem oneHot_bounds_at_of_scoreGapLo
       ratDivUp 1 (1 + scoreGapLo q k)
   have hweights_nonneg : ∀ k, 0 ≤ weights q k := by
     intro k
-    simpa [weights] using
-      (Circuit.softmax_nonneg (scores := scoresReal q) k)
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.nonneg q k
   have hsum_one : (∑ k, weights q k) = 1 := by
-    simpa [weights] using
-      (Circuit.softmax_sum_one (scores := scoresReal q))
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.sum_one q
   have hsum_others_le_one : (∑ k ∈ others q, weights q k) ≤ 1 := by
     have hsubset : others q ⊆ (Finset.univ : Finset (Fin seq)) := by
       intro k hk
@@ -276,12 +276,10 @@ theorem oneHot_bounds_at_of_scoreGapLo
       other_le := ?_ }
   · intro q' hq' k
     subst q'
-    change 0 ≤ Circuit.softmax (scoresReal q) k
-    exact Circuit.softmax_nonneg (scores := scoresReal q) k
+    exact hweights_nonneg k
   · intro q' hq'
     subst q'
-    change (∑ k, Circuit.softmax (scoresReal q) k) = 1
-    exact Circuit.softmax_sum_one (scores := scoresReal q)
+    exact hsum_one
   · intro q' hq'
     subst q'
     have hsum_eq :

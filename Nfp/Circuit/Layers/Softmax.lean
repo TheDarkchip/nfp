@@ -61,6 +61,32 @@ lemma softmax_sum_one [NeZero seq] (scores : Fin seq → Real) :
     _ = 1 := by
         simp [hdenom]
 
+/-- Real-valued row-stochastic weights with explicit nonnegativity and row-sum proofs.
+    Kept separate from `ProbVec` because softmax outputs `Real` rather than `NNReal`. -/
+structure SoftmaxWeights (seq : Nat) [NeZero seq] where
+  /-- Weight assigned to each query/key pair. -/
+  weights : Fin seq → Fin seq → Real
+  /-- All weights are nonnegative. -/
+  nonneg : ∀ q k, 0 ≤ weights q k
+  /-- Each row sums to one. -/
+  sum_one : ∀ q, (∑ k, weights q k) = 1
+
+/-- Package softmax weights with row-stochastic proofs. -/
+def softmaxWeights [NeZero seq] (scores : Fin seq → Fin seq → Real) :
+    SoftmaxWeights seq :=
+  { weights := fun q k => softmax (scores q) k
+    nonneg := by
+      intro q k
+      simpa using softmax_nonneg (scores := scores q) k
+    sum_one := by
+      intro q
+      simpa using softmax_sum_one (scores := scores q) }
+
+/-- Definitional unfolding for `softmaxWeights.weights`. -/
+theorem softmaxWeights_weights [NeZero seq] (scores : Fin seq → Fin seq → Real) :
+    (softmaxWeights scores).weights = fun q k => softmax (scores q) k := by
+  rfl
+
 lemma softmax_le_one [NeZero seq] (scores : Fin seq → Real) (k : Fin seq) :
     softmax scores k ≤ 1 := by
   classical
