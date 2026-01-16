@@ -415,6 +415,51 @@ theorem activeOfTokensShift_eq_activeOfPeriodShift_of_diag {period : Nat}
     exact (mem_activeOfTokensShift (tokens := tokens) (q := q)).2
       ⟨kq, hklt, htok⟩
 
+/-- Diagnostic prompts align shifted-token `prev` with the period-shifted map. -/
+theorem prevOfTokensShift_eq_prevOfPeriodShift_of_diag_all {period : Nat}
+    {tokens : Fin (2 * period) → Nat} (hdiag : InductionDiagnosticTokens period tokens)
+    (hper : 0 < period) :
+    prevOfTokensShift tokens = prevOfPeriodShift (seq := 2 * period) period := by
+  funext q
+  by_cases hqper : period ≤ q.val
+  · simpa using
+      (prevOfTokensShift_eq_prevOfPeriodShift_of_diag (tokens := tokens) hdiag hper
+        (q := q) hqper)
+  · have hqnot_period : q ∉ activeOfPeriodShift (seq := 2 * period) period := by
+      intro hqmem
+      have hcond :=
+        (mem_activeOfPeriodShift (seq := 2 * period) (period := period) (q := q)).1 hqmem
+      exact (hqper hcond.2).elim
+    have hactive_eq :=
+      activeOfTokensShift_eq_activeOfPeriodShift_of_diag (tokens := tokens) hdiag hper
+    have hqnot_tokens_shift : q ∉ activeOfTokensShift (seq := 2 * period) tokens := by
+      simpa [hactive_eq] using hqnot_period
+    have hqnot_tokens : q ∉ activeOfTokens tokens := by
+      simpa [activeOfTokensShift] using hqnot_tokens_shift
+    simp [prevOfTokensShift, hqnot_tokens, prevOfPeriodShift, hqper]
+
+/-- Diagnostic prompts let period-shift specs re-express as token-shift specs. -/
+theorem InductionPrevSpecTokensShift_of_diag {dModel dHead : Nat} {period : Nat}
+    {tokens : Fin (2 * period) → Nat} (hdiag : InductionDiagnosticTokens period tokens)
+    (hper : 0 < period) {inputs : InductionHeadInputs (2 * period) dModel dHead}
+    (hspec : InductionPrevSpecPeriodShift (seq := 2 * period) period inputs) :
+    InductionPrevSpecTokensShift (seq := 2 * period) tokens inputs := by
+  refine ⟨?active, ?prev⟩
+  · have hactive_eq :=
+      activeOfTokensShift_eq_activeOfPeriodShift_of_diag (tokens := tokens) hdiag hper
+    calc
+      inputs.active = activeOfPeriodShift (seq := 2 * period) period := hspec.active_eq
+      _ = activeOfTokensShift (seq := 2 * period) tokens := by
+        symm
+        exact hactive_eq
+  · have hprev_eq :=
+      prevOfTokensShift_eq_prevOfPeriodShift_of_diag_all (tokens := tokens) hdiag hper
+    calc
+      inputs.prev = prevOfPeriodShift (seq := 2 * period) period := hspec.prev_eq
+      _ = prevOfTokensShift tokens := by
+        symm
+        exact hprev_eq
+
 end Model
 
 end Nfp
