@@ -14,7 +14,9 @@ literature.
 By default, `prev`/active are built from bigram prefix matches (the token at
 q-1 maps to the *following* token after its previous occurrence), and heads are
 ranked by attention to `prev`. Use `--score-mode=copy` or `--score-mode=attn_copy`
-to include OV/copying alignment in the ranking.
+to include OV/copying alignment in the ranking. Use `--use-activations` to
+score heads using real layer activations from a HuggingFace GPT-2 model rather
+than the embedding-only approximation stored in the NFP file.
 """
 
 from __future__ import annotations
@@ -23,7 +25,7 @@ import argparse
 import json
 import os
 import subprocess
-import sys
+import math
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Iterable, List, Tuple
@@ -144,6 +146,144 @@ def layer_norm(x: np.ndarray, gamma: np.ndarray, beta: np.ndarray, eps: float) -
     var = ((x - mean) ** 2).mean(axis=1, keepdims=True)
     x_hat = (x - mean) / np.sqrt(var + eps)
     return x_hat * gamma + beta
+
+
+def skip_head_weights(f, model_dim: int, head_dim: int) -> None:
+    skip_f64(f, model_dim * head_dim)  # wq
+    skip_f64(f, head_dim)  # bq
+    skip_f64(f, model_dim * head_dim)  # wk
+    skip_f64(f, head_dim)  # bk
+    skip_f64(f, model_dim * head_dim)  # wv
+    skip_f64(f, head_dim)  # bv
+    skip_f64(f, head_dim * model_dim)  # wo
+
+
+def skip_layer_weights(
+    f,
+    model_dim: int,
+    head_dim: int,
+    num_heads: int,
+    hidden_dim: int,
+) -> None:
+    for _ in range(num_heads):
+        skip_head_weights(f, model_dim, head_dim)
+    skip_f64(f, model_dim)  # attn bias
+    skip_f64(f, model_dim * hidden_dim)
+    skip_f64(f, hidden_dim)
+    skip_f64(f, hidden_dim * model_dim)
+    skip_f64(f, model_dim)
+    skip_f64(f, model_dim)  # ln1 gamma
+    skip_f64(f, model_dim)  # ln1 beta
+    skip_f64(f, model_dim)  # ln2 gamma
+    skip_f64(f, model_dim)  # ln2 beta
+
+
+def load_hf_model_and_states(tokens: np.ndarray, model_name: str, device: str):
+    try:
+        import torch
+        from transformers import AutoModel
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise SystemExit(
+            "Activation mode requires torch + transformers. "
+            "Install them (e.g., `uv run --with torch --with transformers ...`)."
+        ) from exc
+
+    torch.set_grad_enabled(False)
+    model = AutoModel.from_pretrained(model_name)
+    model.eval()
+    model.to(device)
+    input_ids = torch.tensor(tokens, dtype=torch.long, device=device).unsqueeze(0)
+    outputs = model(input_ids, output_hidden_states=True, use_cache=False)
+    hidden_states = outputs.hidden_states
+    if hidden_states is None:
+        raise SystemExit("HuggingFace model did not return hidden states.")
+    return model, hidden_states
+
+
+def get_transformer_blocks(model):
+    if hasattr(model, "transformer"):
+        return model.transformer.h
+    if hasattr(model, "h"):
+        return model.h
+    raise SystemExit("Unsupported HuggingFace model structure (missing transformer blocks).")
+
+
+def compute_head_data_from_activations(
+    model,
+    hidden_states,
+    layers: List[int],
+    heads: List[int],
+    prev: np.ndarray,
+    active_positions: List[int],
+    prev_indices: np.ndarray,
+    head_dim: int,
+    seq_len: int,
+) -> Dict[
+    Tuple[int, int],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
+]:
+    try:
+        import torch
+    except ImportError as exc:  # pragma: no cover - optional dependency
+        raise SystemExit("Activation mode requires torch.") from exc
+
+    blocks = get_transformer_blocks(model)
+    head_data: Dict[
+        Tuple[int, int],
+        Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
+    ] = {}
+    device = hidden_states[0].device
+    causal_mask = torch.triu(
+        torch.ones((seq_len, seq_len), device=device, dtype=torch.bool),
+        diagonal=1,
+    )
+    for layer_idx in layers:
+        block = blocks[layer_idx]
+        hidden = hidden_states[layer_idx]
+        ln = block.ln_1(hidden)
+        qkv = block.attn.c_attn(ln)
+        split_size = getattr(block.attn, "split_size", qkv.shape[-1] // 3)
+        q, k, v = qkv.split(split_size, dim=2)
+        num_heads = getattr(block.attn, "num_heads", q.shape[-1] // head_dim)
+        head_dim_local = getattr(block.attn, "head_dim", head_dim)
+        if head_dim_local != head_dim:
+            raise SystemExit("HuggingFace head_dim does not match NFP header.")
+        scale = 1.0 / math.sqrt(head_dim_local)
+        q = block.attn._split_heads(q, num_heads, head_dim_local)
+        k = block.attn._split_heads(k, num_heads, head_dim_local)
+        v = block.attn._split_heads(v, num_heads, head_dim_local)
+        scores = torch.matmul(q, k.transpose(-2, -1)) * scale
+        scores = scores.masked_fill(causal_mask, -10000.0)
+        weights = torch.softmax(scores, dim=-1)
+        wo_full = block.attn.c_proj.weight
+
+        for head_idx in heads:
+            weights_head = weights[0, head_idx]
+            scores_head = scores[0, head_idx]
+            weights_np = weights_head.detach().cpu().numpy()
+            scores_np = scores_head.detach().cpu().numpy()
+            eps, margin, prev_mean, prev_median, prev_top1 = compute_eps_margin(
+                weights_np, scores_np, prev, active_positions
+            )
+            prev_weights = weights_np[np.array(active_positions), prev_indices]
+
+            v_head = v[0, head_idx]
+            v_np = v_head.detach().cpu().numpy()
+            start = head_idx * head_dim_local
+            end = start + head_dim_local
+            wo_np = wo_full[start:end, :].detach().cpu().numpy()
+
+            head_data[(layer_idx, head_idx)] = (
+                v_np,
+                wo_np,
+                prev_weights,
+                eps,
+                margin,
+                prev_mean,
+                prev_median,
+                prev_top1,
+            )
+    return head_data
 
 
 def softmax(scores: np.ndarray) -> np.ndarray:
@@ -325,6 +465,21 @@ def main() -> int:
     parser.add_argument("--output", type=Path, default=Path("reports/gpt2_induction_discover.txt"))
     parser.add_argument("--json-out", type=Path, help="Optional JSON output path")
     parser.add_argument("--nfp-bin", help="Path to nfp binary (defaults to .lake/build/bin/nfp)")
+    parser.add_argument(
+        "--use-activations",
+        action="store_true",
+        help="Use HuggingFace GPT-2 activations for Q/K/V instead of embedding-only approximation.",
+    )
+    parser.add_argument(
+        "--hf-model",
+        default="gpt2",
+        help="HuggingFace model name or path (activation mode).",
+    )
+    parser.add_argument(
+        "--device",
+        default="cpu",
+        help="Torch device for activation mode (e.g. cpu, cuda, mps).",
+    )
     args = parser.parse_args()
 
     if args.max_tokens <= 1:
@@ -350,7 +505,11 @@ def main() -> int:
         heads = parse_index_list(args.heads, num_heads) or list(range(num_heads))
 
         tokens = read_i32(f, seq_len)
-        embeddings = read_f64(f, seq_len * model_dim).reshape(seq_len, model_dim)
+        if args.use_activations:
+            skip_f64(f, seq_len * model_dim)
+            embeddings = None
+        else:
+            embeddings = read_f64(f, seq_len * model_dim).reshape(seq_len, model_dim)
 
         if args.prev_mode != "period" and args.period is not None:
             raise SystemExit("--period is incompatible with --prev-mode=token/bigram")
@@ -389,7 +548,30 @@ def main() -> int:
             Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
         ] = {}
 
+        hf_model = None
+        hf_states = None
+        if args.use_activations:
+            hf_model, hf_states = load_hf_model_and_states(tokens, args.hf_model, args.device)
+            config = getattr(hf_model, "config", None)
+            if config is not None:
+                if getattr(config, "n_layer", num_layers) != num_layers:
+                    raise SystemExit("HuggingFace model layer count does not match NFP header.")
+                if getattr(config, "n_head", num_heads) != num_heads:
+                    raise SystemExit("HuggingFace model head count does not match NFP header.")
+                if getattr(config, "n_embd", model_dim) != model_dim:
+                    raise SystemExit("HuggingFace model dimension does not match NFP header.")
+                if getattr(config, "vocab_size", vocab_size) != vocab_size:
+                    raise SystemExit("HuggingFace vocab size does not match NFP header.")
+                if getattr(config, "n_positions", seq_len) < seq_len:
+                    raise SystemExit("Prompt length exceeds HuggingFace model context.")
+            if len(hf_states) < num_layers + 1:
+                raise SystemExit("Hidden state count is smaller than expected.")
+            if hf_states[0].shape[1] != seq_len:
+                raise SystemExit("Hidden state sequence length does not match NFP header.")
         for layer_idx in range(num_layers):
+            if args.use_activations:
+                skip_layer_weights(f, model_dim, head_dim, num_heads, hidden_dim)
+                continue
             head_weights = []
             for _ in range(num_heads):
                 wq = read_f64(f, model_dim * head_dim).reshape(model_dim, head_dim)
@@ -455,6 +637,19 @@ def main() -> int:
                 model_dim,
                 vocab_size,
                 tok,
+            )
+
+        if args.use_activations:
+            head_data = compute_head_data_from_activations(
+                hf_model,
+                hf_states,
+                layers,
+                heads,
+                prev,
+                active_positions,
+                prev_indices,
+                head_dim,
+                seq_len,
             )
 
     results: List[HeadResult] = []
@@ -554,6 +749,9 @@ def main() -> int:
         f.write("Induction discovery (approximate ranking)\n")
         f.write(f"model={args.model}\n")
         f.write(f"score_mode={args.score_mode}\n")
+        f.write(f"use_activations={args.use_activations}\n")
+        if args.use_activations:
+            f.write(f"hf_model={args.hf_model} device={args.device}\n")
         f.write(f"tokens={len(unique_tokens)} active={len(active_positions)}\n")
         f.write(
             f"min-eps={args.min_eps} min-margin={args.min_margin} "
@@ -587,6 +785,9 @@ def main() -> int:
             "min_logit_lb": args.min_logit_lb,
             "min_score": args.min_score,
             "min_copy": args.min_copy,
+            "use_activations": args.use_activations,
+            "hf_model": args.hf_model if args.use_activations else None,
+            "device": args.device if args.use_activations else None,
         }
         if args.score_mode != "logit":
             payload["results"] = [
