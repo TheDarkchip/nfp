@@ -24,7 +24,12 @@ namespace Gpt2
 
 open Nfp.Model
 
-/-- Build induction-head inputs from a GPT-2 head slice and prompt period. -/
+/--
+Build induction-head inputs from a GPT-2 head slice and prompt period.
+
+This uses the unshifted periodic prompt (`prev = q - period`), i.e. it matches
+the current token rather than the canonical induction copy target.
+-/
 def buildInductionHeadInputs {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
     Model.InductionHeadInputs seq dModel dHead :=
@@ -72,6 +77,58 @@ theorem buildInductionHeadInputs_def {seq dModel dHead vocab : Nat}
         directionSpec := slice.direction.spec
         direction := slice.directionVec } := by
   simp [buildInductionHeadInputs]
+
+/--
+Build induction-head inputs using the canonical shifted periodic prompt
+(`prev = q - period + 1`, with `0 < period`).
+-/
+def buildInductionHeadInputsShift {seq dModel dHead vocab : Nat}
+    (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
+    Model.InductionHeadInputs seq dModel dHead :=
+  { scale := slice.scale
+    active := activeOfPeriodShift (seq := seq) period
+    prev := prevOfPeriodShift (seq := seq) period
+    embed := slice.embed
+    lnEps := slice.lnEps
+    ln1Gamma := slice.ln1Gamma
+    ln1Beta := slice.ln1Beta
+    wq := slice.wq
+    bq := slice.bq
+    wk := slice.wk
+    bk := slice.bk
+    wv := slice.wv
+    bv := slice.bv
+    wo := slice.wo
+    attnBias := slice.attnBias
+    maskCausal := true
+    maskValue := (-10000 : Rat)
+    directionSpec := slice.direction.spec
+    direction := slice.directionVec }
+
+/-- Definitional characterization of `buildInductionHeadInputsShift`. -/
+theorem buildInductionHeadInputsShift_def {seq dModel dHead vocab : Nat}
+    (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
+    buildInductionHeadInputsShift slice period =
+      { scale := slice.scale
+        active := activeOfPeriodShift (seq := seq) period
+        prev := prevOfPeriodShift (seq := seq) period
+        embed := slice.embed
+        lnEps := slice.lnEps
+        ln1Gamma := slice.ln1Gamma
+        ln1Beta := slice.ln1Beta
+        wq := slice.wq
+        bq := slice.bq
+        wk := slice.wk
+        bk := slice.bk
+        wv := slice.wv
+        bv := slice.bv
+        wo := slice.wo
+        attnBias := slice.attnBias
+        maskCausal := true
+        maskValue := (-10000 : Rat)
+        directionSpec := slice.direction.spec
+        direction := slice.directionVec } := by
+  simp [buildInductionHeadInputsShift]
 
 end Gpt2
 
