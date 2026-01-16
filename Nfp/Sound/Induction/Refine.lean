@@ -146,12 +146,12 @@ theorem refineKeysAt_def
       | some k => insert k neg := by
   rfl
 
-/-- Refinement keys that also include weight-one keys. -/
+/-- Refinement keys that also include weight-one and `loAt`-minimizing keys. -/
 def refineKeysAtWithWeightOnes
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cache : InductionHeadCoreCache seq dModel dHead)
     (q : Fin seq) : Finset (Fin seq) :=
-  refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q
+  refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q ∪ loAtKeysAt inputs cache q
 
 /-- Unfolding lemma for `refineKeysAtWithWeightOnes`. -/
 theorem refineKeysAtWithWeightOnes_def
@@ -159,7 +159,7 @@ theorem refineKeysAtWithWeightOnes_def
     (cache : InductionHeadCoreCache seq dModel dHead)
     (q : Fin seq) :
     refineKeysAtWithWeightOnes inputs cache q =
-      refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q := by
+      refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q ∪ loAtKeysAt inputs cache q := by
   rfl
 
 /-- Refinement spec focused on a single query. -/
@@ -182,7 +182,7 @@ theorem refineSpecForQuery_def
         splitBudgetDiffRefined := budget } := by
   rfl
 
-/-- Refinement spec for a single query, including weight-one keys. -/
+/-- Refinement spec for a single query, including weight-one and `loAt`-minimizing keys. -/
 def refineSpecForQueryWithWeightOnes
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cache : InductionHeadCoreCache seq dModel dHead)
