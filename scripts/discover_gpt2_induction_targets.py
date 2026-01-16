@@ -78,6 +78,21 @@ class StripeResult:
     active: int
 
 
+@dataclass(frozen=True)
+class CircuitResult:
+    prev_layer: int
+    prev_head: int
+    induction_layer: int
+    induction_head: int
+    score: float
+    prev_mean: float
+    prev_median: float
+    prev_top1_frac: float
+    stripe_mean: float
+    stripe_median: float
+    stripe_top1_frac: float
+
+
 def parse_header(f) -> Dict[str, str]:
     header: Dict[str, str] = {}
     magic = f.readline().decode("ascii").strip()
@@ -243,11 +258,14 @@ def compute_head_data_from_activations(
     seq_len: int,
     stripe_prev: np.ndarray | None = None,
     stripe_positions: List[int] | None = None,
+    prevtok_prev: np.ndarray | None = None,
+    prevtok_positions: List[int] | None = None,
 ) -> Tuple[
     Dict[
         Tuple[int, int],
         Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
     ],
+    Dict[Tuple[int, int], Tuple[float, float, float, float, float]],
     Dict[Tuple[int, int], Tuple[float, float, float, float, float]],
 ]:
     try:
@@ -266,6 +284,7 @@ def compute_head_data_from_activations(
         Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
     ] = {}
     stripe_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
+    prevtok_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
     device = hidden_states[0].device
     causal_mask = torch.triu(
         torch.ones((seq_len, seq_len), device=device, dtype=torch.bool),
@@ -310,6 +329,17 @@ def compute_head_data_from_activations(
                     eps_s,
                     margin_s,
                 )
+            if prevtok_prev is not None and prevtok_positions is not None:
+                eps_p, margin_p, prevtok_mean, prevtok_median, prevtok_top1 = compute_eps_margin(
+                    weights_np, scores_np, prevtok_prev, prevtok_positions
+                )
+                prevtok_data[(layer_idx, head_idx)] = (
+                    prevtok_mean,
+                    prevtok_median,
+                    prevtok_top1,
+                    eps_p,
+                    margin_p,
+                )
             prev_weights = weights_np[np.array(active_positions), prev_indices]
 
             v_head = v[0, head_idx]
@@ -328,7 +358,7 @@ def compute_head_data_from_activations(
                 prev_median,
                 prev_top1,
             )
-    return head_data, stripe_data
+    return head_data, stripe_data, prevtok_data
 
 
 def softmax(scores: np.ndarray) -> np.ndarray:
@@ -474,6 +504,20 @@ def format_stripe_result(result: StripeResult) -> str:
     )
 
 
+def format_circuit_result(result: CircuitResult) -> str:
+    prev_layer = result.prev_layer + 1
+    prev_head = result.prev_head + 1
+    ind_layer = result.induction_layer + 1
+    ind_head = result.induction_head + 1
+    return (
+        f"prev=L{prev_layer}H{prev_head} ind=L{ind_layer}H{ind_head} "
+        f"score={result.score:.6f} prevMean={result.prev_mean:.6f} "
+        f"prevMedian={result.prev_median:.6f} prevTop1={result.prev_top1_frac:.3f} "
+        f"stripeMean={result.stripe_mean:.6f} stripeMedian={result.stripe_median:.6f} "
+        f"stripeTop1={result.stripe_top1_frac:.3f}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path, help="Path to NFP_BINARY_V1 model")
@@ -484,12 +528,12 @@ def main() -> int:
                         help="Run verifier on the top N candidates")
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "copy", "attn_copy", "stripe", "logit"],
+        choices=["attn", "copy", "attn_copy", "stripe", "circuit", "logit"],
         default="attn",
         help=(
             "Rank heads by attention to prev (attn), OV copy score (copy), "
             "attention-weighted copy score (attn_copy), induction stripe attention "
-            "(stripe), or logit lower bound (logit)."
+            "(stripe), circuit pairing (circuit), or logit lower bound (logit)."
         ),
     )
     parser.add_argument(
@@ -548,8 +592,8 @@ def main() -> int:
         raise SystemExit("max-tokens must be at least 2")
     if args.verify_top > 0 and args.score_mode != "logit":
         raise SystemExit("--verify-top requires --score-mode=logit")
-    if args.score_mode == "stripe" and args.stripe_period is None:
-        raise SystemExit("--score-mode=stripe requires --stripe-period")
+    if args.score_mode in {"stripe", "circuit"} and args.stripe_period is None:
+        raise SystemExit("--score-mode=stripe/circuit requires --stripe-period")
 
     if not args.model.exists():
         raise SystemExit(f"Missing model file: {args.model}")
@@ -594,12 +638,19 @@ def main() -> int:
         prev_indices = prev[np.array(active_positions, dtype=np.int64)]
         stripe_prev = None
         stripe_positions = None
-        if args.score_mode == "stripe":
+        if args.score_mode in {"stripe", "circuit"}:
             stripe_period = int(args.stripe_period)
             stripe_prev, stripe_active = build_prev_period(seq_len, stripe_period)
             stripe_positions = [int(i) for i, flag in enumerate(stripe_active) if flag]
             if not stripe_positions:
                 raise SystemExit("No stripe positions found for the requested period")
+        prevtok_prev = None
+        prevtok_positions = None
+        if args.score_mode == "circuit":
+            prevtok_prev, prevtok_active = build_prev_period(seq_len, 1)
+            prevtok_positions = [int(i) for i, flag in enumerate(prevtok_active) if flag]
+            if not prevtok_positions:
+                raise SystemExit("No previous-token positions found")
 
         prompt_tokens = sorted({int(tok) for tok in tokens.tolist()})
         unique_tokens = []
@@ -618,6 +669,7 @@ def main() -> int:
             Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
         ] = {}
         stripe_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
+        prevtok_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
 
         hf_model = None
         hf_states = None
@@ -694,6 +746,17 @@ def main() -> int:
                         eps_s,
                         margin_s,
                     )
+                if prevtok_prev is not None and prevtok_positions is not None:
+                    eps_p, margin_p, prevtok_mean, prevtok_median, prevtok_top1 = compute_eps_margin(
+                        weights, scores, prevtok_prev, prevtok_positions
+                    )
+                    prevtok_data[(layer_idx, head_idx)] = (
+                        prevtok_mean,
+                        prevtok_median,
+                        prevtok_top1,
+                        eps_p,
+                        margin_p,
+                    )
                 prev_weights = weights[np.array(active_positions), prev_indices]
                 head_data[(layer_idx, head_idx)] = (
                     v,
@@ -722,7 +785,7 @@ def main() -> int:
             )
 
         if args.use_activations:
-            head_data, stripe_data = compute_head_data_from_activations(
+            head_data, stripe_data, prevtok_data = compute_head_data_from_activations(
                 hf_model,
                 hf_states,
                 layers,
@@ -734,11 +797,14 @@ def main() -> int:
                 seq_len,
                 stripe_prev=stripe_prev,
                 stripe_positions=stripe_positions,
+                prevtok_prev=prevtok_prev,
+                prevtok_positions=prevtok_positions,
             )
 
     results: List[HeadResult] = []
     attn_results: List[AttnResult] = []
     stripe_results: List[StripeResult] = []
+    circuit_results: List[CircuitResult] = []
     for (layer_idx, head_idx), (
         v,
         wo,
@@ -773,6 +839,37 @@ def main() -> int:
                     active=len(stripe_positions) if stripe_positions is not None else 0,
                 )
             )
+            continue
+        if args.score_mode == "circuit":
+            stripe = stripe_data.get((layer_idx, head_idx))
+            if stripe is None:
+                continue
+            stripe_mean, stripe_median, stripe_top1, _eps_s, _margin_s = stripe
+            best_prev: CircuitResult | None = None
+            for (prev_layer, prev_head), prev_stats in prevtok_data.items():
+                if prev_layer >= layer_idx:
+                    continue
+                prev_mean, prev_median, prev_top1, _eps_p, _margin_p = prev_stats
+                score = prev_mean * stripe_mean
+                if score < args.min_score:
+                    continue
+                candidate = CircuitResult(
+                    prev_layer=prev_layer,
+                    prev_head=prev_head,
+                    induction_layer=layer_idx,
+                    induction_head=head_idx,
+                    score=score,
+                    prev_mean=prev_mean,
+                    prev_median=prev_median,
+                    prev_top1_frac=prev_top1,
+                    stripe_mean=stripe_mean,
+                    stripe_median=stripe_median,
+                    stripe_top1_frac=stripe_top1,
+                )
+                if best_prev is None or candidate.score > best_prev.score:
+                    best_prev = candidate
+            if best_prev is not None:
+                circuit_results.append(best_prev)
             continue
         if args.score_mode != "logit":
             ov = v @ wo
@@ -847,14 +944,16 @@ def main() -> int:
         if best is not None:
             results.append(best)
 
-    if args.score_mode == "stripe":
+    if args.score_mode == "circuit":
+        circuit_results.sort(key=lambda r: r.score, reverse=True)
+    elif args.score_mode == "stripe":
         stripe_results.sort(key=lambda r: r.score, reverse=True)
     elif args.score_mode != "logit":
         attn_results.sort(key=lambda r: r.score, reverse=True)
     else:
         results.sort(key=lambda r: r.logit_lb, reverse=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    active_count = len(stripe_positions) if args.score_mode == "stripe" and stripe_positions else len(active_positions)
+    active_count = len(stripe_positions) if args.score_mode in {"stripe", "circuit"} and stripe_positions else len(active_positions)
     with args.output.open("w", encoding="ascii") as f:
         f.write("Induction discovery (approximate ranking)\n")
         f.write(f"model={args.model}\n")
@@ -863,14 +962,17 @@ def main() -> int:
         if args.use_activations:
             f.write(f"hf_model={args.hf_model} device={args.device}\n")
         f.write(f"tokens={len(unique_tokens)} active={active_count}\n")
-        if args.score_mode == "stripe":
+        if args.score_mode in {"stripe", "circuit"}:
             f.write(f"stripe_period={args.stripe_period}\n")
         f.write(
             f"min-eps={args.min_eps} min-margin={args.min_margin} "
             f"min-logit-lb={args.min_logit_lb} min-score={args.min_score} "
             f"min-copy={args.min_copy}\n"
         )
-        if args.score_mode == "stripe":
+        if args.score_mode == "circuit":
+            for rank, result in enumerate(circuit_results[: args.top], start=1):
+                f.write(f"{rank:02d} {format_circuit_result(result)}\n")
+        elif args.score_mode == "stripe":
             for rank, result in enumerate(stripe_results[: args.top], start=1):
                 f.write(f"{rank:02d} {format_stripe_result(result)}\n")
         elif args.score_mode != "logit":
@@ -881,7 +983,10 @@ def main() -> int:
                 f.write(f"{rank:02d} {format_result(result)}\n")
 
     print(f"Wrote report to {args.output}")
-    if args.score_mode == "stripe":
+    if args.score_mode == "circuit":
+        for rank, result in enumerate(circuit_results[: args.top], start=1):
+            print(f"{rank:02d} {format_circuit_result(result)}")
+    elif args.score_mode == "stripe":
         for rank, result in enumerate(stripe_results[: args.top], start=1):
             print(f"{rank:02d} {format_stripe_result(result)}")
     elif args.score_mode != "logit":
@@ -908,7 +1013,25 @@ def main() -> int:
             "device": args.device if args.use_activations else None,
             "stripe_period": args.stripe_period if args.score_mode == "stripe" else None,
         }
-        if args.score_mode == "stripe":
+        if args.score_mode == "circuit":
+            payload["results"] = [
+                {
+                    "rank": rank,
+                    "prev_layer": r.prev_layer + 1,
+                    "prev_head": r.prev_head + 1,
+                    "induction_layer": r.induction_layer + 1,
+                    "induction_head": r.induction_head + 1,
+                    "score": r.score,
+                    "prev_mean": r.prev_mean,
+                    "prev_median": r.prev_median,
+                    "prev_top1_frac": r.prev_top1_frac,
+                    "stripe_mean": r.stripe_mean,
+                    "stripe_median": r.stripe_median,
+                    "stripe_top1_frac": r.stripe_top1_frac,
+                }
+                for rank, r in enumerate(circuit_results[: args.top], start=1)
+            ]
+        elif args.score_mode == "stripe":
             payload["results"] = [
                 {
                     "rank": rank,
