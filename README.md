@@ -50,7 +50,8 @@ verified by the CLI.
 Note: the discovery/scan/sweep helper scripts use **one-based** layer/head
 indices (literature-aligned), default to **bigram prefix matching** for
 `prev`, and **rank by attention score** unless you explicitly switch to
-logit-diff mode. The Lean CLI continues to accept zero-based layer/head indices.
+logit-diff mode. The Lean CLI now expects **one-based** layer/head indices by
+default; pass `--zero-based` to use legacy zero-based indices.
 
 ```bash
 python scripts/build_gpt2_induction_cert.py \
