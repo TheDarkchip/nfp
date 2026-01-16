@@ -4,6 +4,7 @@ module
 
 public import Mathlib.Data.Finset.Max
 public import Mathlib.Data.Fintype.Basic
+public import Nfp.Model.InductionHead
 
 /-!
 Helpers for induction-style prompts.
@@ -194,6 +195,35 @@ theorem prevOfTokensShift_spec_of_active {seq : Nat} {tokens : Fin seq → Nat} 
   have hk' : k < q := by
     exact (Fin.lt_def).2 hk
   exact prevOfTokensShift_spec (tokens := tokens) (q := q) ⟨k, hk', htok⟩
+
+/-- Active queries select a `prev` strictly in the past. -/
+def InductionPrevInPast {seq dModel dHead : Nat}
+    (inputs : InductionHeadInputs seq dModel dHead) : Prop :=
+  ∀ q, q ∈ inputs.active → inputs.prev q < q
+
+/--
+Canonical shifted-prev spec for periodic prompts.
+
+Note: when `1 < period`, every active query has `prev q < q`.
+-/
+structure InductionPrevSpecPeriodShift {seq dModel dHead : Nat}
+    (period : Nat) (inputs : InductionHeadInputs seq dModel dHead) : Prop where
+  /-- Active queries are the shifted-period active set. -/
+  active_eq : inputs.active = activeOfPeriodShift (seq := seq) period
+  /-- Prev map matches the shifted-period definition. -/
+  prev_eq : inputs.prev = prevOfPeriodShift (seq := seq) period
+
+/--
+Canonical shifted-prev spec for token-based prompts.
+
+Note: if successive tokens repeat, the shifted target can coincide with `q`.
+-/
+structure InductionPrevSpecTokensShift {seq dModel dHead : Nat}
+    (tokens : Fin seq → Nat) (inputs : InductionHeadInputs seq dModel dHead) : Prop where
+  /-- Active queries match the shifted-token definition. -/
+  active_eq : inputs.active = activeOfTokensShift (seq := seq) tokens
+  /-- Prev map matches the shifted-token definition. -/
+  prev_eq : inputs.prev = prevOfTokensShift (seq := seq) tokens
 
 end Model
 

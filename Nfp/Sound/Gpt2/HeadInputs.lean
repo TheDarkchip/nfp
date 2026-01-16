@@ -80,7 +80,8 @@ theorem buildInductionHeadInputs_def {seq dModel dHead vocab : Nat}
 
 /--
 Build induction-head inputs using the canonical shifted periodic prompt
-(`prev = q - period + 1`, with `0 < period`).
+(`prev = q - period + 1`, with `0 < period`). When `1 < period`, every active
+query has `prev q < q`.
 -/
 def buildInductionHeadInputsShift {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
@@ -129,6 +130,13 @@ theorem buildInductionHeadInputsShift_def {seq dModel dHead vocab : Nat}
         directionSpec := slice.direction.spec
         direction := slice.directionVec } := by
   simp [buildInductionHeadInputsShift]
+
+/-- `buildInductionHeadInputsShift` satisfies the shifted-period prev/active spec. -/
+theorem buildInductionHeadInputsShift_prev_spec {seq dModel dHead vocab : Nat}
+    (slice : Gpt2HeadSlice seq dModel dHead vocab) (period : Nat) :
+    InductionPrevSpecPeriodShift (seq := seq) period
+      (buildInductionHeadInputsShift slice period) := by
+  constructor <;> simp [buildInductionHeadInputsShift]
 
 end Gpt2
 
