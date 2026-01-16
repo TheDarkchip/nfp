@@ -65,6 +65,19 @@ class AttnResult:
     active: int
 
 
+@dataclass(frozen=True)
+class StripeResult:
+    layer: int
+    head: int
+    score: float
+    stripe_mean: float
+    stripe_median: float
+    stripe_top1_frac: float
+    eps: float
+    margin: float
+    active: int
+
+
 def parse_header(f) -> Dict[str, str]:
     header: Dict[str, str] = {}
     magic = f.readline().decode("ascii").strip()
@@ -138,6 +151,16 @@ def build_prev_bigram(tokens: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     active_shift = active_token[:-1]
     prev[1:] = np.where(active_shift, prev_shift, 0)
     active[1:] = active_shift
+    return prev, active
+
+
+def build_prev_period(seq_len: int, period: int) -> Tuple[np.ndarray, np.ndarray]:
+    prev = np.zeros(seq_len, dtype=np.int64)
+    active = np.zeros(seq_len, dtype=bool)
+    idx = np.arange(seq_len)
+    mask = idx >= period
+    prev[mask] = idx[mask] - period
+    active[mask] = True
     return prev, active
 
 
@@ -218,9 +241,14 @@ def compute_head_data_from_activations(
     prev_indices: np.ndarray,
     head_dim: int,
     seq_len: int,
-) -> Dict[
-    Tuple[int, int],
-    Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
+    stripe_prev: np.ndarray | None = None,
+    stripe_positions: List[int] | None = None,
+) -> Tuple[
+    Dict[
+        Tuple[int, int],
+        Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
+    ],
+    Dict[Tuple[int, int], Tuple[float, float, float, float, float]],
 ]:
     try:
         import torch
@@ -237,6 +265,7 @@ def compute_head_data_from_activations(
         Tuple[int, int],
         Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
     ] = {}
+    stripe_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
     device = hidden_states[0].device
     causal_mask = torch.triu(
         torch.ones((seq_len, seq_len), device=device, dtype=torch.bool),
@@ -270,6 +299,17 @@ def compute_head_data_from_activations(
             eps, margin, prev_mean, prev_median, prev_top1 = compute_eps_margin(
                 weights_np, scores_np, prev, active_positions
             )
+            if stripe_prev is not None and stripe_positions is not None:
+                eps_s, margin_s, stripe_mean, stripe_median, stripe_top1 = compute_eps_margin(
+                    weights_np, scores_np, stripe_prev, stripe_positions
+                )
+                stripe_data[(layer_idx, head_idx)] = (
+                    stripe_mean,
+                    stripe_median,
+                    stripe_top1,
+                    eps_s,
+                    margin_s,
+                )
             prev_weights = weights_np[np.array(active_positions), prev_indices]
 
             v_head = v[0, head_idx]
@@ -288,7 +328,7 @@ def compute_head_data_from_activations(
                 prev_median,
                 prev_top1,
             )
-    return head_data
+    return head_data, stripe_data
 
 
 def softmax(scores: np.ndarray) -> np.ndarray:
@@ -423,6 +463,17 @@ def format_attn_result(result: AttnResult) -> str:
     )
 
 
+def format_stripe_result(result: StripeResult) -> str:
+    layer = result.layer + 1
+    head = result.head + 1
+    return (
+        f"L{layer}H{head} score={result.score:.6f} "
+        f"stripeMean={result.stripe_mean:.6f} stripeMedian={result.stripe_median:.6f} "
+        f"stripeTop1={result.stripe_top1_frac:.3f} "
+        f"eps={result.eps:.6f} margin={result.margin:.6f} active={result.active}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path, help="Path to NFP_BINARY_V1 model")
@@ -433,11 +484,12 @@ def main() -> int:
                         help="Run verifier on the top N candidates")
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "copy", "attn_copy", "logit"],
+        choices=["attn", "copy", "attn_copy", "stripe", "logit"],
         default="attn",
         help=(
             "Rank heads by attention to prev (attn), OV copy score (copy), "
-            "attention-weighted copy score (attn_copy), or logit lower bound (logit)."
+            "attention-weighted copy score (attn_copy), induction stripe attention "
+            "(stripe), or logit lower bound (logit)."
         ),
     )
     parser.add_argument(
@@ -467,6 +519,11 @@ def main() -> int:
         default="bigram",
         help="Choose prev/active construction (default: bigram prefix match).",
     )
+    parser.add_argument(
+        "--stripe-period",
+        type=int,
+        help="Period for induction stripe scoring (required for --score-mode=stripe).",
+    )
     parser.add_argument("--output", type=Path, default=Path("reports/gpt2_induction_discover.txt"))
     parser.add_argument("--json-out", type=Path, help="Optional JSON output path")
     parser.add_argument("--nfp-bin", help="Path to nfp binary (defaults to .lake/build/bin/nfp)")
@@ -491,6 +548,8 @@ def main() -> int:
         raise SystemExit("max-tokens must be at least 2")
     if args.verify_top > 0 and args.score_mode != "logit":
         raise SystemExit("--verify-top requires --score-mode=logit")
+    if args.score_mode == "stripe" and args.stripe_period is None:
+        raise SystemExit("--score-mode=stripe requires --stripe-period")
 
     if not args.model.exists():
         raise SystemExit(f"Missing model file: {args.model}")
@@ -523,9 +582,7 @@ def main() -> int:
 
         if args.prev_mode == "period":
             period = int(args.period)
-            prev = np.arange(seq_len, dtype=np.int64)
-            prev = np.where(prev >= period, prev - period, 0)
-            active_mask = np.arange(seq_len) >= period
+            prev, active_mask = build_prev_period(seq_len, period)
         elif args.prev_mode == "bigram":
             prev, active_mask = build_prev_bigram(tokens)
         else:
@@ -535,6 +592,14 @@ def main() -> int:
         if not active_positions:
             raise SystemExit("No active positions found in the prompt")
         prev_indices = prev[np.array(active_positions, dtype=np.int64)]
+        stripe_prev = None
+        stripe_positions = None
+        if args.score_mode == "stripe":
+            stripe_period = int(args.stripe_period)
+            stripe_prev, stripe_active = build_prev_period(seq_len, stripe_period)
+            stripe_positions = [int(i) for i, flag in enumerate(stripe_active) if flag]
+            if not stripe_positions:
+                raise SystemExit("No stripe positions found for the requested period")
 
         prompt_tokens = sorted({int(tok) for tok in tokens.tolist()})
         unique_tokens = []
@@ -552,6 +617,7 @@ def main() -> int:
             Tuple[int, int],
             Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
         ] = {}
+        stripe_data: Dict[Tuple[int, int], Tuple[float, float, float, float, float]] = {}
 
         hf_model = None
         hf_states = None
@@ -617,6 +683,17 @@ def main() -> int:
                 eps, margin, prev_mean, prev_median, prev_top1 = compute_eps_margin(
                     weights, scores, prev, active_positions
                 )
+                if stripe_prev is not None and stripe_positions is not None:
+                    eps_s, margin_s, stripe_mean, stripe_median, stripe_top1 = compute_eps_margin(
+                        weights, scores, stripe_prev, stripe_positions
+                    )
+                    stripe_data[(layer_idx, head_idx)] = (
+                        stripe_mean,
+                        stripe_median,
+                        stripe_top1,
+                        eps_s,
+                        margin_s,
+                    )
                 prev_weights = weights[np.array(active_positions), prev_indices]
                 head_data[(layer_idx, head_idx)] = (
                     v,
@@ -645,7 +722,7 @@ def main() -> int:
             )
 
         if args.use_activations:
-            head_data = compute_head_data_from_activations(
+            head_data, stripe_data = compute_head_data_from_activations(
                 hf_model,
                 hf_states,
                 layers,
@@ -655,10 +732,13 @@ def main() -> int:
                 prev_indices,
                 head_dim,
                 seq_len,
+                stripe_prev=stripe_prev,
+                stripe_positions=stripe_positions,
             )
 
     results: List[HeadResult] = []
     attn_results: List[AttnResult] = []
+    stripe_results: List[StripeResult] = []
     for (layer_idx, head_idx), (
         v,
         wo,
@@ -672,6 +752,28 @@ def main() -> int:
         if args.score_mode == "logit":
             if eps > args.min_eps or margin < args.min_margin:
                 continue
+        if args.score_mode == "stripe":
+            stripe = stripe_data.get((layer_idx, head_idx))
+            if stripe is None:
+                continue
+            stripe_mean, stripe_median, stripe_top1, eps_s, margin_s = stripe
+            score = stripe_mean
+            if score < args.min_score:
+                continue
+            stripe_results.append(
+                StripeResult(
+                    layer=layer_idx,
+                    head=head_idx,
+                    score=score,
+                    stripe_mean=stripe_mean,
+                    stripe_median=stripe_median,
+                    stripe_top1_frac=stripe_top1,
+                    eps=eps_s,
+                    margin=margin_s,
+                    active=len(stripe_positions) if stripe_positions is not None else 0,
+                )
+            )
+            continue
         if args.score_mode != "logit":
             ov = v @ wo
             copy_mean, copy_weighted_mean = compute_copy_scores(
@@ -745,11 +847,14 @@ def main() -> int:
         if best is not None:
             results.append(best)
 
-    if args.score_mode != "logit":
+    if args.score_mode == "stripe":
+        stripe_results.sort(key=lambda r: r.score, reverse=True)
+    elif args.score_mode != "logit":
         attn_results.sort(key=lambda r: r.score, reverse=True)
     else:
         results.sort(key=lambda r: r.logit_lb, reverse=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
+    active_count = len(stripe_positions) if args.score_mode == "stripe" and stripe_positions else len(active_positions)
     with args.output.open("w", encoding="ascii") as f:
         f.write("Induction discovery (approximate ranking)\n")
         f.write(f"model={args.model}\n")
@@ -757,13 +862,18 @@ def main() -> int:
         f.write(f"use_activations={args.use_activations}\n")
         if args.use_activations:
             f.write(f"hf_model={args.hf_model} device={args.device}\n")
-        f.write(f"tokens={len(unique_tokens)} active={len(active_positions)}\n")
+        f.write(f"tokens={len(unique_tokens)} active={active_count}\n")
+        if args.score_mode == "stripe":
+            f.write(f"stripe_period={args.stripe_period}\n")
         f.write(
             f"min-eps={args.min_eps} min-margin={args.min_margin} "
             f"min-logit-lb={args.min_logit_lb} min-score={args.min_score} "
             f"min-copy={args.min_copy}\n"
         )
-        if args.score_mode != "logit":
+        if args.score_mode == "stripe":
+            for rank, result in enumerate(stripe_results[: args.top], start=1):
+                f.write(f"{rank:02d} {format_stripe_result(result)}\n")
+        elif args.score_mode != "logit":
             for rank, result in enumerate(attn_results[: args.top], start=1):
                 f.write(f"{rank:02d} {format_attn_result(result)}\n")
         else:
@@ -771,7 +881,10 @@ def main() -> int:
                 f.write(f"{rank:02d} {format_result(result)}\n")
 
     print(f"Wrote report to {args.output}")
-    if args.score_mode != "logit":
+    if args.score_mode == "stripe":
+        for rank, result in enumerate(stripe_results[: args.top], start=1):
+            print(f"{rank:02d} {format_stripe_result(result)}")
+    elif args.score_mode != "logit":
         for rank, result in enumerate(attn_results[: args.top], start=1):
             print(f"{rank:02d} {format_attn_result(result)}")
     else:
@@ -783,7 +896,7 @@ def main() -> int:
         payload = {
             "model": str(args.model),
             "tokens": len(unique_tokens),
-            "active": len(active_positions),
+            "active": active_count,
             "score_mode": args.score_mode,
             "min_eps": args.min_eps,
             "min_margin": args.min_margin,
@@ -793,8 +906,25 @@ def main() -> int:
             "use_activations": args.use_activations,
             "hf_model": args.hf_model if args.use_activations else None,
             "device": args.device if args.use_activations else None,
+            "stripe_period": args.stripe_period if args.score_mode == "stripe" else None,
         }
-        if args.score_mode != "logit":
+        if args.score_mode == "stripe":
+            payload["results"] = [
+                {
+                    "rank": rank,
+                    "layer": r.layer + 1,
+                    "head": r.head + 1,
+                    "score": r.score,
+                    "stripe_mean": r.stripe_mean,
+                    "stripe_median": r.stripe_median,
+                    "stripe_top1_frac": r.stripe_top1_frac,
+                    "eps": r.eps,
+                    "margin": r.margin,
+                    "active": r.active,
+                }
+                for rank, r in enumerate(stripe_results[: args.top], start=1)
+            ]
+        elif args.score_mode != "logit":
             payload["results"] = [
                 {
                     "rank": rank,
