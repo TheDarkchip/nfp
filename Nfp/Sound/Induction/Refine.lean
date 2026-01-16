@@ -35,6 +35,15 @@ theorem refineBudgetBoost_def (budget : Nat) :
     refineBudgetBoost budget = max (budget + 1) (2 * budget) := by
   rfl
 
+/-- Heuristic cap on the number of top-weight keys to refine. -/
+def refineTopWeightCount (budget : Nat) : Nat :=
+  min 8 (max 1 (2 * budget))
+
+/-- Unfolding lemma for `refineTopWeightCount`. -/
+theorem refineTopWeightCount_def (budget : Nat) :
+    refineTopWeightCount budget = min 8 (max 1 (2 * budget)) := by
+  rfl
+
 /-- Scale used for refined value bounds. -/
 def valRefineScale (budget : Nat) : Nat :=
   Bounds.sqrtLowerScale * refineBudgetBoost budget
@@ -122,6 +131,38 @@ theorem loAtKeysAt_def
         ∅ := by
   rfl
 
+/-- Top-weight keys for a query (excluding `prev`), capped by `count`. -/
+def topWeightKeysAt
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) (count : Nat) : Finset (Fin seq) :=
+  if count = 0 then
+    ∅
+  else
+    let others := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
+    let weighted : Array (Rat × Fin seq) :=
+      others.toArray.map (fun k => (cache.weightBoundAt q k, k))
+    let sorted := weighted.qsort (fun a b => a.1 > b.1)
+    let keys := (sorted.toList.take count).map (fun p => p.2)
+    keys.foldr (fun k acc => insert k acc) ∅
+
+/-- Unfolding lemma for `topWeightKeysAt`. -/
+theorem topWeightKeysAt_def
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) (count : Nat) :
+    topWeightKeysAt inputs cache q count =
+      if count = 0 then
+        ∅
+      else
+        let others := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
+        let weighted : Array (Rat × Fin seq) :=
+          others.toArray.map (fun k => (cache.weightBoundAt q k, k))
+        let sorted := weighted.qsort (fun a b => a.1 > b.1)
+        let keys := (sorted.toList.take count).map (fun p => p.2)
+        keys.foldr (fun k acc => insert k acc) ∅ := by
+  rfl
+
 /-- Refinement keys for a query, seeded by negative base gaps and the worst key. -/
 def refineKeysAt
     (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -146,20 +187,28 @@ theorem refineKeysAt_def
       | some k => insert k neg := by
   rfl
 
-/-- Refinement keys that also include weight-one and `loAt`-minimizing keys. -/
+/-- Refinement keys that also include weight-one, `loAt`-minimizing, and top-weight keys. -/
 def refineKeysAtWithWeightOnes
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cache : InductionHeadCoreCache seq dModel dHead)
-    (q : Fin seq) : Finset (Fin seq) :=
-  refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q ∪ loAtKeysAt inputs cache q
+    (q : Fin seq) (budget : Nat) : Finset (Fin seq) :=
+  let topCount := refineTopWeightCount budget
+  refineKeysAt inputs cache q ∪
+    weightOneKeysAt inputs cache q ∪
+    loAtKeysAt inputs cache q ∪
+    topWeightKeysAt inputs cache q topCount
 
 /-- Unfolding lemma for `refineKeysAtWithWeightOnes`. -/
 theorem refineKeysAtWithWeightOnes_def
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cache : InductionHeadCoreCache seq dModel dHead)
-    (q : Fin seq) :
-    refineKeysAtWithWeightOnes inputs cache q =
-      refineKeysAt inputs cache q ∪ weightOneKeysAt inputs cache q ∪ loAtKeysAt inputs cache q := by
+    (q : Fin seq) (budget : Nat) :
+    refineKeysAtWithWeightOnes inputs cache q budget =
+      let topCount := refineTopWeightCount budget
+      refineKeysAt inputs cache q ∪
+        weightOneKeysAt inputs cache q ∪
+        loAtKeysAt inputs cache q ∪
+        topWeightKeysAt inputs cache q topCount := by
   rfl
 
 /-- Refinement spec focused on a single query. -/
@@ -182,12 +231,13 @@ theorem refineSpecForQuery_def
         splitBudgetDiffRefined := budget } := by
   rfl
 
-/-- Refinement spec for a single query, including weight-one and `loAt`-minimizing keys. -/
+/-- Refinement spec for a single query, including weight-one, `loAt`-minimizing, and top-weight
+keys. -/
 def refineSpecForQueryWithWeightOnes
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cache : InductionHeadCoreCache seq dModel dHead)
     (q : Fin seq) (budget : Nat) : InductionHeadRefineSpec seq :=
-  let keys := refineKeysAtWithWeightOnes inputs cache q
+  let keys := refineKeysAtWithWeightOnes inputs cache q budget
   { refineKeys := fun q' => if _ : q' = q then keys else ∅
     splitBudgetDiffRefined := budget }
 
@@ -197,7 +247,7 @@ theorem refineSpecForQueryWithWeightOnes_def
     (cache : InductionHeadCoreCache seq dModel dHead)
     (q : Fin seq) (budget : Nat) :
     refineSpecForQueryWithWeightOnes inputs cache q budget =
-      let keys := refineKeysAtWithWeightOnes inputs cache q
+      let keys := refineKeysAtWithWeightOnes inputs cache q budget
       { refineKeys := fun q' => if _ : q' = q then keys else ∅
         splitBudgetDiffRefined := budget } := by
   rfl

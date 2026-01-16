@@ -159,7 +159,7 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             IO.eprintln s!"debug: loAt keys: {loAtMsg}"
             if (← logitDiffRefineEnabled) then
               let refineBudget := max 1 cfg.splitBudgetDiffRefined
-              let refineKeys := Sound.refineKeysAtWithWeightOnes inputs cache info.q
+              let refineKeys := Sound.refineKeysAtWithWeightOnes inputs cache info.q refineBudget
               IO.eprintln
                 s!"debug: refine budget={refineBudget}, \
                 refineKeys.card={refineKeys.card}"
