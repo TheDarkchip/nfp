@@ -179,8 +179,15 @@ theorem prevOfTokensShift_spec {seq : Nat} {tokens : Fin seq → Nat} {q : Fin s
         ∀ k, k < q → tokens k = tokens q → k ≤ p0 := by
     simpa [p0] using (prevOfTokens_spec (tokens := tokens) (q := q) h)
   have hpval : (prevOfTokensShift tokens q).val = p0.val + 1 := by
-    simpa [prevOfTokensShift, hactive, p0]
-  simpa [p0, hpval, hp0]
+    simp [prevOfTokensShift, hactive, p0]
+  have hpval' :
+      (prevOfTokensShift tokens q).val = (prevOfTokens tokens q).val + 1 := by
+    simpa [p0] using hpval
+  have hp0' :
+      prevOfTokens tokens q < q ∧ tokens (prevOfTokens tokens q) = tokens q ∧
+        ∀ k, k < q → tokens k = tokens q → k ≤ prevOfTokens tokens q := by
+    simpa [p0] using hp0
+  simpa using And.intro hpval' hp0'
 
 /-- Active shifted queries imply the shifted `prev` maximal-match specification. -/
 theorem prevOfTokensShift_spec_of_active {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
