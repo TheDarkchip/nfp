@@ -88,6 +88,12 @@ def main() -> int:
     parser.add_argument("--min-margin", type=str)
     parser.add_argument("--max-eps", type=str)
     parser.add_argument("--nfp-bin", help="Path to nfp binary")
+    parser.add_argument("--timing", type=int)
+    parser.add_argument("--heartbeat-ms", type=int)
+    parser.add_argument("--split-budget-q", type=int)
+    parser.add_argument("--split-budget-k", type=int)
+    parser.add_argument("--split-budget-diff-base", type=int)
+    parser.add_argument("--split-budget-diff-refined", type=int)
 
     parser.add_argument(
         "--ensure-model",
@@ -128,6 +134,7 @@ def main() -> int:
 
     cmd = resolve_nfp_cmd(args.nfp_bin) + [
         "induction",
+        "advanced",
         subcmd,
         "--model",
         str(model_path),
@@ -148,6 +155,18 @@ def main() -> int:
         cmd += ["--min-margin", args.min_margin]
     if args.max_eps is not None:
         cmd += ["--max-eps", args.max_eps]
+    if args.timing is not None:
+        cmd += ["--timing", str(args.timing)]
+    if args.heartbeat_ms is not None:
+        cmd += ["--heartbeat-ms", str(args.heartbeat_ms)]
+    if args.split_budget_q is not None:
+        cmd += ["--split-budget-q", str(args.split_budget_q)]
+    if args.split_budget_k is not None:
+        cmd += ["--split-budget-k", str(args.split_budget_k)]
+    if args.split_budget_diff_base is not None:
+        cmd += ["--split-budget-diff-base", str(args.split_budget_diff_base)]
+    if args.split_budget_diff_refined is not None:
+        cmd += ["--split-budget-diff-refined", str(args.split_budget_diff_refined)]
 
     proc = subprocess.run(cmd)
     return proc.returncode
