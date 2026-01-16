@@ -12,8 +12,8 @@ Layer/head indices are one-based to align with the mechanistic interpretability
 literature.
 
 By default, `prev`/active are built from bigram prefix matches (the token at
-q-1 maps to its previous occurrence), and heads are ranked by attention to
-`prev`.
+q-1 maps to the *following* token after its previous occurrence), and heads are
+ranked by attention to `prev`.
 """
 
 from __future__ import annotations
@@ -117,13 +117,22 @@ def build_prev(tokens: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 
 
 def build_prev_bigram(tokens: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Bigram-prefix induction prev: for each position q>=1, look at token at q-1,
+    find its previous occurrence index j, and set prev[q] = j + 1.
+
+    Example (tokens = [1,2,1,3,2,1]):
+      prev = [0,0,0,1,0,2], active = [F,F,F,T,F,T]
+    """
     prev_token, active_token = build_prev(tokens)
     prev = np.zeros_like(tokens)
     active = np.zeros_like(tokens, dtype=bool)
     if tokens.size <= 1:
         return prev, active
-    prev[1:] = prev_token[:-1]
-    active[1:] = active_token[:-1]
+    prev_shift = prev_token[:-1] + 1
+    active_shift = active_token[:-1]
+    prev[1:] = np.where(active_shift, prev_shift, 0)
+    active[1:] = active_shift
     return prev, active
 
 
