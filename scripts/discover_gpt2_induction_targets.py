@@ -13,7 +13,8 @@ literature.
 
 By default, `prev`/active are built from bigram prefix matches (the token at
 q-1 maps to the *following* token after its previous occurrence), and heads are
-ranked by attention to `prev`.
+ranked by attention to `prev`. Use `--score-mode=copy` or `--score-mode=attn_copy`
+to include OV/copying alignment in the ranking.
 """
 
 from __future__ import annotations
@@ -55,6 +56,8 @@ class AttnResult:
     prev_mean: float
     prev_median: float
     prev_top1_frac: float
+    copy_mean: float
+    copy_weighted_mean: float
     eps: float
     margin: float
     active: int
@@ -226,6 +229,30 @@ def compute_eps_margin(
     return max(eps_vals), min(margin_vals), prev_mean, prev_median, prev_top1
 
 
+def compute_copy_scores(
+    ov: np.ndarray,
+    weights_prev: np.ndarray,
+    columns: Dict[int, np.ndarray],
+    tokens: np.ndarray,
+    prev: np.ndarray,
+    active_positions: Iterable[int],
+) -> Tuple[float, float]:
+    copy_vals: List[float] = []
+    copy_weighted_vals: List[float] = []
+    for idx, q in enumerate(active_positions):
+        tok = int(tokens[q])
+        col = columns.get(tok)
+        if col is None:
+            continue
+        prev_q = int(prev[q])
+        val = float(ov[prev_q] @ col)
+        copy_vals.append(val)
+        copy_weighted_vals.append(float(weights_prev[idx]) * val)
+    if not copy_vals:
+        return 0.0, 0.0
+    return float(np.mean(copy_vals)), float(np.mean(copy_weighted_vals))
+
+
 def format_result(result: HeadResult) -> str:
     layer = result.layer + 1
     head = result.head + 1
@@ -246,6 +273,7 @@ def format_attn_result(result: AttnResult) -> str:
         f"L{layer}H{head} score={result.score:.6f} "
         f"prevMean={result.prev_mean:.6f} prevMedian={result.prev_median:.6f} "
         f"prevTop1={result.prev_top1_frac:.3f} "
+        f"copyMean={result.copy_mean:.6f} copyWeighted={result.copy_weighted_mean:.6f} "
         f"eps={result.eps:.6f} margin={result.margin:.6f} active={result.active}"
     )
 
@@ -260,15 +288,24 @@ def main() -> int:
                         help="Run verifier on the top N candidates")
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "logit"],
+        choices=["attn", "copy", "attn_copy", "logit"],
         default="attn",
-        help="Rank heads by attention to prev (attn) or logit lower bound (logit).",
+        help=(
+            "Rank heads by attention to prev (attn), OV copy score (copy), "
+            "attention-weighted copy score (attn_copy), or logit lower bound (logit)."
+        ),
     )
     parser.add_argument(
         "--min-score",
         type=float,
         default=0.0,
-        help="Minimum attention score (attn mode).",
+        help="Minimum score threshold for the selected score mode.",
+    )
+    parser.add_argument(
+        "--min-copy",
+        type=float,
+        default=None,
+        help="Optional minimum OV copy score.",
     )
     parser.add_argument("--min-eps", type=float, default=0.5,
                         help="Filter candidates with eps above this value")
@@ -333,7 +370,9 @@ def main() -> int:
         active_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
         if not active_positions:
             raise SystemExit("No active positions found in the prompt")
+        prev_indices = prev[np.array(active_positions, dtype=np.int64)]
 
+        prompt_tokens = sorted({int(tok) for tok in tokens.tolist()})
         unique_tokens = []
         seen = set()
         for tok in tokens.tolist():
@@ -347,7 +386,7 @@ def main() -> int:
 
         head_data: Dict[
             Tuple[int, int],
-            Tuple[np.ndarray, np.ndarray, float, float, float, float, float],
+            Tuple[np.ndarray, np.ndarray, np.ndarray, float, float, float, float, float],
         ] = {}
 
         for layer_idx in range(num_layers):
@@ -391,9 +430,11 @@ def main() -> int:
                 eps, margin, prev_mean, prev_median, prev_top1 = compute_eps_margin(
                     weights, scores, prev, active_positions
                 )
+                prev_weights = weights[np.array(active_positions), prev_indices]
                 head_data[(layer_idx, head_idx)] = (
                     v,
                     wo,
+                    prev_weights,
                     eps,
                     margin,
                     prev_mean,
@@ -407,7 +448,7 @@ def main() -> int:
         unembed_start = f.tell()
 
         columns: Dict[int, np.ndarray] = {}
-        for tok in unique_tokens:
+        for tok in prompt_tokens:
             columns[tok] = read_unembed_column(
                 f,
                 unembed_start,
@@ -418,13 +459,37 @@ def main() -> int:
 
     results: List[HeadResult] = []
     attn_results: List[AttnResult] = []
-    prev_indices = prev[np.array(active_positions, dtype=np.int64)]
-    for (layer_idx, head_idx), (v, wo, eps, margin, prev_mean, prev_median, prev_top1) in head_data.items():
+    for (layer_idx, head_idx), (
+        v,
+        wo,
+        prev_weights,
+        eps,
+        margin,
+        prev_mean,
+        prev_median,
+        prev_top1,
+    ) in head_data.items():
         if args.score_mode == "logit":
             if eps > args.min_eps or margin < args.min_margin:
                 continue
-        if args.score_mode == "attn":
-            score = prev_mean
+        if args.score_mode != "logit":
+            ov = v @ wo
+            copy_mean, copy_weighted_mean = compute_copy_scores(
+                ov,
+                prev_weights,
+                columns,
+                tokens,
+                prev,
+                active_positions,
+            )
+            if args.min_copy is not None and copy_mean < args.min_copy:
+                continue
+            if args.score_mode == "attn":
+                score = prev_mean
+            elif args.score_mode == "copy":
+                score = copy_mean
+            else:
+                score = copy_weighted_mean
             if score < args.min_score:
                 continue
             attn_results.append(
@@ -435,6 +500,8 @@ def main() -> int:
                     prev_mean=prev_mean,
                     prev_median=prev_median,
                     prev_top1_frac=prev_top1,
+                    copy_mean=copy_mean,
+                    copy_weighted_mean=copy_weighted_mean,
                     eps=eps,
                     margin=margin,
                     active=len(active_positions),
@@ -478,7 +545,7 @@ def main() -> int:
         if best is not None:
             results.append(best)
 
-    if args.score_mode == "attn":
+    if args.score_mode != "logit":
         attn_results.sort(key=lambda r: r.score, reverse=True)
     else:
         results.sort(key=lambda r: r.logit_lb, reverse=True)
@@ -490,9 +557,10 @@ def main() -> int:
         f.write(f"tokens={len(unique_tokens)} active={len(active_positions)}\n")
         f.write(
             f"min-eps={args.min_eps} min-margin={args.min_margin} "
-            f"min-logit-lb={args.min_logit_lb} min-score={args.min_score}\n"
+            f"min-logit-lb={args.min_logit_lb} min-score={args.min_score} "
+            f"min-copy={args.min_copy}\n"
         )
-        if args.score_mode == "attn":
+        if args.score_mode != "logit":
             for rank, result in enumerate(attn_results[: args.top], start=1):
                 f.write(f"{rank:02d} {format_attn_result(result)}\n")
         else:
@@ -500,7 +568,7 @@ def main() -> int:
                 f.write(f"{rank:02d} {format_result(result)}\n")
 
     print(f"Wrote report to {args.output}")
-    if args.score_mode == "attn":
+    if args.score_mode != "logit":
         for rank, result in enumerate(attn_results[: args.top], start=1):
             print(f"{rank:02d} {format_attn_result(result)}")
     else:
@@ -518,8 +586,9 @@ def main() -> int:
             "min_margin": args.min_margin,
             "min_logit_lb": args.min_logit_lb,
             "min_score": args.min_score,
+            "min_copy": args.min_copy,
         }
-        if args.score_mode == "attn":
+        if args.score_mode != "logit":
             payload["results"] = [
                 {
                     "rank": rank,
@@ -529,6 +598,8 @@ def main() -> int:
                     "prev_mean": r.prev_mean,
                     "prev_median": r.prev_median,
                     "prev_top1_frac": r.prev_top1_frac,
+                    "copy_mean": r.copy_mean,
+                    "copy_weighted_mean": r.copy_weighted_mean,
                     "eps": r.eps,
                     "margin": r.margin,
                     "active": r.active,

@@ -101,6 +101,7 @@ def run_discovery(
     min_margin: float,
     min_logit_lb: float,
     min_score: float,
+    min_copy: float | None,
     score_mode: str,
     period: int | None,
     output_dir: Path,
@@ -129,6 +130,8 @@ def run_discovery(
         "--json-out",
         str(json_out),
     ]
+    if min_copy is not None:
+        cmd += ["--min-copy", str(min_copy)]
     if period is not None:
         cmd += ["--period", str(period)]
     if prev_mode != "bigram":
@@ -188,6 +191,8 @@ def write_csv_row(path: Path, row: dict) -> None:
         "prev_mean",
         "prev_median",
         "prev_top1_frac",
+        "copy_mean",
+        "copy_weighted_mean",
         "approx_logit_lb",
         "approx_eps",
         "approx_margin",
@@ -222,11 +227,12 @@ def main() -> int:
     parser.add_argument("--min-margin", type=float, default=0.0)
     parser.add_argument("--min-logit-lb", type=float, default=0.0)
     parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument("--min-copy", type=float)
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "logit"],
+        choices=["attn", "copy", "attn_copy", "logit"],
         default="attn",
-        help="Rank by attention score or logit-diff bound.",
+        help="Rank by attention/copy score or logit-diff bound.",
     )
     parser.add_argument("--use-period", action="store_true",
                         help="Use pattern length as the period override")
@@ -262,6 +268,7 @@ def main() -> int:
                     args.min_margin,
                     args.min_logit_lb,
                     args.min_score,
+                    args.min_copy,
                     args.score_mode,
                     period,
                     args.discovery_dir,
@@ -307,6 +314,8 @@ def main() -> int:
                             "prev_mean": result.get("prev_mean", ""),
                             "prev_median": result.get("prev_median", ""),
                             "prev_top1_frac": result.get("prev_top1_frac", ""),
+                            "copy_mean": result.get("copy_mean", ""),
+                            "copy_weighted_mean": result.get("copy_weighted_mean", ""),
                             "approx_logit_lb": result["logit_lb"],
                             "approx_eps": result["eps"],
                             "approx_margin": result["margin"],
@@ -339,6 +348,8 @@ def main() -> int:
                             "prev_mean": result.get("prev_mean", ""),
                             "prev_median": result.get("prev_median", ""),
                             "prev_top1_frac": result.get("prev_top1_frac", ""),
+                            "copy_mean": result.get("copy_mean", ""),
+                            "copy_weighted_mean": result.get("copy_weighted_mean", ""),
                             "approx_logit_lb": result.get("logit_lb", ""),
                             "approx_eps": result.get("eps", ""),
                             "approx_margin": result.get("margin", ""),

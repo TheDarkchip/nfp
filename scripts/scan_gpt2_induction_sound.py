@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Scan GPT-2 induction head candidates with attention or logit-diff bounds.
+Scan GPT-2 induction head candidates with attention/copy or logit-diff bounds.
 
 This script:
 1) Ensures a GPT-2 "rigorous induction" binary model exists.
@@ -123,11 +123,12 @@ def main() -> int:
     parser.add_argument("--min-margin", type=float, default=0.0)
     parser.add_argument("--min-logit-lb", type=float, default=0.0)
     parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument("--min-copy", type=float)
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "logit"],
+        choices=["attn", "copy", "attn_copy", "logit"],
         default="attn",
-        help="Rank by attention score or logit-diff bound.",
+        help="Rank by attention/copy score or logit-diff bound.",
     )
     parser.add_argument("--layers", help="Comma-separated layer list or 'all'")
     parser.add_argument("--heads", help="Comma-separated head list or 'all'")
@@ -187,6 +188,8 @@ def main() -> int:
         "--json-out",
         str(discover_json),
     ]
+    if args.min_copy is not None:
+        discover_cmd += ["--min-copy", str(args.min_copy)]
     if args.layers is not None:
         discover_cmd += ["--layers", args.layers]
     if args.heads is not None:
@@ -281,11 +284,14 @@ def main() -> int:
                 prev_mean = candidate.get("prev_mean")
                 prev_median = candidate.get("prev_median")
                 prev_top1 = candidate.get("prev_top1_frac")
+                copy_mean = candidate.get("copy_mean")
+                copy_weighted = candidate.get("copy_weighted_mean")
                 eps = candidate.get("eps")
                 margin = candidate.get("margin")
                 f.write(
                     f"{rank:02d} L{layer}H{head} score={score} "
                     f"prevMean={prev_mean} prevMedian={prev_median} prevTop1={prev_top1} "
+                    f"copyMean={copy_mean} copyWeighted={copy_weighted} "
                     f"eps={eps} margin={margin}\n"
                 )
 
