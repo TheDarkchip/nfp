@@ -26,6 +26,15 @@ structure InductionHeadRefineSpec (seq : Nat) where
   /-- Split budget for refined diff bounds. -/
   splitBudgetDiffRefined : Nat
 
+/-- Heuristic boost for refinement budgets. -/
+def refineBudgetBoost (budget : Nat) : Nat :=
+  max (budget + 1) (2 * budget)
+
+/-- Unfolding lemma for `refineBudgetBoost`. -/
+theorem refineBudgetBoost_def (budget : Nat) :
+    refineBudgetBoost budget = max (budget + 1) (2 * budget) := by
+  rfl
+
 /-- Worst key under the base score-gap lower bound (excluding `prev`). -/
 def worstKeyBase
     (inputs : Model.InductionHeadInputs seq dModel dHead)

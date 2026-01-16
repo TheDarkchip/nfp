@@ -335,8 +335,17 @@ def logitDiffLowerBoundRefineOnDemand
             let refineBudget := max 1 core.splitBudgetDiffRefined
             let spec := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget
             match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-            | some lb1 => some (max lb0 lb1)
             | none => some lb0
+            | some lb1 =>
+                let lb01 := max lb0 lb1
+                if lb01 ≤ 0 then
+                  let refineBudget' := refineBudgetBoost refineBudget
+                  let spec' := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget'
+                  match logitDiffLowerBoundRefinedFromCache inputs core c cache spec' with
+                  | some lb2 => some (max lb01 lb2)
+                  | none => some lb01
+                else
+                  some lb01
       else
         some lb0
 
@@ -356,8 +365,17 @@ theorem logitDiffLowerBoundRefineOnDemand_def
                 let refineBudget := max 1 core.splitBudgetDiffRefined
                 let spec := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget
                 match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-                | some lb1 => some (max lb0 lb1)
                 | none => some lb0
+                | some lb1 =>
+                    let lb01 := max lb0 lb1
+                    if lb01 ≤ 0 then
+                      let refineBudget' := refineBudgetBoost refineBudget
+                      let spec' := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget'
+                      match logitDiffLowerBoundRefinedFromCache inputs core c cache spec' with
+                      | some lb2 => some (max lb01 lb2)
+                      | none => some lb01
+                    else
+                      some lb01
           else
             some lb0 := by
   rfl
