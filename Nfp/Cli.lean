@@ -74,6 +74,7 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let timing? := (p.flag? "timing").map (·.as! Nat)
   let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let skipLogitDiff := p.hasFlag "skip-logit-diff"
   let zeroBased := p.hasFlag "zero-based"
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
@@ -97,6 +98,8 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
             fail "--layer/--head/--period are only valid with --model"
           else if direction?.isSome then
             fail "--direction is only valid with --model"
+          else if requireNonvacuous && skipLogitDiff then
+            fail "--skip-logit-diff is not allowed with certify_nonvacuous"
           else if requireNonvacuous then
             IO.runInductionCertifyHeadNonvacuous inputsPath minActive? minLogitDiffStr?
               minMarginStr? maxEpsStr? timing? heartbeatMs?
@@ -105,6 +108,7 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
             IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
               minMarginStr? maxEpsStr? timing? heartbeatMs?
               splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+              skipLogitDiff
       | none, some modelPath =>
           match layer?, head? with
           | some layer, some head =>
@@ -116,7 +120,9 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
               | Except.ok layer', Except.ok head' =>
                 match direction? with
                 | some ⟨dirTarget, dirNegative⟩ =>
-                    if requireNonvacuous then
+                    if requireNonvacuous && skipLogitDiff then
+                      fail "--skip-logit-diff is not allowed with certify_nonvacuous"
+                    else if requireNonvacuous then
                       IO.runInductionCertifyHeadModelNonvacuous modelPath layer' head' dirTarget
                         dirNegative period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
                         timing? heartbeatMs?
@@ -126,8 +132,11 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
                         period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
                         timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+                        skipLogitDiff
                 | none =>
-                    if requireNonvacuous then
+                    if requireNonvacuous && skipLogitDiff then
+                      fail "--skip-logit-diff is not allowed with certify_nonvacuous"
+                    else if requireNonvacuous then
                       IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer' head' period?
                         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -135,6 +144,7 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
                       IO.runInductionCertifyHeadModelAuto modelPath layer' head' period?
                         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+                        skipLogitDiff
           | _, _ =>
               fail "--layer and --head are required with --model"
       | none, none =>
@@ -215,6 +225,7 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
                                 (rational literal; default: 0)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    "skip-logit-diff"; "Skip logit-diff lower bound computation."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
 ]
@@ -421,9 +432,10 @@ def runInductionCertifyHead (p : Parsed) : IO UInt32 := do
   let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
   let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
   let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
+  let skipLogitDiff := p.hasFlag "skip-logit-diff"
   IO.runInductionCertifyHead inputsPath minActive? minLogitDiffStr?
     minMarginStr? maxEpsStr? timing? heartbeatMs?
-    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+    splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? skipLogitDiff
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
 def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
@@ -462,6 +474,7 @@ def inductionCertifyHeadCmd : Cmd := `[Cli|
                                       (default: 0)."
     "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
                                          bounds (default: 12)."
+    "skip-logit-diff" : Bool; "Skip logit-diff lower bound computation."
 ]
 
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
@@ -484,6 +497,7 @@ def inductionCertifyHeadNonvacuousCmd : Cmd := `[Cli|
                                       (default: 0)."
     "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
                                          bounds (default: 12)."
+    "skip-logit-diff" : Bool; "Skip logit-diff lower bound computation."
 ]
 
 /-- `nfp induction certify_head_model` subcommand. -/
@@ -504,6 +518,7 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
   let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
   let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
+  let skipLogitDiff := p.hasFlag "skip-logit-diff"
   let zeroBased := p.hasFlag "zero-based"
   let layerE := toZeroBased "layer" layer zeroBased
   let headE := toZeroBased "head" head zeroBased
@@ -517,7 +532,7 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   | Except.ok layer', Except.ok head' =>
       IO.runInductionCertifyHeadModel modelPath layer' head' dirTarget dirNegative period?
         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
-        splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+        splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? skipLogitDiff
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
@@ -568,6 +583,7 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
   let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
   let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
   let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
+  let skipLogitDiff := p.hasFlag "skip-logit-diff"
   let zeroBased := p.hasFlag "zero-based"
   let layerE := toZeroBased "layer" layer zeroBased
   let headE := toZeroBased "head" head zeroBased
@@ -581,7 +597,7 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
   | Except.ok layer', Except.ok head' =>
       IO.runInductionCertifyHeadModelAuto modelPath layer' head' period?
         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
-        splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+        splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? skipLogitDiff
 
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
 def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
@@ -640,6 +656,7 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
                                       (default: 0)."
     "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
                                          bounds (default: 12)."
+    "skip-logit-diff" : Bool; "Skip logit-diff lower bound computation."
 ]
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/

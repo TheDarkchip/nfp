@@ -88,12 +88,18 @@ def main() -> int:
     parser.add_argument("--min-margin", type=str)
     parser.add_argument("--max-eps", type=str)
     parser.add_argument("--nfp-bin", help="Path to nfp binary")
+    parser.add_argument(
+        "--preset",
+        choices=["fast", "balanced", "tight"],
+        help="Split-budget preset for streamlined certify",
+    )
     parser.add_argument("--timing", type=int)
     parser.add_argument("--heartbeat-ms", type=int)
     parser.add_argument("--split-budget-q", type=int)
     parser.add_argument("--split-budget-k", type=int)
     parser.add_argument("--split-budget-diff-base", type=int)
     parser.add_argument("--split-budget-diff-refined", type=int)
+    parser.add_argument("--skip-logit-diff", action="store_true")
 
     parser.add_argument(
         "--ensure-model",
@@ -128,13 +134,28 @@ def main() -> int:
         print(f"error: model not found at {model_path}", file=sys.stderr)
         return 1
 
-    subcmd = "certify_head_model_auto"
-    if args.nonvacuous:
-        subcmd = "certify_head_model_auto_nonvacuous"
+    use_advanced = any(
+        val is not None
+        for val in (
+            args.split_budget_q,
+            args.split_budget_k,
+            args.split_budget_diff_base,
+            args.split_budget_diff_refined,
+        )
+    )
+    if use_advanced:
+        subcmd = "certify_head_model_auto"
+        if args.nonvacuous:
+            subcmd = "certify_head_model_auto_nonvacuous"
+    else:
+        subcmd = "certify"
+        if args.nonvacuous:
+            subcmd = "certify_nonvacuous"
 
-    cmd = resolve_nfp_cmd(args.nfp_bin) + [
-        "induction",
-        "advanced",
+    cmd = resolve_nfp_cmd(args.nfp_bin) + ["induction"]
+    if use_advanced:
+        cmd.append("advanced")
+    cmd += [
         subcmd,
         "--model",
         str(model_path),
@@ -155,6 +176,8 @@ def main() -> int:
         cmd += ["--min-margin", args.min_margin]
     if args.max_eps is not None:
         cmd += ["--max-eps", args.max_eps]
+    if args.preset is not None and not use_advanced:
+        cmd += ["--preset", args.preset]
     if args.timing is not None:
         cmd += ["--timing", str(args.timing)]
     if args.heartbeat_ms is not None:
@@ -167,6 +190,8 @@ def main() -> int:
         cmd += ["--split-budget-diff-base", str(args.split_budget_diff_base)]
     if args.split_budget_diff_refined is not None:
         cmd += ["--split-budget-diff-refined", str(args.split_budget_diff_refined)]
+    if args.skip_logit_diff:
+        cmd.append("--skip-logit-diff")
 
     proc = subprocess.run(cmd)
     return proc.returncode

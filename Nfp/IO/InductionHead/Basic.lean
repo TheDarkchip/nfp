@@ -318,7 +318,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (cfg : Sound.InductionHeadSplitConfig)
     (minActive? : Option Nat) (minLogitDiff? : Option Rat)
-    (minMargin maxEps : Rat) : IO UInt32 := do
+    (minMargin maxEps : Rat) (skipLogitDiff : Bool) : IO UInt32 := do
   match seq with
   | 0 =>
       IO.eprintln "error: seq must be positive"
@@ -890,6 +890,12 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               s!"error: eps {ratToString cert.eps} \
               above maximum {ratToString maxEps}"
             return 2
+          if skipLogitDiff then
+            IO.println
+              s!"ok: induction head certificate built (seq={seq}, active={activeCount}, \
+              margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
+              note=logit-diff skipped)"
+            return 0
           timingPrint "timing: head tol start"
           timingFlush
           let tol := cert.eps * (cert.values.hi - cert.values.lo)
@@ -1177,7 +1183,8 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
-    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
+    (skipLogitDiff : Bool) :
     IO UInt32 := do
   configureTiming timing? heartbeatMs?
   let splitCfg :=
@@ -1206,6 +1213,7 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
           return 1
       | Except.ok ⟨_seq, ⟨_dModel, ⟨_dHead, inputs⟩⟩⟩ =>
           checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff? minMargin maxEps
+            skipLogitDiff
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
@@ -1213,7 +1221,8 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
-    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
+    (skipLogitDiff : Bool) :
     IO UInt32 := do
   configureTiming timing? heartbeatMs?
   let splitCfg :=
@@ -1254,6 +1263,7 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
               return 1
           | Except.ok inputs =>
               checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff? minMargin maxEps
+                skipLogitDiff
 
 /-- Heuristic logit-diff direction derived from prompt tokens. -/
 def deriveDirectionFromTokens {seq : Nat} (tokens : Fin seq → Nat) :
@@ -1290,7 +1300,8 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
-    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
+    (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
+    (skipLogitDiff : Bool) :
     IO UInt32 := do
   configureTiming timing? heartbeatMs?
   let splitCfg :=
@@ -1345,7 +1356,7 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
                       return 1
                   | Except.ok inputs =>
                       checkInductionHeadInputs inputs splitCfg minActive? minLogitDiff?
-                        minMargin maxEps
+                        minMargin maxEps skipLogitDiff
 
 /-- Build head-output interval bounds from exact head inputs. -/
 def runInductionHeadInterval (inputsPath : System.FilePath)
