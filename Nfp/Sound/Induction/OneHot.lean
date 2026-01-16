@@ -315,6 +315,120 @@ theorem oneHot_bounds_at_of_scoreGapLo
       simpa using h
     exact hle.trans hsum_others_le
 
+/-- One-hot bounds on a single active query, derived from per-key weight bounds. -/
+theorem oneHot_bounds_at_of_weight_bounds
+    (active : Finset (Fin seq))
+    (prev : Fin seq → Fin seq)
+    (scoresReal : Fin seq → Fin seq → Real)
+    (weightBoundAt : Fin seq → Fin seq → Rat)
+    (epsAt : Fin seq → Rat)
+    (hepsAt :
+      ∀ q, epsAt q =
+        min (1 : Rat)
+          ((Finset.univ : Finset (Fin seq)).erase (prev q) |>.sum (fun k =>
+            weightBoundAt q k)))
+    (hweight_bounds :
+      ∀ q, q ∈ active → ∀ k, k ≠ prev q →
+        Circuit.softmax (scoresReal q) k ≤ (weightBoundAt q k : Real)) :
+    ∀ q, q ∈ active →
+      Layers.OneHotApproxBoundsOnActive (Val := Real) (epsAt q : Real)
+        (fun q' => q' = q) prev
+        (fun q k => Circuit.softmax (scoresReal q) k) := by
+  classical
+  intro q hq
+  let softmaxWeights := Circuit.softmaxWeights scoresReal
+  let weights : Fin seq → Fin seq → Real := fun q k =>
+    Circuit.softmax (scoresReal q) k
+  let others : Fin seq → Finset (Fin seq) := fun q =>
+    (Finset.univ : Finset (Fin seq)).erase (prev q)
+  have hweights_nonneg : ∀ k, 0 ≤ weights q k := by
+    intro k
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.nonneg q k
+  have hsum_one : (∑ k, weights q k) = 1 := by
+    simpa [weights, softmaxWeights, Circuit.softmaxWeights_weights] using
+      softmaxWeights.sum_one q
+  have hsum_others_le_one : (∑ k ∈ others q, weights q k) ≤ 1 := by
+    have hsubset : others q ⊆ (Finset.univ : Finset (Fin seq)) := by
+      intro k hk
+      simp
+    have hsum_le :
+        (∑ k ∈ others q, weights q k) ≤
+          ∑ k ∈ (Finset.univ : Finset (Fin seq)), weights q k :=
+      Finset.sum_le_sum_of_subset_of_nonneg hsubset (by
+        intro k _ _
+        exact hweights_nonneg k)
+    simpa [hsum_one] using hsum_le
+  have hbound :
+      ∀ k ∈ others q, weights q k ≤ (weightBoundAt q k : Real) := by
+    intro k hk
+    have hkne : k ≠ prev q := (Finset.mem_erase.mp hk).1
+    exact hweight_bounds q hq k hkne
+  have hsum_others_le : (∑ k ∈ others q, weights q k) ≤ (epsAt q : Real) := by
+    have hsum_le :
+        (∑ k ∈ others q, weights q k) ≤
+          ∑ k ∈ others q, (weightBoundAt q k : Real) :=
+      Finset.sum_le_sum hbound
+    have hsum_le_min :
+        (∑ k ∈ others q, weights q k) ≤
+          min (1 : Real) (∑ k ∈ others q, (weightBoundAt q k : Real)) := by
+      exact le_min hsum_others_le_one hsum_le
+    have hepsAtReal :
+        (epsAt q : Real) = min (1 : Real) (∑ k ∈ others q, (weightBoundAt q k : Real)) := by
+      have h' : epsAt q = min 1 ((others q).sum (fun k => weightBoundAt q k)) := by
+        simpa [others] using hepsAt q
+      have h'' :
+          ratToReal (epsAt q) =
+            ratToReal (min 1 ((others q).sum (fun k => weightBoundAt q k))) := by
+        exact congrArg ratToReal h'
+      simpa [ratToReal_min, ratToReal_def, Rat.cast_sum] using h''
+    simpa [hepsAtReal] using hsum_le_min
+  refine
+    { nonneg := ?_
+      sum_one := ?_
+      prev_large := ?_
+      other_le := ?_ }
+  · intro q' hq' k
+    subst q'
+    exact hweights_nonneg k
+  · intro q' hq'
+    subst q'
+    exact hsum_one
+  · intro q' hq'
+    subst q'
+    have hsum_eq :
+        weights q (prev q) + ∑ k ∈ others q, weights q k = 1 := by
+      have hsum' :
+          weights q (prev q) + ∑ k ∈ others q, weights q k =
+            ∑ k, weights q k := by
+        simp [others]
+      calc
+        weights q (prev q) + ∑ k ∈ others q, weights q k =
+            ∑ k, weights q k := hsum'
+        _ = 1 := hsum_one
+    have hsum_le' :
+        weights q (prev q) + ∑ k ∈ others q, weights q k ≤
+          weights q (prev q) + (epsAt q : Real) := by
+      simpa [add_comm, add_left_comm, add_assoc] using
+        (add_le_add_left hsum_others_le (weights q (prev q)))
+    have hprev :
+        1 ≤ weights q (prev q) + (epsAt q : Real) := by
+      simpa [hsum_eq] using hsum_le'
+    exact hprev
+  · intro q' hq' k hk
+    subst q'
+    have hk' : k ∈ others q := by
+      simp [others, hk]
+    have hnonneg :
+        ∀ j ∈ others q, 0 ≤ weights q j := by
+      intro j _
+      exact hweights_nonneg j
+    have hle :
+        weights q k ≤ ∑ j ∈ others q, weights q j := by
+      have h := Finset.single_le_sum hnonneg hk'
+      simpa using h
+    exact hle.trans hsum_others_le
+
 /-- Per-key weight bounds on a single active query, derived from per-key score gaps. -/
 theorem weight_bound_at_of_scoreGapLo
     (active : Finset (Fin seq))

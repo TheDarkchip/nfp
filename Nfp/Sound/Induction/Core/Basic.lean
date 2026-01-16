@@ -245,6 +245,323 @@ structure InductionHeadCoreCache (seq dModel dHead : Nat) where
   /-- Induction-head certificate. -/
   cert : InductionHeadCert seq
 
+/-- Cached certificate-related fields derived from score gaps. -/
+structure InductionHeadCertFields (seq : Nat) where
+  /-- Margin per query. -/
+  marginAt : Fin seq → Rat
+  /-- Base weight bounds derived from score gaps. -/
+  weightBoundAtBase : Fin seq → Fin seq → Rat
+  /-- Cached base weight bounds. -/
+  weightBoundAtBaseCached : Fin seq → Fin seq → Rat
+  /-- Base epsilon per query. -/
+  epsAtBase : Fin seq → Rat
+  /-- Epsilon per query. -/
+  epsAt : Fin seq → Rat
+  /-- Per-key weight bounds derived from score gaps. -/
+  weightBoundAt : Fin seq → Fin seq → Rat
+  /-- Global margin. -/
+  margin : Rat
+  /-- Global epsilon. -/
+  eps : Rat
+
+/-- Build certificate-related cached fields from score gaps. -/
+def buildInductionHeadCertFields [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (otherKeys : Fin seq → Finset (Fin seq))
+    (scoreGapLo : Fin seq → Fin seq → Rat) : InductionHeadCertFields seq := by
+  let marginAt : Fin seq → Rat := fun q =>
+    if hq : q ∈ inputs.active then
+      let other := otherKeys q
+      if h : other.Nonempty then
+        other.inf' h (fun k => scoreGapLo q k)
+      else
+        (0 : Rat)
+    else
+      (0 : Rat)
+  let weightBoundAtBase : Fin seq → Fin seq → Rat := fun q k =>
+    if hk : k = inputs.prev q then
+      (0 : Rat)
+    else
+      let gap := scoreGapLo q k
+      if gap < 0 then
+        (1 : Rat)
+      else
+        ratDivUp 1 (1 + gap)
+  let weightBoundAtBaseCached : Fin seq → Fin seq → Rat :=
+    Bounds.cacheBound2Task weightBoundAtBase
+  let epsAtBase : Fin seq → Rat := fun q =>
+    let other := otherKeys q
+    let total := other.sum (fun k => weightBoundAtBaseCached q k)
+    min (1 : Rat) total
+  let epsAt : Fin seq → Rat := Bounds.cacheBoundThunk epsAtBase
+  let weightBoundAt : Fin seq → Fin seq → Rat := weightBoundAtBaseCached
+  let margin : Rat :=
+    if h : inputs.active.Nonempty then
+      inputs.active.inf' h marginAt
+    else
+      (0 : Rat)
+  let eps : Rat :=
+    if h : inputs.active.Nonempty then
+      inputs.active.sup' h epsAt
+    else
+      (0 : Rat)
+  exact
+    { marginAt := marginAt
+      weightBoundAtBase := weightBoundAtBase
+      weightBoundAtBaseCached := weightBoundAtBaseCached
+      epsAtBase := epsAtBase
+      epsAt := epsAt
+      weightBoundAt := weightBoundAt
+      margin := margin
+      eps := eps }
+
+/-- Unfolding lemma for `buildInductionHeadCertFields`. -/
+theorem buildInductionHeadCertFields_def [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (otherKeys : Fin seq → Finset (Fin seq))
+    (scoreGapLo : Fin seq → Fin seq → Rat) :
+    buildInductionHeadCertFields inputs otherKeys scoreGapLo =
+      (let marginAt : Fin seq → Rat := fun q =>
+          if _ : q ∈ inputs.active then
+            let other := otherKeys q
+            if h : other.Nonempty then
+              other.inf' h (fun k => scoreGapLo q k)
+            else
+              (0 : Rat)
+          else
+            (0 : Rat)
+        let weightBoundAtBase : Fin seq → Fin seq → Rat := fun q k =>
+          if _ : k = inputs.prev q then
+            (0 : Rat)
+          else
+            let gap := scoreGapLo q k
+            if gap < 0 then
+              (1 : Rat)
+            else
+              ratDivUp 1 (1 + gap)
+        let weightBoundAtBaseCached : Fin seq → Fin seq → Rat :=
+          Bounds.cacheBound2Task weightBoundAtBase
+        let epsAtBase : Fin seq → Rat := fun q =>
+          let other := otherKeys q
+          let total := other.sum (fun k => weightBoundAtBaseCached q k)
+          min (1 : Rat) total
+        let epsAt : Fin seq → Rat := Bounds.cacheBoundThunk epsAtBase
+        let weightBoundAt : Fin seq → Fin seq → Rat := weightBoundAtBaseCached
+        let margin : Rat :=
+          if h : inputs.active.Nonempty then
+            inputs.active.inf' h marginAt
+          else
+            (0 : Rat)
+        let eps : Rat :=
+          if h : inputs.active.Nonempty then
+            inputs.active.sup' h epsAt
+          else
+            (0 : Rat)
+        { marginAt := marginAt
+          weightBoundAtBase := weightBoundAtBase
+          weightBoundAtBaseCached := weightBoundAtBaseCached
+          epsAtBase := epsAtBase
+          epsAt := epsAt
+          weightBoundAt := weightBoundAt
+          margin := margin
+          eps := eps }) := by
+  rfl
+
+/-- The `eps` field of `buildInductionHeadCertFields` is the active supremum when nonempty. -/
+theorem buildInductionHeadCertFields_eps_eq [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (otherKeys : Fin seq → Finset (Fin seq))
+    (scoreGapLo : Fin seq → Fin seq → Rat) :
+    (buildInductionHeadCertFields inputs otherKeys scoreGapLo).eps =
+      if h : inputs.active.Nonempty then
+        inputs.active.sup' h
+          (buildInductionHeadCertFields inputs otherKeys scoreGapLo).epsAt
+      else
+        (0 : Rat) := by
+  rfl
+
+/-- Build an induction-head certificate from cached fields. -/
+def inductionHeadCertOfCacheFields [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (eps : Rat) (epsAt : Fin seq → Rat) (weightBoundAt : Fin seq → Fin seq → Rat)
+    (margin : Rat) (valCert : ValueInterval seq) : InductionHeadCert seq :=
+  { eps := eps
+    epsAt := epsAt
+    weightBoundAt := weightBoundAt
+    margin := margin
+    active := inputs.active
+    prev := inputs.prev
+    values := valCert }
+
+/-- Unfolding lemma for `inductionHeadCertOfCacheFields`. -/
+theorem inductionHeadCertOfCacheFields_def [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (eps : Rat) (epsAt : Fin seq → Rat) (weightBoundAt : Fin seq → Fin seq → Rat)
+    (margin : Rat) (valCert : ValueInterval seq) :
+    inductionHeadCertOfCacheFields inputs eps epsAt weightBoundAt margin valCert =
+      { eps := eps
+        epsAt := epsAt
+        weightBoundAt := weightBoundAt
+        margin := margin
+        active := inputs.active
+        prev := inputs.prev
+        values := valCert } := by
+  rfl
+
+/-- Build a value-interval certificate from per-query bounds. -/
+def buildInductionHeadValCert [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsLo valsHi : Fin seq → Rat) : ValueInterval seq := by
+  let univ : Finset (Fin seq) := Finset.univ
+  have hnonempty : univ.Nonempty := by simp [univ]
+  let lo := univ.inf' hnonempty valsLo
+  let hi := univ.sup' hnonempty valsHi
+  exact
+    { lo := lo
+      hi := hi
+      valsLo := valsLo
+      valsHi := valsHi
+      direction := some inputs.directionSpec }
+
+/-- Unfolding lemma for `buildInductionHeadValCert`. -/
+theorem buildInductionHeadValCert_def [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsLo valsHi : Fin seq → Rat) :
+    buildInductionHeadValCert inputs valsLo valsHi =
+      (let univ : Finset (Fin seq) := Finset.univ
+        have hnonempty : univ.Nonempty := by simp [univ]
+        let lo := univ.inf' hnonempty valsLo
+        let hi := univ.sup' hnonempty valsHi
+        { lo := lo
+          hi := hi
+          valsLo := valsLo
+          valsHi := valsHi
+          direction := some inputs.directionSpec }) := by
+  rfl
+
+/-- `buildInductionHeadValCert` preserves the provided lower bounds. -/
+theorem buildInductionHeadValCert_valsLo [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsLo valsHi : Fin seq → Rat) :
+    (buildInductionHeadValCert inputs valsLo valsHi).valsLo = valsLo := by
+  rfl
+
+/-- `buildInductionHeadValCert` preserves the provided upper bounds. -/
+theorem buildInductionHeadValCert_valsHi [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsLo valsHi : Fin seq → Rat) :
+    (buildInductionHeadValCert inputs valsLo valsHi).valsHi = valsHi := by
+  rfl
+
+/-- `buildInductionHeadValCert` yields pointwise value bounds from interval bounds. -/
+theorem buildInductionHeadValCert_bounds_at [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsReal : Fin seq → Real)
+    (valsLo valsHi : Fin seq → Rat)
+    (hvals : ∀ k, (valsLo k : Real) ≤ valsReal k ∧ valsReal k ≤ (valsHi k : Real)) :
+    ∀ k,
+      ((buildInductionHeadValCert inputs valsLo valsHi).valsLo k : Real) ≤ valsReal k ∧
+        valsReal k ≤ ((buildInductionHeadValCert inputs valsLo valsHi).valsHi k : Real) := by
+  intro k
+  have hprojLo :
+      (buildInductionHeadValCert inputs valsLo valsHi).valsLo = valsLo := by
+    exact buildInductionHeadValCert_valsLo (inputs := inputs) valsLo valsHi
+  have hprojHi :
+      (buildInductionHeadValCert inputs valsLo valsHi).valsHi = valsHi := by
+    exact buildInductionHeadValCert_valsHi (inputs := inputs) valsLo valsHi
+  have hlo :
+      ((buildInductionHeadValCert inputs valsLo valsHi).valsLo k : Real) = valsLo k := by
+    exact congrArg (fun r : Rat => (r : Real)) (congrArg (fun f => f k) hprojLo)
+  have hhi :
+      ((buildInductionHeadValCert inputs valsLo valsHi).valsHi k : Real) = valsHi k := by
+    exact congrArg (fun r : Rat => (r : Real)) (congrArg (fun f => f k) hprojHi)
+  simpa [hlo, hhi] using hvals k
+
+/-- `buildInductionHeadValCert` satisfies `ValueIntervalBounds` from pointwise value bounds. -/
+theorem buildInductionHeadValCert_bounds [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (valsReal : Fin seq → Real)
+    (valsLo valsHi : Fin seq → Rat)
+    (hvals : ∀ k, (valsLo k : Real) ≤ valsReal k ∧ valsReal k ≤ (valsHi k : Real)) :
+    ValueIntervalBounds (vals := valsReal) (buildInductionHeadValCert inputs valsLo valsHi) := by
+  let valCert := buildInductionHeadValCert inputs valsLo valsHi
+  let univ : Finset (Fin seq) := Finset.univ
+  have hnonempty : univ.Nonempty := by simp [univ]
+  let lo := univ.inf' hnonempty valsLo
+  let hi := univ.sup' hnonempty valsHi
+  refine
+    { lo_le_hi := ?_
+      lo_le_valsLo := ?_
+      vals_bounds := ?_
+      valsHi_le_hi := ?_ }
+  · rcases (Finset.univ_nonempty : univ.Nonempty) with ⟨k0, hk0⟩
+    have hmem0 : k0 ∈ univ := hk0
+    have hlo : (valCert.lo : Real) ≤ (valCert.valsLo k0 : Real) := by
+      have hloRat : valCert.lo ≤ valCert.valsLo k0 := by
+        change lo ≤ valsLo k0
+        dsimp [lo]
+        refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
+          (f := valsLo) (a := valsLo k0)).2 ⟨k0, hmem0, le_rfl⟩
+      simpa [ratToReal_def] using ratToReal_le_of_le hloRat
+    have hvals : (valCert.valsLo k0 : Real) ≤ valsReal k0 ∧
+        valsReal k0 ≤ (valCert.valsHi k0 : Real) := by
+      exact buildInductionHeadValCert_bounds_at (inputs := inputs)
+        (valsReal := valsReal) (valsLo := valsLo) (valsHi := valsHi) hvals k0
+    have hhi : (valCert.valsHi k0 : Real) ≤ (valCert.hi : Real) := by
+      have hhiRat : valCert.valsHi k0 ≤ valCert.hi := by
+        change valsHi k0 ≤ hi
+        dsimp [hi]
+        refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
+          (f := valsHi) (a := valsHi k0)).2 ⟨k0, ⟨hmem0, le_rfl⟩⟩
+      simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
+    have hreal : (valCert.lo : Real) ≤ (valCert.hi : Real) :=
+      le_trans hlo (le_trans hvals.1 (le_trans hvals.2 hhi))
+    have hreal' : ratToReal valCert.lo ≤ ratToReal valCert.hi := by
+      simpa [ratToReal_def] using hreal
+    exact (ratToReal_le_iff (x := valCert.lo) (y := valCert.hi)).1 hreal'
+  · intro k
+    have hloRat : valCert.lo ≤ valCert.valsLo k := by
+      change lo ≤ valsLo k
+      dsimp [lo]
+      refine (Finset.inf'_le_iff (s := univ) (H := hnonempty)
+        (f := valsLo) (a := valsLo k)).2 ⟨k, by simp [univ], le_rfl⟩
+    simpa [ratToReal_def] using ratToReal_le_of_le hloRat
+  · exact buildInductionHeadValCert_bounds_at (inputs := inputs)
+      (valsReal := valsReal) (valsLo := valsLo) (valsHi := valsHi) hvals
+  · intro k
+    have hhiRat : valCert.valsHi k ≤ valCert.hi := by
+      change valsHi k ≤ hi
+      dsimp [hi]
+      refine (Finset.le_sup'_iff (s := univ) (H := hnonempty)
+        (f := valsHi) (a := valsHi k)).2 ⟨k, by simp [univ], le_rfl⟩
+    simpa [ratToReal_def] using ratToReal_le_of_le hhiRat
+
+/-- Build an induction-head certificate from cached fields and value bounds. -/
+def buildInductionHeadCert [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (certFields : InductionHeadCertFields seq)
+    (valCert : ValueInterval seq) : InductionHeadCert seq :=
+  inductionHeadCertOfCacheFields inputs certFields.eps certFields.epsAt
+    certFields.weightBoundAt certFields.margin valCert
+
+/-- Unfolding lemma for `buildInductionHeadCert`. -/
+theorem buildInductionHeadCert_def [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (certFields : InductionHeadCertFields seq)
+    (valCert : ValueInterval seq) :
+    buildInductionHeadCert inputs certFields valCert =
+      inductionHeadCertOfCacheFields inputs certFields.eps certFields.epsAt
+        certFields.weightBoundAt certFields.margin valCert := by
+  rfl
+
+/-- `buildInductionHeadCert` preserves the provided value certificate. -/
+theorem buildInductionHeadCert_values [NeZero seq] {dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (certFields : InductionHeadCertFields seq)
+    (valCert : ValueInterval seq) :
+    (buildInductionHeadCert inputs certFields valCert).values = valCert := by
+  rfl
+
 /-- Build cached core quantities for induction-head certificates. -/
 def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
     (cfg : InductionHeadSplitConfig)
@@ -601,38 +918,52 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
         let t := worstKeyArr[q.1]'(by
           simp [worstKeyArr, q.isLt])
         Thunk.get t
+  let refineKeys : Fin seq → Finset (Fin seq) :=
+    if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
+      fun _ => ∅
+    else
+      let refineKeysRaw : Fin seq → Finset (Fin seq) := fun q =>
+        let base : Finset (Fin seq) :=
+          match worstKey q with
+          | some k => {k}
+          | none => ∅
+        if hq : q ∈ inputs.active then
+          let other := otherKeys q
+          base ∪ other.filter (fun k => decide (scoreGapLoBase q k < 0))
+        else
+          base
+      let refineKeysArr : Array (Thunk (Finset (Fin seq))) :=
+        Array.ofFn (fun q => Thunk.mk (fun _ => refineKeysRaw q))
+      fun q =>
+        let t := refineKeysArr[q.1]'(by
+          simp [refineKeysArr, q.isLt])
+        Thunk.get t
   let dotDiffLoHi : (Fin seq → Fin seq → Rat) × (Fin seq → Fin seq → Rat) :=
     if h : cfg.splitBudgetDiffRefined = cfg.splitBudgetDiffBase then
       (dotDiffLoBase, dotDiffHiBase)
     else
       let dotDiffLo : Fin seq → Fin seq → Rat := fun q k =>
-        match worstKey q with
-        | some k' =>
-            if hk : k = k' then
-              let dimsQ := splitDimsQ q
-              let dimsDiff := splitDimsDiffRefined q k
-              let prev := inputs.prev q
-              (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-                (fun d => qLo q d) (fun d => qHi q d)
-                (fun d => kLo prev d - kHi k d)
-                (fun d => kHi prev d - kLo k d)).1
-            else
-              dotDiffLoBase q k
-        | none => dotDiffLoBase q k
+        if hk : k ∈ refineKeys q then
+          let dimsQ := splitDimsQ q
+          let dimsDiff := splitDimsDiffRefined q k
+          let prev := inputs.prev q
+          (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+            (fun d => qLo q d) (fun d => qHi q d)
+            (fun d => kLo prev d - kHi k d)
+            (fun d => kHi prev d - kLo k d)).1
+        else
+          dotDiffLoBase q k
       let dotDiffHi : Fin seq → Fin seq → Rat := fun q k =>
-        match worstKey q with
-        | some k' =>
-            if hk : k = k' then
-              let dimsQ := splitDimsQ q
-              let dimsDiff := splitDimsDiffRefined q k
-              let prev := inputs.prev q
-              (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
-                (fun d => qLo q d) (fun d => qHi q d)
-                (fun d => kLo prev d - kHi k d)
-                (fun d => kHi prev d - kLo k d)).2
-            else
-              dotDiffHiBase q k
-        | none => dotDiffHiBase q k
+        if hk : k ∈ refineKeys q then
+          let dimsQ := splitDimsQ q
+          let dimsDiff := splitDimsDiffRefined q k
+          let prev := inputs.prev q
+          (_root_.Nfp.Sound.Bounds.dotIntervalLowerUpper2SignSplitBoth dimsQ dimsDiff
+            (fun d => qLo q d) (fun d => qHi q d)
+            (fun d => kLo prev d - kHi k d)
+            (fun d => kHi prev d - kLo k d)).2
+        else
+          dotDiffHiBase q k
       (dotDiffLo, dotDiffHi)
   let dotDiffLo : Fin seq → Fin seq → Rat := dotDiffLoHi.1
   let dotDiffHi : Fin seq → Fin seq → Rat := dotDiffLoHi.2
@@ -647,48 +978,26 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
       inputs.scale * dotDiffHi q k
   let scoreGapLo : Fin seq → Fin seq → Rat :=
     Bounds.cacheBound2 scoreGapLoRaw
-  let marginAt : Fin seq → Rat := fun q =>
-    if hq : q ∈ inputs.active then
-      let other := otherKeys q
-      if h : other.Nonempty then
-        other.inf' h (fun k => scoreGapLo q k)
-      else
-        (0 : Rat)
-    else
-      (0 : Rat)
-  let weightBoundAtBase : Fin seq → Fin seq → Rat := fun q k =>
-    if hk : k = inputs.prev q then
-      (0 : Rat)
-    else
-      let gap := scoreGapLo q k
-      if gap < 0 then
-        (1 : Rat)
-      else
-        ratDivUp 1 (1 + gap)
-  let weightBoundAtBaseCached : Fin seq → Fin seq → Rat :=
-    Bounds.cacheBound2Task weightBoundAtBase
-  let epsAtBase : Fin seq → Rat := fun q =>
-    let other := otherKeys q
-    let total := other.sum (fun k => weightBoundAtBaseCached q k)
-    min (1 : Rat) total
-  let epsAt : Fin seq → Rat :=
-    Bounds.cacheBoundThunk epsAtBase
-  let weightBoundAt : Fin seq → Fin seq → Rat := weightBoundAtBaseCached
-  let margin : Rat :=
-    if h : inputs.active.Nonempty then
-      inputs.active.inf' h marginAt
-    else
-      (0 : Rat)
-  let eps : Rat :=
-    if h : inputs.active.Nonempty then
-      inputs.active.sup' h epsAt
-    else
-      (0 : Rat)
+  let certFields := buildInductionHeadCertFields inputs otherKeys scoreGapLo
+  let marginAt : Fin seq → Rat := certFields.marginAt
+  let weightBoundAtBase : Fin seq → Fin seq → Rat := certFields.weightBoundAtBase
+  let weightBoundAtBaseCached : Fin seq → Fin seq → Rat := certFields.weightBoundAtBaseCached
+  let epsAtBase : Fin seq → Rat := certFields.epsAtBase
+  let epsAt : Fin seq → Rat := certFields.epsAt
+  let weightBoundAt : Fin seq → Fin seq → Rat := certFields.weightBoundAt
+  let margin : Rat := certFields.margin
+  let eps : Rat := certFields.eps
   let dirHeadVec := dirHeadVecOfInputs inputs
   let dirHead : Fin dHead → Rat := fun d => dirHeadVec.get d
-  let wvDir : Fin dModel → Rat :=
+  let wvDirTask : Fin dModel → Rat :=
     Bounds.cacheBoundTask (fun j =>
       Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
+  let wvDirArr : Array Rat := Array.ofFn wvDirTask
+  let wvDir : Fin dModel → Rat := fun j =>
+    wvDirArr[j.1]'(by
+      have hsize : wvDirArr.size = dModel := by
+        simp [wvDirArr]
+      simp [hsize, j.isLt])
   let bDir : Rat :=
     Linear.dotFin dHead dirHead (fun d => inputs.bv d)
   let valsLo : Fin seq → Rat := fun q =>
@@ -699,20 +1008,9 @@ def buildInductionHeadCoreCacheWith [NeZero seq] {dModel dHead : Nat}
   have hnonempty : univ.Nonempty := by simp [univ]
   let lo := univ.inf' hnonempty valsLo
   let hi := univ.sup' hnonempty valsHi
-  let valCert : ValueInterval seq :=
-    { lo := lo
-      hi := hi
-      valsLo := valsLo
-      valsHi := valsHi
-      direction := some inputs.directionSpec }
+  let valCert : ValueInterval seq := buildInductionHeadValCert inputs valsLo valsHi
   let cert : InductionHeadCert seq :=
-    { eps := eps
-      epsAt := epsAt
-      weightBoundAt := weightBoundAt
-      margin := margin
-      active := inputs.active
-      prev := inputs.prev
-      values := valCert }
+    buildInductionHeadCert inputs certFields valCert
   exact
     { lnBounds := lnBounds
       lnLo := lnLo

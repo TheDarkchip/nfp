@@ -226,6 +226,27 @@ structure InductionHeadCert (seq : Nat) where
   /-- Value-interval certificate for the direction values. -/
   values : ValueInterval seq
 
+/-- Extensionality lemma for `InductionHeadCert`. -/
+@[ext] theorem InductionHeadCert.ext {seq : Nat} {c₁ c₂ : InductionHeadCert seq}
+    (hε : c₁.eps = c₂.eps)
+    (hεAt : c₁.epsAt = c₂.epsAt)
+    (hweight : c₁.weightBoundAt = c₂.weightBoundAt)
+    (hmargin : c₁.margin = c₂.margin)
+    (hactive : c₁.active = c₂.active)
+    (hprev : c₁.prev = c₂.prev)
+    (hvalues : c₁.values = c₂.values) :
+    c₁ = c₂ := by
+  cases c₁
+  cases c₂
+  cases hε
+  cases hεAt
+  cases hweight
+  cases hmargin
+  cases hactive
+  cases hprev
+  cases hvalues
+  rfl
+
 /-- Soundness predicate for `InductionHeadCert`. -/
 structure InductionHeadCertSound [NeZero seq] {dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (c : InductionHeadCert seq) : Prop where

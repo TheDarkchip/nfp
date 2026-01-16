@@ -3,6 +3,7 @@ module
 
 public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 public import Nfp.Sound.Induction.CoreDefs
+public import Nfp.Sound.Induction.Core.Basic
 public import Nfp.Sound.Linear.FinFold
 
 /-!
@@ -141,6 +142,88 @@ theorem valsReal_eq_of_dir (inputs : Model.InductionHeadInputs seq dModel dHead)
             (bDir : Real) := by
         simpa [dotProduct] using hdir_bv.symm
       simp [hb]
+
+/-- Bound `valsRealOfInputs` using cached `wvDir`/`bDir` and logit interval bounds. -/
+theorem valsReal_bounds_at_of_ln_bounds (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (dirHead : Fin dHead → Rat)
+    (hdirHead : dirHead = fun d => (dirHeadVecOfInputs inputs).get d)
+    (wvDir : Fin dModel → Rat) (bDir : Rat)
+    (hwvDir : ∀ j, wvDir j = Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
+    (hbDir : bDir = Linear.dotFin dHead dirHead (fun d => inputs.bv d))
+    (lnLo lnHi : Fin seq → Fin dModel → Rat)
+    (valsLo valsHi : Fin seq → Rat)
+    (hvalsLo :
+      ∀ k, valsLo k = bDir + Bounds.dotIntervalLower wvDir (lnLo k) (lnHi k))
+    (hvalsHi :
+      ∀ k, valsHi k = bDir + Bounds.dotIntervalUpper wvDir (lnLo k) (lnHi k))
+    (hln :
+      ∀ k j, (lnLo k j : Real) ≤ lnRealOfInputs inputs k j ∧
+        lnRealOfInputs inputs k j ≤ (lnHi k j : Real)) :
+    ∀ k,
+      (valsLo k : Rat) ≤ valsRealOfInputs inputs k ∧
+        valsRealOfInputs inputs k ≤ (valsHi k : Rat) := by
+  intro k
+  have hdir_wv :
+      ∀ j, (wvDir j : Real) = ∑ d, (dirHead d : Real) * (inputs.wv j d : Real) :=
+    wvDir_real_eq_sum inputs dirHead wvDir hwvDir
+  have hdir_bv :
+      (bDir : Real) = ∑ d, (dirHead d : Real) * (inputs.bv d : Real) :=
+    bDir_real_eq_sum inputs dirHead bDir hbDir
+  have hvals_eq :=
+    valsReal_eq_of_dir inputs dirHead hdirHead wvDir bDir hdir_wv hdir_bv k
+  have hlo : ∀ j, (lnLo k j : Real) ≤ lnRealOfInputs inputs k j :=
+    fun j => (hln k j).1
+  have hhi : ∀ j, lnRealOfInputs inputs k j ≤ (lnHi k j : Real) :=
+    fun j => (hln k j).2
+  have hlow' :
+      (bDir + Bounds.dotIntervalLower wvDir (lnLo k) (lnHi k) : Rat) ≤
+        dotProduct (fun j => (wvDir j : Real)) (lnRealOfInputs inputs k) + (bDir : Real) := by
+    simpa [Rat.cast_add, add_comm] using
+      (Bounds.dotIntervalLower_le_dotProduct_real_add
+        (n := dModel) (v := wvDir)
+        (lo := lnLo k) (hi := lnHi k)
+        (x := lnRealOfInputs inputs k) (b := (bDir : Real))
+        hlo hhi)
+  have hhigh' :
+      dotProduct (fun j => (wvDir j : Real)) (lnRealOfInputs inputs k) + (bDir : Real) ≤
+        (bDir + Bounds.dotIntervalUpper wvDir (lnLo k) (lnHi k) : Rat) := by
+    simpa [Rat.cast_add, add_comm] using
+      (Bounds.dotProduct_le_dotIntervalUpper_real_add
+        (n := dModel) (v := wvDir)
+        (lo := lnLo k) (hi := lnHi k)
+        (x := lnRealOfInputs inputs k) (b := (bDir : Real))
+        hlo hhi)
+  constructor
+  · rw [hvalsLo k, hvals_eq]
+    exact hlow'
+  · rw [hvalsHi k, hvals_eq]
+    exact hhigh'
+
+/-- Build `ValueIntervalBounds` from logit interval bounds for `buildInductionHeadValCert`. -/
+theorem valCert_bounds_of_ln_bounds [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (dirHead : Fin dHead → Rat)
+    (hdirHead : dirHead = fun d => (dirHeadVecOfInputs inputs).get d)
+    (wvDir : Fin dModel → Rat) (bDir : Rat)
+    (hwvDir : ∀ j, wvDir j = Linear.dotFin dHead dirHead (fun d => inputs.wv j d))
+    (hbDir : bDir = Linear.dotFin dHead dirHead (fun d => inputs.bv d))
+    (lnLo lnHi : Fin seq → Fin dModel → Rat)
+    (valsLo valsHi : Fin seq → Rat)
+    (hvalsLo :
+      ∀ k, valsLo k = bDir + Bounds.dotIntervalLower wvDir (lnLo k) (lnHi k))
+    (hvalsHi :
+      ∀ k, valsHi k = bDir + Bounds.dotIntervalUpper wvDir (lnLo k) (lnHi k))
+    (hln :
+      ∀ k j, (lnLo k j : Real) ≤ lnRealOfInputs inputs k j ∧
+        lnRealOfInputs inputs k j ≤ (lnHi k j : Real)) :
+    ValueIntervalBounds (vals := valsRealOfInputs inputs)
+      (buildInductionHeadValCert inputs valsLo valsHi) := by
+  have hvals_bounds_at :=
+    valsReal_bounds_at_of_ln_bounds inputs dirHead hdirHead wvDir bDir hwvDir hbDir
+      lnLo lnHi valsLo valsHi hvalsLo hvalsHi hln
+  exact buildInductionHeadValCert_bounds (inputs := inputs)
+    (valsReal := valsRealOfInputs inputs) (valsLo := valsLo) (valsHi := valsHi)
+    hvals_bounds_at
 
 end Sound
 end Nfp

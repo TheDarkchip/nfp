@@ -33,6 +33,32 @@ def buildInductionCertFromHeadWith? [NeZero seq] {dModel dHead : Nat}
   | some c =>
       exact some ⟨c, buildInductionCertFromHeadCoreWith?_sound (cfg := cfg) inputs c hcore⟩
 
+/-- Build and certify induction certificates from exact head inputs, retaining the core cache. -/
+def buildInductionCertFromHeadWithCache? [NeZero seq] {dModel dHead : Nat}
+    (cfg : InductionHeadSplitConfig)
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    Option {cache : InductionHeadCoreCache seq dModel dHead //
+      InductionHeadCertSound inputs cache.cert} := by
+  classical
+  by_cases hEps : 0 < inputs.lnEps
+  · by_cases hSqrt : 0 < sqrtLower inputs.lnEps
+    · by_cases hmodel : dModel = 0
+      · exact none
+      · by_cases hactive : inputs.active.Nonempty
+        · let cache := buildInductionHeadCoreCacheWith cfg inputs
+          have hmodel' : dModel ≠ 0 := by
+            exact hmodel
+          have hcore :
+              buildInductionCertFromHeadCoreWith? cfg inputs = some cache.cert := by
+            simpa [cache] using
+              (buildInductionCertFromHeadCoreWith?_eq_some
+                (cfg := cfg) (inputs := inputs) hEps hSqrt hmodel' hactive)
+          exact some ⟨cache,
+            buildInductionCertFromHeadCoreWith?_sound (cfg := cfg) inputs cache.cert hcore⟩
+        · exact none
+    · exact none
+  · exact none
+
 /-- Build and certify induction certificates from exact head inputs using the default split
 budgets. -/
 def buildInductionCertFromHead? [NeZero seq] {dModel dHead : Nat}

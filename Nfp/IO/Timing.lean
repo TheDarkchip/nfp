@@ -295,29 +295,31 @@ def profileLogitDiffWeighted {seq : Nat}
   else
     timingPrint "timing: logit-diff profile start"
     timingFlush
-    let _ ← timePureWithHeartbeat "logit-diff profile: valsLo force" (fun () =>
+    let valsLoArr ← timePureWithHeartbeat "logit-diff profile: valsLo force" (fun () =>
       Array.ofFn (fun q : Fin seq => cache.valsLo q))
-    let _ ← timePureWithHeartbeat "logit-diff profile: weightBoundAt force" (fun () =>
+    let weightRows ← timePureWithHeartbeat "logit-diff profile: weightBoundAt force" (fun () =>
       Array.ofFn (fun q : Fin seq =>
         Array.ofFn (fun k : Fin seq => cert.weightBoundAt q k)))
+    let valsLo : Fin seq → Rat := fun k =>
+      valsLoArr.getD k.1 (0 : Rat)
+    let weightBoundAt : Fin seq → Fin seq → Rat := fun q k =>
+      let row := weightRows.getD q.1 #[]
+      row.getD k.1 (0 : Rat)
     let _ ← timePureWithHeartbeat "logit-diff profile: weighted gap sum" (fun () =>
-      let others : Fin seq → Finset (Fin seq) := fun q =>
-        (Finset.univ : Finset (Fin seq)).erase (cert.prev q)
       Array.ofFn (fun q : Fin seq =>
-        (others q).sum (fun k =>
-          let diff := cache.valsLo (cert.prev q) - cache.valsLo k
-          cert.weightBoundAt q k * max (0 : Rat) diff)))
+        let valsLoPrev := valsLo (cert.prev q)
+        Linear.sumFin seq (fun k =>
+          let diff := valsLoPrev - valsLo k
+          weightBoundAt q k * max (0 : Rat) diff)))
     let _ ← timePureWithHeartbeat "logit-diff profile: weighted min" (fun () =>
-      let others : Fin seq → Finset (Fin seq) := fun q =>
-        (Finset.univ : Finset (Fin seq)).erase (cert.prev q)
       let gap : Fin seq → Rat := fun q =>
-        (others q).sum (fun k =>
-          let diff := cache.valsLo (cert.prev q) - cache.valsLo k
-          cert.weightBoundAt q k * max (0 : Rat) diff)
-      let f : Fin seq → Rat := fun q => cache.valsLo (cert.prev q) - gap q
+        let valsLoPrev := valsLo (cert.prev q)
+        Linear.sumFin seq (fun k =>
+          let diff := valsLoPrev - valsLo k
+          weightBoundAt q k * max (0 : Rat) diff)
+      let f : Fin seq → Rat := fun q => valsLo (cert.prev q) - gap q
       if h : cert.active.Nonempty then
-        let img := cert.active.image f
-        let _ := Finset.min' img (h.image f)
+        let _ := cert.active.inf' h f
         ()
       else
         ())

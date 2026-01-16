@@ -79,6 +79,17 @@ def loadInductionHeadInputs (path : System.FilePath) :
 private def ratToString (x : Rat) : String :=
   toString x
 
+private def ratOptToString (x : Option Rat) : String :=
+  match x with
+  | some v => ratToString v
+  | none => "none"
+
+private def logitDiffDebugEnabled : IO Bool := do
+  return (← IO.getEnv "NFP_LOGITDIFF_DEBUG").isSome
+
+private def logitDiffRefineEnabled : IO Bool := do
+  return (← IO.getEnv "NFP_LOGITDIFF_REFINE").isSome
+
 private def renderResidualIntervalCert {n : Nat} (c : Circuit.ResidualIntervalCert n) : String :=
   let header := s!"dim {n}"
   let lines :=
@@ -714,14 +725,14 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
       let tCert0 ← monoUsNow
       let certTask :
           Task
-            (Option { c : Sound.InductionHeadCert seq //
-              Sound.InductionHeadCertSound inputs c }) :=
+            (Option { cache : Sound.InductionHeadCoreCache seq dModel dHead //
+              Sound.InductionHeadCertSound inputs cache.cert }) :=
         Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
-          match Sound.buildInductionCertFromHeadWith? cfg inputs with
+          match Sound.buildInductionCertFromHeadWithCache? cfg inputs with
           | none => none
-          | some ⟨cert, hcert⟩ =>
-              let _ := cert.active.card
-              some ⟨cert, hcert⟩)
+          | some ⟨cache, hcert⟩ =>
+              let _ := cache.cert.active.card
+              some ⟨cache, hcert⟩)
       let heartbeatMs ← heartbeatMs
       if heartbeatMs ≠ 0 then
         let mut finished := (← IO.hasFinished certTask)
@@ -742,7 +753,8 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
       | none =>
           IO.eprintln "error: head inputs rejected"
           return 2
-      | some ⟨cert, _hcert⟩ =>
+      | some ⟨cache, _hcert⟩ =>
+          let cert := cache.cert
           timingPrint "timing: head active count start"
           timingFlush
           let activeCount := cert.active.card
@@ -780,7 +792,7 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           profileLogitDiffWeighted cert logitCache
           let logitDiffLB0? ← timePureWithHeartbeat
             "head: logit-diff lower bound unweighted" (fun () =>
-              Nfp.Sound.logitDiffLowerBoundFromCache cert logitCache)
+              Nfp.Sound.logitDiffLowerBoundRefineOnDemand inputs cache cert logitCache)
           let logitDiffLB? ←
             match logitDiffLB0? with
             | none => pure none
@@ -854,14 +866,14 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
       let tCert0 ← monoUsNow
       let certTask :
           Task
-            (Option { c : Sound.InductionHeadCert seq //
-              Sound.InductionHeadCertSound inputs c }) :=
+            (Option { cache : Sound.InductionHeadCoreCache seq dModel dHead //
+              Sound.InductionHeadCertSound inputs cache.cert }) :=
         Task.spawn (prio := Task.Priority.dedicated) (fun _ =>
-          match Sound.buildInductionCertFromHeadWith? cfg inputs with
+          match Sound.buildInductionCertFromHeadWithCache? cfg inputs with
           | none => none
-          | some ⟨cert, hcert⟩ =>
-              let _ := cert.active.card
-              some ⟨cert, hcert⟩)
+          | some ⟨cache, hcert⟩ =>
+              let _ := cache.cert.active.card
+              some ⟨cache, hcert⟩)
       let heartbeatMs ← heartbeatMs
       if heartbeatMs ≠ 0 then
         let mut finished := (← IO.hasFinished certTask)
@@ -882,7 +894,8 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
       | none =>
           IO.eprintln "error: head inputs rejected"
           return 2
-      | some ⟨cert, _hcert⟩ =>
+      | some ⟨cache, _hcert⟩ =>
+          let cert := cache.cert
           let activeCount := cert.active.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := minActive?.getD defaultMinActive
@@ -926,7 +939,96 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
                 Nfp.Sound.logitDiffLowerBoundWeightedFromCache cert logitCache))
           let logitDiffLB0? ← timePureWithHeartbeat
             "head: logit-diff lower bound unweighted" (fun () =>
-              Nfp.Sound.logitDiffLowerBoundFromCache cert logitCache)
+              Nfp.Sound.logitDiffLowerBoundRefineOnDemand inputs cache cert logitCache)
+          if (← logitDiffDebugEnabled) then
+            match logitDiffLB0? with
+            | some lb0 =>
+                if lb0 ≤ 0 then
+                  match Nfp.Sound.logitDiffLowerBoundAtLoDebug cert logitCache with
+                  | none =>
+                      IO.eprintln "debug: logitDiffLB0 witness not found"
+                  | some ⟨info, _⟩ =>
+                      IO.eprintln
+                        s!"debug: logitDiffLB0 witness q={info.q.1}, prev={info.prev.1}"
+                      IO.eprintln
+                        s!"debug: eps={ratToString info.eps}, \
+                        valsPrevLo={ratToString info.valsPrevLo}, \
+                        loAt={ratToString info.loAt}, \
+                        lo={ratToString info.lo}"
+                      IO.eprintln
+                        s!"debug: valsPrevLoMinusLoAt={ratToString info.valsPrevLoMinusLoAt}, \
+                        gap={ratToString info.gap}, \
+                        fAtQ={ratToString (info.valsPrevLo - info.gap)}, \
+                        lbAtQ={ratToString info.lbAtQ}"
+                      let weightBoundAt := cert.weightBoundAt
+                      let step : (Rat × Nat × Rat) → Fin seq → (Rat × Nat × Rat) :=
+                        fun acc k =>
+                          if k = info.prev then
+                            acc
+                          else
+                            let w := weightBoundAt info.q k
+                            let sum := acc.1 + w
+                            let ones := if w = (1 : Rat) then acc.2.1 + 1 else acc.2.1
+                            let maxW := if w > acc.2.2 then w else acc.2.2
+                            (sum, ones, maxW)
+                      let acc := Sound.Linear.foldlFin seq step (0, 0, 0)
+                      IO.eprintln
+                        s!"debug: epsAt={ratToString (cert.epsAt info.q)}, \
+                        weightSum={ratToString acc.1}, ones={acc.2.1}, \
+                        maxWeight={ratToString acc.2.2}"
+                      let valsLo := logitCache.valsLo
+                      let stepOnes : Array String → Fin seq → Array String :=
+                        fun acc k =>
+                          if k = info.prev then
+                            acc
+                          else
+                            let w := weightBoundAt info.q k
+                            if w = (1 : Rat) then
+                              acc.push
+                                s!"k={k.1} valsLo={ratToString (valsLo k)}"
+                            else
+                              acc
+                      let ones := Sound.Linear.foldlFin seq stepOnes #[]
+                      let onesMsg :=
+                        if ones.isEmpty then
+                          "none"
+                        else
+                          String.intercalate ", " ones.toList
+                      IO.eprintln s!"debug: weightBoundAt=1 keys: {onesMsg}"
+                      let stepLoAt : Array String → Fin seq → Array String :=
+                        fun acc k =>
+                          if k = info.prev then
+                            acc
+                          else if valsLo k = info.loAt then
+                            acc.push
+                              s!"k={k.1} w={ratToString (weightBoundAt info.q k)}"
+                          else
+                            acc
+                      let loAtKeys := Sound.Linear.foldlFin seq stepLoAt #[]
+                      let loAtMsg :=
+                        if loAtKeys.isEmpty then
+                          "none"
+                        else
+                          String.intercalate ", " loAtKeys.toList
+                      IO.eprintln s!"debug: loAt keys: {loAtMsg}"
+                      if (← logitDiffRefineEnabled) then
+                        let refineBudget := max 1 cfg.splitBudgetDiffRefined
+                        let refineKeys := Sound.refineKeysAtWithWeightOnes inputs cache info.q
+                        IO.eprintln
+                          s!"debug: refine budget={refineBudget}, \
+                          refineKeys.card={refineKeys.card}"
+                        let refineSpec :=
+                          Sound.refineSpecForQueryWithWeightOnes inputs cache info.q refineBudget
+                        let refinedLB? :=
+                          Sound.logitDiffLowerBoundRefinedFromCache
+                            inputs cache cert logitCache refineSpec
+                        match refinedLB? with
+                        | none =>
+                            IO.eprintln "debug: refined logitDiffLB0 none"
+                        | some lb =>
+                            IO.eprintln
+                              s!"debug: refined logitDiffLB0={ratToString lb}"
+            | none => pure ()
           let needsWeighted : Bool :=
             match logitDiffLB0? with
             | none => true
@@ -969,6 +1071,12 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
               return 2
           | some logitDiffLB =>
               if logitDiffLB ≤ 0 then
+                if (← logitDiffDebugEnabled) then
+                  IO.eprintln
+                    s!"debug: logitDiffLB0={ratOptToString logitDiffLB0?}, \
+                    logitDiffWeighted={ratOptToString logitDiffWeighted?}, \
+                    logitDiffLB={ratToString logitDiffLB}, \
+                    bound={boundLabel}"
                 IO.eprintln
                   s!"error: logitDiffLB {ratToString logitDiffLB} \
                   is not strictly positive"

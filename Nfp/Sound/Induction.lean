@@ -9,6 +9,8 @@ public import Nfp.Sound.Induction.HeadBounds
 public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 public import Nfp.Sound.Induction.OneHot
+public import Nfp.Sound.Induction.Refine
+public import Nfp.Sound.Induction.RefineSound
 
 /-!
 Sound builders for induction certificates.

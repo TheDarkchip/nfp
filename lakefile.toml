@@ -24,6 +24,7 @@ weak.linter.style.lambdaSyntax = true
 weak.linter.style.dollarSyntax = true
 weak.linter.style.cdot = true
 weak.linter.style.longLine = true
+weak.linter.nfp.noHeartbeats = true
 
 [[require]]
 name = "mathlib"

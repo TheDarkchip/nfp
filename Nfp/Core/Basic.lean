@@ -2,6 +2,7 @@
 
 module
 
+public meta import Nfp.Tactic.Linter
 public import Mathlib.Algebra.Order.Group.Unbundled.Abs
 public import Mathlib.Data.NNReal.Defs
 public import Mathlib.Data.NNReal.Basic

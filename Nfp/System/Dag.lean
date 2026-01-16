@@ -2,6 +2,7 @@
 
 module
 
+public meta import Nfp.Tactic.Linter
 public import Mathlib.Combinatorics.Digraph.Basic
 public import Mathlib.Data.Fintype.Defs
 public import Mathlib.Data.Finset.Basic
