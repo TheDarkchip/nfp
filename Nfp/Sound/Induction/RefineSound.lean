@@ -2,9 +2,10 @@
 
 module
 
-public import Nfp.Sound.Induction.LogitDiff
+public import Nfp.Sound.Induction.LogitDiffSound
 public import Nfp.Sound.Induction.OneHot
 public import Nfp.Sound.Induction.Refine
+public import Nfp.Sound.Induction.CoreSound.Values
 
 /-!
 Soundness lemmas for refine-on-demand overlays.
@@ -355,6 +356,88 @@ theorem oneHot_bounds_at_overlay
   · intro q' hq' k hk
     exact hweight_overlay q' hq' k hk
 
+/-- Refined value lower bounds are sound when LayerNorm bounds are sound. -/
+theorem valsLoRefinedAt_le_valsReal
+    [NeZero seq] (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat)
+    (hsound : InductionHeadCertSound inputs cache.cert)
+    (k : Fin seq) :
+    (valsLoRefinedAt inputs cache budget k : Real) ≤ valsRealOfInputs inputs k := by
+  classical
+  by_cases hEps : 0 < inputs.lnEps
+  · by_cases hSqrt :
+      0 < Bounds.sqrtLowerWithScale (valRefineScale budget) inputs.lnEps
+    · by_cases hmodel : dModel = 0
+      · have hvals := hsound.value_bounds.vals_bounds k
+        simpa [valsLoRefinedAt_def, hEps, hSqrt, hmodel] using hvals.1
+      · let scale : Nat := valRefineScale budget
+        let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
+        let wvDir : Fin dModel → Rat :=
+          fun j => Linear.dotFin dHead dirHead (fun d => inputs.wv j d)
+        let bDir : Rat :=
+          Linear.dotFin dHead dirHead (fun d => inputs.bv d)
+        let lnBounds :
+            Fin seq → (Fin dModel → Rat) × (Fin dModel → Rat) := fun k' =>
+              Bounds.layerNormBoundsWithScale scale inputs.lnEps inputs.ln1Gamma inputs.ln1Beta
+                (inputs.embed k')
+        let lnLo : Fin seq → Fin dModel → Rat := fun k' => (lnBounds k').1
+        let lnHi : Fin seq → Fin dModel → Rat := fun k' => (lnBounds k').2
+        let valsLo : Fin seq → Rat := fun k' =>
+          bDir + Bounds.dotIntervalLower wvDir (lnLo k') (lnHi k')
+        let valsHi : Fin seq → Rat := fun k' =>
+          bDir + Bounds.dotIntervalUpper wvDir (lnLo k') (lnHi k')
+        have hscale_pos : 0 < scale := by
+          have hbase : 0 < Bounds.sqrtLowerScale := by
+            simp [Bounds.sqrtLowerScale_def]
+          have hboost : 0 < refineBudgetBoost budget := by
+            have hle : budget + 1 ≤ refineBudgetBoost budget := by
+              simp [refineBudgetBoost_def]
+            exact lt_of_lt_of_le (Nat.succ_pos budget) hle
+          simpa [scale, valRefineScale_def] using Nat.mul_pos hbase hboost
+        have hln :
+            ∀ k' j, (lnLo k' j : Real) ≤ lnRealOfInputs inputs k' j ∧
+              lnRealOfInputs inputs k' j ≤ (lnHi k' j : Real) := by
+          intro k' j
+          have hln' :=
+            Bounds.layerNormBoundsWithScale_spec (scale := scale)
+              (eps := inputs.lnEps) (gamma := inputs.ln1Gamma) (beta := inputs.ln1Beta)
+              (x := inputs.embed k') hmodel hEps hSqrt hscale_pos
+          simpa [lnBounds, lnLo, lnHi, lnRealOfInputs_def] using hln' j
+        have hvals :=
+          valsReal_bounds_at_of_ln_bounds (inputs := inputs)
+            (dirHead := dirHead) (hdirHead := rfl)
+            (wvDir := wvDir) (bDir := bDir)
+            (hwvDir := by intro j; rfl)
+            (hbDir := by rfl)
+            (lnLo := lnLo) (lnHi := lnHi)
+            (valsLo := valsLo) (valsHi := valsHi)
+            (hvalsLo := by intro k'; rfl)
+            (hvalsHi := by intro k'; rfl)
+            (hln := hln)
+        have hvals_k := (hvals k).1
+        simpa [valsLoRefinedAt_def, hEps, hSqrt, hmodel, scale, lnBounds, lnLo, lnHi,
+          valsLo, wvDir, bDir] using hvals_k
+    · have hvals := hsound.value_bounds.vals_bounds k
+      simpa [valsLoRefinedAt_def, hEps, hSqrt] using hvals.1
+  · have hvals := hsound.value_bounds.vals_bounds k
+    simpa [valsLoRefinedAt_def, hEps] using hvals.1
+
+/-- Overlayed value lower bounds remain sound. -/
+theorem valsLoOverlay_le_valsReal
+    [NeZero seq] (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat) (refineKeys : Finset (Fin seq))
+    (hsound : InductionHeadCertSound inputs cache.cert) :
+    ∀ k, (valsLoOverlay inputs cache budget refineKeys k : Real) ≤ valsRealOfInputs inputs k := by
+  intro k
+  by_cases hmem : k ∈ refineKeys
+  · simpa [valsLoOverlay_def, hmem] using
+      (valsLoRefinedAt_le_valsReal (inputs := inputs) (cache := cache)
+        (budget := budget) (hsound := hsound) k)
+  · have hvals := hsound.value_bounds.vals_bounds k
+    simpa [valsLoOverlay_def, hmem] using hvals.1
+
 /-- The refined unweighted logit-diff lower bound is sound on active queries. -/
 theorem logitDiffLowerBoundRefinedFromCache_le
     [NeZero seq] (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -564,40 +647,110 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                   cases h2 :
                       logitDiffLowerBoundRefinedFromCache inputs cache c logitCache spec' with
                   | none =>
-                      have hlb : lb = lb01 := by
-                        simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin, h1,
-                          spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget'] using
-                          hbound.symm
-                      have hbase := hbase_le (lb0 := lb0) h0
-                      have hweight_overlay' :
-                          ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
-                            Circuit.softmax (scoresRealOfInputs inputs q) k ≤
-                              (weightBoundAtOverlay inputs cache spec q k : Real) := by
-                        simpa [spec, refineBudget] using hweight_overlay q0 refineBudget
-                      have hrefine :=
-                        logitDiffLowerBoundRefinedFromCache_le
-                          (inputs := inputs)
-                          (cache := cache)
-                          (c := c)
-                          (logitCache := logitCache)
-                          (spec := spec)
-                          (hcert := hcert)
-                          (hcache := hcache)
-                          (hsound := hsound)
-                          (hweight_overlay := hweight_overlay')
-                          (hbound := h1)
-                          (hq := hq)
-                      have hmax' :
-                          max (lb0 : Real) (lb1 : Real) ≤ headLogitDiff inputs q := by
-                        exact max_le_iff.mpr ⟨hbase, hrefine⟩
-                      have hmax : (lb01 : Real) ≤ headLogitDiff inputs q := by
-                        simpa [lb01, ratToReal_max] using hmax'
-                      simpa [hlb] using hmax
+                      let valBudget := refineBudgetBoost refineBudget
+                      let valKeys := loAtKeysAt inputs cache q0
+                      let valsLo := valsLoOverlay inputs cache valBudget valKeys
+                      cases hval :
+                          logitDiffLowerBoundFromCacheWithEpsVals c logitCache.epsAt valsLo with
+                      | none =>
+                          have hlb : lb = lb01 := by
+                            simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
+                              h1, spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget',
+                              valBudget, valKeys, valsLo, hval] using hbound.symm
+                          have hbase := hbase_le (lb0 := lb0) h0
+                          have hweight_overlay' :
+                              ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
+                                Circuit.softmax (scoresRealOfInputs inputs q) k ≤
+                                  (weightBoundAtOverlay inputs cache spec q k : Real) := by
+                            simpa [spec, refineBudget] using hweight_overlay q0 refineBudget
+                          have hrefine :=
+                            logitDiffLowerBoundRefinedFromCache_le
+                              (inputs := inputs)
+                              (cache := cache)
+                              (c := c)
+                              (logitCache := logitCache)
+                              (spec := spec)
+                              (hcert := hcert)
+                              (hcache := hcache)
+                              (hsound := hsound)
+                              (hweight_overlay := hweight_overlay')
+                              (hbound := h1)
+                              (hq := hq)
+                          have hmax' :
+                              max (lb0 : Real) (lb1 : Real) ≤ headLogitDiff inputs q := by
+                            exact max_le_iff.mpr ⟨hbase, hrefine⟩
+                          have hmax : (lb01 : Real) ≤ headLogitDiff inputs q := by
+                            simpa [lb01, ratToReal_max] using hmax'
+                          simpa [hlb] using hmax
+                      | some lb2 =>
+                          have hlb : lb = max lb01 lb2 := by
+                            simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
+                              h1, spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget',
+                              valBudget, valKeys, valsLo, hval] using hbound.symm
+                          have hbase := hbase_le (lb0 := lb0) h0
+                          have hweight_overlay' :
+                              ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
+                                Circuit.softmax (scoresRealOfInputs inputs q) k ≤
+                                  (weightBoundAtOverlay inputs cache spec q k : Real) := by
+                            simpa [spec, refineBudget] using hweight_overlay q0 refineBudget
+                          have hrefine :=
+                            logitDiffLowerBoundRefinedFromCache_le
+                              (inputs := inputs)
+                              (cache := cache)
+                              (c := c)
+                              (logitCache := logitCache)
+                              (spec := spec)
+                              (hcert := hcert)
+                              (hcache := hcache)
+                              (hsound := hsound)
+                              (hweight_overlay := hweight_overlay')
+                              (hbound := h1)
+                              (hq := hq)
+                          have hmax' :
+                              max (lb0 : Real) (lb1 : Real) ≤ headLogitDiff inputs q := by
+                            exact max_le_iff.mpr ⟨hbase, hrefine⟩
+                          have hmax : (lb01 : Real) ≤ headLogitDiff inputs q := by
+                            simpa [lb01, ratToReal_max] using hmax'
+                          have hsound_cache : InductionHeadCertSound inputs cache.cert := by
+                            simpa [hcert] using hsound
+                          have hvalsLo :
+                              ∀ k, (valsLo k : Real) ≤ valsRealOfInputs inputs k := by
+                            exact valsLoOverlay_le_valsReal (inputs := inputs) (cache := cache)
+                              (budget := valBudget) (refineKeys := valKeys) hsound_cache
+                          have honeHot :
+                              ∀ q, q ∈ c.active →
+                                Layers.OneHotApproxBoundsOnActive (Val := Real)
+                                  ((logitDiffCache c).epsAt q : Real)
+                                  (fun q' => q' = q) c.prev
+                                  (fun q' k => Circuit.softmax (scoresRealOfInputs inputs q') k) :=
+                            by
+                              intro q' hq'
+                              have h := hsound.oneHot_bounds_at q' hq'
+                              have heps : (logitDiffCache c).epsAt q' = c.epsAt q' := by
+                                simp [logitDiffCache_def, Bounds.cacheBoundTask_apply]
+                              simpa [heps] using h
+                          have hval' :
+                              logitDiffLowerBoundFromCacheWithEpsVals c (logitDiffCache c).epsAt
+                                  valsLo = some lb2 := by
+                            simpa [hcache] using hval
+                          have hrefine_val :=
+                            logitDiffLowerBoundFromCacheWithEpsVals_le
+                              (inputs := inputs)
+                              (c := c)
+                              (epsAtCustom := (logitDiffCache c).epsAt)
+                              (valsLoCustom := valsLo)
+                              (hsound := hsound)
+                              (honeHot := honeHot)
+                              (hvalsLo := hvalsLo)
+                              (hbound := hval')
+                              (hq := hq)
+                          have hmax' :
+                              max (lb01 : Real) (lb2 : Real) ≤ headLogitDiff inputs q := by
+                            exact max_le_iff.mpr ⟨hmax, hrefine_val⟩
+                          have hmax : (max lb01 lb2 : Real) ≤ headLogitDiff inputs q := by
+                            simpa [ratToReal_max] using hmax'
+                          simpa [hlb] using hmax
                   | some lb2 =>
-                      have hlb : lb = max lb01 lb2 := by
-                        simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin, h1,
-                          spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget'] using
-                          hbound.symm
                       have hbase := hbase_le (lb0 := lb0) h0
                       have hweight_overlay' :
                           ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
@@ -643,9 +796,73 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                       have hmax' :
                           max (lb01 : Real) (lb2 : Real) ≤ headLogitDiff inputs q := by
                         exact max_le_iff.mpr ⟨hmax01, hrefine'⟩
-                      have hmax : (max lb01 lb2 : Real) ≤ headLogitDiff inputs q := by
+                      have hmax_weight : (max lb01 lb2 : Real) ≤ headLogitDiff inputs q := by
                         simpa [ratToReal_max] using hmax'
-                      simpa [hlb] using hmax
+                      let lbWeight : Rat := max lb01 lb2
+                      by_cases hweight_nonpos : lbWeight ≤ 0
+                      · let valBudget := refineBudgetBoost refineBudget
+                        let valKeys := loAtKeysAt inputs cache q0
+                        let valsLo := valsLoOverlay inputs cache valBudget valKeys
+                        cases hval :
+                            logitDiffLowerBoundFromCacheWithEpsVals c logitCache.epsAt valsLo with
+                        | none =>
+                            have hlb : lb = lbWeight := by
+                              simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
+                                h1, spec, refineBudget, lb01, hnonpos1, h2, spec',
+                                refineBudget', lbWeight, hweight_nonpos, valBudget, valKeys,
+                                valsLo, hval] using hbound.symm
+                            simpa [hlb, lbWeight] using hmax_weight
+                        | some lb3 =>
+                            have hlb : lb = max lbWeight lb3 := by
+                              simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
+                                h1, spec, refineBudget, lb01, hnonpos1, h2, spec',
+                                refineBudget', lbWeight, hweight_nonpos, valBudget, valKeys,
+                                valsLo, hval] using hbound.symm
+                            have hsound_cache : InductionHeadCertSound inputs cache.cert := by
+                              simpa [hcert] using hsound
+                            have hvalsLo :
+                                ∀ k, (valsLo k : Real) ≤ valsRealOfInputs inputs k := by
+                              exact valsLoOverlay_le_valsReal (inputs := inputs) (cache := cache)
+                                (budget := valBudget) (refineKeys := valKeys) hsound_cache
+                            have honeHot :
+                                ∀ q, q ∈ c.active →
+                                  Layers.OneHotApproxBoundsOnActive (Val := Real)
+                                    ((logitDiffCache c).epsAt q : Real)
+                                    (fun q' => q' = q) c.prev
+                                    (fun q' k =>
+                                      Circuit.softmax (scoresRealOfInputs inputs q') k) := by
+                                intro q' hq'
+                                have h := hsound.oneHot_bounds_at q' hq'
+                                have heps : (logitDiffCache c).epsAt q' = c.epsAt q' := by
+                                  simp [logitDiffCache_def, Bounds.cacheBoundTask_apply]
+                                simpa [heps] using h
+                            have hval' :
+                                logitDiffLowerBoundFromCacheWithEpsVals c (logitDiffCache c).epsAt
+                                    valsLo = some lb3 := by
+                              simpa [hcache] using hval
+                            have hrefine_val :=
+                              logitDiffLowerBoundFromCacheWithEpsVals_le
+                                (inputs := inputs)
+                                (c := c)
+                                (epsAtCustom := (logitDiffCache c).epsAt)
+                                (valsLoCustom := valsLo)
+                                (hsound := hsound)
+                                (honeHot := honeHot)
+                                (hvalsLo := hvalsLo)
+                                (hbound := hval')
+                                (hq := hq)
+                            have hmax' :
+                                max (lbWeight : Real) (lb3 : Real) ≤ headLogitDiff inputs q := by
+                              exact max_le_iff.mpr ⟨by simpa [lbWeight] using hmax_weight,
+                                hrefine_val⟩
+                            have hmax : (max lbWeight lb3 : Real) ≤ headLogitDiff inputs q := by
+                              simpa [ratToReal_max] using hmax'
+                            simpa [hlb] using hmax
+                      · have hlb : lb = lbWeight := by
+                          simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin, h1,
+                            spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget',
+                            lbWeight, hweight_nonpos] using hbound.symm
+                        simpa [hlb, lbWeight] using hmax_weight
                 · have hlb : lb = lb01 := by
                     simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin, h1,
                       spec, refineBudget, lb01, hnonpos1] using hbound.symm

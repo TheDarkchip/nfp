@@ -3,6 +3,7 @@
 module
 
 public import Nfp.IO.InductionHead.Basic
+public import Nfp.IO.InductionHead.Nonvacuous
 
 /-!
 IO helpers for induction-head certificate construction.

@@ -35,6 +35,15 @@ theorem refineBudgetBoost_def (budget : Nat) :
     refineBudgetBoost budget = max (budget + 1) (2 * budget) := by
   rfl
 
+/-- Scale used for refined value bounds. -/
+def valRefineScale (budget : Nat) : Nat :=
+  Bounds.sqrtLowerScale * refineBudgetBoost budget
+
+/-- Unfolding lemma for `valRefineScale`. -/
+theorem valRefineScale_def (budget : Nat) :
+    valRefineScale budget = Bounds.sqrtLowerScale * refineBudgetBoost budget := by
+  rfl
+
 /-- Worst key under the base score-gap lower bound (excluding `prev`). -/
 def worstKeyBase
     (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -83,6 +92,34 @@ theorem weightOneKeysAt_def
       let others : Finset (Fin seq) :=
         (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
       others.filter (fun k => decide (cache.weightBoundAt q k = (1 : Rat))) := by
+  rfl
+
+/-- Keys attaining the per-query lower-value minimum (excluding `prev`). -/
+def loAtKeysAt
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) : Finset (Fin seq) :=
+  let others : Finset (Fin seq) :=
+    (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
+  if h : others.Nonempty then
+    let lo := others.inf' h cache.valsLo
+    others.filter (fun k => decide (cache.valsLo k = lo))
+  else
+    ∅
+
+/-- Unfolding lemma for `loAtKeysAt`. -/
+theorem loAtKeysAt_def
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) :
+    loAtKeysAt inputs cache q =
+      let others : Finset (Fin seq) :=
+        (Finset.univ : Finset (Fin seq)).erase (inputs.prev q)
+      if h : others.Nonempty then
+        let lo := others.inf' h cache.valsLo
+        others.filter (fun k => decide (cache.valsLo k = lo))
+      else
+        ∅ := by
   rfl
 
 /-- Refinement keys for a query, seeded by negative base gaps and the worst key. -/
@@ -163,6 +200,84 @@ theorem refineSpecForQueryWithWeightOnes_def
       let keys := refineKeysAtWithWeightOnes inputs cache q
       { refineKeys := fun q' => if _ : q' = q then keys else ∅
         splitBudgetDiffRefined := budget } := by
+  rfl
+
+/-- Refined value lower bound at a single key (fallbacks to base bounds if disabled). -/
+def valsLoRefinedAt
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat) (k : Fin seq) : Rat :=
+  let scale := valRefineScale budget
+  if _ : 0 < inputs.lnEps then
+    if _ : 0 < Bounds.sqrtLowerWithScale scale inputs.lnEps then
+      if _ : dModel = 0 then
+        cache.cert.values.valsLo k
+      else
+        let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
+        let wvDir : Fin dModel → Rat :=
+          fun j => Linear.dotFin dHead dirHead (fun d => inputs.wv j d)
+        let bDir : Rat :=
+          Linear.dotFin dHead dirHead (fun d => inputs.bv d)
+        let lnBounds :=
+          Bounds.layerNormBoundsWithScale scale inputs.lnEps inputs.ln1Gamma inputs.ln1Beta
+            (inputs.embed k)
+        let lnLo := lnBounds.1
+        let lnHi := lnBounds.2
+        bDir + Bounds.dotIntervalLower wvDir lnLo lnHi
+    else
+      cache.cert.values.valsLo k
+  else
+    cache.cert.values.valsLo k
+
+/-- Unfolding lemma for `valsLoRefinedAt`. -/
+theorem valsLoRefinedAt_def
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat) (k : Fin seq) :
+    valsLoRefinedAt inputs cache budget k =
+      let scale := valRefineScale budget
+      if _ : 0 < inputs.lnEps then
+        if _ : 0 < Bounds.sqrtLowerWithScale scale inputs.lnEps then
+          if _ : dModel = 0 then
+            cache.cert.values.valsLo k
+          else
+            let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
+            let wvDir : Fin dModel → Rat :=
+              fun j => Linear.dotFin dHead dirHead (fun d => inputs.wv j d)
+            let bDir : Rat :=
+              Linear.dotFin dHead dirHead (fun d => inputs.bv d)
+            let lnBounds :=
+              Bounds.layerNormBoundsWithScale scale inputs.lnEps inputs.ln1Gamma inputs.ln1Beta
+                (inputs.embed k)
+            let lnLo := lnBounds.1
+            let lnHi := lnBounds.2
+            bDir + Bounds.dotIntervalLower wvDir lnLo lnHi
+        else
+          cache.cert.values.valsLo k
+      else
+        cache.cert.values.valsLo k := by
+  rfl
+
+/-- Overlay refined value lower bounds on a subset of keys. -/
+def valsLoOverlay
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat) (refineKeys : Finset (Fin seq)) : Fin seq → Rat := fun k =>
+  if k ∈ refineKeys then
+    valsLoRefinedAt inputs cache budget k
+  else
+    cache.cert.values.valsLo k
+
+/-- Unfolding lemma for `valsLoOverlay`. -/
+theorem valsLoOverlay_def
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (budget : Nat) (refineKeys : Finset (Fin seq)) (k : Fin seq) :
+    valsLoOverlay inputs cache budget refineKeys k =
+      if k ∈ refineKeys then
+        valsLoRefinedAt inputs cache budget k
+      else
+        cache.cert.values.valsLo k := by
   rfl
 
 /-- Refined diff dot-product lower bound at a single `(q,k)` pair. -/
