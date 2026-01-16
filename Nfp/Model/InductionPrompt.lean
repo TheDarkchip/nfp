@@ -32,6 +32,33 @@ theorem mem_activeOfPeriod {seq : Nat} {period : Nat} {q : Fin seq} :
     q ∈ activeOfPeriod (seq := seq) period ↔ period ≤ q.val := by
   simp [activeOfPeriod]
 
+/--
+Shifted `prev` map for a periodic induction prompt: if `0 < period` and
+`period ≤ q`, return `q - period + 1`; otherwise default to `0`.
+-/
+def prevOfPeriodShift {seq : Nat} (period : Nat) (q : Fin seq) : Fin seq := by
+  classical
+  by_cases hq : period ≤ q.val
+  · by_cases hper : 0 < period
+    · have hlt : q.val - period + 1 < seq := by
+        have hsub : q.val - period < q.val := Nat.sub_lt_of_pos_le hper hq
+        have hle : q.val - period + 1 ≤ q.val := Nat.succ_le_of_lt hsub
+        exact lt_of_le_of_lt hle q.isLt
+      exact ⟨q.val - period + 1, hlt⟩
+    · have hpos : 0 < seq := lt_of_le_of_lt (Nat.zero_le _) q.isLt
+      exact ⟨0, hpos⟩
+  · have hpos : 0 < seq := lt_of_le_of_lt (Nat.zero_le _) q.isLt
+    exact ⟨0, hpos⟩
+
+/-- Active queries for shifted periodic induction prompts (`0 < period ≤ q`). -/
+def activeOfPeriodShift {seq : Nat} (period : Nat) : Finset (Fin seq) :=
+  (Finset.univ : Finset (Fin seq)).filter (fun q => 0 < period ∧ period ≤ q.val)
+
+/-- Membership characterization for `activeOfPeriodShift`. -/
+theorem mem_activeOfPeriodShift {seq : Nat} {period : Nat} {q : Fin seq} :
+    q ∈ activeOfPeriodShift (seq := seq) period ↔ 0 < period ∧ period ≤ q.val := by
+  simp [activeOfPeriodShift]
+
 /-- `prev` map induced by token repeats (defaulting to `0` when no prior match exists). -/
 def prevOfTokens {seq : Nat} (tokens : Fin seq → Nat) (q : Fin seq) : Fin seq := by
   classical
@@ -99,6 +126,74 @@ theorem prevOfTokens_spec_of_active {seq : Nat} {tokens : Fin seq → Nat} {q : 
   have hk' : k < q := by
     exact (Fin.lt_def).2 hk
   exact prevOfTokens_spec (tokens := tokens) (q := q) ⟨k, hk', htok⟩
+
+/--
+Shifted `prev` map for induction: match the current token to its previous
+occurrence and return the following position (`A B ... A -> B`).
+
+Example (tokens = [1,2,1,3,2,1]):
+  prevShift = [0,0,0,1,0,2], activeShift = {3,5}
+-/
+def prevOfTokensShift {seq : Nat} (tokens : Fin seq → Nat) (q : Fin seq) : Fin seq := by
+  classical
+  by_cases hq : q ∈ activeOfTokens tokens
+  · let p := prevOfTokens tokens q
+    have hp :
+        p < q ∧ tokens p = tokens q ∧
+          ∀ k, k < q → tokens k = tokens q → k ≤ p := by
+      simpa [p] using
+        (prevOfTokens_spec_of_active (tokens := tokens) (q := q) hq)
+    have hpv : p.val < q.val := (Fin.lt_def).1 hp.1
+    have hle : p.val + 1 ≤ q.val := Nat.succ_le_of_lt hpv
+    have hlt : p.val + 1 < seq := lt_of_le_of_lt hle q.isLt
+    exact ⟨p.val + 1, hlt⟩
+  · let hpos : 0 < seq := lt_of_le_of_lt (Nat.zero_le _) q.isLt
+    exact ⟨0, hpos⟩
+
+/-- Active queries for shifted-token induction (same witness condition). -/
+def activeOfTokensShift {seq : Nat} (tokens : Fin seq → Nat) : Finset (Fin seq) :=
+  activeOfTokens tokens
+
+/-- Membership characterization for `activeOfTokensShift`. -/
+theorem mem_activeOfTokensShift {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq} :
+    q ∈ activeOfTokensShift tokens ↔ ∃ k, k.val < q.val ∧ tokens k = tokens q := by
+  simp [activeOfTokensShift, activeOfTokens]
+
+/-- Shifted `prev` agrees with the maximal previous match, advanced by one. -/
+theorem prevOfTokensShift_spec {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
+    (h : ∃ k, k < q ∧ tokens k = tokens q) :
+    let p := prevOfTokensShift tokens q
+    let p0 := prevOfTokens tokens q
+    p.val = p0.val + 1 ∧
+      p0 < q ∧ tokens p0 = tokens q ∧
+        ∀ k, k < q → tokens k = tokens q → k ≤ p0 := by
+  classical
+  have hactive : q ∈ activeOfTokens tokens := by
+    rcases h with ⟨k, hk, htok⟩
+    exact (mem_activeOfTokens (tokens := tokens) (q := q)).2
+      ⟨k, (Fin.lt_def).1 hk, htok⟩
+  let p0 := prevOfTokens tokens q
+  have hp0 :
+      p0 < q ∧ tokens p0 = tokens q ∧
+        ∀ k, k < q → tokens k = tokens q → k ≤ p0 := by
+    simpa [p0] using (prevOfTokens_spec (tokens := tokens) (q := q) h)
+  have hpval : (prevOfTokensShift tokens q).val = p0.val + 1 := by
+    simpa [prevOfTokensShift, hactive, p0]
+  simpa [p0, hpval, hp0]
+
+/-- Active shifted queries imply the shifted `prev` maximal-match specification. -/
+theorem prevOfTokensShift_spec_of_active {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
+    (hq : q ∈ activeOfTokensShift tokens) :
+    let p := prevOfTokensShift tokens q
+    let p0 := prevOfTokens tokens q
+    p.val = p0.val + 1 ∧
+      p0 < q ∧ tokens p0 = tokens q ∧
+        ∀ k, k < q → tokens k = tokens q → k ≤ p0 := by
+  have h := (mem_activeOfTokensShift (tokens := tokens) (q := q)).1 hq
+  rcases h with ⟨k, hk, htok⟩
+  have hk' : k < q := by
+    exact (Fin.lt_def).2 hk
+  exact prevOfTokensShift_spec (tokens := tokens) (q := q) ⟨k, hk', htok⟩
 
 end Model
 
