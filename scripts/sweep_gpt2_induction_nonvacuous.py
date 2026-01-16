@@ -8,7 +8,8 @@ This is untrusted orchestration: discovery uses floating-point math and only
 Lean verification results are treated as definitive in logit mode.
 
 Layer/head indices are one-based (literature-aligned). `prev` defaults to bigram
-prefix matching.
+prefix matching. This sweep generates repeated-random patterns to benchmark
+prefix-matching scores across seeds/lengths.
 """
 
 from __future__ import annotations

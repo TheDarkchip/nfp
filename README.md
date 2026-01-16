@@ -53,6 +53,10 @@ indices (literature-aligned), default to **bigram prefix matching** for
 logit-diff mode. The Lean CLI now expects **one-based** layer/head indices by
 default; pass `--zero-based` to use legacy zero-based indices.
 
+For canonical prefix-matching benchmarks, `scripts/scan_gpt2_induction_sound.py`
+supports `--synthetic` to generate repeated-random pattern prompts and score
+attention/copying on that distribution.
+
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \

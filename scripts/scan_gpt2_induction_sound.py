@@ -5,7 +5,8 @@
 Scan GPT-2 induction head candidates with attention/copy or logit-diff bounds.
 
 This script:
-1) Ensures a GPT-2 "rigorous induction" binary model exists.
+1) Ensures a GPT-2 "rigorous induction" binary model exists (or generates one
+   from repeated random patterns via --synthetic).
 2) Uses the untrusted discovery helper to propose head candidates.
 3) Optionally runs `nfp induction certify_head_model_nonvacuous` in logit mode.
 
@@ -32,11 +33,43 @@ def run_cmd(cmd: list[str]) -> str:
     return proc.stdout
 
 
-def ensure_model(model_path: Path) -> None:
+def ensure_model(
+    model_path: Path,
+    *,
+    seq_len: int = 256,
+    pattern_len: int = 20,
+    seed: int = 1337,
+    vocab_min: int = 1000,
+    vocab_max: int = 5000,
+    min_word_length: int = 4,
+    allow_no_leading_space: bool = False,
+    model_name: str = "gpt2",
+) -> None:
     if model_path.exists():
         return
     model_path.parent.mkdir(parents=True, exist_ok=True)
-    generator = [sys.executable, "scripts/generate_rigorous_induction.py", str(model_path)]
+    generator = [
+        sys.executable,
+        "scripts/generate_rigorous_induction.py",
+        "--output",
+        str(model_path),
+        "--seq-len",
+        str(seq_len),
+        "--pattern-len",
+        str(pattern_len),
+        "--seed",
+        str(seed),
+        "--vocab-min",
+        str(vocab_min),
+        "--vocab-max",
+        str(vocab_max),
+        "--min-word-length",
+        str(min_word_length),
+        "--model",
+        model_name,
+    ]
+    if allow_no_leading_space:
+        generator.append("--allow-no-leading-space")
     if shutil.which("uv"):
         generator = ["uv", "run"] + generator
     subprocess.run(generator, check=True)
@@ -139,6 +172,19 @@ def main() -> int:
         default="bigram",
         help="Choose prev/active construction (forwarded to discovery).",
     )
+    parser.add_argument(
+        "--synthetic",
+        action="store_true",
+        help="Generate a repeated-random pattern prompt (prefix-matching benchmark).",
+    )
+    parser.add_argument("--synthetic-seq-len", type=int, default=256)
+    parser.add_argument("--synthetic-pattern-len", type=int, default=20)
+    parser.add_argument("--synthetic-seed", type=int, default=1337)
+    parser.add_argument("--synthetic-vocab-min", type=int, default=1000)
+    parser.add_argument("--synthetic-vocab-max", type=int, default=5000)
+    parser.add_argument("--synthetic-min-word-length", type=int, default=4)
+    parser.add_argument("--synthetic-allow-no-leading-space", action="store_true")
+    parser.add_argument("--synthetic-model", default="gpt2")
     parser.add_argument("--output", default="reports/gpt2_induction_sound_scan.txt")
     args = parser.parse_args()
     args.jobs = max(1, args.jobs)
@@ -147,8 +193,30 @@ def main() -> int:
     if args.fast and not top_arg and args.top == parser.get_default("top"):
         args.top = 4
 
-    model_path = Path(args.model)
-    ensure_model(model_path)
+    model_arg = any(a.startswith("--model") for a in sys.argv[1:])
+    if args.synthetic and not model_arg:
+        model_path = Path(
+            "models/"
+            f"gpt2_rigorous_seq{args.synthetic_seq_len}"
+            f"_pat{args.synthetic_pattern_len}"
+            f"_seed{args.synthetic_seed}.nfpt"
+        )
+    else:
+        model_path = Path(args.model)
+    if args.synthetic:
+        ensure_model(
+            model_path,
+            seq_len=args.synthetic_seq_len,
+            pattern_len=args.synthetic_pattern_len,
+            seed=args.synthetic_seed,
+            vocab_min=args.synthetic_vocab_min,
+            vocab_max=args.synthetic_vocab_max,
+            min_word_length=args.synthetic_min_word_length,
+            allow_no_leading_space=args.synthetic_allow_no_leading_space,
+            model_name=args.synthetic_model,
+        )
+    else:
+        ensure_model(model_path)
     nfp_cmd = resolve_nfp_cmd(args.nfp_bin)
 
     header, tokens = read_header_and_tokens(model_path)
@@ -263,6 +331,12 @@ def main() -> int:
         else:
             f.write("Induction attention scan (prev-attn ranking)\n")
         f.write(f"model={model_path}\n")
+        if args.synthetic:
+            f.write(
+                "synthetic="
+                f"seq{args.synthetic_seq_len}_pat{args.synthetic_pattern_len}_"
+                f"seed{args.synthetic_seed}\n"
+            )
         f.write(f"target={target} negative={negative}\n")
         eps_header = header.get("layer_norm_eps") or header.get("eps") or "unknown"
         f.write(f"top={args.top} eps={eps_header}\n")
