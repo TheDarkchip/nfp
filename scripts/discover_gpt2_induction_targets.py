@@ -227,6 +227,11 @@ def compute_head_data_from_activations(
     except ImportError as exc:  # pragma: no cover - optional dependency
         raise SystemExit("Activation mode requires torch.") from exc
 
+    def split_heads(x: "torch.Tensor", num_heads: int, head_dim_local: int) -> "torch.Tensor":
+        batch, seq, _ = x.shape
+        x = x.reshape(batch, seq, num_heads, head_dim_local)
+        return x.permute(0, 2, 1, 3)
+
     blocks = get_transformer_blocks(model)
     head_data: Dict[
         Tuple[int, int],
@@ -249,9 +254,9 @@ def compute_head_data_from_activations(
         if head_dim_local != head_dim:
             raise SystemExit("HuggingFace head_dim does not match NFP header.")
         scale = 1.0 / math.sqrt(head_dim_local)
-        q = block.attn._split_heads(q, num_heads, head_dim_local)
-        k = block.attn._split_heads(k, num_heads, head_dim_local)
-        v = block.attn._split_heads(v, num_heads, head_dim_local)
+        q = split_heads(q, num_heads, head_dim_local)
+        k = split_heads(k, num_heads, head_dim_local)
+        v = split_heads(v, num_heads, head_dim_local)
         scores = torch.matmul(q, k.transpose(-2, -1)) * scale
         scores = scores.masked_fill(causal_mask, -10000.0)
         weights = torch.softmax(scores, dim=-1)
