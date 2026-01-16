@@ -47,6 +47,38 @@ theorem weight_eq_zero_of_not_parent (L : LocalSystem ι) {i j : ι} (h : ¬ L.d
   by
     simpa using L.support i j h
 
+/-- Off-edge weights remain zero after coercion to a mixer. -/
+theorem toMixer_weight_eq_zero_of_not_parent (L : LocalSystem ι) (h : IsRowStochastic L)
+    {i j : ι} (hrel : ¬ L.dag.rel j i) :
+    (toMixer L h).weight i j = 0 := by
+  simpa [toMixer] using weight_eq_zero_of_not_parent (L := L) (i := i) (j := j) hrel
+
+/-- Row sums can be restricted to parents in a row-stochastic local system. -/
+theorem row_sum_parents (L : LocalSystem ι) (h : IsRowStochastic L) (i : ι) :
+    Finset.sum (L.dag.parents i) (fun j => L.weight i j) = 1 := by
+  classical
+  have hsubset : L.dag.parents i ⊆ (Finset.univ : Finset ι) := by
+    intro j _hj
+    exact Finset.mem_univ j
+  have hzero :
+      ∀ j ∈ (Finset.univ : Finset ι), j ∉ L.dag.parents i → L.weight i j = 0 := by
+    intro j _hj hj
+    have hrel : ¬ L.dag.rel j i := by
+      intro hrel
+      have hmem : j ∈ L.dag.parents i := by
+        simpa using hrel
+      exact hj hmem
+    exact weight_eq_zero_of_not_parent (L := L) (i := i) (j := j) hrel
+  have hsum :
+      Finset.sum (L.dag.parents i) (fun j => L.weight i j) =
+        Finset.sum (Finset.univ : Finset ι) (fun j => L.weight i j) := by
+    exact Finset.sum_subset hsubset hzero
+  calc
+    Finset.sum (L.dag.parents i) (fun j => L.weight i j) =
+        Finset.sum (Finset.univ : Finset ι) (fun j => L.weight i j) := hsum
+    _ = 1 := by
+      simpa using h i
+
 /-- One-step evaluation functional used by `eval`. -/
 def evalStep (L : LocalSystem ι) (input : ι → Mass)
     (i : ι) (rec : ∀ j, L.dag.rel j i → Mass) : Mass :=
