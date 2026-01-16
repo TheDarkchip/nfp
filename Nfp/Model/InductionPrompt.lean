@@ -232,6 +232,189 @@ structure InductionPrevSpecTokensShift {seq dModel dHead : Nat}
   /-- Prev map matches the shifted-token definition. -/
   prev_eq : inputs.prev = prevOfTokensShift (seq := seq) tokens
 
+/-- Helper: lift a first-half index into `Fin (2 * period)`. -/
+lemma lt_double_of_lt_period {period i : Nat} (hi : i < period) : i < 2 * period := by
+  have hle : period ≤ 2 * period := by
+    have hpos : 0 < (2 : Nat) := by decide
+    exact Nat.le_mul_of_pos_left period hpos
+  exact Nat.lt_of_lt_of_le hi hle
+
+/--
+Tokens are a repeated pattern of length `period` with no repeats in the first half.
+
+This matches the usual induction diagnostic: a random pattern of length `period`
+repeated twice.
+-/
+structure InductionDiagnosticTokens (period : Nat) (tokens : Fin (2 * period) → Nat) : Prop where
+  /-- Second half repeats the first half with period `period`. -/
+  repeat_tok : ∀ q : Fin (2 * period), period ≤ q.val →
+      tokens q = tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩
+  /-- The first-half tokens are pairwise distinct. -/
+  inj : ∀ {i j : Nat} (hi : i < period) (hj : j < period),
+      tokens ⟨i, lt_double_of_lt_period hi⟩ =
+        tokens ⟨j, lt_double_of_lt_period hj⟩ → i = j
+
+/--
+In a diagnostic prompt (repeated distinct pattern), the previous matching token
+for any query in the second half is exactly `q - period`.
+-/
+theorem prevOfTokens_eq_prevOfPeriod_of_diag {period : Nat}
+    {tokens : Fin (2 * period) → Nat} (hdiag : InductionDiagnosticTokens period tokens)
+    (hper : 0 < period) {q : Fin (2 * period)} (hq : period ≤ q.val) :
+    prevOfTokens tokens q = prevOfPeriod (seq := 2 * period) period q := by
+  classical
+  let kq : Fin (2 * period) :=
+    ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩
+  have hklt : kq < q := by
+    have hklt' : kq.val < q.val := by
+      simpa [kq] using (Nat.sub_lt_of_pos_le hper hq)
+    exact (Fin.lt_def).2 hklt'
+  have htok : tokens kq = tokens q := by
+    have := hdiag.repeat_tok q hq
+    simpa [kq] using this.symm
+  have hspec := prevOfTokens_spec (tokens := tokens) (q := q) ⟨kq, hklt, htok⟩
+  let p := prevOfTokens tokens q
+  have hp :
+      p < q ∧ tokens p = tokens q ∧
+        ∀ k, k < q → tokens k = tokens q → k ≤ p := by
+    simpa [p] using hspec
+  have hqsub : q.val - period < period := by
+    have hq2 : q.val < 2 * period := q.isLt
+    have hq2' : q.val < period + period := by simpa [two_mul] using hq2
+    exact (Nat.sub_lt_iff_lt_add hq).2 (by simpa [Nat.add_comm] using hq2')
+  have huniq :
+      ∀ r : Fin (2 * period), r < q → tokens r = tokens q → r.val = q.val - period := by
+    intro r hr htokr
+    by_cases hrper : period ≤ r.val
+    · have hrsub : r.val - period < period := by
+        have hr2 : r.val < 2 * period := r.isLt
+        have hr2' : r.val < period + period := by simpa [two_mul] using hr2
+        exact (Nat.sub_lt_iff_lt_add hrper).2 (by simpa [Nat.add_comm] using hr2')
+      have htok_r :
+          tokens ⟨r.val - period, lt_of_le_of_lt (Nat.sub_le _ _) r.isLt⟩ = tokens r := by
+        have := hdiag.repeat_tok r hrper
+        simpa using this.symm
+      have htok_q :
+          tokens q = tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+        simpa using hdiag.repeat_tok q hq
+      have htok_first :
+          tokens ⟨r.val - period, lt_of_le_of_lt (Nat.sub_le _ _) r.isLt⟩ =
+            tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+        calc
+          tokens ⟨r.val - period, lt_of_le_of_lt (Nat.sub_le _ _) r.isLt⟩
+              = tokens r := by simpa using htok_r
+          _ = tokens q := by simpa using htokr
+          _ = tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+              simpa using htok_q
+      have hkeq : r.val - period = q.val - period := by
+        apply hdiag.inj hrsub hqsub
+        simpa using htok_first
+      have hrval : r.val = q.val := by
+        have h := congrArg (fun x => x + period) hkeq
+        simpa [Nat.sub_add_cancel hrper, Nat.sub_add_cancel hq] using h
+      have hrlt : r.val < q.val := (Fin.lt_def).1 hr
+      have hrlt' : r.val < r.val := by
+        have hrlt' := hrlt
+        rw [← hrval] at hrlt'
+        exact hrlt'
+      exact (False.elim (lt_irrefl _ hrlt'))
+    · have hrlt : r.val < period := lt_of_not_ge hrper
+      have hrfin :
+          (⟨r.val, lt_double_of_lt_period hrlt⟩ : Fin (2 * period)) = r := by
+        apply Fin.ext
+        rfl
+      have htok_q :
+          tokens q = tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+        simpa using hdiag.repeat_tok q hq
+      have htok_first :
+          tokens ⟨r.val, lt_double_of_lt_period hrlt⟩ =
+            tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+        calc
+          tokens ⟨r.val, lt_double_of_lt_period hrlt⟩ = tokens r := by
+            simp [hrfin]
+          _ = tokens q := by simpa using htokr
+          _ = tokens ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩ := by
+            simpa using htok_q
+      have hkeq : r.val = q.val - period := by
+        apply hdiag.inj hrlt hqsub
+        simpa using htok_first
+      exact hkeq
+  have hpval : p.val = q.val - period := by
+    have := hp.2.2 p hp.1 hp.2.1
+    have huniq' := huniq p hp.1 hp.2.1
+    exact huniq'
+  apply Fin.ext
+  simp [prevOfPeriod, hpval, p]
+
+/-- Shifted `prev` map matches the period-shifted map under diagnostic tokens. -/
+theorem prevOfTokensShift_eq_prevOfPeriodShift_of_diag {period : Nat}
+    {tokens : Fin (2 * period) → Nat} (hdiag : InductionDiagnosticTokens period tokens)
+    (hper : 0 < period) {q : Fin (2 * period)} (hq : period ≤ q.val) :
+    prevOfTokensShift tokens q = prevOfPeriodShift (seq := 2 * period) period q := by
+  have hprev :=
+    prevOfTokens_eq_prevOfPeriod_of_diag (tokens := tokens) hdiag hper (q := q) hq
+  have hactive : q ∈ activeOfTokensShift tokens := by
+    let kq : Fin (2 * period) :=
+      ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩
+    have hklt : kq < q := by
+      have hklt' : kq.val < q.val := by
+        simpa [kq] using (Nat.sub_lt_of_pos_le hper hq)
+      exact (Fin.lt_def).2 hklt'
+    have htok : tokens kq = tokens q := by
+      have := hdiag.repeat_tok q hq
+      simpa [kq] using this.symm
+    exact (mem_activeOfTokensShift (tokens := tokens) (q := q)).2
+      ⟨kq, hklt, htok⟩
+  have hactive' : q ∈ activeOfTokens tokens := by
+    simpa [activeOfTokensShift] using hactive
+  simp [prevOfTokensShift, hactive', hprev, prevOfPeriodShift, prevOfPeriod, hq, hper]
+
+/-- Active shifted queries coincide with the periodic active set in diagnostics. -/
+theorem activeOfTokensShift_eq_activeOfPeriodShift_of_diag {period : Nat}
+    {tokens : Fin (2 * period) → Nat} (hdiag : InductionDiagnosticTokens period tokens)
+    (hper : 0 < period) :
+    activeOfTokensShift (seq := 2 * period) tokens =
+      activeOfPeriodShift (seq := 2 * period) period := by
+  ext q
+  constructor
+  · intro hq
+    have hq' := (mem_activeOfTokensShift (tokens := tokens) (q := q)).1 hq
+    rcases hq' with ⟨k, hk, htok⟩
+    have hkper : period ≤ q.val := by
+      by_contra hlt
+      have hqlt : q.val < period := lt_of_not_ge hlt
+      have hklt : k.val < period := lt_of_lt_of_le hk (Nat.le_of_lt hqlt)
+      have hkfin :
+          (⟨k.val, lt_double_of_lt_period hklt⟩ : Fin (2 * period)) = k := by
+        apply Fin.ext
+        rfl
+      have hqfin :
+          (⟨q.val, lt_double_of_lt_period hqlt⟩ : Fin (2 * period)) = q := by
+        apply Fin.ext
+        rfl
+      have hkeq : k.val = q.val := by
+        apply hdiag.inj hklt hqlt
+        simpa [hkfin, hqfin] using htok
+      have hk' : k.val < k.val := by
+        have hk' := hk
+        rw [← hkeq] at hk'
+        exact hk'
+      exact (False.elim (lt_irrefl _ hk'))
+    exact (mem_activeOfPeriodShift (seq := 2 * period) (period := period) (q := q)).2
+      ⟨hper, hkper⟩
+  · intro hq
+    have hq' := (mem_activeOfPeriodShift (seq := 2 * period) (period := period) (q := q)).1 hq
+    rcases hq' with ⟨_, hqper⟩
+    let kq : Fin (2 * period) :=
+      ⟨q.val - period, lt_of_le_of_lt (Nat.sub_le _ _) q.isLt⟩
+    have hklt : kq.val < q.val := by
+      simpa [kq] using (Nat.sub_lt_of_pos_le hper hqper)
+    have htok : tokens kq = tokens q := by
+      have := hdiag.repeat_tok q hqper
+      simpa [kq] using this.symm
+    exact (mem_activeOfTokensShift (tokens := tokens) (q := q)).2
+      ⟨kq, hklt, htok⟩
+
 end Model
 
 end Nfp
