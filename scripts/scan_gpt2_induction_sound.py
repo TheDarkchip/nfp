@@ -2,12 +2,15 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Scan GPT-2 induction head candidates with SOUND logit-diff bounds.
+Scan GPT-2 induction head candidates with attention or logit-diff bounds.
 
 This script:
 1) Ensures a GPT-2 "rigorous induction" binary model exists.
-2) Uses the untrusted discovery helper to propose head/direction candidates.
-3) Runs `nfp induction certify_head_model_nonvacuous` to check each candidate.
+2) Uses the untrusted discovery helper to propose head candidates.
+3) Optionally runs `nfp induction certify_head_model_nonvacuous` in logit mode.
+
+Layer/head indices are one-based (literature-aligned). `prev` defaults to bigram
+prefix matching.
 """
 
 from __future__ import annotations
@@ -119,9 +122,22 @@ def main() -> int:
     parser.add_argument("--min-eps", type=float, default=0.5)
     parser.add_argument("--min-margin", type=float, default=0.0)
     parser.add_argument("--min-logit-lb", type=float, default=0.0)
+    parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument(
+        "--score-mode",
+        choices=["attn", "logit"],
+        default="attn",
+        help="Rank by attention score or logit-diff bound.",
+    )
     parser.add_argument("--layers", help="Comma-separated layer list or 'all'")
     parser.add_argument("--heads", help="Comma-separated head list or 'all'")
     parser.add_argument("--period", type=int)
+    parser.add_argument(
+        "--prev-mode",
+        choices=["bigram", "token", "period"],
+        default="bigram",
+        help="Choose prev/active construction (forwarded to discovery).",
+    )
     parser.add_argument("--output", default="reports/gpt2_induction_sound_scan.txt")
     args = parser.parse_args()
     args.jobs = max(1, args.jobs)
@@ -156,12 +172,16 @@ def main() -> int:
         str(model_path),
         "--top",
         str(args.top),
+        "--score-mode",
+        args.score_mode,
         "--min-eps",
         str(args.min_eps),
         "--min-margin",
         str(args.min_margin),
         "--min-logit-lb",
         str(args.min_logit_lb),
+        "--min-score",
+        str(args.min_score),
         "--output",
         str(discover_txt),
         "--json-out",
@@ -173,6 +193,8 @@ def main() -> int:
         discover_cmd += ["--heads", args.heads]
     if args.period is not None:
         discover_cmd += ["--period", str(args.period)]
+    if args.prev_mode != "bigram":
+        discover_cmd += ["--prev-mode", args.prev_mode]
     run_cmd(discover_cmd)
     payload = json.loads(discover_json.read_text(encoding="ascii"))
     candidates = payload.get("results", [])
@@ -182,70 +204,90 @@ def main() -> int:
 
     results: list[tuple[Fraction, dict[str, int]]] = []
 
-    def run_cert(candidate: dict[str, int]) -> tuple[dict[str, int], Fraction | None]:
-        layer = int(candidate["layer"])
-        head = int(candidate["head"])
-        target_id = int(candidate.get("target", target))
-        negative_id = int(candidate.get("negative", negative))
-        cmd = nfp_cmd + [
-            "induction",
-            "certify_head_model_nonvacuous",
-            "--model",
-            str(model_path),
-            "--layer",
-            str(layer),
-            "--head",
-            str(head),
-            "--direction-target",
-            str(target_id),
-            "--direction-negative",
-            str(negative_id),
-        ]
-        if args.period is not None:
-            cmd += ["--period", str(args.period)]
-        try:
-            cert_out = run_cmd(cmd)
-        except subprocess.CalledProcessError:
-            return candidate, None
-        return candidate, parse_logit_lb(cert_out)
+    if args.score_mode == "logit":
+        def run_cert(candidate: dict[str, int]) -> tuple[dict[str, int], Fraction | None]:
+            layer = int(candidate["layer"]) - 1
+            head = int(candidate["head"]) - 1
+            target_id = int(candidate.get("target", target))
+            negative_id = int(candidate.get("negative", negative))
+            cmd = nfp_cmd + [
+                "induction",
+                "certify_head_model_nonvacuous",
+                "--model",
+                str(model_path),
+                "--layer",
+                str(layer),
+                "--head",
+                str(head),
+                "--direction-target",
+                str(target_id),
+                "--direction-negative",
+                str(negative_id),
+            ]
+            if args.period is not None:
+                cmd += ["--period", str(args.period)]
+            try:
+                cert_out = run_cmd(cmd)
+            except subprocess.CalledProcessError:
+                return candidate, None
+            return candidate, parse_logit_lb(cert_out)
 
-    if args.jobs == 1:
-        for candidate in candidates:
-            candidate_out, logit_lb = run_cert(candidate)
-            if logit_lb is None:
-                continue
-            results.append((logit_lb, candidate_out))
-    else:
-        with ThreadPoolExecutor(max_workers=args.jobs) as executor:
-            futures = {executor.submit(run_cert, candidate): candidate for candidate in candidates}
-            for future in as_completed(futures):
-                candidate_out, logit_lb = future.result()
+        if args.jobs == 1:
+            for candidate in candidates:
+                candidate_out, logit_lb = run_cert(candidate)
                 if logit_lb is None:
                     continue
                 results.append((logit_lb, candidate_out))
+        else:
+            with ThreadPoolExecutor(max_workers=args.jobs) as executor:
+                futures = {executor.submit(run_cert, candidate): candidate for candidate in candidates}
+                for future in as_completed(futures):
+                    candidate_out, logit_lb = future.result()
+                    if logit_lb is None:
+                        continue
+                    results.append((logit_lb, candidate_out))
 
-    if not results:
-        print("No sound logit bounds produced.", file=sys.stderr)
-        return 1
+        if not results:
+            print("No sound logit bounds produced.", file=sys.stderr)
+            return 1
 
-    results.sort(key=lambda x: x[0], reverse=True)
+        results.sort(key=lambda x: x[0], reverse=True)
     out_path = Path(args.output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="ascii") as f:
-        f.write("SOUND induction scan (logitDiffLB ranking)\n")
+        if args.score_mode == "logit":
+            f.write("SOUND induction scan (logitDiffLB ranking)\n")
+        else:
+            f.write("Induction attention scan (prev-attn ranking)\n")
         f.write(f"model={model_path}\n")
         f.write(f"target={target} negative={negative}\n")
         eps_header = header.get("layer_norm_eps") or header.get("eps") or "unknown"
         f.write(f"top={args.top} eps={eps_header}\n")
-        for rank, (lb, candidate) in enumerate(results, start=1):
-            layer = int(candidate["layer"])
-            head = int(candidate["head"])
-            target_id = int(candidate.get("target", target))
-            negative_id = int(candidate.get("negative", negative))
-            f.write(
-                f"{rank:02d} L{layer}H{head} "
-                f"target={target_id} negative={negative_id} logitDiffLB={lb}\n"
-            )
+        if args.score_mode == "logit":
+            for rank, (lb, candidate) in enumerate(results, start=1):
+                layer = int(candidate["layer"])
+                head = int(candidate["head"])
+                target_id = int(candidate.get("target", target))
+                negative_id = int(candidate.get("negative", negative))
+                f.write(
+                    f"{rank:02d} L{layer}H{head} "
+                    f"target={target_id} negative={negative_id} logitDiffLB={lb}\n"
+                )
+        else:
+            for rank, candidate in enumerate(candidates[: args.top], start=1):
+                layer = int(candidate["layer"])
+                head = int(candidate["head"])
+                score = candidate.get("score")
+                prev_mean = candidate.get("prev_mean")
+                prev_median = candidate.get("prev_median")
+                prev_top1 = candidate.get("prev_top1_frac")
+                eps = candidate.get("eps")
+                margin = candidate.get("margin")
+                f.write(
+                    f"{rank:02d} L{layer}H{head} score={score} "
+                    f"prevMean={prev_mean} prevMedian={prev_median} prevTop1={prev_top1} "
+                    f"eps={eps} margin={margin}\n"
+                )
 
     print(f"Report written to {out_path}")
     return 0

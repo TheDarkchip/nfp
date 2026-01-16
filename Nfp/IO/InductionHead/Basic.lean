@@ -100,6 +100,40 @@ def logitDiffDebugEarlyExitEnabled : IO Bool := do
 def logitDiffRefineEnabled : IO Bool := do
   return (← IO.getEnv "NFP_LOGITDIFF_REFINE").isSome
 
+/-- Parse an optional query index for alternative logit-diff bound diagnostics. -/
+def logitDiffAltBoundQuery : IO (Option Nat) := do
+  match (← IO.getEnv "NFP_LOGITDIFF_ALT_BOUND_Q") with
+  | none => return none
+  | some txt =>
+      match txt.toNat? with
+      | some n => return some n
+      | none =>
+          IO.eprintln s!"warn: invalid NFP_LOGITDIFF_ALT_BOUND_Q={txt}"
+          return none
+
+/-- Parse an optional query index for q-only logit-diff diagnostics. -/
+def logitDiffQueryOnly : IO (Option Nat) := do
+  match (← IO.getEnv "NFP_LOGITDIFF_Q_ONLY") with
+  | none => return none
+  | some txt =>
+      match txt.toNat? with
+      | some n => return some n
+      | none =>
+          IO.eprintln s!"warn: invalid NFP_LOGITDIFF_Q_ONLY={txt}"
+          return none
+
+/-- Check whether q-only logit-diff diagnostics should include refined weight bounds. -/
+def logitDiffQueryOnlyRefineEnabled : IO Bool := do
+  return (← IO.getEnv "NFP_LOGITDIFF_Q_ONLY_REFINE").isSome
+
+/-- Check whether q-only logit-diff diagnostics should include refined value bounds. -/
+def logitDiffQueryOnlyValsEnabled : IO Bool := do
+  return (← IO.getEnv "NFP_LOGITDIFF_Q_ONLY_VALS").isSome
+
+/-- Check whether q-only logit-diff diagnostics should exit early. -/
+def logitDiffQueryOnlyEarlyExitEnabled : IO Bool := do
+  return (← IO.getEnv "NFP_LOGITDIFF_Q_ONLY_EARLY_EXIT").isSome
+
 private def renderResidualIntervalCert {n : Nat} (c : Circuit.ResidualIntervalCert n) : String :=
   let header := s!"dim {n}"
   let lines :=
@@ -114,6 +148,76 @@ private def emitResidualIntervalCert {n : Nat} (c : Circuit.ResidualIntervalCert
   match outPath? with
   | some path => IO.FS.writeFile path (payload ++ "\n")
   | none => IO.println payload
+
+/-- Emit q-only logit-diff diagnostics, returning whether early exit was requested. -/
+def emitLogitDiffQueryOnly {seq dModel dHead : Nat} [NeZero seq]
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cfg : Sound.InductionHeadSplitConfig)
+    (cache : Sound.InductionHeadCoreCache seq dModel dHead)
+    (cert : Sound.InductionHeadCert seq)
+    (logitCache : Sound.LogitDiffCache seq) : IO Bool := do
+  match (← logitDiffQueryOnly) with
+  | none => return false
+  | some qNat =>
+      if hq : qNat < seq then
+        let q : Fin seq := ⟨qNat, hq⟩
+        let prev := cert.prev q
+        let epsAt : Fin seq → Rat := logitCache.epsAt
+        let others : Finset (Fin seq) :=
+          (Finset.univ : Finset (Fin seq)).erase prev
+        IO.eprintln
+          s!"debug: q-only q={qNat} prev={prev.1} \
+          epsAt={ratToString (epsAt q)}"
+        if (← logitDiffQueryOnlyValsEnabled) then
+          let valsLo : Fin seq → Rat := logitCache.valsLo
+          let loAt : Rat :=
+            if h : others.Nonempty then
+              others.inf' h valsLo
+            else
+              cert.values.lo
+          let valsPrevLo := valsLo prev
+          let delta := valsPrevLo - loAt
+          let gap := epsAt q * max (0 : Rat) delta
+          let lbAtQ := valsPrevLo - gap
+          IO.eprintln
+            s!"debug: q-only loAt={ratToString loAt} \
+            valsPrevLo={ratToString valsPrevLo} \
+            lbAtQ={ratToString lbAtQ}"
+        if (← logitDiffQueryOnlyRefineEnabled) then
+          let refineBudget := max 1 cfg.splitBudgetDiffRefined
+          let spec := Sound.refineSpecForQueryWithWeightOnes inputs cache q refineBudget
+          let weightBoundAt := Sound.weightBoundAtOverlay inputs cache spec
+          let epsAtRef := Sound.epsAtOverlay cache weightBoundAt q
+          IO.eprintln
+            s!"debug: q-only refined budget={refineBudget} \
+            epsAt={ratToString epsAtRef}"
+          if (← logitDiffQueryOnlyValsEnabled) then
+            let valBudget := Sound.refineBudgetBoost refineBudget
+            let valKeys := Sound.loAtKeysAt inputs cache q
+            let valsLoRef : Fin seq → Rat :=
+              Sound.valsLoOverlay inputs cache valBudget valKeys
+            let loAtRef : Rat :=
+              if h : others.Nonempty then
+                others.inf' h valsLoRef
+              else
+                cert.values.lo
+            let valsPrevLoRef := valsLoRef prev
+            let deltaRef := valsPrevLoRef - loAtRef
+            let gapRef := epsAtRef * max (0 : Rat) deltaRef
+            let lbAtQRef := valsPrevLoRef - gapRef
+            IO.eprintln
+              s!"debug: q-only refined loAt={ratToString loAtRef} \
+              valsPrevLo={ratToString valsPrevLoRef} \
+              lbAtQ={ratToString lbAtQRef}"
+        let earlyExit := (← logitDiffQueryOnlyEarlyExitEnabled) ||
+          (← logitDiffDebugEarlyExitEnabled)
+        if earlyExit then
+          IO.eprintln "debug: early exit requested (q-only)"
+          return true
+        return false
+      else
+        IO.eprintln s!"warn: NFP_LOGITDIFF_Q_ONLY={qNat} out of range (seq={seq})"
+        return false
 
 private def buildHeadOutputIntervalFromInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead)
@@ -796,6 +900,10 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
             | some v => some v
             | none => some (0 : Rat)
           let logitCache := Nfp.Sound.logitDiffCache cert
+          let qOnlyExit ←
+            emitLogitDiffQueryOnly inputs cfg cache cert logitCache
+          if qOnlyExit then
+            return 2
           let emitLogitDiffDebug (info : Nfp.Sound.LogitDiffAtLoDebug seq) : IO Unit := do
             IO.eprintln
               s!"debug: logitDiffLB0 witness q={info.q.1}, prev={info.prev.1}"
@@ -860,6 +968,38 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
               else
                 String.intercalate ", " loAtKeys.toList
             IO.eprintln s!"debug: loAt keys: {loAtMsg}"
+            let scoreLoPrev := cache.scoreLoPrev info.q
+            let stepAlt :
+                (Rat × Nat × Nat) → Fin seq → (Rat × Nat × Nat) :=
+              fun acc k =>
+                if k = info.prev then
+                  acc
+                else
+                  let g := scoreLoPrev - cache.scoreHi info.q k
+                  let nonneg := if g ≥ (0 : Rat) then acc.2.1 + 1 else acc.2.1
+                  let gtNegOne := if g > (-1 : Rat) then acc.2.2 + 1 else acc.2.2
+                  let expLB :=
+                    if g ≥ (0 : Rat) then
+                      (1 : Rat) + g + g * g / (2 : Rat)
+                    else
+                      max (0 : Rat) ((1 : Rat) + g)
+                  let w := (1 : Rat) / ((1 : Rat) + expLB)
+                  (acc.1 + w, nonneg, gtNegOne)
+            let accAlt := Sound.Linear.foldlFin seq stepAlt (0, 0, 0)
+            IO.eprintln
+              s!"debug: alt-exp epsAt={ratToString accAlt.1}, \
+              g>=0={accAlt.2.1}, g>-1={accAlt.2.2}"
+            let stepMin : Option Rat → Fin seq → Option Rat :=
+              fun acc k =>
+                if k = info.prev then
+                  acc
+                else
+                  let g := scoreLoPrev - cache.scoreHi info.q k
+                  match acc with
+                  | none => some g
+                  | some cur => some (min cur g)
+            let minGap := Sound.Linear.foldlFin seq stepMin none
+            IO.eprintln s!"debug: alt-exp min(scoreLoPrev-scoreHi)={ratOptToString minGap}"
             if (← logitDiffRefineEnabled) then
               let refineBudget := max 1 cfg.splitBudgetDiffRefined
               let refineKeys := Sound.refineKeysAtWithWeightOnes inputs cache info.q refineBudget
@@ -881,6 +1021,52 @@ private def checkInductionHeadInputs {seq dModel dHead : Nat}
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
           profileLogitDiffWeighted cert logitCache
+          let altQuery? ← logitDiffAltBoundQuery
+          match altQuery? with
+          | none => pure ()
+          | some qNat =>
+              if hq : qNat < seq then
+                let q : Fin seq := ⟨qNat, hq⟩
+                let prev := cert.prev q
+                let scoreLoPrev := cache.scoreLoPrev q
+                let stepAlt :
+                    (Rat × Nat × Nat) → Fin seq → (Rat × Nat × Nat) :=
+                  fun acc k =>
+                    if k = prev then
+                      acc
+                    else
+                      let g := scoreLoPrev - cache.scoreHi q k
+                      let nonneg := if g ≥ (0 : Rat) then acc.2.1 + 1 else acc.2.1
+                      let gtNegOne := if g > (-1 : Rat) then acc.2.2 + 1 else acc.2.2
+                      let expLB :=
+                        if g ≥ (0 : Rat) then
+                          (1 : Rat) + g + g * g / (2 : Rat)
+                        else
+                          max (0 : Rat) ((1 : Rat) + g)
+                      let w := (1 : Rat) / ((1 : Rat) + expLB)
+                      (acc.1 + w, nonneg, gtNegOne)
+                let accAlt := Sound.Linear.foldlFin seq stepAlt (0, 0, 0)
+                let stepMin : Option Rat → Fin seq → Option Rat :=
+                  fun acc k =>
+                    if k = prev then
+                      acc
+                    else
+                      let g := scoreLoPrev - cache.scoreHi q k
+                      match acc with
+                      | none => some g
+                      | some cur => some (min cur g)
+                let minGap := Sound.Linear.foldlFin seq stepMin none
+                IO.eprintln
+                  s!"debug: alt-exp q={qNat} prev={prev.1} \
+                  epsAt={ratToString accAlt.1} \
+                  g>=0={accAlt.2.1} g>-1={accAlt.2.2} \
+                  minGap={ratOptToString minGap}"
+                if (← logitDiffDebugEarlyExitEnabled) then
+                  IO.eprintln "debug: early exit requested (alt bound)"
+                  return 2
+              else
+                IO.eprintln
+                  s!"warn: NFP_LOGITDIFF_ALT_BOUND_Q={qNat} out of range (seq={seq})"
           let earlyExit? ←
             if (← logitDiffDebugEnabled) && (← logitDiffDebugEarlyExitEnabled) then
               let debug? ← timePureWithHeartbeat

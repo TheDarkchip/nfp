@@ -93,6 +93,10 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
           timingPrint "timing: head logit-diff lower bound start"
           timingFlush
           let logitCache := Nfp.Sound.logitDiffCache cert
+          let qOnlyExit ←
+            emitLogitDiffQueryOnly inputs cfg cache cert logitCache
+          if qOnlyExit then
+            return 2
           let emitLogitDiffDebug (info : Nfp.Sound.LogitDiffAtLoDebug seq) : IO Unit := do
             IO.eprintln
               s!"debug: logitDiffLB0 witness q={info.q.1}, prev={info.prev.1}"
@@ -157,6 +161,38 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
               else
                 String.intercalate ", " loAtKeys.toList
             IO.eprintln s!"debug: loAt keys: {loAtMsg}"
+            let scoreLoPrev := cache.scoreLoPrev info.q
+            let stepAlt :
+                (Rat × Nat × Nat) → Fin seq → (Rat × Nat × Nat) :=
+              fun acc k =>
+                if k = info.prev then
+                  acc
+                else
+                  let g := scoreLoPrev - cache.scoreHi info.q k
+                  let nonneg := if g ≥ (0 : Rat) then acc.2.1 + 1 else acc.2.1
+                  let gtNegOne := if g > (-1 : Rat) then acc.2.2 + 1 else acc.2.2
+                  let expLB :=
+                    if g ≥ (0 : Rat) then
+                      (1 : Rat) + g + g * g / (2 : Rat)
+                    else
+                      max (0 : Rat) ((1 : Rat) + g)
+                  let w := (1 : Rat) / ((1 : Rat) + expLB)
+                  (acc.1 + w, nonneg, gtNegOne)
+            let accAlt := Sound.Linear.foldlFin seq stepAlt (0, 0, 0)
+            IO.eprintln
+              s!"debug: alt-exp epsAt={ratToString accAlt.1}, \
+              g>=0={accAlt.2.1}, g>-1={accAlt.2.2}"
+            let stepMin : Option Rat → Fin seq → Option Rat :=
+              fun acc k =>
+                if k = info.prev then
+                  acc
+                else
+                  let g := scoreLoPrev - cache.scoreHi info.q k
+                  match acc with
+                  | none => some g
+                  | some cur => some (min cur g)
+            let minGap := Sound.Linear.foldlFin seq stepMin none
+            IO.eprintln s!"debug: alt-exp min(scoreLoPrev-scoreHi)={ratOptToString minGap}"
             if (← logitDiffRefineEnabled) then
               let refineBudget := max 1 cfg.splitBudgetDiffRefined
               let refineKeys := Sound.refineKeysAtWithWeightOnes inputs cache info.q refineBudget
@@ -179,6 +215,52 @@ private def checkInductionHeadInputsNonvacuous {seq dModel dHead : Nat}
             profileLogitDiffWeighted cert logitCache
           else
             pure ()
+          let altQuery? ← logitDiffAltBoundQuery
+          match altQuery? with
+          | none => pure ()
+          | some qNat =>
+              if hq : qNat < seq then
+                let q : Fin seq := ⟨qNat, hq⟩
+                let prev := cert.prev q
+                let scoreLoPrev := cache.scoreLoPrev q
+                let stepAlt :
+                    (Rat × Nat × Nat) → Fin seq → (Rat × Nat × Nat) :=
+                  fun acc k =>
+                    if k = prev then
+                      acc
+                    else
+                      let g := scoreLoPrev - cache.scoreHi q k
+                      let nonneg := if g ≥ (0 : Rat) then acc.2.1 + 1 else acc.2.1
+                      let gtNegOne := if g > (-1 : Rat) then acc.2.2 + 1 else acc.2.2
+                      let expLB :=
+                        if g ≥ (0 : Rat) then
+                          (1 : Rat) + g + g * g / (2 : Rat)
+                        else
+                          max (0 : Rat) ((1 : Rat) + g)
+                      let w := (1 : Rat) / ((1 : Rat) + expLB)
+                      (acc.1 + w, nonneg, gtNegOne)
+                let accAlt := Sound.Linear.foldlFin seq stepAlt (0, 0, 0)
+                let stepMin : Option Rat → Fin seq → Option Rat :=
+                  fun acc k =>
+                    if k = prev then
+                      acc
+                    else
+                      let g := scoreLoPrev - cache.scoreHi q k
+                      match acc with
+                      | none => some g
+                      | some cur => some (min cur g)
+                let minGap := Sound.Linear.foldlFin seq stepMin none
+                IO.eprintln
+                  s!"debug: alt-exp q={qNat} prev={prev.1} \
+                  epsAt={ratToString accAlt.1} \
+                  g>=0={accAlt.2.1} g>-1={accAlt.2.2} \
+                  minGap={ratOptToString minGap}"
+                if (← logitDiffDebugEarlyExitEnabled) then
+                  IO.eprintln "debug: early exit requested (alt bound)"
+                  return 2
+              else
+                IO.eprintln
+                  s!"warn: NFP_LOGITDIFF_ALT_BOUND_Q={qNat} out of range (seq={seq})"
           let earlyExit? ←
             if (← logitDiffDebugEnabled) && (← logitDiffDebugEarlyExitEnabled) then
               let debug? ← timePureWithHeartbeat

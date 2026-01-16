@@ -47,6 +47,11 @@ verified by the CLI.
 
 ### Build a head certificate (untrusted)
 
+Note: the discovery/scan/sweep helper scripts use **one-based** layer/head
+indices (literature-aligned), default to **bigram prefix matching** for
+`prev`, and **rank by attention score** unless you explicitly switch to
+logit-diff mode. The Lean CLI continues to accept zero-based layer/head indices.
+
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \

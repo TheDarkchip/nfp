@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Sweep prompt parameters and verify nonvacuous induction bounds for GPT-2.
+Sweep prompt parameters and evaluate induction head scores for GPT-2.
 
 This is untrusted orchestration: discovery uses floating-point math and only
-Lean verification results are treated as definitive.
+Lean verification results are treated as definitive in logit mode.
+
+Layer/head indices are one-based (literature-aligned). `prev` defaults to bigram
+prefix matching.
 """
 
 from __future__ import annotations
@@ -97,8 +100,11 @@ def run_discovery(
     min_eps: float,
     min_margin: float,
     min_logit_lb: float,
+    min_score: float,
+    score_mode: str,
     period: int | None,
     output_dir: Path,
+    prev_mode: str,
 ) -> list[dict]:
     output_dir.mkdir(parents=True, exist_ok=True)
     json_out = output_dir / f"{model.stem}.json"
@@ -116,11 +122,17 @@ def run_discovery(
         str(min_margin),
         "--min-logit-lb",
         str(min_logit_lb),
+        "--min-score",
+        str(min_score),
+        "--score-mode",
+        score_mode,
         "--json-out",
         str(json_out),
     ]
     if period is not None:
         cmd += ["--period", str(period)]
+    if prev_mode != "bigram":
+        cmd += ["--prev-mode", prev_mode]
     run_cmd(cmd, check=True)
     payload = json.loads(json_out.read_text(encoding="ascii"))
     return payload.get("results", [])
@@ -171,6 +183,11 @@ def write_csv_row(path: Path, row: dict) -> None:
         "head",
         "target",
         "negative",
+        "score_mode",
+        "score",
+        "prev_mean",
+        "prev_median",
+        "prev_top1_frac",
         "approx_logit_lb",
         "approx_eps",
         "approx_margin",
@@ -204,8 +221,21 @@ def main() -> int:
     parser.add_argument("--min-eps", type=float, default=0.5)
     parser.add_argument("--min-margin", type=float, default=0.0)
     parser.add_argument("--min-logit-lb", type=float, default=0.0)
+    parser.add_argument("--min-score", type=float, default=0.0)
+    parser.add_argument(
+        "--score-mode",
+        choices=["attn", "logit"],
+        default="attn",
+        help="Rank by attention score or logit-diff bound.",
+    )
     parser.add_argument("--use-period", action="store_true",
                         help="Use pattern length as the period override")
+    parser.add_argument(
+        "--prev-mode",
+        choices=["bigram", "token", "period"],
+        default="bigram",
+        help="Choose prev/active construction (forwarded to discovery).",
+    )
     parser.add_argument("--nfp-bin", help="Path to nfp binary")
     parser.add_argument("--discovery-dir", type=Path, default=Path("reports/discovery"))
     args = parser.parse_args()
@@ -231,8 +261,11 @@ def main() -> int:
                     args.min_eps,
                     args.min_margin,
                     args.min_logit_lb,
+                    args.min_score,
+                    args.score_mode,
                     period,
                     args.discovery_dir,
+                    args.prev_mode,
                 )
                 if not results:
                     print(
@@ -240,48 +273,83 @@ def main() -> int:
                         flush=True,
                     )
                     continue
-                for result in results[: args.verify_top]:
-                    verify = verify_candidate(
-                        nfp_cmd,
-                        model_path,
-                        result["layer"],
-                        result["head"],
-                        result["target"],
-                        result["negative"],
-                        period,
-                    )
-                    status = "ok" if verify.ok else "fail"
-                    if verify.ok:
-                        print(
-                            f"verified L{result['layer']}H{result['head']} "
-                            f"seq={seq_len} pat={pattern_len} seed={seed}",
-                            flush=True,
+                if args.score_mode == "logit":
+                    for result in results[: args.verify_top]:
+                        layer = result["layer"] - 1
+                        head = result["head"] - 1
+                        verify = verify_candidate(
+                            nfp_cmd,
+                            model_path,
+                            layer,
+                            head,
+                            result["target"],
+                            result["negative"],
+                            period,
                         )
-                    row = {
-                        "model_path": model_path,
-                        "seq_len": seq_len,
-                        "pattern_len": pattern_len,
-                        "seed": seed,
-                        "layer": result["layer"],
-                        "head": result["head"],
-                        "target": result["target"],
-                        "negative": result["negative"],
-                        "approx_logit_lb": result["logit_lb"],
-                        "approx_eps": result["eps"],
-                        "approx_margin": result["margin"],
-                        "approx_min_prev": result["min_prev"],
-                        "approx_value_range": result["value_range"],
-                        "active": result["active"],
-                        "period": period if period is not None else "",
-                        "verify_status": status,
-                        "verify_logit_lb": verify.logit_lb or "",
-                    }
-                    write_csv_row(args.output, row)
-                    if not verify.ok:
-                        if verify.stdout:
-                            print(f"  out: {verify.stdout}", flush=True)
-                        if verify.stderr:
-                            print(f"  err: {verify.stderr}", flush=True)
+                        status = "ok" if verify.ok else "fail"
+                        if verify.ok:
+                            print(
+                                f"verified L{result['layer']}H{result['head']} "
+                                f"seq={seq_len} pat={pattern_len} seed={seed}",
+                                flush=True,
+                            )
+                        row = {
+                            "model_path": model_path,
+                            "seq_len": seq_len,
+                            "pattern_len": pattern_len,
+                            "seed": seed,
+                            "layer": result["layer"],
+                            "head": result["head"],
+                            "target": result["target"],
+                            "negative": result["negative"],
+                            "score_mode": args.score_mode,
+                            "score": "",
+                            "prev_mean": result.get("prev_mean", ""),
+                            "prev_median": result.get("prev_median", ""),
+                            "prev_top1_frac": result.get("prev_top1_frac", ""),
+                            "approx_logit_lb": result["logit_lb"],
+                            "approx_eps": result["eps"],
+                            "approx_margin": result["margin"],
+                            "approx_min_prev": result["min_prev"],
+                            "approx_value_range": result["value_range"],
+                            "active": result["active"],
+                            "period": period if period is not None else "",
+                            "verify_status": status,
+                            "verify_logit_lb": verify.logit_lb or "",
+                        }
+                        write_csv_row(args.output, row)
+                        if not verify.ok:
+                            if verify.stdout:
+                                print(f"  out: {verify.stdout}", flush=True)
+                            if verify.stderr:
+                                print(f"  err: {verify.stderr}", flush=True)
+                else:
+                    for result in results[: args.top]:
+                        row = {
+                            "model_path": model_path,
+                            "seq_len": seq_len,
+                            "pattern_len": pattern_len,
+                            "seed": seed,
+                            "layer": result["layer"],
+                            "head": result["head"],
+                            "target": result.get("target", ""),
+                            "negative": result.get("negative", ""),
+                            "score_mode": args.score_mode,
+                            "score": result.get("score", ""),
+                            "prev_mean": result.get("prev_mean", ""),
+                            "prev_median": result.get("prev_median", ""),
+                            "prev_top1_frac": result.get("prev_top1_frac", ""),
+                            "approx_logit_lb": result.get("logit_lb", ""),
+                            "approx_eps": result.get("eps", ""),
+                            "approx_margin": result.get("margin", ""),
+                            "approx_min_prev": result.get("min_prev", ""),
+                            "approx_value_range": result.get("value_range", ""),
+                            "active": result.get("active", ""),
+                            "period": period if period is not None else "",
+                            "verify_status": "",
+                            "verify_logit_lb": "",
+                        }
+                        write_csv_row(args.output, row)
 
     return 0
 
