@@ -93,6 +93,23 @@ class CircuitResult:
     stripe_top1_frac: float
 
 
+@dataclass(frozen=True)
+class CircuitCopyResult:
+    prev_layer: int
+    prev_head: int
+    induction_layer: int
+    induction_head: int
+    score: float
+    prev_mean: float
+    prev_median: float
+    prev_top1_frac: float
+    stripe_mean: float
+    stripe_median: float
+    stripe_top1_frac: float
+    copy_mean: float
+    copy_weighted_mean: float
+
+
 def parse_header(f) -> Dict[str, str]:
     header: Dict[str, str] = {}
     magic = f.readline().decode("ascii").strip()
@@ -518,6 +535,21 @@ def format_circuit_result(result: CircuitResult) -> str:
     )
 
 
+def format_circuit_copy_result(result: CircuitCopyResult) -> str:
+    prev_layer = result.prev_layer + 1
+    prev_head = result.prev_head + 1
+    ind_layer = result.induction_layer + 1
+    ind_head = result.induction_head + 1
+    return (
+        f"prev=L{prev_layer}H{prev_head} ind=L{ind_layer}H{ind_head} "
+        f"score={result.score:.6f} prevMean={result.prev_mean:.6f} "
+        f"stripeMean={result.stripe_mean:.6f} copyMean={result.copy_mean:.6f} "
+        f"copyWeighted={result.copy_weighted_mean:.6f} "
+        f"prevMedian={result.prev_median:.6f} prevTop1={result.prev_top1_frac:.3f} "
+        f"stripeMedian={result.stripe_median:.6f} stripeTop1={result.stripe_top1_frac:.3f}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--model", required=True, type=Path, help="Path to NFP_BINARY_V1 model")
@@ -528,12 +560,13 @@ def main() -> int:
                         help="Run verifier on the top N candidates")
     parser.add_argument(
         "--score-mode",
-        choices=["attn", "copy", "attn_copy", "stripe", "circuit", "logit"],
+        choices=["attn", "copy", "attn_copy", "stripe", "circuit", "circuit_copy", "logit"],
         default="attn",
         help=(
             "Rank heads by attention to prev (attn), OV copy score (copy), "
             "attention-weighted copy score (attn_copy), induction stripe attention "
-            "(stripe), circuit pairing (circuit), or logit lower bound (logit)."
+            "(stripe), circuit pairing (circuit), circuit + copy (circuit_copy), "
+            "or logit lower bound (logit)."
         ),
     )
     parser.add_argument(
@@ -592,8 +625,10 @@ def main() -> int:
         raise SystemExit("max-tokens must be at least 2")
     if args.verify_top > 0 and args.score_mode != "logit":
         raise SystemExit("--verify-top requires --score-mode=logit")
-    if args.score_mode in {"stripe", "circuit"} and args.stripe_period is None:
+    if args.score_mode in {"stripe", "circuit", "circuit_copy"} and args.stripe_period is None:
         raise SystemExit("--score-mode=stripe/circuit requires --stripe-period")
+    if args.score_mode in {"circuit", "circuit_copy"} and args.prev_mode != "bigram":
+        raise SystemExit("--score-mode=circuit requires --prev-mode=bigram")
 
     if not args.model.exists():
         raise SystemExit(f"Missing model file: {args.model}")
@@ -638,7 +673,7 @@ def main() -> int:
         prev_indices = prev[np.array(active_positions, dtype=np.int64)]
         stripe_prev = None
         stripe_positions = None
-        if args.score_mode in {"stripe", "circuit"}:
+        if args.score_mode in {"stripe", "circuit", "circuit_copy"}:
             stripe_period = int(args.stripe_period)
             stripe_prev, stripe_active = build_prev_period(seq_len, stripe_period)
             stripe_positions = [int(i) for i, flag in enumerate(stripe_active) if flag]
@@ -646,7 +681,7 @@ def main() -> int:
                 raise SystemExit("No stripe positions found for the requested period")
         prevtok_prev = None
         prevtok_positions = None
-        if args.score_mode == "circuit":
+        if args.score_mode in {"circuit", "circuit_copy"}:
             prevtok_prev, prevtok_active = build_prev_period(seq_len, 1)
             prevtok_positions = [int(i) for i, flag in enumerate(prevtok_active) if flag]
             if not prevtok_positions:
@@ -805,6 +840,7 @@ def main() -> int:
     attn_results: List[AttnResult] = []
     stripe_results: List[StripeResult] = []
     circuit_results: List[CircuitResult] = []
+    circuit_copy_results: List[CircuitCopyResult] = []
     for (layer_idx, head_idx), (
         v,
         wo,
@@ -870,6 +906,51 @@ def main() -> int:
                     best_prev = candidate
             if best_prev is not None:
                 circuit_results.append(best_prev)
+            continue
+        if args.score_mode == "circuit_copy":
+            stripe = stripe_data.get((layer_idx, head_idx))
+            if stripe is None:
+                continue
+            stripe_mean, stripe_median, stripe_top1, _eps_s, _margin_s = stripe
+            ov = v @ wo
+            copy_mean, copy_weighted_mean = compute_copy_scores(
+                ov,
+                prev_weights,
+                columns,
+                tokens,
+                prev,
+                active_positions,
+            )
+            if args.min_copy is not None and copy_mean < args.min_copy:
+                continue
+            copy_score = max(copy_mean, 0.0)
+            best_prev: CircuitCopyResult | None = None
+            for (prev_layer, prev_head), prev_stats in prevtok_data.items():
+                if prev_layer >= layer_idx:
+                    continue
+                prev_mean, prev_median, prev_top1, _eps_p, _margin_p = prev_stats
+                score = prev_mean * stripe_mean * copy_score
+                if score < args.min_score:
+                    continue
+                candidate = CircuitCopyResult(
+                    prev_layer=prev_layer,
+                    prev_head=prev_head,
+                    induction_layer=layer_idx,
+                    induction_head=head_idx,
+                    score=score,
+                    prev_mean=prev_mean,
+                    prev_median=prev_median,
+                    prev_top1_frac=prev_top1,
+                    stripe_mean=stripe_mean,
+                    stripe_median=stripe_median,
+                    stripe_top1_frac=stripe_top1,
+                    copy_mean=copy_mean,
+                    copy_weighted_mean=copy_weighted_mean,
+                )
+                if best_prev is None or candidate.score > best_prev.score:
+                    best_prev = candidate
+            if best_prev is not None:
+                circuit_copy_results.append(best_prev)
             continue
         if args.score_mode != "logit":
             ov = v @ wo
@@ -944,7 +1025,9 @@ def main() -> int:
         if best is not None:
             results.append(best)
 
-    if args.score_mode == "circuit":
+    if args.score_mode == "circuit_copy":
+        circuit_copy_results.sort(key=lambda r: r.score, reverse=True)
+    elif args.score_mode == "circuit":
         circuit_results.sort(key=lambda r: r.score, reverse=True)
     elif args.score_mode == "stripe":
         stripe_results.sort(key=lambda r: r.score, reverse=True)
@@ -953,7 +1036,7 @@ def main() -> int:
     else:
         results.sort(key=lambda r: r.logit_lb, reverse=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    active_count = len(stripe_positions) if args.score_mode in {"stripe", "circuit"} and stripe_positions else len(active_positions)
+    active_count = len(stripe_positions) if args.score_mode in {"stripe", "circuit", "circuit_copy"} and stripe_positions else len(active_positions)
     with args.output.open("w", encoding="ascii") as f:
         f.write("Induction discovery (approximate ranking)\n")
         f.write(f"model={args.model}\n")
@@ -962,14 +1045,17 @@ def main() -> int:
         if args.use_activations:
             f.write(f"hf_model={args.hf_model} device={args.device}\n")
         f.write(f"tokens={len(unique_tokens)} active={active_count}\n")
-        if args.score_mode in {"stripe", "circuit"}:
+        if args.score_mode in {"stripe", "circuit", "circuit_copy"}:
             f.write(f"stripe_period={args.stripe_period}\n")
         f.write(
             f"min-eps={args.min_eps} min-margin={args.min_margin} "
             f"min-logit-lb={args.min_logit_lb} min-score={args.min_score} "
             f"min-copy={args.min_copy}\n"
         )
-        if args.score_mode == "circuit":
+        if args.score_mode == "circuit_copy":
+            for rank, result in enumerate(circuit_copy_results[: args.top], start=1):
+                f.write(f"{rank:02d} {format_circuit_copy_result(result)}\n")
+        elif args.score_mode == "circuit":
             for rank, result in enumerate(circuit_results[: args.top], start=1):
                 f.write(f"{rank:02d} {format_circuit_result(result)}\n")
         elif args.score_mode == "stripe":
@@ -983,7 +1069,10 @@ def main() -> int:
                 f.write(f"{rank:02d} {format_result(result)}\n")
 
     print(f"Wrote report to {args.output}")
-    if args.score_mode == "circuit":
+    if args.score_mode == "circuit_copy":
+        for rank, result in enumerate(circuit_copy_results[: args.top], start=1):
+            print(f"{rank:02d} {format_circuit_copy_result(result)}")
+    elif args.score_mode == "circuit":
         for rank, result in enumerate(circuit_results[: args.top], start=1):
             print(f"{rank:02d} {format_circuit_result(result)}")
     elif args.score_mode == "stripe":
@@ -1013,7 +1102,27 @@ def main() -> int:
             "device": args.device if args.use_activations else None,
             "stripe_period": args.stripe_period if args.score_mode == "stripe" else None,
         }
-        if args.score_mode == "circuit":
+        if args.score_mode == "circuit_copy":
+            payload["results"] = [
+                {
+                    "rank": rank,
+                    "prev_layer": r.prev_layer + 1,
+                    "prev_head": r.prev_head + 1,
+                    "induction_layer": r.induction_layer + 1,
+                    "induction_head": r.induction_head + 1,
+                    "score": r.score,
+                    "prev_mean": r.prev_mean,
+                    "prev_median": r.prev_median,
+                    "prev_top1_frac": r.prev_top1_frac,
+                    "stripe_mean": r.stripe_mean,
+                    "stripe_median": r.stripe_median,
+                    "stripe_top1_frac": r.stripe_top1_frac,
+                    "copy_mean": r.copy_mean,
+                    "copy_weighted_mean": r.copy_weighted_mean,
+                }
+                for rank, r in enumerate(circuit_copy_results[: args.top], start=1)
+            ]
+        elif args.score_mode == "circuit":
             payload["results"] = [
                 {
                     "rank": rank,
