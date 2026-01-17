@@ -7,6 +7,9 @@ public import Nfp.IO.Parse.Basic
 
 /-!
 Shared parsing helpers for softmax-margin payloads.
+
+All sequence indices in the payload are 1-based (literature convention) and are converted to
+`Fin` indices internally.
 -/
 
 public section
@@ -47,50 +50,47 @@ def initState (seq : Nat) : ParseState seq :=
     scores := Array.replicate seq row
     weights := Array.replicate seq row }
 
+private def toIndex1 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
+  if idx = 0 then
+    throw s!"{label} index must be >= 1"
+  let idx' := idx - 1
+  if h : idx' < seq then
+    return ⟨idx', h⟩
+  else
+    throw s!"{label} index out of range: {idx}"
+
 /-- Set a predecessor entry from `(q, k)` tokens. -/
 def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) : Except String (ParseState seq) := do
-  if q < seq then
-    if hk : k < seq then
-      let kFin : Fin seq := ⟨k, hk⟩
-      match st.prev[q]! with
-      | some _ =>
-          throw s!"duplicate prev entry for q={q}"
-      | none =>
-          let prev' := st.prev.set! q (some kFin)
-          return { st with prev := prev' }
-    else
-      throw s!"prev index out of range: k={k}"
-  else
-    throw s!"prev index out of range: q={q}"
+  let qFin ← toIndex1 (seq := seq) "q" q
+  let kFin ← toIndex1 (seq := seq) "k" k
+  match st.prev[qFin.1]! with
+  | some _ =>
+      throw s!"duplicate prev entry for q={q}"
+  | none =>
+      let prev' := st.prev.set! qFin.1 (some kFin)
+      return { st with prev := prev' }
 
 /-- Mark an active query index. -/
 def setActive {seq : Nat} (st : ParseState seq) (q : Nat) : Except String (ParseState seq) := do
-  if hq : q < seq then
-    let qFin : Fin seq := ⟨q, hq⟩
-    if qFin ∈ st.active then
-      throw s!"duplicate active entry for q={q}"
-    else
-      return { st with active := insert qFin st.active, activeSeen := true }
+  let qFin ← toIndex1 (seq := seq) "q" q
+  if qFin ∈ st.active then
+    throw s!"duplicate active entry for q={q}"
   else
-    throw s!"active index out of range: q={q}"
+    return { st with active := insert qFin st.active, activeSeen := true }
 
 /-- Insert a matrix entry for scores/weights. -/
 def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
     (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
-  if q < seq then
-    if k < seq then
-      let row := mat[q]!
-      match row[k]! with
-      | some _ =>
-          throw s!"duplicate matrix entry at ({q}, {k})"
-      | none =>
-          let row' := row.set! k (some v)
-          let mat' := mat.set! q row'
-          return mat'
-    else
-      throw s!"index out of range: k={k}"
-  else
-    throw s!"index out of range: q={q}"
+  let qFin ← toIndex1 (seq := seq) "q" q
+  let kFin ← toIndex1 (seq := seq) "k" k
+  let row := mat[qFin.1]!
+  match row[kFin.1]! with
+  | some _ =>
+      throw s!"duplicate matrix entry at ({q}, {k})"
+  | none =>
+      let row' := row.set! kFin.1 (some v)
+      let mat' := mat.set! qFin.1 row'
+      return mat'
 
 /-- Parse a tokenized line into the softmax-margin parse state. -/
 def parseLine {seq : Nat} (st : ParseState seq)

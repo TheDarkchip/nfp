@@ -55,7 +55,8 @@ section Spec
 variable {Val : Type v}
 variable {n : Nat}
 
-/-- Induction-head spec: for nonzero queries, outputs copy `prev` values. -/
+/-- Induction-head spec: for non-initial queries (1-based indices ≥ 2),
+    outputs copy `prev` values. -/
 def InductionSpec (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (out vals : Fin (Nat.succ n) → Val) : Prop :=
   ∀ q, q ≠ 0 → out q = vals (prev q)
@@ -147,17 +148,19 @@ section Bounds
 variable {Val : Type v} [Semiring Val] [PartialOrder Val]
 variable {seq : Nat} [NeZero seq]
 
-/-- Numeric bounds certifying one-hot weights on nonzero queries. -/
+/-- Numeric bounds certifying one-hot weights on non-initial queries
+    (1-based indices ≥ 2). -/
 structure OneHotBoundsOn (prev : Fin seq → Fin seq)
     (weights : Fin seq → Fin seq → Val) : Prop where
-  /-- All weights are nonnegative on nonzero queries. -/
+  /-- All weights are nonnegative on non-initial queries (1-based indices ≥ 2). -/
   nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
-  /-- Weights sum to one on nonzero queries. -/
+  /-- Weights sum to one on non-initial queries (1-based indices ≥ 2). -/
   sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
-  /-- Non-prev weights are nonpositive on nonzero queries. -/
+  /-- Non-prev weights are nonpositive on non-initial queries (1-based indices ≥ 2). -/
   other_le_zero : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ 0
 
-/-- Certified bounds imply one-hot weights on nonzero queries. -/
+/-- Certified bounds imply one-hot weights on non-initial queries
+    (1-based indices ≥ 2). -/
 theorem oneHot_of_boundsOn (prev : Fin seq → Fin seq)
     (weights : Fin seq → Fin seq → Val) [DecidableEq (Fin seq)]
     (h : OneHotBoundsOn prev weights) :
@@ -200,16 +203,18 @@ section ApproxBounds
 variable {Val : Type v} [Semiring Val] [PartialOrder Val]
 variable {seq : Nat} [NeZero seq]
 
-/-- Approximate one-hot bounds for attention weights on nonzero queries. -/
+/-- Approximate one-hot bounds for attention weights on non-initial queries
+    (1-based indices ≥ 2). -/
 structure OneHotApproxBoundsOn (ε : Val) (prev : Fin seq → Fin seq)
     (weights : Fin seq → Fin seq → Val) : Prop where
-  /-- All weights are nonnegative on nonzero queries. -/
+  /-- All weights are nonnegative on non-initial queries (1-based indices ≥ 2). -/
   nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
-  /-- Weights sum to one on nonzero queries. -/
+  /-- Weights sum to one on non-initial queries (1-based indices ≥ 2). -/
   sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
-  /-- The `prev` weight is within `ε` of one on nonzero queries. -/
+  /-- The `prev` weight is within `ε` of one on non-initial queries
+      (1-based indices ≥ 2). -/
   prev_large : ∀ q, q ≠ 0 → 1 ≤ weights q (prev q) + ε
-  /-- Non-prev weights are at most `ε` on nonzero queries. -/
+  /-- Non-prev weights are at most `ε` on non-initial queries (1-based indices ≥ 2). -/
   other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
 
 /-- Approximate one-hot bounds for attention weights on active queries. -/
@@ -514,15 +519,17 @@ variable {seq : Nat} [NeZero seq]
 /-- Softmax margin certificates for approximate one-hot weights. -/
 structure SoftmaxMarginBounds (ε margin : Val) (prev : Fin seq → Fin seq)
     (scores weights : Fin seq → Fin seq → Val) : Prop where
-  /-- Score gap between `prev` and other keys on nonzero queries. -/
+  /-- Score gap between `prev` and other keys on non-initial queries
+      (1-based indices ≥ 2). -/
   score_margin : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → scores q k + margin ≤ scores q (prev q)
-  /-- All weights are nonnegative on nonzero queries. -/
+  /-- All weights are nonnegative on non-initial queries (1-based indices ≥ 2). -/
   nonneg : ∀ q, q ≠ 0 → ∀ k, 0 ≤ weights q k
-  /-- Weights sum to one on nonzero queries. -/
+  /-- Weights sum to one on non-initial queries (1-based indices ≥ 2). -/
   sum_one : ∀ q, q ≠ 0 → (∑ k, weights q k) = 1
-  /-- The `prev` weight is within `ε` of one on nonzero queries. -/
+  /-- The `prev` weight is within `ε` of one on non-initial queries
+      (1-based indices ≥ 2). -/
   prev_large : ∀ q, q ≠ 0 → 1 ≤ weights q (prev q) + ε
-  /-- Non-prev weights are at most `ε` on nonzero queries. -/
+  /-- Non-prev weights are at most `ε` on non-initial queries (1-based indices ≥ 2). -/
   other_le : ∀ q, q ≠ 0 → ∀ k, k ≠ prev q → weights q k ≤ ε
 
 /-- Softmax margin certificates for approximate one-hot weights on active queries. -/
@@ -796,7 +803,8 @@ variable {Val : Type v} [NonAssocSemiring Val]
 variable (scale : Val)
 variable (softmax : (Fin (Nat.succ n) → Val) → Fin (Nat.succ n) → Val)
 
-/-- One-hot weights on nonzero queries imply the induction spec for typed evaluation. -/
+/-- One-hot weights on non-initial queries (1-based indices ≥ 2) imply the induction spec
+    for typed evaluation. -/
 theorem attentionTyped_eval_inductionSpec_of_oneHot
     (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (input : AttentionInput Batch (Nat.succ n) heads dim → Val)

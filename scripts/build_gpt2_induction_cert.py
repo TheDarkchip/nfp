@@ -7,6 +7,7 @@ Build an induction-head certificate for a GPT-2-small induction head.
 This script is untrusted and uses floating-point arithmetic to produce a
 rational induction-head certificate compatible with `nfp induction certify`.
 Active induction positions are recorded as `active <q>` lines in the output.
+All sequence indices in the certificate are 1-based (literature convention).
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
@@ -20,6 +21,7 @@ Optionally, provide a logit-diff direction:
 
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
+Direction token IDs use the model's raw tokenizer indexing.
 """
 
 import argparse
@@ -115,15 +117,15 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
             f.write(f"margin {rat_to_str(margin)}\n")
         if active is not None:
             for q in active:
-                f.write(f"active {q}\n")
+                f.write(f"active {q + 1}\n")
         for q, k in enumerate(prev.tolist()):
-            f.write(f"prev {q} {k}\n")
+            f.write(f"prev {q + 1} {k + 1}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"score {q} {k} {rat_to_str(scores[q][k])}\n")
+                f.write(f"score {q + 1} {k + 1} {rat_to_str(scores[q][k])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
+                f.write(f"weight {q + 1} {k + 1} {rat_to_str(weights[q][k])}\n")
 
 def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights,
                          eps, margin, active, eps_at, weight_bound_at,
@@ -139,27 +141,27 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
         f.write(f"margin {rat_to_str(margin)}\n")
         if active is not None:
             for q in active:
-                f.write(f"active {q}\n")
+                f.write(f"active {q + 1}\n")
         for q, k in enumerate(prev.tolist()):
-            f.write(f"prev {q} {k}\n")
+            f.write(f"prev {q + 1} {k + 1}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"score {q} {k} {rat_to_str(scores[q][k])}\n")
+                f.write(f"score {q + 1} {k + 1} {rat_to_str(scores[q][k])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
+                f.write(f"weight {q + 1} {k + 1} {rat_to_str(weights[q][k])}\n")
         for q in range(seq):
-            f.write(f"eps-at {q} {rat_to_str(eps_at[q])}\n")
+            f.write(f"eps-at {q + 1} {rat_to_str(eps_at[q])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight-bound {q} {k} {rat_to_str(weight_bound_at[q][k])}\n")
+                f.write(f"weight-bound {q + 1} {k + 1} {rat_to_str(weight_bound_at[q][k])}\n")
         f.write(f"lo {rat_to_str(lo)}\n")
         f.write(f"hi {rat_to_str(hi)}\n")
         for k, val in enumerate(vals):
             val_str = rat_to_str(val)
-            f.write(f"val {k} {val_str}\n")
-            f.write(f"val-lo {k} {val_str}\n")
-            f.write(f"val-hi {k} {val_str}\n")
+            f.write(f"val {k + 1} {val_str}\n")
+            f.write(f"val-lo {k + 1} {val_str}\n")
+            f.write(f"val-hi {k + 1} {val_str}\n")
 
 
 def write_value_range(path: Path, seq: int, values, decimals: int,
@@ -175,7 +177,7 @@ def write_value_range(path: Path, seq: int, values, decimals: int,
         f.write(f"lo {rat_to_str(lo)}\n")
         f.write(f"hi {rat_to_str(hi)}\n")
         for k, val in enumerate(vals_rat):
-            f.write(f"val {k} {rat_to_str(val)}\n")
+            f.write(f"val {k + 1} {rat_to_str(val)}\n")
 
 
 def main() -> None:

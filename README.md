@@ -94,8 +94,10 @@ val-lo <k> <rat>
 val-hi <k> <rat>
 ```
 
+All sequence indices (`q`, `k`) are **1-based** (literature convention). Direction token IDs
+(`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
-appear, the checker defaults to all nonzero queries.
+appear, the checker defaults to all non-initial queries (indices 2.. in 1-based indexing).
 
 ## Soundness boundary
 

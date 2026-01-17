@@ -6,7 +6,7 @@ induction heads, and spell out the scope and limitations of that claim.
 ## Formal proof chain (Lean)
 
 - Explicit induction-head certificates are parsed from text in
-  `Nfp/IO/InductionHead/Cert.lean`.
+  `Nfp/IO/InductionHead/Cert.lean` (sequence indices are 1-based in the payload).
 - `checkInductionHeadCert` and `checkInductionHeadCert_sound` show that a
   passing certificate satisfies `InductionHeadCertBounds`
   (`Nfp/Circuit/Cert/InductionHead.lean`).
