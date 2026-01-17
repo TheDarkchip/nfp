@@ -46,6 +46,8 @@ The input setup follows the standard literature diagnostic: repeated token patte
 repeated twice) and attention stripes that look back by one period.
 
 For a step-by-step walkthrough, see `docs/demo.md`.
+For a careful statement of what certificates do and do not claim, see
+`docs/cert_usefulness.md`.
 
 ### Build a head certificate (untrusted)
 
