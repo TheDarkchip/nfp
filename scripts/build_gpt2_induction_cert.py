@@ -11,7 +11,7 @@ All sequence indices in the certificate are 1-based (literature convention).
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
-    --layer 0 --head 5 --seq 32 --pattern-length 16 \
+    --layer 1 --head 6 --seq 32 --pattern-length 16 \
     --random-pattern --seed 0 \
     --values-out reports/gpt2_induction.values --value-dim 0 \
     --active-eps-max 0.2 --min-margin 0
@@ -21,6 +21,7 @@ Optionally, provide a logit-diff direction:
 
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
+Layer/head indices are 1-based in the CLI and converted to 0-based internally.
 Direction token IDs use the model's raw tokenizer indexing.
 """
 
@@ -184,8 +185,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, help="Path to write certificate")
     parser.add_argument("--scores-out", help="Optional path for raw scores/weights dump")
-    parser.add_argument("--layer", type=int, default=0, help="Transformer layer index")
-    parser.add_argument("--head", type=int, default=0, help="Attention head index")
+    parser.add_argument("--layer", type=int, default=1,
+                        help="Transformer layer index (1-based)")
+    parser.add_argument("--head", type=int, default=1,
+                        help="Attention head index (1-based)")
     parser.add_argument("--seq", type=int, default=32, help="Sequence length")
     parser.add_argument("--pattern-length", type=int, default=16, help="Pattern length")
     parser.add_argument("--random-pattern", action="store_true", help="Use random token pattern")
@@ -213,12 +216,22 @@ def main() -> None:
     prev, active_mask = build_prev(tokens)
     candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
 
+    if args.layer <= 0:
+        raise SystemExit("layer must be >= 1")
+    if args.head <= 0:
+        raise SystemExit("head must be >= 1")
+
     model = GPT2Model.from_pretrained(args.model)
+    layer = args.layer - 1
+    head = args.head - 1
+    if layer >= model.config.n_layer:
+        raise SystemExit(f"layer must be in [1, {model.config.n_layer}]")
+    if head >= model.config.n_head:
+        raise SystemExit(f"head must be in [1, {model.config.n_head}]")
     model.to(args.device)
     input_ids = torch.tensor(tokens, dtype=torch.long, device=args.device).unsqueeze(0)
 
-    scores, weights, values = compute_scores_weights(model, input_ids, args.layer, args.head,
-                                                    args.device)
+    scores, weights, values = compute_scores_weights(model, input_ids, layer, head, args.device)
 
     scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals) for k in range(args.seq)]
                   for q in range(args.seq)]
@@ -294,8 +307,8 @@ def main() -> None:
         direction_negative = args.direction_negative
         direction = wte[direction_target] - wte[direction_negative]
         head_dim = model.config.n_embd // model.config.n_head
-        start, end = args.head * head_dim, (args.head + 1) * head_dim
-        w_o = model.h[args.layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
+        start, end = head * head_dim, (head + 1) * head_dim
+        w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
         dir_head = w_o.T @ direction
         vals = values @ dir_head
     else:

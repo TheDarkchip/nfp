@@ -48,10 +48,12 @@ by **untrusted** Python scripts and verified by the Lean CLI; no model forward p
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 0 --head 5 --seq 32 --pattern-length 16 \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
   --random-pattern --seed 0 \
   --active-eps-max 1/2
 ```
+
+Layer/head indices in the generator are 1-based to match the literature.
 
 Optional direction metadata:
 
