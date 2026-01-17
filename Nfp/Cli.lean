@@ -63,6 +63,7 @@ private def toZeroBased (label : String) (idx : Nat) (zeroBased : Bool) :
 private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) : IO UInt32 := do
   let inputsPath? := (p.flag? "inputs").map (·.as! String)
   let modelPath? := (p.flag? "model").map (·.as! String)
+  let certPath? := (p.flag? "cert").map (·.as! String)
   let layer? := (p.flag? "layer").map (·.as! Nat)
   let head? := (p.flag? "head").map (·.as! Nat)
   let period? := (p.flag? "period").map (·.as! Nat)
@@ -93,6 +94,22 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
   | _, Except.error msg => fail msg
   | Except.ok ⟨splitBudgetQ?, splitBudgetK?, splitBudgetDiffBase?, splitBudgetDiffRefined?⟩,
       Except.ok direction? =>
+      match certPath? with
+      | some certPath =>
+          if inputsPath?.isSome || modelPath?.isSome then
+            fail "provide exactly one of --cert or --inputs/--model"
+          else if layer?.isSome || head?.isSome || period?.isSome || prevShift then
+            fail "--layer/--head/--period/--prev-shift are only valid with --model"
+          else if direction?.isSome then
+            fail "--direction is only valid with --model"
+          else if presetStr?.isSome then
+            fail "--preset is only valid with --inputs or --model"
+          else if requireNonvacuous && skipLogitDiff then
+            fail "--skip-logit-diff is not allowed with certify_nonvacuous"
+          else
+            IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
+              minMarginStr? maxEpsStr?
+      | none =>
       match inputsPath?, modelPath? with
       | some inputsPath, none =>
           if layer?.isSome || head?.isSome || period?.isSome || prevShift then
@@ -152,9 +169,9 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
           | _, _ =>
               fail "--layer and --head are required with --model"
       | none, none =>
-          fail "provide exactly one of --inputs or --model"
+          fail "provide exactly one of --cert or --inputs/--model"
       | some _, some _ =>
-          fail "provide exactly one of --inputs or --model"
+          fail "provide exactly one of --cert or --inputs/--model"
 
 private def runInductionCertifySimple (p : Parsed) : IO UInt32 :=
   runInductionCertifyUnified false p
@@ -213,8 +230,10 @@ private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify` subcommand (streamlined). -/
 def inductionCertifySimpleCmd : Cmd := `[Cli|
   certify VIA runInductionCertifySimple;
-  "Check induction head certificates from inputs or a model file."
+  "Check induction head certificates from an explicit cert, inputs, or a model file."
   FLAGS:
+    cert : String; "Path to the induction head certificate file \
+                    (use either --cert or --inputs/--model)."
     inputs : String; "Path to the induction head input file (use either --inputs or --model)."
     model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
     layer : Nat; "Layer index for the induction head (1-based, required with --model)."
@@ -239,8 +258,10 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
 /-- `nfp induction certify_nonvacuous` subcommand (streamlined). -/
 def inductionCertifyNonvacuousSimpleCmd : Cmd := `[Cli|
   certify_nonvacuous VIA runInductionCertifyNonvacuousSimple;
-  "Require a strictly positive logit-diff bound from inputs or a model file."
+  "Require a strictly positive logit-diff bound from a cert, inputs, or a model file."
   FLAGS:
+    cert : String; "Path to the induction head certificate file \
+                    (use either --cert or --inputs/--model)."
     inputs : String; "Path to the induction head input file (use either --inputs or --model)."
     model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
     layer : Nat; "Layer index for the induction head (1-based, required with --model)."
