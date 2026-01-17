@@ -33,6 +33,14 @@ This is direct mechanistic evidence in the Transformer Circuits sense: it ties
 parameters (Q/K/V/O + LayerNorm) to certified bounds on attention and value
 contributions, but only for the specific inputs and direction supplied.
 
+## Literature alignment
+
+We follow the standard induction-head diagnostic setup from the literature:
+repeated-token sequences (a pattern repeated twice) and attention stripes that
+look back by one period (`q -> q - period`). The diagnostic script
+`scripts/diagnose_induction_heads.py` mirrors this setup, and the certificate
+generator uses repeated patterns for its inputs.
+
 ## Preconditions and scope limits
 
 These proofs are sufficient for a **conditional** certification claim:

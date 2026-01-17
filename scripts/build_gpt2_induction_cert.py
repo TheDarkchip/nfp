@@ -9,6 +9,9 @@ rational induction-head certificate compatible with `nfp induction certify`.
 Active induction positions are recorded as `active <q>` lines in the output.
 All sequence indices in the certificate are 1-based (literature convention).
 
+The repeated-pattern inputs match the standard induction-head diagnostic setup
+from the literature (pattern repeated twice).
+
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
     --layer 1 --head 6 --seq 32 --pattern-length 16 \

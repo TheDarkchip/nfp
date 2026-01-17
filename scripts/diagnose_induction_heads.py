@@ -9,6 +9,8 @@ This mirrors the common literature setup:
 - run GPT-2 with output_attentions,
 - rank heads by induction stripe attention (q -> q - period),
 - rank heads by previous-token attention (q -> q - 1).
+
+Layer/head indices in the report are 1-based to match the literature.
 """
 
 from __future__ import annotations
