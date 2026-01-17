@@ -12,6 +12,8 @@ It is intentionally brief and focused on the soundness boundary.
   yet imply full model behavior.
 - Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
   unembedding columns represent token logits.
+- Any direction search performed by Python helpers is untrusted witness generation; only the
+  resulting explicit certificate is checked by the Lean CLI.
 - The active set is user-supplied (or defaulted by the parser); bounds only hold for
   `q ∈ active`.
 - Performance: checking large certificates can be expensive for long sequences.
