@@ -10,12 +10,16 @@ Active induction positions are recorded as `active <q>` lines in the output.
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
-    --layer 5 --head 1 --seq 32 --pattern-length 16 \
+    --layer 0 --head 5 --seq 32 --pattern-length 16 \
+    --random-pattern --seed 0 \
     --values-out reports/gpt2_induction.values --value-dim 0 \
-    --active-eps-max 0.2
+    --active-eps-max 0.2 --min-margin 0
 
 Optionally, provide a logit-diff direction:
   --direction-target <tok_id> --direction-negative <tok_id>
+
+Note: active positions are filtered by --active-eps-max and --min-margin. If
+none qualify, the script exits with an error.
 """
 
 import argparse
@@ -192,6 +196,8 @@ def main() -> None:
                         help="Value dimension index for the value-range certificate")
     parser.add_argument("--active-eps-max", default="1/2",
                         help="Maximum eps to include an active position (default: 1/2).")
+    parser.add_argument("--min-margin", default="0",
+                        help="Minimum score gap required for an active position (default: 0).")
     parser.add_argument("--direction-target", type=int,
                         help="Target token id for logit-diff direction (optional)")
     parser.add_argument("--direction-negative", type=int,
@@ -241,16 +247,17 @@ def main() -> None:
                  for k in range(args.seq) if k != prev_q]
         margin_by_q[q] = min(diffs) if diffs else Fraction(0)
 
-    active_positions = candidate_positions
     eps_threshold = Fraction(args.active_eps_max)
-    active_positions = [q for q in candidate_positions if eps_by_q[q] <= eps_threshold]
-    if not active_positions and candidate_positions:
-        print("Warning: no active positions satisfy active-eps-max; certificate may be vacuous.")
-
-    if not active_positions and args.seq > 1:
-        if candidate_positions:
-            print("Warning: no active positions satisfy active-eps-max; using all nonzero queries.")
-        active_positions = list(range(1, args.seq))
+    min_margin = Fraction(args.min_margin)
+    active_positions = [
+        q for q in candidate_positions
+        if eps_by_q[q] <= eps_threshold and margin_by_q[q] >= min_margin
+    ]
+    if not active_positions:
+        raise SystemExit(
+            "No active positions satisfy active-eps-max/min-margin. "
+            "Try a different head/layer, random-pattern/seed, or relax the thresholds."
+        )
     if active_positions:
         eps = max(eps_by_q[q] for q in active_positions)
         margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))

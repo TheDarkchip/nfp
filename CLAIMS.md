@@ -19,9 +19,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 
 ## Soundly checked by the trusted CLI
 
-- `nfp induction certify`, `nfp induction certify_nonvacuous`, and
-  `nfp induction head_cert_check` verify explicit induction-head certificates from a single
-  cert file, optionally enforcing minimum `active`, `margin`, `eps`, and logit-diff gates.
+- `nfp induction certify` verifies explicit induction-head certificates from a single cert
+  file, optionally enforcing minimum `active`, `margin`, `eps`, and logit-diff gates.
 
 ## Untrusted / heuristic
 
