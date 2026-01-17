@@ -859,6 +859,29 @@ def inductionHeadIntervalCmd : Cmd := `[Cli|
     out : String; "Optional path to write the residual-interval certificate."
 ]
 
+/-- `nfp induction head_cert_check` subcommand. -/
+def runInductionHeadCertCheck (p : Parsed) : IO UInt32 := do
+  let certPath := p.flag! "cert" |>.as! String
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+
+/-- `nfp induction head_cert_check` subcommand. -/
+def inductionHeadCertCheckCmd : Cmd := `[Cli|
+  head_cert_check VIA runInductionHeadCertCheck;
+  "Check an explicit induction-head certificate."
+  FLAGS:
+    cert : String; "Path to the induction-head certificate file."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal; defaults to 0 when direction is set)."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+]
+
 /-- `nfp induction head_interval_model` subcommand. -/
 def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
   let modelPath := p.flag! "model" |>.as! String
@@ -917,7 +940,8 @@ def inductionAdvancedCmd : Cmd := `[Cli|
     inductionCertifyHeadModelAutoNonvacuousCmd;
     inductionCertifyCircuitModelCmd;
     inductionHeadIntervalCmd;
-    inductionHeadIntervalModelCmd
+    inductionHeadIntervalModelCmd;
+    inductionHeadCertCheckCmd
 ]
 
 /-- Induction-head subcommands. -/

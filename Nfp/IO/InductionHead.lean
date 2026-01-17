@@ -3,6 +3,7 @@
 module
 
 public import Nfp.IO.InductionHead.Basic
+public import Nfp.IO.InductionHead.Cert
 public import Nfp.IO.InductionHead.Circuit
 public import Nfp.IO.InductionHead.Nonvacuous
 
