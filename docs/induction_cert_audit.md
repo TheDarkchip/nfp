@@ -69,3 +69,8 @@ along a specified direction, conditional on an explicit certificate.
 
 - Add a verified extraction pipeline from model weights to explicit certificates.
 - Prove that `prev`, `active`, and `direction` correspond to token-level semantics.
+
+## References
+
+- Elhage et al., “A Mathematical Framework for Transformer Circuits.” citeturn0search0
+- Olsson et al., “In-context Learning and Induction Heads.” citeturn0academia12

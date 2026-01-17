@@ -179,6 +179,11 @@ For known gaps, see `SOUNDNESS_LIMITATIONS.md`.
 - **Lean 4** (pinned in `lean-toolchain`) and **Lake**.
 - Optional: **Python** for helper scripts (`scripts/`), plus `torch`, `transformers`, and `numpy`.
 
+## References
+
+- Elhage et al., “A Mathematical Framework for Transformer Circuits.” citeturn0search0
+- Olsson et al., “In-context Learning and Induction Heads.” citeturn0academia12
+
 ## Contributing
 
 Please follow the project rules in `AGENTS.md` (no `sorry`, no linter disables, total soundness in
