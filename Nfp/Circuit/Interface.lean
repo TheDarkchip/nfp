@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Semantics
+module
+
+public import Nfp.Circuit.Semantics
 
 /-!
 Typed input/output interfaces for circuits.
 -/
+
+public section
 
 namespace Nfp
 
@@ -12,7 +16,7 @@ universe u v u_in u_out
 
 namespace Circuit
 
-variable {ι : Type u} [Fintype ι] [DecidableEq ι]
+variable {ι : Type u} [Fintype ι]
 variable {α : Type v}
 
 /-- A typed input/output interface for a circuit. -/
@@ -27,17 +31,29 @@ namespace Interface
 variable {C : Circuit ι α} {ι_in : Type u_in} {ι_out : Type u_out}
 
 /-- Convert a typed input assignment into an input-node assignment. -/
-def toInputAssignment (I : Interface C ι_in ι_out) (input : ι_in → α) : C.InputAssignment :=
+def toInputAssignment (I : Interface C ι_in ι_out) (input : ι_in → α) :
+    C.InputAssignment :=
   fun i => input (I.inputs.symm i)
+
+/-- Definitional characterization of `Interface.toInputAssignment`. -/
+theorem toInputAssignment_def (I : Interface C ι_in ι_out) (input : ι_in → α) :
+    I.toInputAssignment input = fun i => input (I.inputs.symm i) := by
+  rfl
+
+section Eval
+
+variable [DecidableEq ι]
 
 /-- Evaluate a circuit on a typed interface. -/
 def eval (I : Interface C ι_in ι_out) (input : ι_in → α) : ι_out → α :=
   fun o => evalInput C (I.toInputAssignment input) (I.outputs o).1
 
-/-- Unfolding equation for `Interface.eval`. -/
-theorem eval_eq (I : Interface C ι_in ι_out) (input : ι_in → α) (o : ι_out) :
-    I.eval input o = evalInput C (I.toInputAssignment input) (I.outputs o).1 :=
+/-- Definitional characterization of `Interface.eval`. -/
+theorem eval_def (I : Interface C ι_in ι_out) (input : ι_in → α) (o : ι_out) :
+    I.eval input o = evalInput C (I.toInputAssignment input) (I.outputs o).1 := by
   rfl
+
+end Eval
 
 end Interface
 

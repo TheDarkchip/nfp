@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Logic.Equiv.Prod
-import Nfp.Circuit.Typed
+module
+
+public import Mathlib.Logic.Equiv.Prod
+public import Nfp.Circuit.Typed
 
 /-!
 Reshape combinators for product-typed circuit interfaces.
 -/
+
+public section
 
 namespace Nfp
 

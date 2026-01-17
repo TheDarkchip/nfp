@@ -1,22 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Basic
-import Nfp.Circuit.Combinators
-import Nfp.Circuit.Interface
-import Nfp.Circuit.Semantics
-import Nfp.Circuit.WellFormed
-import Nfp.Circuit.Cert
-import Nfp.Circuit.Cert.SoftmaxMargin
-import Nfp.Circuit.Cert.ValueRange
-import Nfp.Circuit.Cert.LogitDiff
-import Nfp.Circuit.Cert.DownstreamLinear
-import Nfp.Circuit.Cert.ResidualBound
-import Nfp.Circuit.Cert.ResidualInterval
-import Nfp.Circuit.Typed
-import Nfp.Circuit.Compose
-import Nfp.Circuit.Gates
-import Nfp.Circuit.Tensor
-import Nfp.Circuit.Layers
+module
+
+public import Nfp.Circuit.Basic
+public import Nfp.Circuit.Combinators
+public import Nfp.Circuit.Interface
+public import Nfp.Circuit.Semantics
+public import Nfp.Circuit.WellFormed
+public import Nfp.Circuit.Cert
+public import Nfp.Circuit.Typed
+public import Nfp.Circuit.Compose
+public import Nfp.Circuit.Gates
+public import Nfp.Circuit.Tensor
+public import Nfp.Circuit.Layers
 
 /-!
 Circuit definitions, semantics, and equivalence checking.

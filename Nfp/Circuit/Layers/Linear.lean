@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Logic.Embedding.Basic
-import Nfp.Circuit.Basic
-import Nfp.Circuit.Gates.Linear
-import Nfp.Circuit.Typed
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Logic.Embedding.Basic
+public import Nfp.Circuit.Basic
+public import Nfp.Circuit.Gates.Linear
+public import Nfp.Circuit.Typed
 
 /-!
 Linear and affine layer circuits.
 -/
+
+public section
 
 namespace Nfp
 
@@ -29,6 +33,14 @@ abbrev LinearNode (Row Col : Type u) : Type u := Sum Col Row
 def linearRank : LinearNode Row Col → Nat
   | Sum.inl _ => 0
   | Sum.inr _ => 1
+
+/-- Definitional characterization of `linearRank`. -/
+theorem linearRank_def (x : LinearNode Row Col) :
+    linearRank (Row := Row) (Col := Col) x =
+      match x with
+      | Sum.inl _ => 0
+      | Sum.inr _ => 1 := by
+  cases x <;> rfl
 
 section Dag
 

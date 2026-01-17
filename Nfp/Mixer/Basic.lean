@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Prob.Basic
+module
+
+public import Nfp.Prob.Basic
 
 /-!
 Row-stochastic mixers.
 -/
+
+public section
 
 open scoped BigOperators
 
@@ -35,3 +39,5 @@ def row (M : Mixer ι κ) (i : ι) : ProbVec κ :=
 end Mixer
 
 end Nfp
+
+end

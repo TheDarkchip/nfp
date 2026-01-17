@@ -7,6 +7,7 @@ defaultTargets = ["Nfp"]
 pp.unicode.fun = true # pretty-prints `fun a ↦ b`
 autoImplicit = false
 relaxedAutoImplicit = false
+experimental.module = true
 weak.linter.mathlibStandardSet = true
 maxSynthPendingDepth = 3
 linter.unusedVariables = true
@@ -23,6 +24,7 @@ weak.linter.style.lambdaSyntax = true
 weak.linter.style.dollarSyntax = true
 weak.linter.style.cdot = true
 weak.linter.style.longLine = true
+weak.linter.nfp.noHeartbeats = true
 
 [[require]]
 name = "mathlib"
@@ -36,18 +38,6 @@ roots = ["Nfp"]
 [[lean_exe]]
 name = "nfp"
 root = "Main"
-
-[[lean_exe]]
-name = "bench-rational"
-root = "BenchRational"
-
-[[lean_exe]]
-name = "bench-induction-core"
-root = "BenchInductionCore"
-
-[[lean_exe]]
-name = "bench-induction-counts"
-root = "BenchInductionCounts"
 
 [[lean_exe]]
 name = "theorem-axioms"

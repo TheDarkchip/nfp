@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Logic.Equiv.Basic
-import Nfp.Circuit.Interface
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Logic.Equiv.Basic
+public import Nfp.Circuit.Interface
 
 /-!
 Circuit combinators such as relabeling.
 -/
+
+public section
 
 namespace Nfp
 
@@ -29,8 +33,7 @@ def relabel (C : Circuit Node Val) (e : _root_.Equiv Node Node') : Circuit Node'
   refine C.gate (e.symm i) ?_
   intro j h
   refine rec (e j) ?_
-  change C.dag.rel (e.symm (e j)) (e.symm i)
-  simpa using h
+  simpa [Dag.relabel_rel_iff] using h
 
 namespace Interface
 

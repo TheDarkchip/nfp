@@ -1,11 +1,15 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Sound.Induction.Core
-import Nfp.Sound.Induction.CoreSound
-import Nfp.Sound.Induction.HeadOutput
+module
+
+public import Nfp.Sound.Induction.Core
+public import Nfp.Sound.Induction.HeadOutput
+public import Nfp.Sound.Induction.LogitDiff
+public import Nfp.Sound.Induction.OneHot
 
 /-!
-Sound builders for induction certificates.
+Soundness lemmas for induction certificates.
 
-This module re-exports the core constructions and head-output interval bounds.
+This module re-exports the core definitions, head-output helpers, and logit-diff
+lemmas that operate on explicit certificates.
 -/

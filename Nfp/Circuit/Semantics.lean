@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Basic
+module
+
+public import Nfp.Circuit.Basic
 
 /-!
 Evaluation semantics for finite circuits.
 -/
+
+public section
 
 namespace Nfp
 

@@ -1,15 +1,19 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Core.Basic
-import Nfp.Circuit.Cert.ValueRange
+module
+
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Cert.ValueRange
 
 /-!
-Exact GPT-2 slices for induction certification and downstream bounds.
+Exact GPT-2 slices for induction certification.
 
 This module holds token embeddings, head projection weights, and per-layer
-MLP/LayerNorm parameters needed to build `InductionHeadInputs` and downstream
-bound computations.
+MLP/LayerNorm parameters used to define `InductionHeadInputs` and bound
+computations.
 -/
+
+public section
 
 namespace Nfp
 

@@ -1,14 +1,18 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Finset.Image
-import Mathlib.Data.Matrix.Mul
-import Mathlib.Logic.Embedding.Basic
-import Nfp.Circuit.Layers.Heads
-import Nfp.Circuit.Layers.Tensor
+module
+
+public import Mathlib.Data.Finset.Image
+public import Mathlib.Data.Matrix.Mul
+public import Mathlib.Logic.Embedding.Basic
+public import Nfp.Circuit.Layers.Heads
+public import Nfp.Circuit.Layers.Tensor
 
 /-!
 QKV and output projection wiring for attention layers, plus attention score/mixing core.
 -/
+
+public section
 
 namespace Nfp
 
@@ -484,6 +488,12 @@ section Inputs
 def attentionInputs : Finset (AttentionNode Batch seq heads dim) :=
   (Finset.univ : Finset (AttentionInput Batch seq heads dim)).map Embedding.inl
 
+/-- Definitional characterization of `attentionInputs`. -/
+theorem attentionInputs_def :
+    attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) =
+      (Finset.univ : Finset (AttentionInput Batch seq heads dim)).map Embedding.inl := by
+  rfl
+
 open scoped Classical in
 /-- Membership in attention inputs corresponds to being a left injection. -/
 theorem mem_attentionInputs_iff {s : AttentionNode Batch seq heads dim} :
@@ -536,6 +546,34 @@ def attentionInputEquiv :
               cases (not_mem_attentionInputs_inr (Batch := Batch) (seq := seq) (heads := heads)
                 (dim := dim) s hs) }
 
+/-- Definitional characterization of `attentionInputEquiv`. -/
+theorem attentionInputEquiv_def :
+    attentionInputEquiv (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) =
+      { toFun := fun a =>
+          ⟨Sum.inl a,
+            (mem_attentionInputs_iff (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)).2
+              ⟨a, rfl⟩⟩
+        invFun := fun i =>
+          match i with
+          | ⟨Sum.inl a, _⟩ => a
+          | ⟨Sum.inr s, h⟩ =>
+              False.elim
+                (not_mem_attentionInputs_inr (Batch := Batch) (seq := seq) (heads := heads)
+                  (dim := dim) s h)
+        left_inv := by
+          intro a
+          rfl
+        right_inv := by
+          intro i
+          cases i with
+          | mk s hs =>
+              cases s with
+              | inl a => rfl
+              | inr s =>
+                  cases (not_mem_attentionInputs_inr (Batch := Batch) (seq := seq) (heads := heads)
+                    (dim := dim) s hs) } := by
+  rfl
+
 end Inputs
 
 section Outputs
@@ -548,6 +586,17 @@ def attentionOutputs : Finset (AttentionNode Batch seq heads dim) :=
         intro a b h
         cases h
         rfl }
+
+/-- Definitional characterization of `attentionOutputs`. -/
+theorem attentionOutputs_def :
+    attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) =
+      (Finset.univ : Finset (AttentionOutput Batch seq heads dim)).map
+        { toFun := attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+          inj' := by
+            intro a b h
+            cases h
+            rfl } := by
+  rfl
 
 open scoped Classical in
 /-- Membership in attention outputs corresponds to being an output injection. -/
@@ -636,6 +685,53 @@ def attentionOutputEquiv :
                   | inr _ =>
                       rfl }
 
+/-- Definitional characterization of `attentionOutputEquiv`. -/
+theorem attentionOutputEquiv_def :
+    attentionOutputEquiv (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) =
+      { toFun := fun o =>
+          ⟨attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) o,
+            (mem_attentionOutputs_iff (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)).2
+              ⟨o, rfl⟩⟩
+        invFun := fun i =>
+          match i with
+          | ⟨Sum.inr (Sum.inr (Sum.inr o)), _⟩ => o
+          | ⟨Sum.inl s, h⟩ =>
+              False.elim
+                (not_mem_attentionOutputs_inl (Batch := Batch) (seq := seq) (heads := heads)
+                  (dim := dim) s h)
+          | ⟨Sum.inr (Sum.inl s), h⟩ =>
+              False.elim
+                (not_mem_attentionOutputs_score (Batch := Batch) (seq := seq) (heads := heads)
+                  (dim := dim) s h)
+          | ⟨Sum.inr (Sum.inr (Sum.inl w)), h⟩ =>
+              False.elim
+                (not_mem_attentionOutputs_weight (Batch := Batch) (seq := seq) (heads := heads)
+                  (dim := dim) w h)
+        left_inv := by
+          intro o
+          rfl
+        right_inv := by
+          intro i
+          cases i with
+          | mk s hs =>
+              cases s with
+              | inl s =>
+                  cases (not_mem_attentionOutputs_inl (Batch := Batch) (seq := seq) (heads := heads)
+                    (dim := dim) s hs)
+              | inr s =>
+                  cases s with
+                  | inl s =>
+                      cases (not_mem_attentionOutputs_score (Batch := Batch) (seq := seq)
+                        (heads := heads) (dim := dim) s hs)
+                  | inr s =>
+                      cases s with
+                      | inl w =>
+                          cases (not_mem_attentionOutputs_weight (Batch := Batch) (seq := seq)
+                            (heads := heads) (dim := dim) w hs)
+                      | inr _ =>
+                          rfl } := by
+  rfl
+
 end Outputs
 
 section Circuits
@@ -702,6 +798,31 @@ def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val
                     (dim := dim) b k h d q)
               exact dotProduct weights vals
 
+/-- Definitional characterization of `attentionGate` on output nodes. -/
+theorem attentionGate_out_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (b : Batch) (q : Fin seq) (h : Fin heads) (d : Fin dim)
+    (rec :
+      ∀ j,
+        (attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)).rel j
+            (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) →
+          Val) :
+    attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) rec =
+      let weightNode : Fin seq → AttentionNode Batch seq heads dim := fun k =>
+        attnWeight (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, h, q, k)
+      let valueNode : Fin seq → AttentionNode Batch seq heads dim := fun k =>
+        attnV (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, k, h, d)
+      let weights : Fin seq → Val := fun k =>
+        rec (weightNode k)
+          (attentionDag_rel_weight_out (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+            b h q k d)
+      let vals : Fin seq → Val := fun k =>
+        rec (valueNode k)
+          (attentionDag_rel_v_out (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+            b k h d q)
+      dotProduct weights vals := by
+  simp [attentionGate]
+
 /-- Circuit for attention score/mixing. -/
 def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
     Circuit (AttentionNode Batch seq heads dim) Val :=
@@ -710,6 +831,16 @@ def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → 
     outputs := attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     gate :=
       attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax }
+
+/-- Definitional characterization of `attentionCircuit`. -/
+theorem attentionCircuit_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+    attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax =
+      { dag := attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+        inputs := attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+        outputs := attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+        gate := attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale
+          softmax } := by
+  rfl
 
 /-- Typed interface for attention score/mixing circuits. -/
 def attentionInterface (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
@@ -733,6 +864,15 @@ def attentionTyped (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Va
       scale softmax
     interface := attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
       scale softmax }
+
+/-- Definitional characterization of `attentionTyped`. -/
+theorem attentionTyped_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+    attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax =
+      { circuit := attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+          scale softmax
+        interface := attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
+          scale softmax } := by
+  rfl
 
 end Typed
 

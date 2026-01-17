@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Matrix.Mul
+module
+
+public import Mathlib.Data.Matrix.Mul
 
 /-!
 Linear and affine gate combinators built from `Matrix.mulVec`.
 -/
+
+public section
 
 namespace Nfp
 

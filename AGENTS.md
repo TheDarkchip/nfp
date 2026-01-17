@@ -103,7 +103,7 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
 ## 3. Workflow Expectations (How to make changes)
 
 ### 3.1 Before coding
-- Identify the right module (see `MODULE_MAP.md`).
+- Identify the right module.
 - Skim the top docstring / main definitions in that module.
 - Look for existing lemmas and naming patterns to match.
 
@@ -125,7 +125,7 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
 
 ### 4.1 Naming and organization
 - Prefer consistent, descriptive names:
-  - `_lemma`, `_iff`, `_eq`, `_mono`, `_nonneg`, `_sum_one`, etc.
+  - `_iff`, `_eq`, `_mono`, `_nonneg`, `_sum_one`, `_def`, etc.
 - Keep namespaces coherent:
   - attach lemmas to the structure/namespace they conceptually belong to.
 
@@ -147,6 +147,7 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
   - the goal is genuinely routine,
   - it stays fast and stable under small refactors, and
   - it does not rely on a large implicit rule universe.
+  - Note: mathlib itself uses `by aesop` widely; we are stricter in trusted/core code here.
 
 - Prefer local rules over global rules:
   - If a lemma is meant to be reused by Aesop, tag it deliberately (e.g. `@[aesop safe]`)
@@ -170,11 +171,15 @@ prefer the **clean redesign**, but do it consciously and document the rationale.
   - update all call sites,
   - leave a brief comment (or commit message rationale).
 
----
-
-## 5. Module Map (Where Things Live)
-
-The module map lives in `MODULE_MAP.md`.
+### 4.5 Mathlib Module Structure (Local Baseline)
+Based on `.lake/packages/mathlib` in this workspace:
+- `Mathlib/` files start with `module`; `MathlibTest/` and `Archive/` files may not.
+- Most `Mathlib/` files use `public import` for reexports, but plain `import` appears in core files too; meta helpers often use `public meta import` based on public API/compile-time reachability.
+- Many `Mathlib/` files open with `@[expose] public section`; `public meta section` is common in meta/Util, while `public section` and `public noncomputable section` are rarer.
+- Use `@[expose] public section` when broad unfolding is expected; use plain `public section` or `private` when you want bodies hidden.
+- Prefer `*_def` lemmas for targeted definitional rewriting even when definitions are exposed.
+- `import all` is rare, requires `allowImportAll`, and is used mainly for tests/private access; keep it local and documented.
+- Keep aggregator modules (e.g., `Nfp.Core`, `Nfp.Sound`) as thin `public import` reexports.
 
 ---
 
@@ -202,7 +207,6 @@ This repo treats “axioms creep” as a serious regression.
 - [ ] New nontrivial definitions/theorems have short, accurate docstrings.
 - [ ] Core invariants (nonnegativity, normalization, finiteness, acyclicity) are
   preserved and, where possible, explicitly proved.
-- [ ] Module map in `MODULE_MAP.md` is accurate (updated in the same commit if needed).
 - [ ] If CLI behavior changed: `lake build nfp --wfail` succeeds and basic `nfp ... --help` works.
 
 ## Landing the Plane (Session Completion)

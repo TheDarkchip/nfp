@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.System.Dag
+module
+
+public import Nfp.System.Dag
 
 /-!
 Circuit foundations: a DAG with designated inputs/outputs and gate semantics.
 -/
+
+public section
 
 namespace Nfp
 

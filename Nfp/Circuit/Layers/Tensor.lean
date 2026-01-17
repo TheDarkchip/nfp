@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Nfp.Circuit.Layers.Linear
+module
+
+public import Nfp.Circuit.Layers.Linear
 
 /-!
 Tensor-shaped layer builders (batched linear and affine layers).
 -/
+
+public section
 
 namespace Nfp
 
@@ -55,7 +59,7 @@ def batchedLinearDag : Dag (BatchedLinearNode Batch Row Col) :=
             linearRank (Row := Batch × Row) (Col := Batch × Col) j <
               linearRank (Row := Batch × Row) (Col := Batch × Col) i) := by
         intro j i h
-        cases j <;> cases i <;> simp [batchedLinearAdj, linearRank] at h ⊢
+        cases j <;> cases i <;> simp [batchedLinearAdj, linearRank_def] at h ⊢
       have hwf : WellFounded (fun j i =>
           linearRank (Row := Batch × Row) (Col := Batch × Col) j <
             linearRank (Row := Batch × Row) (Col := Batch × Col) i) := by

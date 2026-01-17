@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.Ring.Basic
-import Mathlib.Data.Finset.Attach
-import Mathlib.Data.Fintype.BigOperators
+module
+
+public import Mathlib.Algebra.Ring.Basic
+public import Mathlib.Data.Finset.Attach
+public import Mathlib.Data.Fintype.BigOperators
 
 /-!
 Basic gate combinators for aggregating parent values.
 -/
+
+public section
 
 namespace Nfp
 

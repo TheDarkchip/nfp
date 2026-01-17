@@ -26,8 +26,7 @@ lake exe nfp induction --help
 ```
 
 Current subcommands are limited to **induction certificate checking**. The CLI does **not** run a
-full model forward pass and does **not** ingest `.nfpt` weights directly; weight ingestion is done
-by untrusted helper scripts (see below).
+full model forward pass; certificate generation is done by untrusted helper scripts (see below).
 
 ## Module map
 
@@ -36,26 +35,54 @@ The authoritative module map and invariants are tracked in `AGENTS.md`.
 High-level layout:
 - `Nfp/Core`, `Nfp/Prob`, `Nfp/Mixer`, `Nfp/System`: core math infrastructure.
 - `Nfp/Circuit`: circuits, typed interfaces, and layer wiring (attention, induction).
-- `Nfp/Sound`: sound builders and verified helpers.
+- `Nfp/Sound`: soundness theorems and verified helpers.
 - `Nfp/IO`, `Nfp/Cli`: parsing and CLI entrypoints.
 
 ## Induction Certification (prototype)
 
-The current prototype checks **head-level induction certificates** and can optionally compose them
-with a **downstream error bound**. Certificates are produced by **untrusted** helper scripts and
-verified by the CLI.
+The current prototype checks **explicit induction-head certificates**. Certificates are produced
+by **untrusted** Python scripts and verified by the Lean CLI; no model forward pass runs in Lean.
 
 ### Build a head certificate (untrusted)
 
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 5 --head 1 --seq 32 --pattern-length 16 \
-  --values-out reports/gpt2_induction.values --value-dim 0 \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
   --active-eps-max 1/2
 ```
 
-If you want values aligned to a logit-diff direction, add:
+Layer/head indices in the generator are 1-based to match the literature.
+
+To certify a **non-vacuous** logit-diff lower bound, supply a direction:
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --direction-target 1268 --direction-negative 1796
+```
+
+Or let the untrusted script search for a direction in a vocab slice:
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
+  --direction-min-lb 1/10 \
+  --direction-report-out reports/direction_report.txt --direction-topk 10
+```
+
+Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
+explicit certificate.
+
+Optional direction metadata:
 
 ```
 --direction-target <token_id> --direction-negative <token_id>
@@ -64,198 +91,53 @@ If you want values aligned to a logit-diff direction, add:
 ### Verify a head certificate (trusted checker)
 
 ```bash
-lake exe nfp induction certify \
-  --scores reports/gpt2_induction.cert \
-  --values reports/gpt2_induction.values
+lake exe nfp induction certify --cert reports/gpt2_induction.cert
 ```
 
-Non-vacuity gates (optional):
+Optional gates:
 
 ```
---min-margin <rat>   --max-eps <rat>   --min-active <n>   --min-logit-diff <rat>
+--min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>
 ```
 
-### Recompute bounds inside Lean (sound builder)
+Example non-vacuous check:
 
 ```bash
-lake exe nfp induction certify_sound \
-  --scores reports/gpt2_induction.cert \
-  --values reports/gpt2_induction.values
+lake exe nfp induction certify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
 ```
-
-This ignores any `eps`/`margin`/`lo`/`hi` lines and recomputes them from the raw entries.
-
-### Compute exact head inputs inside Lean (experimental)
-
-```bash
-lake exe nfp induction certify_head --inputs reports/gpt2_induction.head
-```
-
-This path recomputes scores/values in Lean from exact head inputs. It is **experimental** and can
-be slow for nontrivial sequence lengths.
-
-You can also derive the head inputs directly from an `NFP_BINARY_V1` model file:
-
-```bash
-lake exe nfp induction certify_head_model \
-  --model models/gpt2_rigorous_with_gelu_kind_seq32.nfpt \
-  --layer 5 --head 1 \
-  --direction-target 1 --direction-negative 2
-```
-
-By default, `certify_head_model` derives the `prev` map and active set from the
-token sequence stored in the model file. Use `--period <n>` to override with a
-fixed periodic prompt.
-
-### GPT2-small (model-driven)
-
-To certify induction heads from GPT2-small weights, export a model binary and
-let the CLI derive the logit-diff direction from the stored prompt tokens
-(prefix matching: [A][B] ... [A] -> [B]):
-
-```bash
-python scripts/export_gpt2.py models/gpt2_small.nfpt
-
-lake exe nfp induction certify_head_model_auto \
-  --model models/gpt2_small.nfpt \
-  --layer 5 --head 1
-```
-
-Use `--period <n>` to override the prompt period derived from tokens.
-
-### End-to-end check with downstream bound (prototype)
-
-```bash
-python scripts/build_downstream_linear_cert.py \
-  --output reports/gpt2_downstream.cert \
-  --gain 3/2 --input-bound 5/4
-
-lake exe nfp induction certify_end_to_end \
-  --scores reports/gpt2_induction.cert \
-  --values reports/gpt2_induction.values \
-  --downstream reports/gpt2_downstream.cert
-```
-
-The downstream certificate is **checked for internal arithmetic consistency** but is externally
-computed. You can also compute the downstream bound inside Lean from a matrix payload:
-
-```bash
-lake exe nfp induction certify_end_to_end_matrix \
-  --scores reports/gpt2_induction.cert \
-  --values reports/gpt2_induction.values \
-  --matrix reports/gpt2_downstream.matrix
-```
-
-Or derive the downstream matrix directly from an `NFP_BINARY_V1` model file
-(currently uses the unembedding direction only). If `--residual-interval` is omitted,
-the tool derives a conservative residual interval from the model:
-
-```bash
-lake exe nfp induction certify_end_to_end_model \
-  --scores reports/gpt2_induction.cert \
-  --values reports/gpt2_induction.values \
-  --model models/gpt2_rigorous.nfpt
-```
-
-To use an external residual-interval certificate instead, include
-`--residual-interval reports/gpt2_residual.interval`.
 
 ## File formats
 
-### Softmax-margin certificate
+### Induction-head certificate
 
 ```
 seq <n>
+direction-target <tok_id>
+direction-negative <tok_id>
 eps <rat>
 margin <rat>
 active <q>
 prev <q> <k>
 score <q> <k> <rat>
 weight <q> <k> <rat>
-```
-
-`active <q>` lines declare the queries on which bounds are required; if omitted, the checker
-defaults to all nonzero queries.
-
-### Value-range certificate
-
-```
-seq <n>
-direction-target <tok_id>
-direction-negative <tok_id>
+eps-at <q> <rat>
+weight-bound <q> <k> <rat>
 lo <rat>
 hi <rat>
 val <k> <rat>
+val-lo <k> <rat>
+val-hi <k> <rat>
 ```
 
-`direction-*` lines are optional metadata for directional (logit-diff) values.
-
-### Downstream linear certificate
-
-```
-error <rat>
-gain <rat>
-input-bound <rat>
-```
-
-The checker enforces `error = gain * input-bound` and nonnegativity of all fields.
-
-### Downstream matrix payload
-
-```
-rows <n>
-cols <n>
-input-bound <rat>
-w <i> <j> <rat>
-```
-
-The checker computes a row-sum norm bound from the matrix entries.
-
-### Residual-interval certificate
-
-```
-dim <n>
-lo <i> <rat>
-hi <i> <rat>
-```
-
-Each `lo`/`hi` entry supplies an interval bound for residual vector coordinate `i`,
-used to compute downstream error.
-
-### Head input format (for `certify_head`)
-
-```
-seq <n>
-d_model <n>
-d_head <n>
-scale <rat>
-direction-target <tok_id>
-direction-negative <tok_id>
-direction <d> <rat>
-active <q>
-prev <q> <k>
-embed <q> <d> <rat>
-ln_eps <rat>
-ln1_gamma <d> <rat>
-ln1_beta <d> <rat>
-wq <i> <j> <rat>
-bq <j> <rat>
-wk <i> <j> <rat>
-bk <j> <rat>
-wv <i> <j> <rat>
-bv <j> <rat>
-wo <i> <j> <rat>
-attn_bias <d> <rat>
-```
-
-All `direction`, `embed`, and projection matrices must be fully specified. If no `active` lines
-appear, the checker defaults to all nonzero queries.
+All sequence indices (`q`, `k`) are **1-based** (literature convention). Direction token IDs
+(`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
+`direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
+appear, the checker defaults to all non-initial queries (indices 2.. in 1-based indexing).
 
 ## Soundness boundary
 
 - Untrusted scripts may use floating-point numerics to generate candidate certificates.
-- The CLI **only verifies** certificate constraints inside Lean; it does not search for witnesses.
-- Downstream error certificates are currently **not derived in Lean** (work in progress).
+- The CLI **only verifies** explicit certificates; it does not search for witnesses or run models.
 
 For known gaps, see `SOUNDNESS_LIMITATIONS.md`.
 

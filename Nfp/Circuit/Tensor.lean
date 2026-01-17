@@ -1,10 +1,14 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Data.Matrix.Basic
+module
+
+public import Mathlib.Data.Matrix.Basic
 
 /-!
 Typed tensor indices and tensor aliases.
 -/
+
+public section
 
 namespace Nfp
 

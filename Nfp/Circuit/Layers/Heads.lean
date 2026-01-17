@@ -1,12 +1,16 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Logic.Equiv.Fin.Basic
-import Mathlib.Logic.Equiv.Prod
-import Nfp.Circuit.Layers.Reshape
+module
+
+public import Mathlib.Logic.Equiv.Fin.Basic
+public import Mathlib.Logic.Equiv.Prod
+public import Nfp.Circuit.Layers.Reshape
 
 /-!
 Head split/merge combinators for transformer-style shapes.
 -/
+
+public section
 
 namespace Nfp
 

@@ -1,20 +1,23 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Mathlib.Data.Vector.Defs
-import Nfp.Circuit.Layers.Induction
-import Nfp.Circuit.Layers.Softmax
-import Nfp.Core.Basic
-import Nfp.Model.InductionHead
-import Nfp.Sound.Bounds.LayerNorm
-import Nfp.Sound.Bounds.MatrixNorm
-import Nfp.Sound.Linear.FinFold
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Batteries.Data.Vector.Lemmas
+public import Nfp.Circuit.Layers.Induction
+public import Nfp.Circuit.Layers.Softmax
+public import Nfp.Core.Basic
+public import Nfp.Model.InductionHead
+public import Nfp.Bounds.LayerNorm
+public import Nfp.Linear.FinFold
 
 /-!
 Core definitions for induction-head certificates.
 
-These definitions are shared across induction certificate builders and checkers.
+These definitions are shared across induction certificate checkers and proofs.
 -/
+
+public section
 
 namespace Nfp
 
@@ -23,7 +26,7 @@ namespace Sound
 open scoped BigOperators
 
 open Nfp.Circuit
-open Nfp.Sound.Bounds
+open Nfp.Bounds
 
 variable {seq : Nat}
 
@@ -32,6 +35,13 @@ def dirHeadVecOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Vector Rat dHead :=
   Vector.ofFn (fun d : Fin dHead =>
     Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j))
+
+/-- Unfolding lemma for `dirHeadVecOfInputs`. -/
+theorem dirHeadVecOfInputs_get {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (d : Fin dHead) :
+    (dirHeadVecOfInputs inputs).get d =
+      Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j) := by
+  simp [dirHeadVecOfInputs]
 
 /-- Real-valued LayerNorm outputs for head inputs. -/
 noncomputable def lnRealOfInputs {seq dModel dHead : Nat}
@@ -43,7 +53,8 @@ noncomputable def lnRealOfInputs {seq dModel dHead : Nat}
 theorem lnRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (i : Fin dModel) :
     lnRealOfInputs inputs q i =
-      Bounds.layerNormReal inputs.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q) i := rfl
+      Bounds.layerNormReal inputs.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q) i := by
+  simp [lnRealOfInputs]
 
 /-- Real-valued query projections for head inputs. -/
 noncomputable def qRealOfInputs {seq dModel dHead : Nat}
@@ -56,7 +67,8 @@ theorem qRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     qRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wq j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bq d : Real) := rfl
+        (inputs.bq d : Real) := by
+  simp [qRealOfInputs]
 
 /-- Real-valued key projections for head inputs. -/
 noncomputable def kRealOfInputs {seq dModel dHead : Nat}
@@ -69,7 +81,8 @@ theorem kRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     kRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wk j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bk d : Real) := rfl
+        (inputs.bk d : Real) := by
+  simp [kRealOfInputs]
 
 /-- Real-valued value projections for head inputs. -/
 noncomputable def vRealOfInputs {seq dModel dHead : Nat}
@@ -82,7 +95,8 @@ theorem vRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) (d : Fin dHead) :
     vRealOfInputs inputs q d =
       dotProduct (fun j => (inputs.wv j d : Real)) (lnRealOfInputs inputs q) +
-        (inputs.bv d : Real) := rfl
+        (inputs.bv d : Real) := by
+  simp [vRealOfInputs]
 
 /-- Real-valued attention scores for head inputs. -/
 noncomputable def scoresRealOfInputs {seq dModel dHead : Nat}
@@ -112,7 +126,8 @@ theorem scoresRealOfInputs_def {seq dModel dHead : Nat}
         else
           (inputs.maskValue : Real)
       else
-        base := rfl
+        base := by
+  simp [scoresRealOfInputs]
 
 /-- Real-valued per-key head outputs in model space. -/
 noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
@@ -124,7 +139,8 @@ noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
 theorem headValueRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) (i : Fin dModel) :
     headValueRealOfInputs inputs k i =
-      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) := rfl
+      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) := by
+  simp [headValueRealOfInputs]
 
 /-- Real-valued direction scores for head inputs. -/
 noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
@@ -137,7 +153,8 @@ theorem valsRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) :
     valsRealOfInputs inputs k =
       let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
-      dotProduct dirHead (fun d => vRealOfInputs inputs k d) := rfl
+      dotProduct dirHead (fun d => vRealOfInputs inputs k d) := by
+  simp [valsRealOfInputs]
 
 /-- Interval data for direction values. -/
 structure ValueInterval (seq : Nat) where
@@ -184,7 +201,7 @@ def defaultInductionHeadSplitConfig : InductionHeadSplitConfig :=
     splitBudgetDiffRefined := 12 }
 
 /-- Unfolding lemma for `defaultInductionHeadSplitConfig`. -/
-theorem defaultInductionHeadSplitConfig_def :
+private theorem defaultInductionHeadSplitConfig_def :
     defaultInductionHeadSplitConfig =
       { splitBudgetQ := 2
         splitBudgetK := 2
@@ -207,6 +224,27 @@ structure InductionHeadCert (seq : Nat) where
   prev : Fin seq → Fin seq
   /-- Value-interval certificate for the direction values. -/
   values : ValueInterval seq
+
+/-- Extensionality lemma for `InductionHeadCert`. -/
+@[ext] theorem InductionHeadCert.ext {seq : Nat} {c₁ c₂ : InductionHeadCert seq}
+    (hε : c₁.eps = c₂.eps)
+    (hεAt : c₁.epsAt = c₂.epsAt)
+    (hweight : c₁.weightBoundAt = c₂.weightBoundAt)
+    (hmargin : c₁.margin = c₂.margin)
+    (hactive : c₁.active = c₂.active)
+    (hprev : c₁.prev = c₂.prev)
+    (hvalues : c₁.values = c₂.values) :
+    c₁ = c₂ := by
+  cases c₁
+  cases c₂
+  cases hε
+  cases hεAt
+  cases hweight
+  cases hmargin
+  cases hactive
+  cases hprev
+  cases hvalues
+  rfl
 
 /-- Soundness predicate for `InductionHeadCert`. -/
 structure InductionHeadCertSound [NeZero seq] {dModel dHead : Nat}

@@ -1,11 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Combinatorics.Digraph.Basic
-import Mathlib.Data.Finset.Basic
+module
+
+public meta import Nfp.Tactic.Linter
+public import Mathlib.Combinatorics.Digraph.Basic
+public import Mathlib.Data.Fintype.Defs
+public import Mathlib.Data.Finset.Basic
 
 /-!
 Directed acyclic graph foundations.
 -/
+
+public section
 
 namespace Nfp
 
@@ -63,8 +69,15 @@ def relabel (G : Dag ι) (e : ι ≃ ι') : Dag ι' :=
     wf := by
       simpa using (InvImage.wf (f := e.symm) (h := G.wf)) }
 
+/-- Relabeling preserves adjacency via the equivalence. -/
+theorem relabel_rel_iff (G : Dag ι) (e : ι ≃ ι') (a b : ι') :
+    (G.relabel e).rel a b ↔ G.rel (e.symm a) (e.symm b) := by
+  rfl
+
 end Relabel
 
 end Dag
 
 end Nfp
+
+end

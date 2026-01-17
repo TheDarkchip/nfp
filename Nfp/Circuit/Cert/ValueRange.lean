@@ -1,13 +1,17 @@
 -- SPDX-License-Identifier: AGPL-3.0-or-later
 
-import Mathlib.Algebra.BigOperators.Group.Finset.Basic
-import Nfp.Core.Basic
-import Nfp.Circuit.Cert
-import Nfp.Circuit.Layers.Induction
+module
+
+public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+public import Nfp.Core.Basic
+public import Nfp.Circuit.Cert.Basic
+public import Nfp.Circuit.Layers.Induction
 
 /-!
 Value-range certificates for attention value vectors.
 -/
+
+public section
 
 namespace Nfp
 

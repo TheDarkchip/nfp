@@ -5,31 +5,21 @@ It is intentionally brief and focused on the soundness boundary.
 
 ## Current limitations
 
-- The trusted CLI only **checks certificates**; it does not search for witnesses or run a model.
-- Induction certificates are **head-level** (softmax-margin + value-range + logit-diff lower bound).
-  They do **not** yet imply end-to-end model behavior.
-- Downstream error bounds can be computed from a **matrix payload** inside Lean. A model-based
-  path exists, but it currently uses only the unembedding direction and derives residual
-  intervals via conservative interval propagation (ignoring attention-score structure),
-  which can be loose.
-- The `certify_head` path uses a **head-input file** extracted by an untrusted script; the extractor
-  now includes attention projection biases and LayerNorm metadata, but the Lean-side computation
-  still ignores LayerNorm and the shared attention output bias.
-- The `certify_head_model` path derives head inputs from the model binary in Lean, includes
-  attention projection biases, and derives `prev`/active from the stored token sequence by
-  default, but still ignores LayerNorm and the shared attention output bias. It currently
-  requires `head_dim` to be a perfect square to represent the scale as an exact rational.
-- The `certify_head_model_auto` path derives the logit-diff direction from the stored prompt
-  tokens using a heuristic; use explicit direction tokens for fixed claims.
-- Performance: exact head-input recomputation in Lean can be slow for nontrivial sequence lengths.
-- There is no bridge theorem connecting certificate validity to a full circuit/model semantics
-  statement (for example, a formal statement about logits under a transformer block stack).
+- The trusted CLI only **checks explicit certificates**; it does not search for witnesses or
+  run model evaluation.
+- Induction certificates are **head-level** (softmax-margin + value-interval + logit-diff lower
+  bound) and conditional on the supplied `prev`, `active`, and `direction` inputs. They do **not**
+  yet imply full model behavior.
+- Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
+  unembedding columns represent token logits.
+- Any direction search performed by Python helpers is untrusted witness generation; only the
+  resulting explicit certificate is checked by the Lean CLI.
+- The active set is user-supplied (or defaulted by the parser); bounds only hold for
+  `q ∈ active`.
+- Performance: checking large certificates can be expensive for long sequences.
 
 ## Remaining work
 
-- Tighten model-derived residual intervals (e.g., use attention-weight certificates or
-  score-aware bounds) to avoid vacuity.
-- Replace untrusted extraction with a verified parser for model weight slices.
-- Add a formal bridge from certificates to circuit semantics and (eventually) to end-to-end
-  transformer claims.
-- Improve performance for the exact head-input path without weakening soundness.
+- Prove or verify that `prev`, `active`, and `direction` are derived from token-level semantics.
+- Add a verified extraction pipeline from model weights to explicit certificates.
+- Extend the bridge from head-level certificates to full circuit/model semantics.
