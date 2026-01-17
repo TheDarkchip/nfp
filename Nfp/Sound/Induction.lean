@@ -3,7 +3,6 @@
 module
 
 public import Nfp.Sound.Induction.Core
-public import Nfp.Sound.Induction.EndToEnd
 public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 public import Nfp.Sound.Induction.OneHot
@@ -11,6 +10,6 @@ public import Nfp.Sound.Induction.OneHot
 /-!
 Soundness lemmas for induction certificates.
 
-This module re-exports the core definitions, head-output interval predicates,
-and logit-diff helpers that operate on explicit certificates.
+This module re-exports the core definitions, head-output helpers, and logit-diff
+lemmas that operate on explicit certificates.
 -/

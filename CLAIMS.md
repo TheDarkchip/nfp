@@ -13,20 +13,9 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
   `InductionHeadCertBounds`.
 - Logit-diff lower bound lemmas: `logitDiffLowerBound_le`, `logitDiffLowerBoundAt_le`, and
   `logitDiffLowerBoundWeightedAt_le`.
-- Bridge lemmas composing head logit-diff bounds with head outputs and residual
-  interval bounds: `headLogitDiff_eq_direction_dot_headOutput`,
-  `logitDiffLowerBound_with_residual`, and `logitDiffLowerBound_with_output_intervals`.
-- Downstream linear certificate soundness: `checkDownstreamLinearCert` implies
-  `DownstreamLinearBounds`.
-- Residual-interval certificate soundness: `checkResidualIntervalCert` implies
-  `ResidualIntervalBounds`.
-- End-to-end direction-dot lower bounds on `transformerStackFinalReal` can be derived by
-  composing head logit-diff bounds with residual interval bounds
-  (`logitDiffLowerBound_end_to_end_gpt2`).
-- Row-sum matrix norm bounds for `mulVec` under uniform input magnitude.
-- Tanh-GELU bounds and interval propagation through MLP layers.
-- Interval bounds for multi-head attention, transformer-layer residual blocks, transformer
-  stacks, and final LayerNorm outputs.
+- The head logit-diff equals the direction dot product of the head output
+  (`headLogitDiff_eq_direction_dot_headOutput`).
+- Row-stochastic attention/one-hot bounds for induction heads and related interval lemmas.
 
 ## Soundly checked by the trusted CLI
 
@@ -36,10 +25,9 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 
 ## Untrusted / heuristic
 
-- Python helpers that generate explicit certificates from GPT-2 weights or `.nfpt` files:
-  `scripts/build_gpt2_induction_cert.py`, `scripts/build_gpt2_induction_cert_from_binary.py`,
-  `scripts/build_residual_interval_cert.py`, `scripts/build_residual_bound_cert.py`, and
-  `scripts/build_downstream_linear_cert.py`.
+- Python helpers that generate explicit induction-head certificates from GPT-2 weights or
+  `.nfpt` files: `scripts/build_gpt2_induction_cert.py`,
+  `scripts/build_gpt2_induction_cert_from_binary.py`.
 - Exporters and dataset generators for `.nfpt` model files.
 - Any choice of prompts, directions, or candidate heads used by certificate generators.
 
@@ -47,5 +35,4 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 
 - A verified extraction pipeline from model weights to explicit certificates.
 - End-to-end claims about GPT-2 logits or Jacobians derived from certificates.
-- A full bridge from explicit certificates to complete model semantics (beyond head-level
-  and residual-interval compositions).
+- A full bridge from explicit head certificates to complete model semantics.

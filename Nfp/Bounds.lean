@@ -7,9 +7,7 @@ public import Nfp.Bounds.Cache
 public import Nfp.Bounds.Gelu
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Bounds.LayerNorm.InvStd
-public import Nfp.Bounds.MatrixNorm
 public import Nfp.Bounds.Mlp
-public import Nfp.Bounds.Transformer
 public import Nfp.Bounds.UnnormRat
 
 /-!

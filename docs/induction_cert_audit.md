@@ -13,11 +13,8 @@ induction heads, and spell out the scope and limitations of that claim.
 - `logitDiffLowerBoundAt` plus `logitDiffLowerBoundAt_le` give a certified lower
   bound on the logit-diff contribution derived from the certificate’s values
   (`Nfp/Circuit/Cert/LogitDiff.lean`).
-- `headLogitDiff_eq_direction_dot_headOutput`, `logitDiffLowerBound_with_residual`,
-  and `logitDiffLowerBound_with_output_intervals` compose head-level logit-diff
-  bounds with output intervals (`Nfp/Sound/Induction/LogitDiff.lean`).
-- `logitDiffLowerBound_end_to_end_gpt2` instantiates the composition for GPT-2
-  stack outputs (`Nfp/Sound/Induction/EndToEnd.lean`).
+- `headLogitDiff_eq_direction_dot_headOutput` connects the logit-diff definition
+  to head-output semantics (`Nfp/Sound/Induction/LogitDiff.lean`).
 
 ## Mechanistic mapping (Transformer Circuits)
 
@@ -48,8 +45,6 @@ Key assumptions and limitations:
   scripts; Lean does not (yet) verify their derivation from token-level semantics.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
-- End-to-end claims rely on external residual/downstream interval certificates; the
-  current checker only verifies those certificates once provided.
 
 ## Conclusion
 
@@ -62,4 +57,3 @@ along a specified direction, conditional on an explicit certificate.
 
 - Add a verified extraction pipeline from model weights to explicit certificates.
 - Prove that `prev`, `active`, and `direction` correspond to token-level semantics.
-- Tighten residual/downstream interval bounds to strengthen end-to-end claims.

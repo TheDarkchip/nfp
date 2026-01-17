@@ -7,7 +7,6 @@ public import Mathlib.Data.List.MinMax
 public import Mathlib.Data.Vector.Basic
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.Bounds.Cache
-public import Nfp.Bounds.MatrixNorm.Interval
 public import Nfp.Sound.Induction.HeadOutput
 
 /-!
@@ -947,7 +946,7 @@ theorem logitDiffLowerBoundFromCertBest_le
 
 end WithNeZero
 
-/-! End-to-end lower bounds from head certificates plus residual intervals. -/
+/-! Head-output identities. -/
 
 /-- The head logit-diff equals the direction dot product of the head output. -/
 theorem headLogitDiff_eq_direction_dot_headOutput
@@ -1004,125 +1003,6 @@ theorem headLogitDiff_eq_direction_dot_headOutput
     _ = dotProduct (fun i => (inputs.direction i : Real))
           (fun i => headOutput inputs q i) := by
           simpa [dir] using hsum.symm
-
-/-- Combine a head logit-diff bound with residual interval bounds. -/
-theorem logitDiffLowerBound_with_residual
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (lb : Rat)
-    (hlb : ∀ q, q ∈ inputs.active → (lb : Real) ≤ headLogitDiff inputs q)
-    (residual : Fin seq → Fin dModel → Real)
-    (lo hi : Fin dModel → Rat)
-    (hres : ∀ q, q ∈ inputs.active → ∀ i,
-      (lo i : Real) ≤ residual q i ∧ residual q i ≤ (hi i : Real)) :
-    ∀ q, q ∈ inputs.active →
-      (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
-        dotProduct (fun i => (inputs.direction i : Real))
-          (fun i => headOutput inputs q i + residual q i) := by
-  intro q hq
-  have hhead := hlb q hq
-  have hres' :
-      |dotProduct (fun i => (inputs.direction i : Real)) (residual q)| ≤
-        (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) := by
-    have hlo : ∀ i, (lo i : Real) ≤ residual q i := fun i => (hres q hq i).1
-    have hhi : ∀ i, residual q i ≤ (hi i : Real) := fun i => (hres q hq i).2
-    simpa using
-      (Bounds.abs_dotProduct_le_dotIntervalAbsBound_real
-        (v := inputs.direction) (lo := lo) (hi := hi) (x := residual q) hlo hhi)
-  have hres_lower :
-      -(Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
-        dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
-    exact (abs_le.mp hres').1
-  have hsum :
-      (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
-        headLogitDiff inputs q +
-          dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
-    have hsum' : (lb : Real) + -(Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
-        headLogitDiff inputs q +
-          dotProduct (fun i => (inputs.direction i : Real)) (residual q) :=
-      add_le_add hhead hres_lower
-    simpa [sub_eq_add_neg] using hsum'
-  calc
-    (lb : Real) - (Bounds.dotIntervalAbsBound inputs.direction lo hi : Real) ≤
-        headLogitDiff inputs q +
-          dotProduct (fun i => (inputs.direction i : Real)) (residual q) := hsum
-    _ =
-        dotProduct (fun i => (inputs.direction i : Real))
-          (fun i => headOutput inputs q i + residual q i) := by
-          have hdot :
-              dotProduct (fun i => (inputs.direction i : Real))
-                  (fun i => headOutput inputs q i + residual q i) =
-                dotProduct (fun i => (inputs.direction i : Real))
-                    (fun i => headOutput inputs q i) +
-                  dotProduct (fun i => (inputs.direction i : Real)) (residual q) := by
-            simpa using
-              (Linear.dotProduct_add_right
-                (x := fun i => (inputs.direction i : Real))
-                (y := fun i => headOutput inputs q i)
-                (z := residual q))
-          simp [headLogitDiff_eq_direction_dot_headOutput, hdot]
-
-/-- Combine a head logit-diff bound with intervals on head output and a downstream output. -/
-theorem logitDiffLowerBound_with_output_intervals
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (lb : Rat)
-    (hlb : ∀ q, q ∈ inputs.active → (lb : Real) ≤ headLogitDiff inputs q)
-    (output : Fin seq → Fin dModel → Real)
-    (outLo outHi : Fin dModel → Rat)
-    (hout : ∀ q, q ∈ inputs.active → ∀ i,
-      (outLo i : Real) ≤ output q i ∧ output q i ≤ (outHi i : Real))
-    (headLo headHi : Fin dModel → Rat)
-    (hhead : ∀ q, q ∈ inputs.active → ∀ i,
-      (headLo i : Real) ≤ headOutput inputs q i ∧
-        headOutput inputs q i ≤ (headHi i : Real)) :
-    ∀ q, q ∈ inputs.active →
-      (lb : Real) -
-          (Bounds.dotIntervalAbsBound inputs.direction
-            (fun i => outLo i - headHi i) (fun i => outHi i - headLo i) : Real) ≤
-        dotProduct (fun i => (inputs.direction i : Real)) (fun i => output q i) := by
-  intro q hq
-  let residual : Fin seq → Fin dModel → Real :=
-    fun q i => output q i - headOutput inputs q i
-  let lo : Fin dModel → Rat := fun i => outLo i - headHi i
-  let hi : Fin dModel → Rat := fun i => outHi i - headLo i
-  have hres : ∀ q, q ∈ inputs.active → ∀ i,
-      (lo i : Real) ≤ residual q i ∧ residual q i ≤ (hi i : Real) := by
-    intro q hq i
-    have hout_q := hout q hq i
-    have hhead_q := hhead q hq i
-    have hlow :
-        (outLo i : Real) - (headHi i : Real) ≤
-          output q i - headOutput inputs q i := by
-      exact sub_le_sub hout_q.1 hhead_q.2
-    have hhigh :
-        output q i - headOutput inputs q i ≤
-          (outHi i : Real) - (headLo i : Real) := by
-      exact sub_le_sub hout_q.2 hhead_q.1
-    constructor
-    · simpa [lo, residual, ratToReal_sub] using hlow
-    · simpa [hi, residual, ratToReal_sub] using hhigh
-  have hbound :=
-    logitDiffLowerBound_with_residual
-      (inputs := inputs)
-      (lb := lb)
-      (hlb := hlb)
-      (residual := residual)
-      (lo := lo)
-      (hi := hi)
-      hres
-      q
-      hq
-  have hdot :
-      dotProduct (fun i => (inputs.direction i : Real))
-          (fun i => headOutput inputs q i + residual q i) =
-        dotProduct (fun i => (inputs.direction i : Real))
-          (fun i => output q i) := by
-    refine Finset.sum_congr rfl ?_
-    intro i _
-    have hsum :
-        headOutput inputs q i + residual q i = output q i := by
-      simp [residual, sub_eq_add_neg, add_left_comm]
-    simp [hsum]
-  simpa [lo, hi, hdot] using hbound
 
 end LogitDiffLowerBound
 

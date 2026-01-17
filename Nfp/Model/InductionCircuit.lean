@@ -10,7 +10,7 @@ Circuit-level induction prompt specifications.
 These wrappers name the *shifted* prev/active maps that correspond to the
 canonical induction-head circuit (previous-token head feeding induction head).
 They are definitional aliases over `InductionPrevSpec*Shift`, but make the
-intended mechanistic interpretation explicit for downstream lemmas.
+intended mechanistic interpretation explicit for later lemmas.
 -/
 
 public section

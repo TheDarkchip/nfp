@@ -2,11 +2,10 @@
 
 module
 
-public import Nfp.Circuit.Cert.ResidualInterval
 public import Nfp.Sound.Induction.CoreDefs
 
 /-!
-Head-output interval certificates for induction heads.
+Head-output definitions for induction heads.
 -/
 
 public section
@@ -52,19 +51,6 @@ theorem headOutput_def (inputs : Model.InductionHeadInputs seq dModel dHead)
     headOutput inputs q i =
       headOutputWithScores (scoresRealOfInputs inputs) inputs q i := by
   simp [headOutput]
-
-/-- Soundness predicate for head-output interval bounds. -/
-structure HeadOutputIntervalSound [NeZero seq]
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (active : Finset (Fin seq))
-    (c : Circuit.ResidualIntervalCert dModel) : Prop where
-  /-- Interval bounds are ordered coordinatewise. -/
-  bounds : Circuit.ResidualIntervalBounds c
-  /-- Active-query outputs lie inside the interval bounds. -/
-  output_mem :
-    ∀ q, q ∈ active → ∀ i,
-      (c.lo i : Real) ≤ headOutput inputs q i ∧
-        headOutput inputs q i ≤ (c.hi i : Real)
 
 end
 

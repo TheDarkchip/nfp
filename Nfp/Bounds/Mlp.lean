@@ -6,7 +6,6 @@ public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 public import Nfp.Core.Basic
 public import Nfp.Bounds.Gelu
 public import Nfp.Bounds.LayerNorm
-public import Nfp.Bounds.MatrixNorm
 
 /-!
 Interval bounds for GPT-2 MLP blocks (linear + GELU + linear).
