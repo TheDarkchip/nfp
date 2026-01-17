@@ -285,7 +285,7 @@ private def finalizeState {seq : Nat} (hpos : 0 < seq) (st : ParseState seq) :
       st.active
     else
       (Finset.univ : Finset (Fin seq)).erase defaultPrev
-  return
+  pure
     { eps := eps
       epsAt := epsAtFun
       weightBoundAt := weightBoundAtFun
@@ -417,4 +417,3 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
 end IO
 
 end Nfp
-

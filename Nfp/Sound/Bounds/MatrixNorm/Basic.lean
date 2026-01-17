@@ -8,8 +8,6 @@ public import Mathlib.Algebra.Order.Ring.Abs
 public import Mathlib.Data.Fintype.Basic
 public import Mathlib.Data.Matrix.Mul
 public import Mathlib.Data.Real.Basic
-public import Nfp.Circuit.Cert.DownstreamLinear
-public import Nfp.Circuit.Cert.ResidualInterval
 public import Nfp.Core.Basic
 public import Nfp.Sound.Bounds.MatrixNorm.Interval
 public import Nfp.Sound.Linear.FinFold
@@ -103,17 +101,6 @@ theorem downstreamErrorFromBounds_nonneg {m n : Nat} (W : Matrix (Fin m) (Fin n)
     0 ≤ downstreamErrorFromBounds W bound := by
   simpa [downstreamErrorFromBounds] using rowSumWeightedNorm_nonneg W bound
 
-/-- Build a residual-interval certificate by applying a matrix to an input interval. -/
-def buildResidualIntervalCertFromMatrix {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (lo hi : Fin n → Rat) (hlohi : ∀ j, lo j ≤ hi j) :
-    {c : Circuit.ResidualIntervalCert m // Circuit.ResidualIntervalBounds c} := by
-  let lo' := mulVecIntervalLower W lo hi
-  let hi' := mulVecIntervalUpper W lo hi
-  refine ⟨{ lo := lo', hi := hi' }, ?_⟩
-  refine { lo_le_hi := ?_ }
-  intro i
-  exact mulVecIntervalLower_le_upper W lo hi hlohi i
-
 /-- Summed absolute row entries factor out a scalar bound. -/
 theorem sum_abs_row_mul_eq_rowSum_mul {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
     (i : Fin m) (inputBound : Rat) :
@@ -163,22 +150,6 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
   have hmul : rowSum W i * inputBound ≤ rowSumNorm W * inputBound :=
     mul_le_mul_of_nonneg_right hle hinput
   exact hrow.trans hmul
-
-/-- Build a downstream linear certificate from a matrix and input bound. -/
-def buildDownstreamLinearCert {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
-    (inputBound : Rat) (hinput : 0 ≤ inputBound) :
-    {c : Circuit.DownstreamLinearCert // Circuit.DownstreamLinearBounds c} := by
-  let gain := rowSumNorm W
-  let error := gain * inputBound
-  refine ⟨{ error := error, gain := gain, inputBound := inputBound }, ?_⟩
-  refine
-    { error_nonneg := ?_
-      gain_nonneg := ?_
-      input_nonneg := hinput
-      error_eq := rfl }
-  · exact mul_nonneg (rowSumNorm_nonneg W) hinput
-  · exact rowSumNorm_nonneg W
-
 
 end Bounds
 

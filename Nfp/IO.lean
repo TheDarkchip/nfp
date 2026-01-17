@@ -2,14 +2,7 @@
 
 module
 
-public import Nfp.IO.Checks
-public import Nfp.IO.Derive
-public import Nfp.IO.HeadScore
 public import Nfp.IO.InductionHead
-public import Nfp.IO.Loaders
-public import Nfp.IO.NfptPure
-public import Nfp.IO.Run
-public import Nfp.IO.Timing
 public import Nfp.IO.Util
 
 /-!
