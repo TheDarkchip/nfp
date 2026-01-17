@@ -22,6 +22,9 @@ Usage:
 Optionally, provide a logit-diff direction:
   --direction-target <tok_id> --direction-negative <tok_id>
 
+Or ask the script to search for a direction (untrusted):
+  --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000
+
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
 Layer/head indices are 1-based in the CLI and converted to 0-based internally.
@@ -183,6 +186,63 @@ def write_value_range(path: Path, seq: int, values, decimals: int,
         for k, val in enumerate(vals_rat):
             f.write(f"val {k + 1} {rat_to_str(val)}\n")
 
+def search_direction(
+    model,
+    values: np.ndarray,
+    layer: int,
+    head: int,
+    prev: np.ndarray,
+    active_positions: list[int],
+    eps_at: list[float],
+    vocab_min: int,
+    vocab_max: int,
+    max_candidates: int | None,
+    seed: int,
+) -> tuple[int, int, float]:
+    if vocab_min < 0 or vocab_max <= vocab_min:
+        raise SystemExit("direction vocab range must satisfy 0 <= min < max")
+    cand_ids = list(range(vocab_min, vocab_max))
+    if max_candidates is not None and max_candidates > 0 and len(cand_ids) > max_candidates:
+        rng = np.random.default_rng(seed)
+        cand_ids = rng.choice(cand_ids, size=max_candidates, replace=False).tolist()
+
+    wte = model.wte.weight.detach().cpu().numpy()
+    if max(cand_ids) >= wte.shape[0]:
+        raise SystemExit("direction vocab range exceeds model vocab size")
+    head_dim = model.config.n_embd // model.config.n_head
+    start, end = head * head_dim, (head + 1) * head_dim
+    w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
+
+    proj = wte[cand_ids] @ w_o  # (m, head_dim)
+    vals_mat = values @ proj.T  # (seq, m)
+    active_prev = [(q, int(prev[q])) for q in active_positions]
+    best_lb = None
+    best_pair = None
+
+    for i in range(vals_mat.shape[1]):
+        vals_i = vals_mat[:, i]
+        for j in range(vals_mat.shape[1]):
+            if i == j:
+                continue
+            vals = vals_i - vals_mat[:, j]
+            lo = float(vals.min())
+            hi = float(vals.max())
+            gap = hi - lo
+            lb = None
+            for q, pq in active_prev:
+                cand = float(vals[pq]) - eps_at[q] * gap
+                if lb is None or cand < lb:
+                    lb = cand
+            if lb is None:
+                continue
+            if best_lb is None or lb > best_lb:
+                best_lb = lb
+                best_pair = (cand_ids[i], cand_ids[j])
+
+    if best_pair is None or best_lb is None:
+        raise SystemExit("No direction candidates found")
+    return best_pair[0], best_pair[1], best_lb
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
@@ -210,6 +270,16 @@ def main() -> None:
                         help="Target token id for logit-diff direction (optional)")
     parser.add_argument("--direction-negative", type=int,
                         help="Negative token id for logit-diff direction (optional)")
+    parser.add_argument("--search-direction", action="store_true",
+                        help="Search for a direction within the vocab range (untrusted).")
+    parser.add_argument("--direction-vocab-min", type=int, default=1000,
+                        help="Minimum vocab id for direction search (inclusive).")
+    parser.add_argument("--direction-vocab-max", type=int, default=2000,
+                        help="Maximum vocab id for direction search (exclusive).")
+    parser.add_argument("--direction-max-candidates", type=int, default=0,
+                        help="Limit number of direction candidates (0 = all in range).")
+    parser.add_argument("--direction-min-lb", default="0",
+                        help="Minimum logit-diff lower bound to accept (default: 0).")
     args = parser.parse_args()
 
     if args.seq <= 0:
@@ -296,18 +366,54 @@ def main() -> None:
         eps_at.append(max(max_other, deficit))
     weight_bound_at = weights_rat
 
+    if args.search_direction and (args.direction_target is not None or args.direction_negative is not None):
+        raise SystemExit("search-direction is mutually exclusive with explicit direction tokens")
+
     direction_target = None
     direction_negative = None
+    if args.search_direction:
+        eps_at_float = [float(eps_at[q]) for q in range(args.seq)]
+        max_candidates = args.direction_max_candidates
+        if max_candidates == 0:
+            max_candidates = None
+        direction_target, direction_negative, best_lb = search_direction(
+            model=model,
+            values=values,
+            layer=layer,
+            head=head,
+            prev=prev,
+            active_positions=active_positions,
+            eps_at=eps_at_float,
+            vocab_min=args.direction_vocab_min,
+            vocab_max=args.direction_vocab_max,
+            max_candidates=max_candidates,
+            seed=args.seed,
+        )
+        try:
+            min_lb = float(Fraction(args.direction_min_lb))
+        except (ValueError, ZeroDivisionError) as exc:
+            raise SystemExit("direction-min-lb must be a rational literal") from exc
+        if best_lb < min_lb:
+            raise SystemExit(
+                f"Best direction lower bound {best_lb:.6f} below minimum {min_lb:.6f}."
+            )
+        print(
+            f"Selected direction: target={direction_target} negative={direction_negative} "
+            f"(estimated LB {best_lb:.6f})"
+        )
+
     if (args.direction_target is None) != (args.direction_negative is None):
         raise SystemExit("direction-target and direction-negative must be provided together")
     if args.direction_target is not None:
-        wte = model.wte.weight.detach().cpu().numpy()
-        if args.direction_target < 0 or args.direction_target >= wte.shape[0]:
-            raise SystemExit("direction-target out of vocab range")
-        if args.direction_negative < 0 or args.direction_negative >= wte.shape[0]:
-            raise SystemExit("direction-negative out of vocab range")
         direction_target = args.direction_target
         direction_negative = args.direction_negative
+
+    if direction_target is not None:
+        wte = model.wte.weight.detach().cpu().numpy()
+        if direction_target < 0 or direction_target >= wte.shape[0]:
+            raise SystemExit("direction-target out of vocab range")
+        if direction_negative < 0 or direction_negative >= wte.shape[0]:
+            raise SystemExit("direction-negative out of vocab range")
         direction = wte[direction_target] - wte[direction_negative]
         head_dim = model.config.n_embd // model.config.n_head
         start, end = head * head_dim, (head + 1) * head_dim

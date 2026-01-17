@@ -66,6 +66,18 @@ python scripts/build_gpt2_induction_cert.py \
   --direction-target 1268 --direction-negative 1796
 ```
 
+Or let the untrusted script search for a direction in a vocab slice:
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
+  --direction-min-lb 1/10
+```
+
 Optional direction metadata:
 
 ```
