@@ -72,5 +72,5 @@ along a specified direction, conditional on an explicit certificate.
 
 ## References
 
-- Elhage et al., “A Mathematical Framework for Transformer Circuits.” citeturn0search0
+- Elhage et al., “A Mathematical Framework for Transformer Circuits.” citeturn0search1
 - Olsson et al., “In-context Learning and Induction Heads.” citeturn0academia12
