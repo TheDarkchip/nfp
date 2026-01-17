@@ -4,6 +4,7 @@ module
 
 public import Nfp.Circuit.Cert.Basic
 public import Nfp.Circuit.Cert.DownstreamLinear
+public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.Circuit.Cert.ResidualBound
 public import Nfp.Circuit.Cert.ResidualInterval
