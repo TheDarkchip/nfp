@@ -3,10 +3,10 @@
 module
 
 public import Nfp.Circuit.Cert.DownstreamLinear
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 
 /-!
-Pure parsing helpers for downstream linear and matrix payloads.
+Parse parsing helpers for downstream linear and matrix payloads.
 -/
 
 public section
@@ -15,7 +15,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 open Nfp.Circuit
 
@@ -199,7 +199,7 @@ def parseDownstreamMatrixRaw (input : String) :
       let raw ← finalizeDownstreamMatrixState st
       return ⟨rows, ⟨cols, raw⟩⟩
 
-end Pure
+end Parse
 
 end IO
 

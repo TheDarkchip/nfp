@@ -3,7 +3,7 @@
 module
 
 public import Mathlib.Data.Finset.Insert
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 public import Nfp.Model.InductionHead
 
 /-!
@@ -16,7 +16,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 private def kwSeq : ByteArray := "seq".toUTF8
 private def kwDModel : ByteArray := "d_model".toUTF8
@@ -783,7 +783,7 @@ def parseInductionHeadInputsBytes (data : ByteArray) :
       let inputs ← finalizeHeadState hpos st
       return ⟨seq, ⟨dModel, ⟨dHead, inputs⟩⟩⟩
 
-end Pure
+end Parse
 
 end IO
 

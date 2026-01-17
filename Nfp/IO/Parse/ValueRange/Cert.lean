@@ -3,10 +3,10 @@
 module
 
 public import Nfp.Circuit.Cert.ValueRange
-public import Nfp.IO.Pure.ValueRange.Shared
+public import Nfp.IO.Parse.ValueRange.Shared
 
 /-!
-Pure parsing helpers for value-range certificates.
+Parse parsing helpers for value-range certificates.
 -/
 
 public section
@@ -15,7 +15,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 open Nfp.Circuit
 
@@ -60,7 +60,7 @@ def parseValueRangeCert (input : String) :
       let cert ← finalizeValueState st
       return ⟨seq, cert⟩
 
-end Pure
+end Parse
 
 end IO
 

@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.IO.Pure.SoftmaxMargin.Cert
-public import Nfp.IO.Pure.SoftmaxMargin.Raw
+public import Nfp.IO.Parse.SoftmaxMargin.Cert
+public import Nfp.IO.Parse.SoftmaxMargin.Raw
 
 /-!
 Aggregator for softmax-margin parsing helpers.

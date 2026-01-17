@@ -2,7 +2,7 @@
 
 module
 
-public import Nfp.IO.Pure
+public import Nfp.IO.Parse
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.Circuit.Cert.DownstreamLinear
 public import Nfp.Circuit.Cert.ResidualBound
@@ -24,50 +24,50 @@ open Nfp.Circuit
 def loadSoftmaxMarginCert (path : System.FilePath) :
     IO (Except String (Sigma SoftmaxMarginCert)) := do
   let data ← IO.FS.readFile path
-  return Pure.parseSoftmaxMarginCert data
+  return Parse.parseSoftmaxMarginCert data
 
 /-- Load raw softmax-margin inputs from disk. -/
 def loadSoftmaxMarginRaw (path : System.FilePath) :
-    IO (Except String (Sigma Pure.SoftmaxMarginRaw)) := do
+    IO (Except String (Sigma Parse.SoftmaxMarginRaw)) := do
   let data ← IO.FS.readFile path
-  return Pure.parseSoftmaxMarginRaw data
+  return Parse.parseSoftmaxMarginRaw data
 
 /-- Load a value-range certificate from disk. -/
 def loadValueRangeCert (path : System.FilePath) :
     IO (Except String (Sigma ValueRangeCert)) := do
   let data ← IO.FS.readFile path
-  return Pure.parseValueRangeCert data
+  return Parse.parseValueRangeCert data
 
 /-- Load a downstream linear certificate from disk. -/
 def loadDownstreamLinearCert (path : System.FilePath) :
     IO (Except String DownstreamLinearCert) := do
   let data ← IO.FS.readFile path
-  return Pure.parseDownstreamLinearCert data
+  return Parse.parseDownstreamLinearCert data
 
 /-- Load a downstream matrix payload from disk. -/
 def loadDownstreamMatrixRaw (path : System.FilePath) :
     IO (Except String (Sigma (fun rows =>
-      Sigma (fun cols => Pure.DownstreamMatrixRaw rows cols)))) := do
+      Sigma (fun cols => Parse.DownstreamMatrixRaw rows cols)))) := do
   let data ← IO.FS.readFile path
-  return Pure.parseDownstreamMatrixRaw data
+  return Parse.parseDownstreamMatrixRaw data
 
 /-- Load a residual-bound certificate from disk. -/
 def loadResidualBoundCert (path : System.FilePath) :
     IO (Except String (Sigma (fun n => ResidualBoundCert n))) := do
   let data ← IO.FS.readFile path
-  return Pure.parseResidualBoundCert data
+  return Parse.parseResidualBoundCert data
 
 /-- Load a residual-interval certificate from disk. -/
 def loadResidualIntervalCert (path : System.FilePath) :
     IO (Except String (Sigma (fun n => ResidualIntervalCert n))) := do
   let data ← IO.FS.readFile path
-  return Pure.parseResidualIntervalCert data
+  return Parse.parseResidualIntervalCert data
 
 /-- Load raw value-range inputs from disk. -/
 def loadValueRangeRaw (path : System.FilePath) :
-    IO (Except String (Sigma Pure.ValueRangeRaw)) := do
+    IO (Except String (Sigma Parse.ValueRangeRaw)) := do
   let data ← IO.FS.readFile path
-  return Pure.parseValueRangeRaw data
+  return Parse.parseValueRangeRaw data
 
 end IO
 

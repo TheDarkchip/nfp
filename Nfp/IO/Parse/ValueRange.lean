@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.IO.Pure.ValueRange.Cert
-public import Nfp.IO.Pure.ValueRange.Raw
+public import Nfp.IO.Parse.ValueRange.Cert
+public import Nfp.IO.Parse.ValueRange.Raw
 
 /-!
 Aggregator for value-range parsing helpers.

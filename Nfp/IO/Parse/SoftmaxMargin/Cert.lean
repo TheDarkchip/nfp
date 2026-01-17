@@ -3,10 +3,10 @@
 module
 
 public import Nfp.Circuit.Cert.SoftmaxMargin
-public import Nfp.IO.Pure.SoftmaxMargin.Shared
+public import Nfp.IO.Parse.SoftmaxMargin.Shared
 
 /-!
-Pure parsing helpers for softmax-margin certificates.
+Parse parsing helpers for softmax-margin certificates.
 -/
 
 public section
@@ -15,7 +15,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 open Nfp.Circuit
 
@@ -76,7 +76,7 @@ def parseSoftmaxMarginCert (input : String) :
       let cert ← finalizeState hpos st
       return ⟨seq, cert⟩
 
-end Pure
+end Parse
 
 end IO
 

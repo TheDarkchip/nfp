@@ -14,7 +14,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 /-- Split a line into whitespace-separated tokens. -/
 def splitWords (line : String) : List String :=
@@ -72,7 +72,7 @@ def parseRat (s : String) : Except String Rat := do
   | _ =>
       throw s!"invalid rational '{s}'"
 
-end Pure
+end Parse
 
 end IO
 

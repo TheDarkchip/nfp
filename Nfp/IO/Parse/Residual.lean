@@ -4,10 +4,10 @@ module
 
 public import Nfp.Circuit.Cert.ResidualBound
 public import Nfp.Circuit.Cert.ResidualInterval
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 
 /-!
-Pure parsing helpers for residual-bound and residual-interval certificates.
+Parse parsing helpers for residual-bound and residual-interval certificates.
 -/
 
 public section
@@ -16,7 +16,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 open Nfp.Circuit
 
@@ -133,7 +133,7 @@ def parseResidualIntervalCert (input : String) :
           return ⟨dim, cert⟩
   | _ => throw "expected header 'dim <n>'"
 
-end Pure
+end Parse
 
 end IO
 

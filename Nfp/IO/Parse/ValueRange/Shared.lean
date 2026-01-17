@@ -3,7 +3,7 @@
 module
 
 public import Nfp.Circuit.Cert.ValueRange
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 
 /-!
 Shared parsing helpers for value-range payloads.
@@ -15,7 +15,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 namespace ValueRange
 
@@ -110,7 +110,7 @@ def parseSeq (tokens : List (List String)) : Except String Nat := do
 
 end ValueRange
 
-end Pure
+end Parse
 
 end IO
 

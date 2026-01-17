@@ -5,7 +5,7 @@ module
 public import Mathlib.Data.Finset.Insert
 public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Util
 
 /-!
@@ -19,7 +19,7 @@ namespace Nfp
 namespace IO
 
 open Nfp.Circuit
-open Nfp.IO.Pure
+open Nfp.IO.Parse
 
 namespace InductionHeadCert
 

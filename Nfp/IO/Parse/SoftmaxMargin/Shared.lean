@@ -3,7 +3,7 @@
 module
 
 public import Mathlib.Data.Finset.Insert
-public import Nfp.IO.Pure.Basic
+public import Nfp.IO.Parse.Basic
 
 /-!
 Shared parsing helpers for softmax-margin payloads.
@@ -15,7 +15,7 @@ namespace Nfp
 
 namespace IO
 
-namespace Pure
+namespace Parse
 
 namespace SoftmaxMargin
 
@@ -138,7 +138,7 @@ def parseSeq (tokens : List (List String)) : Except String Nat := do
 
 end SoftmaxMargin
 
-end Pure
+end Parse
 
 end IO
 
