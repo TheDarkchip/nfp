@@ -6,9 +6,9 @@ public import Aesop
 public import Mathlib.Data.List.MinMax
 public import Mathlib.Data.Vector.Basic
 public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.Sound.Bounds.Cache
 public import Nfp.Sound.Bounds.MatrixNorm.Interval
 public import Nfp.Sound.Induction.HeadOutput
-public import Nfp.Sound.Induction.Refine
 
 /-!
 Logit-diff bounds derived from induction certificates.
@@ -314,157 +314,6 @@ theorem logitDiffLowerBoundFromCacheWithEpsVals_def
       Circuit.logitDiffLowerBoundAtLoAt c.active c.prev epsAt loAt valsLo := by
   rfl
 
-/-- Refined unweighted logit-diff lower bound using an overlayed `epsAt`. -/
-def logitDiffLowerBoundRefinedFromCache
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq)
-    (spec : InductionHeadRefineSpec seq) : Option Rat :=
-  let weightBoundAt := weightBoundAtOverlay inputs core spec
-  let epsAt := epsAtOverlay core weightBoundAt
-  logitDiffLowerBoundFromCacheWithEps c cache epsAt
-
-/-- Unfolding lemma for `logitDiffLowerBoundRefinedFromCache`. -/
-theorem logitDiffLowerBoundRefinedFromCache_def
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq)
-    (spec : InductionHeadRefineSpec seq) :
-    logitDiffLowerBoundRefinedFromCache inputs core c cache spec =
-      let weightBoundAt := weightBoundAtOverlay inputs core spec
-      let epsAt := epsAtOverlay core weightBoundAt
-      logitDiffLowerBoundFromCacheWithEps c cache epsAt := by
-  rfl
-
-/-- Refine-on-demand unweighted logit-diff bound using a supplied refinement spec. -/
-def logitDiffLowerBoundRefineOnDemandWithSpec
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq)
-    (spec : InductionHeadRefineSpec seq) : Option Rat :=
-  match logitDiffLowerBoundFromCache c cache with
-  | none => none
-  | some lb0 =>
-      if lb0 ≤ 0 then
-        match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-        | some lb1 => some (max lb0 lb1)
-        | none => some lb0
-      else
-        some lb0
-
-/-- Unfolding lemma for `logitDiffLowerBoundRefineOnDemandWithSpec`. -/
-theorem logitDiffLowerBoundRefineOnDemandWithSpec_def
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq)
-    (spec : InductionHeadRefineSpec seq) :
-    logitDiffLowerBoundRefineOnDemandWithSpec inputs core c cache spec =
-      match logitDiffLowerBoundFromCache c cache with
-      | none => none
-      | some lb0 =>
-          if lb0 ≤ 0 then
-            match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-            | some lb1 => some (max lb0 lb1)
-            | none => some lb0
-          else
-            some lb0 := by
-  rfl
-
-/-- Refine-on-demand unweighted logit-diff bound, refining only the argmin query. -/
-def logitDiffLowerBoundRefineOnDemand
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq) : Option Rat :=
-  match logitDiffLowerBoundFromCache c cache with
-  | none => none
-  | some lb0 =>
-      if lb0 ≤ 0 then
-        match logitDiffLowerBoundArgminFromCache c cache with
-        | none => some lb0
-        | some q0 =>
-            let refineBudget := max 1 core.splitBudgetDiffRefined
-            let spec := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget
-            match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-            | none => some lb0
-            | some lb1 =>
-                let lb01 := max lb0 lb1
-                let lbWeight? : Option Rat :=
-                  if lb01 ≤ 0 then
-                    let refineBudget' := refineBudgetBoost refineBudget
-                    let spec' := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget'
-                    match logitDiffLowerBoundRefinedFromCache inputs core c cache spec' with
-                    | some lb2 => some (max lb01 lb2)
-                    | none => some lb01
-                  else
-                    some lb01
-                match lbWeight? with
-                | none => some lb01
-                | some lbWeight =>
-                    if lbWeight ≤ 0 then
-                      let valBudget := refineBudgetBoost refineBudget
-                      let valCount := refineLowValueCount refineBudget
-                      let valKeys :=
-                        loAtKeysAt inputs core q0 ∪
-                          lowValueKeysAt inputs core q0 valCount
-                      let valsLo := valsLoOverlay inputs core valBudget valKeys
-                      let lbRefined? :=
-                        logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo
-                      match lbRefined? with
-                      | some lb2 => some (max lbWeight lb2)
-                      | none => some lbWeight
-                    else
-                      some lbWeight
-      else
-        some lb0
-
-/-- Unfolding lemma for `logitDiffLowerBoundRefineOnDemand`. -/
-theorem logitDiffLowerBoundRefineOnDemand_def
-    (inputs : Model.InductionHeadInputs seq dModel dHead)
-    (core : InductionHeadCoreCache seq dModel dHead)
-    (c : InductionHeadCert seq) (cache : LogitDiffCache seq) :
-    logitDiffLowerBoundRefineOnDemand inputs core c cache =
-      match logitDiffLowerBoundFromCache c cache with
-      | none => none
-      | some lb0 =>
-          if lb0 ≤ 0 then
-            match logitDiffLowerBoundArgminFromCache c cache with
-            | none => some lb0
-            | some q0 =>
-                let refineBudget := max 1 core.splitBudgetDiffRefined
-                let spec := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget
-                match logitDiffLowerBoundRefinedFromCache inputs core c cache spec with
-                | none => some lb0
-                | some lb1 =>
-                    let lb01 := max lb0 lb1
-                    let lbWeight? : Option Rat :=
-                      if lb01 ≤ 0 then
-                        let refineBudget' := refineBudgetBoost refineBudget
-                        let spec' := refineSpecForQueryWithWeightOnes inputs core q0 refineBudget'
-                        match logitDiffLowerBoundRefinedFromCache inputs core c cache spec' with
-                        | some lb2 => some (max lb01 lb2)
-                        | none => some lb01
-                      else
-                        some lb01
-                    match lbWeight? with
-                    | none => some lb01
-                    | some lbWeight =>
-                        if lbWeight ≤ 0 then
-                          let valBudget := refineBudgetBoost refineBudget
-                          let valCount := refineLowValueCount refineBudget
-                          let valKeys :=
-                            loAtKeysAt inputs core q0 ∪
-                              lowValueKeysAt inputs core q0 valCount
-                          let valsLo := valsLoOverlay inputs core valBudget valKeys
-                          let lbRefined? :=
-                            logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo
-                          match lbRefined? with
-                          | some lb2 => some (max lbWeight lb2)
-                          | none => some lbWeight
-                        else
-                          some lbWeight
-          else
-            some lb0 := by
-  rfl
 
 /-- Weighted logit-diff lower bound from a shared cache. -/
 def logitDiffLowerBoundWeightedFromCache (c : InductionHeadCert seq) (cache : LogitDiffCache seq) :
@@ -1095,70 +944,6 @@ theorem logitDiffLowerBoundFromCertBest_le
           have hmax : max (lb0 : Real) (lb1 : Real) ≤ headLogitDiff inputs q :=
             max_le_iff.mpr ⟨h0le, h1le⟩
           simpa [ratToReal_max, ratToReal_def] using hmax
-
-/-- Certified logit-diff lower bound derived from exact head inputs. -/
-structure InductionLogitLowerBoundResult
-    (inputs : Model.InductionHeadInputs seq dModel dHead) where
-  /-- Induction certificate built from the head inputs. -/
-  cert : InductionHeadCert seq
-  /-- Soundness proof for the induction certificate. -/
-  sound : InductionHeadCertSound inputs cert
-  /-- Reported lower bound on logit diff. -/
-  lb : Rat
-  /-- `lb` is computed from `logitDiffLowerBoundFromCert`. -/
-  lb_def : logitDiffLowerBoundFromCert cert = some lb
-  /-- The lower bound is sound on active queries. -/
-  lb_sound : ∀ q, q ∈ cert.active → (lb : Real) ≤ headLogitDiff inputs q
-
-/-- Nonvacuous logit-diff bound (strictly positive). -/
-structure InductionLogitLowerBoundNonvacuous
-    (inputs : Model.InductionHeadInputs seq dModel dHead) where
-  /-- Base logit-diff bound data. -/
-  base : InductionLogitLowerBoundResult inputs
-  /-- The reported bound is strictly positive. -/
-  lb_pos : 0 < base.lb
-
-/-- Build a logit-diff lower bound from exact head inputs. -/
-def buildInductionLogitLowerBoundFromHead?
-    (inputs : Model.InductionHeadInputs seq dModel dHead) :
-    Option (InductionLogitLowerBoundResult inputs) := by
-  classical
-  cases hcert : buildInductionCertFromHead? inputs with
-  | none => exact none
-  | some certWithProof =>
-      rcases certWithProof with ⟨cert, hsound⟩
-      cases hlb : logitDiffLowerBoundFromCert cert with
-      | none => exact none
-      | some lb =>
-          refine some ?_
-          refine
-            { cert := cert
-              sound := hsound
-              lb := lb
-              lb_def := hlb
-              lb_sound := ?_ }
-          intro q hq
-          exact
-            logitDiffLowerBoundFromCert_le
-              (inputs := inputs)
-              (c := cert)
-              (hsound := hsound)
-              (lb := lb)
-              (hbound := hlb)
-              (q := q)
-              hq
-
-/-- Build a strictly positive logit-diff lower bound from exact head inputs. -/
-def buildInductionLogitLowerBoundNonvacuous?
-    (inputs : Model.InductionHeadInputs seq dModel dHead) :
-    Option (InductionLogitLowerBoundNonvacuous inputs) := by
-  classical
-  cases hbase : buildInductionLogitLowerBoundFromHead? inputs with
-  | none => exact none
-  | some base =>
-      by_cases hpos : 0 < base.lb
-      · exact some ⟨base, hpos⟩
-      · exact none
 
 end WithNeZero
 

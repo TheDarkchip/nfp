@@ -3,18 +3,14 @@
 module
 
 public import Nfp.Sound.Induction.Core
-public import Nfp.Sound.Induction.CoreSound
 public import Nfp.Sound.Induction.EndToEnd
-public import Nfp.Sound.Induction.HeadBounds
 public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 public import Nfp.Sound.Induction.OneHot
-public import Nfp.Sound.Induction.Refine
-public import Nfp.Sound.Induction.RefineSound
 
 /-!
-Sound builders for induction certificates.
+Soundness lemmas for induction certificates.
 
-This module re-exports the core constructions, head-output interval bounds,
-and logit-diff helpers.
+This module re-exports the core definitions, head-output interval predicates,
+and logit-diff helpers that operate on explicit certificates.
 -/

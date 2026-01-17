@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.Sound.Induction.Core.Basic
+public import Nfp.Sound.Induction.CoreDefs
 
 /-!
-Core definitions and constructors for induction certificates.
+Core definitions for induction certificates.
 -/
