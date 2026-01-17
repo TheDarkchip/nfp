@@ -31,13 +31,13 @@ theorem logitDiffLowerBound_end_to_end_gpt2
     (scores : Fin numLayers → Fin numHeads → Fin seq → Fin seq → Real)
     (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < Bounds.sqrtLower eps)
     (hactive : inputs.active.Nonempty) :
-    let bounds :=
+  let bounds :=
       Bounds.gpt2ResidualIntervalBoundsActive inputs.active hactive eps layers heads finalLn
         inputs.embed
-    let output : Fin seq → Fin dModel → Real :=
+  let output : Fin seq → Fin dModel → Real :=
       fun q i => Bounds.transformerStackFinalReal eps finalLn layers heads scores
         (fun q i => (inputs.embed q i : Real)) q i
-    ∀ q, q ∈ inputs.active →
+  ∀ q, q ∈ inputs.active →
       (lb : Real) -
           (Bounds.dotIntervalAbsBound inputs.direction
             (fun i => bounds.1 i - headCert.hi i)
@@ -45,12 +45,11 @@ theorem logitDiffLowerBound_end_to_end_gpt2
         dotProduct (fun i => (inputs.direction i : Real)) (fun i => output q i) := by
   classical
   intro bounds output q hq
-  let cert : Circuit.ResidualIntervalCert dModel := { lo := bounds.1, hi := bounds.2 }
   have hbounds :
       ∀ q, q ∈ inputs.active → ∀ i,
         (bounds.1 i : Real) ≤ output q i ∧ output q i ≤ (bounds.2 i : Real) := by
-    have hsound :=
-      Bounds.gpt2ResidualIntervalBoundsActive_sound
+    simpa [bounds, output] using
+      (Bounds.gpt2ResidualIntervalBoundsActive_spec
         (active := inputs.active)
         (hactive := hactive)
         (eps := eps)
@@ -61,9 +60,7 @@ theorem logitDiffLowerBound_end_to_end_gpt2
         (embed := inputs.embed)
         (hne := hne)
         (heps := heps)
-        (hsqrt := hsqrt)
-    rcases (by simpa [bounds, cert, output] using hsound) with ⟨_, hmem⟩
-    exact hmem
+        (hsqrt := hsqrt))
   have hhead_out := hhead.output_mem
   have h :=
     logitDiffLowerBound_with_output_intervals
