@@ -5,33 +5,19 @@ induction heads, and spell out the scope and limitations of that claim.
 
 ## Formal proof chain (Lean)
 
-- `buildInductionCertFromHeadCoreWith?` returns a certificate under explicit guards
-  (`lnEps > 0`, `sqrtLower lnEps > 0`, `dModel ≠ 0`, `active.Nonempty`), so the
-  computation is only claimed when these preconditions hold
-  (`Nfp/Sound/Induction/Core.lean`).
-- `buildInductionHeadInputs_def` shows the model-derived head inputs are
-  definitional: `prev`/`active` are computed from tokens (or a fixed period),
-  and the `direction` vector is the unembedding-column difference for the
-  provided target/negative token ids (`Nfp/IO/NfptPure.lean`).
-- `buildInductionHeadInputs_prev_spec_of_active` and
-  `prevOfTokens_spec_of_active` prove that when `period? = none`,
-  every active query has a maximal prior matching token in `prev`
-  (`Nfp/IO/NfptPure.lean`, `Nfp/Model/InductionPrompt.lean`).
-- `buildInductionCertFromHeadWith?` wraps the core computation and returns
-  a proof-carrying certificate `⟨c, InductionHeadCertSound inputs c⟩`
-  (`Nfp/Sound/Induction/HeadOutput.lean`).
-- `buildInductionCertFromHeadCoreWith?_sound` proves that any returned certificate
-  satisfies `InductionHeadCertSound`, i.e. the softmax-margin bounds, one-hot
-  bounds, and value-interval bounds that define the head-level certificate
-  (`Nfp/Sound/Induction/CoreSound.lean`).
-- `buildInductionLogitLowerBoundFromHead?` and
-  `buildInductionLogitLowerBoundNonvacuous?` lift the head certificate to a
-  logit-diff lower bound; the key lemma `logitDiffLowerBoundFromCert_le` shows
-  the bound is sound on active queries (`Nfp/Sound/Induction/LogitDiff.lean`).
-- `logitDiffLowerBound_end_to_end_gpt2` combines head logit-diff bounds, head
-  output intervals, and GPT-2 stack output intervals to give a direction lower
-  bound on `transformerStackFinalReal`
-  (`Nfp/Sound/Induction/EndToEnd.lean`, `Nfp/Sound/Bounds/Transformer.lean`).
+- Explicit induction-head certificates are parsed from text in
+  `Nfp/IO/InductionHead/Cert.lean`.
+- `checkInductionHeadCert` and `checkInductionHeadCert_sound` show that a
+  passing certificate satisfies `InductionHeadCertBounds`
+  (`Nfp/Circuit/Cert/InductionHead.lean`).
+- `logitDiffLowerBoundAt` plus `logitDiffLowerBoundAt_le` give a certified lower
+  bound on the logit-diff contribution derived from the certificate’s values
+  (`Nfp/Circuit/Cert/LogitDiff.lean`).
+- `headLogitDiff_eq_direction_dot_headOutput`, `logitDiffLowerBound_with_residual`,
+  and `logitDiffLowerBound_with_output_intervals` compose head-level logit-diff
+  bounds with output intervals (`Nfp/Sound/Induction/LogitDiff.lean`).
+- `logitDiffLowerBound_end_to_end_gpt2` instantiates the composition for GPT-2
+  stack outputs (`Nfp/Sound/Induction/EndToEnd.lean`).
 
 ## Mechanistic mapping (Transformer Circuits)
 
@@ -50,63 +36,30 @@ This is direct mechanistic evidence in the Transformer Circuits sense: it ties
 parameters (Q/K/V/O + LayerNorm) to certified bounds on attention and value
 contributions, but only for the specific inputs and direction supplied.
 
-Sources referenced for the mechanistic framing:
-- `transformer-circuits-framework.md` (QK/OV decomposition).
-- `induction-heads.md` (induction head behavior definition).
-- `foundations.md` (reverse-engineering framing and feature decomposition).
-
 ## Preconditions and scope limits
 
 These proofs are sufficient for a **conditional** certification claim:
-if the inputs are correct and the builder returns a certificate, then the
-head-level bounds hold. They are **not** sufficient for a global claim that a
-head “is an induction head” without additional assumptions.
+if the explicit certificate passes the checker, then the head-level bounds hold.
+They are **not** sufficient for a global claim that a head “is an induction head”
+without additional assumptions.
 
 Key assumptions and limitations:
-- For `certify_head_model` with `period? = none`, `prev`/`active` are derived
-  from tokens and `prev` is the maximal prior match. For head-input files or
-  when `period?` is set explicitly, `prev` remains a user-supplied input.
-- The `--prev-shift` flag switches to the **shifted** `prev` map (`q - period + 1`
-  or the token-shifted analogue). This aligns the head-level certificate with
-  the canonical induction circuit (previous-token head → induction head), but
-  it is still a head-level approximation rather than a verified two-head
-  composition.
-- The `certify_circuit_model` CLI uses shifted `prev` for the induction head
-  by default, while the previous-token head uses the unshifted period-1 map.
-- The certificate proves a logit-diff bound along the supplied `direction`
-  vector. For model-derived inputs, this vector is the target-minus-negative
-  unembedding column difference, but we still assume that the unembedding
-  matrix represents the model’s logit map.
-- The active set is user-supplied and can be strict; bounds only hold for
-  `q ∈ active`, not all positions.
-- There is now a formal bridge from head logit-diff bounds plus residual interval
-  bounds to a direction lower bound on `headOutput + residual`, but full
-  end-to-end model logits still require verified residual bounds through the
-  rest of the stack.
-  We now have a theorem packaging GPT-2 residual interval bounds derived from
-  model slices into a sound `ResidualIntervalCert`, but it is not yet connected
-  to the head-level logit-diff contribution inside the full stack.
-  A new lemma composes head logit-diff bounds with *both* head-output intervals
-  and downstream output intervals, yielding a sound lower bound on the direction
-  dot of the downstream output (via interval subtraction), and we now instantiate
-  this for GPT-2 stack outputs via `logitDiffLowerBound_end_to_end_gpt2`.
+- `prev`, `active`, and `direction` are user-supplied or produced by untrusted
+  scripts; Lean does not (yet) verify their derivation from token-level semantics.
+- The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
+- The direction metadata assumes the unembedding columns encode the model’s logit map.
+- End-to-end claims rely on external residual/downstream interval certificates; the
+  current checker only verifies those certificates once provided.
 
 ## Conclusion
 
 Yes—**within the formal scope** of the current definitions, the proofs are
 enough to claim that we can certify induction-head behavior at the head level:
 they certify attention to a specified `prev` index and a logit-diff lower bound
-along a specified direction. We now have a bridge that composes those bounds
-with residual interval bounds to certify `headOutput + residual`, but we still
-need a proof that the inputs correspond to the behavioral induction-head
-definition on actual sequences and that residual bounds are derived from full
-model semantics.
+along a specified direction, conditional on an explicit certificate.
 
 ## Next steps
 
-- Formalize the relationship between `directionSpec` and the logit-diff vector
-  derived from unembedding (so the certified direction matches token-level claims).
-- Add a proof or verified derivation that the `prev` mapping corresponds to the
-  induction pattern for a given prompt sequence.
-- Extend the bridge to full transformer stacks by deriving residual interval
-  bounds from verified layer/block semantics.
+- Add a verified extraction pipeline from model weights to explicit certificates.
+- Prove that `prev`, `active`, and `direction` correspond to token-level semantics.
+- Tighten residual/downstream interval bounds to strengthen end-to-end claims.

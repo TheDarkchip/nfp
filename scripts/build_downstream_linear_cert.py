@@ -4,8 +4,8 @@
 """
 Build a downstream linear certificate from externally computed bounds.
 
-This script is untrusted: it only formats rational inputs into the certificate
-format expected by `nfp induction certify_end_to_end`.
+This script is untrusted: it only formats rational inputs into the downstream
+linear certificate format expected by the Lean checker.
 
 Usage:
   python scripts/build_downstream_linear_cert.py \

@@ -15,7 +15,7 @@ public import Nfp.Linear.FinFold
 /-!
 Core definitions for induction-head certificates.
 
-These definitions are shared across induction certificate builders and checkers.
+These definitions are shared across induction certificate checkers and proofs.
 -/
 
 public section

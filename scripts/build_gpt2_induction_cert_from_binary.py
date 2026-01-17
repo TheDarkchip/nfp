@@ -2,10 +2,10 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Build a softmax-margin certificate and value-range certificate from an NFP_BINARY_V1 model.
+Build an induction-head certificate from an NFP_BINARY_V1 model.
 
-This is untrusted and uses floating-point arithmetic to produce rational certificates
-compatible with `nfp induction certify`.
+This is untrusted and uses floating-point arithmetic to produce a rational
+induction-head certificate compatible with `nfp induction certify`.
 """
 
 from __future__ import annotations
@@ -191,11 +191,19 @@ def softmax(scores: np.ndarray) -> np.ndarray:
     return exp / exp.sum(axis=1, keepdims=True)
 
 
-def write_softmax_cert(path: Path, seq: int, prev: np.ndarray,
+def write_induction_cert(path: Path, seq: int, prev: np.ndarray,
                         scores_rat, weights_rat, eps: Fraction,
-                        margin: Fraction, active_positions) -> None:
+                        margin: Fraction, active_positions,
+                        eps_at, weight_bound_at, vals_rat,
+                        direction_target: int | None,
+                        direction_negative: int | None) -> None:
+    lo = min(vals_rat)
+    hi = max(vals_rat)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
+        if direction_target is not None and direction_negative is not None:
+            f.write(f"direction-target {direction_target}\n")
+            f.write(f"direction-negative {direction_negative}\n")
         f.write(f"eps {rat_to_str(eps)}\n")
         f.write(f"margin {rat_to_str(margin)}\n")
         for q in active_positions:
@@ -208,6 +216,18 @@ def write_softmax_cert(path: Path, seq: int, prev: np.ndarray,
         for q in range(seq):
             for k in range(seq):
                 f.write(f"weight {q} {k} {rat_to_str(weights_rat[q][k])}\n")
+        for q in range(seq):
+            f.write(f"eps-at {q} {rat_to_str(eps_at[q])}\n")
+        for q in range(seq):
+            for k in range(seq):
+                f.write(f"weight-bound {q} {k} {rat_to_str(weight_bound_at[q][k])}\n")
+        f.write(f"lo {rat_to_str(lo)}\n")
+        f.write(f"hi {rat_to_str(hi)}\n")
+        for k, val in enumerate(vals_rat):
+            val_str = rat_to_str(val)
+            f.write(f"val {k} {val_str}\n")
+            f.write(f"val-lo {k} {val_str}\n")
+            f.write(f"val-hi {k} {val_str}\n")
 
 
 def write_value_range(path: Path, seq: int, values, decimals: int,
@@ -231,9 +251,10 @@ def main() -> None:
     ap.add_argument("--model", type=Path, required=True, help="Path to NFP_BINARY_V1 model")
     ap.add_argument("--layer", type=int, required=True, help="Layer index")
     ap.add_argument("--head", type=int, required=True, help="Head index")
-    ap.add_argument("--output", type=Path, required=True, help="Path for softmax certificate")
-    ap.add_argument("--values-out", type=Path, required=True,
-                    help="Path for value-range certificate")
+    ap.add_argument("--output", type=Path, required=True,
+                    help="Path for induction-head certificate")
+    ap.add_argument("--values-out", type=Path,
+                    help="Optional path for a value-range certificate")
     ap.add_argument("--direction-target", type=int, required=True,
                     help="Target token id for logit-diff direction")
     ap.add_argument("--direction-negative", type=int, required=True,
@@ -329,22 +350,28 @@ def main() -> None:
 
     eps_by_q: dict[int, Fraction] = {}
     margin_by_q: dict[int, Fraction] = {}
-    for q in candidate_positions:
+    for q in range(seq_len):
         prev_q = prev[q]
         prev_w = weights_rat[q][prev_q]
-        max_other = max(weights_rat[q][k] for k in range(seq_len) if k != prev_q)
+        if seq_len == 1:
+            max_other = Fraction(0)
+        else:
+            max_other = max(weights_rat[q][k] for k in range(seq_len) if k != prev_q)
         deficit = Fraction(1) - prev_w
         eps_by_q[q] = max(max_other, deficit)
 
         diffs = [scores_rat[q][prev_q] - scores_rat[q][k]
                  for k in range(seq_len) if k != prev_q]
-        if diffs:
-            margin_by_q[q] = min(diffs)
+        margin_by_q[q] = min(diffs) if diffs else Fraction(0)
 
     active_positions = [q for q in candidate_positions if eps_by_q[q] <= active_eps_max]
     if not active_positions and candidate_positions:
         print("Warning: no active positions satisfy active-eps-max; certificate may be vacuous.")
 
+    if not active_positions and seq_len > 1:
+        if candidate_positions:
+            print("Warning: no active positions satisfy active-eps-max; using all nonzero queries.")
+        active_positions = list(range(1, seq_len))
     if active_positions:
         eps = max(eps_by_q[q] for q in active_positions)
         margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))
@@ -352,23 +379,50 @@ def main() -> None:
         eps = Fraction(0)
         margin = Fraction(0)
 
-    output_path = args.output
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_softmax_cert(output_path, seq_len, prev, scores_rat, weights_rat, eps, margin,
-                       active_positions)
+    eps_at = []
+    for q in range(seq_len):
+        prev_q = prev[q]
+        if seq_len == 1:
+            max_other = Fraction(0)
+        else:
+            max_other = max(weights_rat[q][k] for k in range(seq_len) if k != prev_q)
+        deficit = Fraction(1) - weights_rat[q][prev_q]
+        eps_at.append(max(max_other, deficit))
+    weight_bound_at = weights_rat
 
     wo = wo_raw.T
     direction = col_target - col_negative
     dir_head = wo.T @ direction
     dir_vals = v @ dir_head
-    values_path = args.values_out
-    values_path.parent.mkdir(parents=True, exist_ok=True)
-    write_value_range(values_path, seq_len, dir_vals, args.decimals,
-                      direction_target=args.direction_target,
-                      direction_negative=args.direction_negative)
+    vals_rat = [rat_from_float(float(dir_vals[k]), args.decimals) for k in range(seq_len)]
 
-    print(f"Wrote softmax certificate to {output_path}")
-    print(f"Wrote value-range certificate to {values_path}")
+    output_path = args.output
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    write_induction_cert(
+        output_path,
+        seq_len,
+        prev,
+        scores_rat,
+        weights_rat,
+        eps,
+        margin,
+        active_positions,
+        eps_at,
+        weight_bound_at,
+        vals_rat,
+        args.direction_target,
+        args.direction_negative,
+    )
+
+    if args.values_out:
+        values_path = args.values_out
+        values_path.parent.mkdir(parents=True, exist_ok=True)
+        write_value_range(values_path, seq_len, dir_vals, args.decimals,
+                          direction_target=args.direction_target,
+                          direction_negative=args.direction_negative)
+        print(f"Wrote value-range certificate to {values_path}")
+
+    print(f"Wrote induction-head certificate to {output_path}")
     if candidate_positions:
         print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 

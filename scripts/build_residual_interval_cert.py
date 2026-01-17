@@ -7,8 +7,7 @@ Build a residual-interval certificate from a GPT-2 forward pass.
 This script is untrusted. It computes per-coordinate min/max bounds by
 taking extrema over a fixed input sequence (optionally restricted to active
 positions from a softmax-margin certificate). The resulting intervals are
-expanded slightly and rounded outwards to rationals for checking by
-`nfp induction certify_end_to_end_model`.
+expanded slightly and rounded outwards to rationals for Lean-side checking.
 
 Usage:
   uv run scripts/build_residual_interval_cert.py \

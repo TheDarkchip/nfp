@@ -2,11 +2,11 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 
 """
-Build a softmax-margin certificate for a GPT-2-small induction head.
+Build an induction-head certificate for a GPT-2-small induction head.
 
 This script is untrusted and uses floating-point arithmetic to produce a
-rational certificate compatible with `nfp induction certify`. Active
-induction positions are recorded as `active <q>` lines in the output.
+rational induction-head certificate compatible with `nfp induction certify`.
+Active induction positions are recorded as `active <q>` lines in the output.
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
@@ -121,6 +121,42 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
             for k in range(seq):
                 f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
 
+def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights,
+                         eps, margin, active, eps_at, weight_bound_at,
+                         vals, direction_target=None, direction_negative=None) -> None:
+    lo = min(vals)
+    hi = max(vals)
+    with path.open("w", encoding="ascii") as f:
+        f.write(f"seq {seq}\n")
+        if direction_target is not None and direction_negative is not None:
+            f.write(f"direction-target {direction_target}\n")
+            f.write(f"direction-negative {direction_negative}\n")
+        f.write(f"eps {rat_to_str(eps)}\n")
+        f.write(f"margin {rat_to_str(margin)}\n")
+        if active is not None:
+            for q in active:
+                f.write(f"active {q}\n")
+        for q, k in enumerate(prev.tolist()):
+            f.write(f"prev {q} {k}\n")
+        for q in range(seq):
+            for k in range(seq):
+                f.write(f"score {q} {k} {rat_to_str(scores[q][k])}\n")
+        for q in range(seq):
+            for k in range(seq):
+                f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
+        for q in range(seq):
+            f.write(f"eps-at {q} {rat_to_str(eps_at[q])}\n")
+        for q in range(seq):
+            for k in range(seq):
+                f.write(f"weight-bound {q} {k} {rat_to_str(weight_bound_at[q][k])}\n")
+        f.write(f"lo {rat_to_str(lo)}\n")
+        f.write(f"hi {rat_to_str(hi)}\n")
+        for k, val in enumerate(vals):
+            val_str = rat_to_str(val)
+            f.write(f"val {k} {val_str}\n")
+            f.write(f"val-lo {k} {val_str}\n")
+            f.write(f"val-hi {k} {val_str}\n")
+
 
 def write_value_range(path: Path, seq: int, values, decimals: int,
                       direction_target=None, direction_negative=None) -> None:
@@ -191,17 +227,19 @@ def main() -> None:
     margin = None
     eps_by_q: dict[int, Fraction] = {}
     margin_by_q: dict[int, Fraction] = {}
-    for q in candidate_positions:
+    for q in range(args.seq):
         prev_q = prev[q]
         prev_w = weights_rat[q][prev_q]
-        max_other = max(weights_rat[q][k] for k in range(args.seq) if k != prev_q)
+        if args.seq == 1:
+            max_other = Fraction(0)
+        else:
+            max_other = max(weights_rat[q][k] for k in range(args.seq) if k != prev_q)
         deficit = Fraction(1) - prev_w
         eps_by_q[q] = max(max_other, deficit)
 
         diffs = [scores_rat[q][prev_q] - scores_rat[q][k]
                  for k in range(args.seq) if k != prev_q]
-        if diffs:
-            margin_by_q[q] = min(diffs)
+        margin_by_q[q] = min(diffs) if diffs else Fraction(0)
 
     active_positions = candidate_positions
     eps_threshold = Fraction(args.active_eps_max)
@@ -209,6 +247,10 @@ def main() -> None:
     if not active_positions and candidate_positions:
         print("Warning: no active positions satisfy active-eps-max; certificate may be vacuous.")
 
+    if not active_positions and args.seq > 1:
+        if candidate_positions:
+            print("Warning: no active positions satisfy active-eps-max; using all nonzero queries.")
+        active_positions = list(range(1, args.seq))
     if active_positions:
         eps = max(eps_by_q[q] for q in active_positions)
         margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))
@@ -218,10 +260,59 @@ def main() -> None:
     if candidate_positions:
         print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 
+    eps_at = []
+    for q in range(args.seq):
+        prev_q = prev[q]
+        if args.seq == 1:
+            max_other = Fraction(0)
+        else:
+            max_other = max(weights_rat[q][k] for k in range(args.seq) if k != prev_q)
+        deficit = Fraction(1) - weights_rat[q][prev_q]
+        eps_at.append(max(max_other, deficit))
+    weight_bound_at = weights_rat
+
+    direction_target = None
+    direction_negative = None
+    if (args.direction_target is None) != (args.direction_negative is None):
+        raise SystemExit("direction-target and direction-negative must be provided together")
+    if args.direction_target is not None:
+        wte = model.wte.weight.detach().cpu().numpy()
+        if args.direction_target < 0 or args.direction_target >= wte.shape[0]:
+            raise SystemExit("direction-target out of vocab range")
+        if args.direction_negative < 0 or args.direction_negative >= wte.shape[0]:
+            raise SystemExit("direction-negative out of vocab range")
+        direction_target = args.direction_target
+        direction_negative = args.direction_negative
+        direction = wte[direction_target] - wte[direction_negative]
+        head_dim = model.config.n_embd // model.config.n_head
+        start, end = args.head * head_dim, (args.head + 1) * head_dim
+        w_o = model.h[args.layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
+        dir_head = w_o.T @ direction
+        vals = values @ dir_head
+    else:
+        if args.value_dim < 0 or args.value_dim >= values.shape[1]:
+            raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")
+        vals = values[:, args.value_dim]
+
+    vals_rat = [rat_from_float(float(vals[k]), args.decimals) for k in range(args.seq)]
+
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    write_scores(output_path, args.seq, prev, scores_rat, weights_rat,
-                 eps=eps, margin=margin, active=active_positions)
+    write_induction_cert(
+        output_path,
+        args.seq,
+        prev,
+        scores_rat,
+        weights_rat,
+        eps,
+        margin,
+        active_positions,
+        eps_at,
+        weight_bound_at,
+        vals_rat,
+        direction_target=direction_target,
+        direction_negative=direction_negative,
+    )
 
     if args.scores_out:
         scores_path = Path(args.scores_out)
@@ -232,27 +323,9 @@ def main() -> None:
     if args.values_out:
         values_path = Path(args.values_out)
         values_path.parent.mkdir(parents=True, exist_ok=True)
-        if (args.direction_target is None) != (args.direction_negative is None):
-            raise SystemExit("direction-target and direction-negative must be provided together")
-        if args.direction_target is not None:
-            wte = model.wte.weight.detach().cpu().numpy()
-            if args.direction_target < 0 or args.direction_target >= wte.shape[0]:
-                raise SystemExit("direction-target out of vocab range")
-            if args.direction_negative < 0 or args.direction_negative >= wte.shape[0]:
-                raise SystemExit("direction-negative out of vocab range")
-            direction = wte[args.direction_target] - wte[args.direction_negative]
-            head_dim = model.config.n_embd // model.config.n_head
-            start, end = args.head * head_dim, (args.head + 1) * head_dim
-            w_o = model.h[args.layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
-            dir_head = w_o.T @ direction
-            dir_vals = values @ dir_head
-            write_value_range(values_path, args.seq, dir_vals, args.decimals,
-                              direction_target=args.direction_target,
-                              direction_negative=args.direction_negative)
-        else:
-            if args.value_dim < 0 or args.value_dim >= values.shape[1]:
-                raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")
-            write_value_range(values_path, args.seq, values[:, args.value_dim], args.decimals)
+        write_value_range(values_path, args.seq, vals, args.decimals,
+                          direction_target=direction_target,
+                          direction_negative=direction_negative)
 
     print(f"Wrote certificate to {output_path}")
     if args.scores_out:

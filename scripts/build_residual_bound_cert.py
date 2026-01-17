@@ -7,7 +7,7 @@ Build a residual-bound certificate from a GPT-2 forward pass.
 This script is untrusted. It computes per-coordinate absolute bounds by
 taking maxima over a fixed input sequence (optionally restricted to active
 positions from a softmax-margin certificate). The resulting bounds are
-rounded up to rationals for checking by `nfp induction certify_end_to_end_model`.
+rounded up to rationals for Lean-side checking.
 
 Usage:
   uv run scripts/build_residual_bound_cert.py \

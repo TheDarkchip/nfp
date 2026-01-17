@@ -5,5 +5,5 @@ module
 public import Nfp.Sound.Induction
 
 /-!
-Sound certificate builders and verified helpers.
+Soundness theorems and verified helpers.
 -/
