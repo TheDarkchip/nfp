@@ -15,7 +15,8 @@ It is intentionally brief and focused on the soundness boundary.
 - Any direction search performed by Python helpers is untrusted witness generation; only the
   resulting explicit certificate is checked by the Lean CLI.
 - The active set is user-supplied (or defaulted by the parser); bounds only hold for
-  `q ∈ active`.
+  `q ∈ active`. You can optionally verify `prev`/`active` against a token list via
+  `nfp induction certify --tokens ...`.
 - Performance: checking large certificates can be expensive for long sequences.
 
 ## Remaining work

@@ -26,6 +26,9 @@ Or ask the script to search for a direction (untrusted):
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000
   --direction-report-out reports/direction_report.txt --direction-topk 10
 
+Optional token dump (for Lean-side prev/active verification):
+  --tokens-out reports/gpt2_induction.tokens
+
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
 Layer/head indices are 1-based in the CLI and converted to 0-based internally.
@@ -187,6 +190,14 @@ def write_value_range(path: Path, seq: int, values, decimals: int,
         for k, val in enumerate(vals_rat):
             f.write(f"val {k + 1} {rat_to_str(val)}\n")
 
+
+def write_tokens(path: Path, tokens: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="ascii") as f:
+        f.write(f"seq {len(tokens)}\n")
+        for idx, tok in enumerate(tokens.tolist(), start=1):
+            f.write(f"token {idx} {tok}\n")
+
 def search_direction(
     model,
     values: np.ndarray,
@@ -291,6 +302,7 @@ def main() -> None:
     parser.add_argument("--values-out", help="Optional path for a value-range certificate")
     parser.add_argument("--value-dim", type=int, default=0,
                         help="Value dimension index for the value-range certificate")
+    parser.add_argument("--tokens-out", help="Optional path to write the token list")
     parser.add_argument("--active-eps-max", default="1/2",
                         help="Maximum eps to include an active position (default: 1/2).")
     parser.add_argument("--min-margin", default="0",
@@ -501,12 +513,17 @@ def main() -> None:
         write_value_range(values_path, args.seq, vals, args.decimals,
                           direction_target=direction_target,
                           direction_negative=direction_negative)
+    if args.tokens_out:
+        tokens_path = Path(args.tokens_out)
+        write_tokens(tokens_path, tokens)
 
     print(f"Wrote certificate to {output_path}")
     if args.scores_out:
         print(f"Wrote scores dump to {scores_path}")
     if args.values_out:
         print(f"Wrote value-range certificate to {values_path}")
+    if args.tokens_out:
+        print(f"Wrote token list to {tokens_path}")
 
 
 if __name__ == "__main__":

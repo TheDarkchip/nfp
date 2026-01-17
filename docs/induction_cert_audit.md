@@ -54,6 +54,10 @@ Key assumptions and limitations:
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
 
+Optional safeguard:
+- If a token list is supplied to the CLI (`--tokens`), the checker verifies that `prev`
+  and `active` match the previous-occurrence semantics for that sequence.
+
 ## Conclusion
 
 Yes—**within the formal scope** of the current definitions, the proofs are

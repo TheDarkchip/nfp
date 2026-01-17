@@ -5,8 +5,10 @@ module
 public import Mathlib.Data.Finset.Insert
 public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
+public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Util
+public import Nfp.Model.InductionPrompt
 
 /-!
 Untrusted parsing and checking for explicit induction-head certificates.
@@ -321,13 +323,38 @@ def loadInductionHeadCert (path : System.FilePath) :
   let data ← IO.FS.readFile path
   return parseInductionHeadCert data
 
+/-- Parse a token list payload. -/
+def parseInductionHeadTokens (input : String) :
+    Except String (Sigma fun seq => Fin seq → Nat) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let seq ← InductionHeadTokens.parseSeq tokens
+  match seq with
+  | 0 => throw "seq must be positive"
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let st0 : InductionHeadTokens.ParseState seq := InductionHeadTokens.initState seq
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | _ => InductionHeadTokens.parseLine st t) st0
+      let tokensFun ← InductionHeadTokens.finalizeState st
+      return ⟨seq, tokensFun⟩
+
+/-- Load a token list from disk. -/
+def loadInductionHeadTokens (path : System.FilePath) :
+    IO (Except String (Sigma fun seq => Fin seq → Nat)) := do
+  let data ← IO.FS.readFile path
+  return parseInductionHeadTokens data
+
 private def ratToString (x : Rat) : String :=
   toString x
 
 /-- Check an explicit induction-head certificate from disk. -/
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
-    (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+    (minMarginStr? : Option String) (maxEpsStr? : Option String)
+    (tokensPath? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -378,6 +405,34 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   s!"error: eps {ratToString cert.eps} \
                   above maximum {ratToString maxEps}"
                 return 2
+              if let some tokensPath := tokensPath? then
+                let tokensParsed ← loadInductionHeadTokens tokensPath
+                match tokensParsed with
+                | Except.error msg =>
+                    IO.eprintln s!"error: {msg}"
+                    return 2
+                | Except.ok ⟨seqTokens, tokens⟩ =>
+                    if hseq : seqTokens = seq then
+                      let tokens' : Fin seq → Nat := by
+                        simpa [hseq] using tokens
+                      let activeTokens := Model.activeOfTokens (seq := seq) tokens'
+                      if !decide (cert.active ⊆ activeTokens) then
+                        IO.eprintln "error: active set not contained in token repeats"
+                        return 2
+                      let prevTokens := Model.prevOfTokens (seq := seq) tokens'
+                      let prevOk :=
+                        (List.finRange seq).all (fun q =>
+                          if decide (q ∈ cert.active) then
+                            decide (prevTokens q = cert.prev q)
+                          else
+                            true)
+                      if !prevOk then
+                        IO.eprintln "error: prev map does not match tokens on active queries"
+                        return 2
+                    else
+                      IO.eprintln
+                        s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
+                      return 2
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
                 | some v, _ => some v

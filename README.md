@@ -78,7 +78,8 @@ python scripts/build_gpt2_induction_cert.py \
   --active-eps-max 1/2 \
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
   --direction-min-lb 1/10 \
-  --direction-report-out reports/direction_report.txt --direction-topk 10
+  --direction-report-out reports/direction_report.txt --direction-topk 10 \
+  --tokens-out reports/gpt2_induction.tokens
 ```
 
 Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
@@ -100,8 +101,11 @@ lake exe nfp induction certify --cert reports/gpt2_induction.cert
 Optional gates:
 
 ```
---min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>
+--min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
 ```
+
+If `--tokens` is provided, the CLI verifies that the certificate's `prev` and `active`
+match the token-sequence semantics for repeated tokens (previous occurrence).
 
 Example non-vacuous check:
 
@@ -147,6 +151,17 @@ rank\tlb\ttarget\tnegative
 
 This file is an **untrusted helper artifact**; it only ranks candidate directions and does not
 change what the Lean checker accepts.
+
+### Token list (untrusted)
+
+```
+seq <n>
+token <q> <tok_id>
+```
+
+This file is an **untrusted helper artifact** used to check that `prev` and `active` match the
+token sequence (previous-occurrence semantics) when `--tokens` is supplied to the CLI. Indices
+are 1-based.
 
 ## Soundness boundary
 

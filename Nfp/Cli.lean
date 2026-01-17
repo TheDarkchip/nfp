@@ -35,6 +35,7 @@ private def runInductionCertifySimple (p : Parsed) : IO UInt32 := do
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let tokensPath? := (p.flag? "tokens").map (·.as! String)
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -42,7 +43,7 @@ private def runInductionCertifySimple (p : Parsed) : IO UInt32 := do
   | none => fail "provide --cert"
   | some certPath =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr?
+        minMarginStr? maxEpsStr? tokensPath?
 
 /-- `nfp induction certify` subcommand (streamlined). -/
 def inductionCertifySimpleCmd : Cmd := `[Cli|
@@ -50,6 +51,7 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
   "Check induction head certificates from an explicit cert."
   FLAGS:
     cert : String; "Path to the induction head certificate file."
+    tokens : String; "Optional path to a token list to verify prev/active."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
