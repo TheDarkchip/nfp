@@ -24,6 +24,7 @@ Optionally, provide a logit-diff direction:
 
 Or ask the script to search for a direction (untrusted):
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000
+  --direction-report-out reports/direction_report.txt --direction-topk 10
 
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
@@ -197,8 +198,11 @@ def search_direction(
     vocab_min: int,
     vocab_max: int,
     max_candidates: int | None,
+    topk: int,
     seed: int,
-) -> tuple[int, int, float]:
+) -> tuple[int, int, float, list[tuple[float, int, int]]]:
+    import heapq
+
     if vocab_min < 0 or vocab_max <= vocab_min:
         raise SystemExit("direction vocab range must satisfy 0 <= min < max")
     cand_ids = list(range(vocab_min, vocab_max))
@@ -218,6 +222,7 @@ def search_direction(
     active_prev = [(q, int(prev[q])) for q in active_positions]
     best_lb = None
     best_pair = None
+    topk_entries: list[tuple[float, int, int]] = []
 
     for i in range(vals_mat.shape[1]):
         vals_i = vals_mat[:, i]
@@ -238,10 +243,34 @@ def search_direction(
             if best_lb is None or lb > best_lb:
                 best_lb = lb
                 best_pair = (cand_ids[i], cand_ids[j])
+            if topk > 0:
+                # Preserve the best few candidates for reporting.
+                if len(topk_entries) < topk:
+                    heapq.heappush(topk_entries, (lb, cand_ids[i], cand_ids[j]))
+                else:
+                    if lb > topk_entries[0][0]:
+                        heapq.heapreplace(topk_entries, (lb, cand_ids[i], cand_ids[j]))
 
     if best_pair is None or best_lb is None:
         raise SystemExit("No direction candidates found")
-    return best_pair[0], best_pair[1], best_lb
+    topk_sorted = sorted(topk_entries, key=lambda x: x[0], reverse=True)
+    return best_pair[0], best_pair[1], best_lb, topk_sorted
+
+
+def write_direction_report(
+    path: Path,
+    entries: list[tuple[float, int, int]],
+    vocab_min: int,
+    vocab_max: int,
+    seed: int,
+) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="ascii") as f:
+        f.write("direction_report\n")
+        f.write(f"vocab_min={vocab_min} vocab_max={vocab_max} seed={seed}\n")
+        f.write("rank\tlb\ttarget\tnegative\n")
+        for rank, (lb, target, negative) in enumerate(entries, start=1):
+            f.write(f"{rank}\t{lb:.6f}\t{target}\t{negative}\n")
 
 
 def main() -> None:
@@ -280,6 +309,10 @@ def main() -> None:
                         help="Limit number of direction candidates (0 = all in range).")
     parser.add_argument("--direction-min-lb", default="0",
                         help="Minimum logit-diff lower bound to accept (default: 0).")
+    parser.add_argument("--direction-report-out", type=Path,
+                        help="Optional path to write a ranked direction report.")
+    parser.add_argument("--direction-topk", type=int, default=10,
+                        help="How many top directions to report (default: 10).")
     args = parser.parse_args()
 
     if args.seq <= 0:
@@ -368,6 +401,8 @@ def main() -> None:
 
     if args.search_direction and (args.direction_target is not None or args.direction_negative is not None):
         raise SystemExit("search-direction is mutually exclusive with explicit direction tokens")
+    if args.direction_report_out is not None and not args.search_direction:
+        raise SystemExit("direction-report-out requires --search-direction")
 
     direction_target = None
     direction_negative = None
@@ -376,7 +411,7 @@ def main() -> None:
         max_candidates = args.direction_max_candidates
         if max_candidates == 0:
             max_candidates = None
-        direction_target, direction_negative, best_lb = search_direction(
+        direction_target, direction_negative, best_lb, topk_entries = search_direction(
             model=model,
             values=values,
             layer=layer,
@@ -387,8 +422,17 @@ def main() -> None:
             vocab_min=args.direction_vocab_min,
             vocab_max=args.direction_vocab_max,
             max_candidates=max_candidates,
+            topk=args.direction_topk,
             seed=args.seed,
         )
+        if args.direction_report_out is not None:
+            write_direction_report(
+                args.direction_report_out,
+                topk_entries,
+                args.direction_vocab_min,
+                args.direction_vocab_max,
+                args.seed,
+            )
         try:
             min_lb = float(Fraction(args.direction_min_lb))
         except (ValueError, ZeroDivisionError) as exc:

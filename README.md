@@ -75,7 +75,8 @@ python scripts/build_gpt2_induction_cert.py \
   --random-pattern --seed 0 \
   --active-eps-max 1/2 \
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
-  --direction-min-lb 1/10
+  --direction-min-lb 1/10 \
+  --direction-report-out reports/direction_report.txt --direction-topk 10
 ```
 
 Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
