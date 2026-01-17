@@ -2,7 +2,6 @@
 
 module
 
-public import Nfp.Sound.Gpt2.HeadInputs
 public import Nfp.Sound.Induction
 public import Nfp.Sound.Bounds
 public import Nfp.Sound.Linear.FinFold

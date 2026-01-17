@@ -7,7 +7,7 @@ public import Nfp.Model.InductionHead
 public import Nfp.Model.InductionPrompt
 
 /-!
-Sound builder for GPT-2 induction head inputs.
+Untrusted builder for GPT-2 induction head inputs.
 
 This converts exact GPT-2 head slices into `InductionHeadInputs` using a
 periodic prompt description. The construction is purely definitional and is
@@ -17,8 +17,6 @@ captured by an explicit theorem, so the trusted core does not hide any logic.
 public section
 
 namespace Nfp
-
-namespace Sound
 
 namespace Gpt2
 
@@ -139,7 +137,5 @@ theorem buildInductionHeadInputsShift_prev_spec {seq dModel dHead vocab : Nat}
   constructor <;> simp [buildInductionHeadInputsShift]
 
 end Gpt2
-
-end Sound
 
 end Nfp
