@@ -34,5 +34,5 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 ## Not yet proven
 
 - A verified extraction pipeline from model weights to explicit certificates.
-- End-to-end claims about GPT-2 logits or Jacobians derived from certificates.
+- Model-level claims about logits or Jacobians derived from certificates.
 - A full bridge from explicit head certificates to complete model semantics.
