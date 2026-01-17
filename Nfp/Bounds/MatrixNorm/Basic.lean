@@ -9,8 +9,8 @@ public import Mathlib.Data.Fintype.Basic
 public import Mathlib.Data.Matrix.Mul
 public import Mathlib.Data.Real.Basic
 public import Nfp.Core.Basic
-public import Nfp.Sound.Bounds.MatrixNorm.Interval
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Bounds.MatrixNorm.Interval
+public import Nfp.Linear.FinFold
 
 /-!
 Row-sum matrix norms for downstream linear certificates.
@@ -23,7 +23,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -153,6 +152,5 @@ theorem abs_mulVec_le_rowSumNorm {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat)
 
 end Bounds
 
-end Sound
 
 end Nfp

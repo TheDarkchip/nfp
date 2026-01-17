@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.Sound.Bounds.MatrixNorm.Basic
-public import Nfp.Sound.Bounds.MatrixNorm.Interval
+public import Nfp.Bounds.MatrixNorm.Basic
+public import Nfp.Bounds.MatrixNorm.Interval
 
 /-!
 Matrix norm and interval bound helpers for downstream certificates.

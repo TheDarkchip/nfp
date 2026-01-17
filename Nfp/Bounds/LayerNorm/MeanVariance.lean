@@ -22,7 +22,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -242,6 +241,5 @@ theorem meanReal_abs_le_bound {n : Nat} (x : Fin n → Real) (bound : Rat)
 
 end Bounds
 
-end Sound
 
 end Nfp

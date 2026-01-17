@@ -18,7 +18,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Linear
 
@@ -126,6 +125,5 @@ theorem dotProduct_mul_right {n : Nat} (x y : Fin n → Real) (a : Real) :
 
 end Linear
 
-end Sound
 
 end Nfp

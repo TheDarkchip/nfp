@@ -4,9 +4,9 @@ module
 
 public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 public import Nfp.Core.Basic
-public import Nfp.Sound.Bounds.Gelu
-public import Nfp.Sound.Bounds.LayerNorm
-public import Nfp.Sound.Bounds.MatrixNorm
+public import Nfp.Bounds.Gelu
+public import Nfp.Bounds.LayerNorm
+public import Nfp.Bounds.MatrixNorm
 
 /-!
 Interval bounds for GPT-2 MLP blocks (linear + GELU + linear).
@@ -16,7 +16,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -293,6 +292,5 @@ theorem layerNormAbsMlpResidualBounds_spec {n hidden : Nat}
 
 end Bounds
 
-end Sound
 
 end Nfp

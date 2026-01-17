@@ -9,10 +9,10 @@ public import Mathlib.Data.Real.Basic
 public import Nfp.Circuit.Layers.Softmax
 public import Nfp.Core.Basic
 public import Nfp.Model.Gpt2
-public import Nfp.Sound.Bounds.Cache
-public import Nfp.Sound.Bounds.LayerNorm
-public import Nfp.Sound.Bounds.MatrixNorm
-public import Nfp.Sound.Bounds.Mlp
+public import Nfp.Bounds.Cache
+public import Nfp.Bounds.LayerNorm
+public import Nfp.Bounds.MatrixNorm
+public import Nfp.Bounds.Mlp
 
 /-!
 Interval bounds for multi-head attention and transformer layers.
@@ -22,7 +22,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -401,6 +400,5 @@ theorem transformerLayerBounds_spec {seq dModel dHead numHeads hidden : Nat} [Ne
 
 end Bounds
 
-end Sound
 
 end Nfp

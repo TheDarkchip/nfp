@@ -3,7 +3,7 @@
 module
 
 public import Nfp.Core.Basic
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Linear.FinFold
 
 /-!
 Unnormalized rational arithmetic.
@@ -16,7 +16,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -59,6 +58,5 @@ theorem UnnormRat.toRat_sumFin (n : Nat) (f : Fin n → UnnormRat) :
 
 end Bounds
 
-end Sound
 
 end Nfp

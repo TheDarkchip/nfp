@@ -20,7 +20,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -826,6 +825,5 @@ theorem real_sqrt_le_sqrtUpper {q : Rat} (hq : 0 ≤ q) :
 
 end Bounds
 
-end Sound
 
 end Nfp

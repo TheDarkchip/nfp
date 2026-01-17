@@ -15,7 +15,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -128,6 +127,5 @@ theorem intervalBoundsOn_spec {seq dModel : Nat} [NeZero seq]
 
 end Bounds
 
-end Sound
 
 end Nfp

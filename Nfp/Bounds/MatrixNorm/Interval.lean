@@ -8,7 +8,7 @@ public import Mathlib.Algebra.Order.Ring.Abs
 public import Mathlib.Data.Matrix.Mul
 public import Mathlib.Data.Real.Basic
 public import Nfp.Core.Basic
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Linear.FinFold
 
 /-!
 Interval bounds for dot products and matrix-vector products.
@@ -20,7 +20,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -918,6 +917,5 @@ theorem mulVecIntervalLower_le_upper {m n : Nat} (W : Matrix (Fin m) (Fin n) Rat
 
 end Bounds
 
-end Sound
 
 end Nfp

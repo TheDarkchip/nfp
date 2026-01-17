@@ -6,8 +6,8 @@ public import Aesop
 public import Mathlib.Data.List.MinMax
 public import Mathlib.Data.Vector.Basic
 public import Nfp.Circuit.Cert.LogitDiff
-public import Nfp.Sound.Bounds.Cache
-public import Nfp.Sound.Bounds.MatrixNorm.Interval
+public import Nfp.Bounds.Cache
+public import Nfp.Bounds.MatrixNorm.Interval
 public import Nfp.Sound.Induction.HeadOutput
 
 /-!

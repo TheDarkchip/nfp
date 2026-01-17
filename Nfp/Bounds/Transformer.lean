@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.Sound.Bounds.Transformer.Basic
-public import Nfp.Sound.Bounds.Transformer.Embedding
+public import Nfp.Bounds.Transformer.Basic
+public import Nfp.Bounds.Transformer.Embedding
 
 /-!
 Transformer-stack interval bounds and supporting lemmas.

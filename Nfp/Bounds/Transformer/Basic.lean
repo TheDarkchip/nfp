@@ -7,10 +7,10 @@ public import Mathlib.Data.List.Range
 public import Mathlib.Data.Real.Basic
 public import Nfp.Circuit.Cert.ResidualInterval
 public import Nfp.Model.Gpt2
-public import Nfp.Sound.Bounds.Attention
-public import Nfp.Sound.Bounds.LayerNorm
-public import Nfp.Sound.Bounds.Transformer.Embedding
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Bounds.Attention
+public import Nfp.Bounds.LayerNorm
+public import Nfp.Bounds.Transformer.Embedding
+public import Nfp.Linear.FinFold
 
 /-!
 Interval bounds for transformer stacks and final LayerNorm outputs.
@@ -20,7 +20,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -519,6 +518,5 @@ theorem gpt2ResidualIntervalBoundsActive_spec
 
 end Bounds
 
-end Sound
 
 end Nfp

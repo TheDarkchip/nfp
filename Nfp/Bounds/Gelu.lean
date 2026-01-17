@@ -16,7 +16,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -162,6 +161,5 @@ theorem geluInterval_bounds {lo hi : Rat} {x : Real}
 
 end Bounds
 
-end Sound
 
 end Nfp

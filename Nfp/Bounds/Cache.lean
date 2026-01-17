@@ -12,7 +12,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -219,6 +218,5 @@ theorem cacheBoundPair2TaskElem_apply_right {m n : Nat}
 
 end Bounds
 
-end Sound
 
 end Nfp

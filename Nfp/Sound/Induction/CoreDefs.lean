@@ -8,9 +8,9 @@ public import Nfp.Circuit.Layers.Induction
 public import Nfp.Circuit.Layers.Softmax
 public import Nfp.Core.Basic
 public import Nfp.Model.InductionHead
-public import Nfp.Sound.Bounds.LayerNorm
-public import Nfp.Sound.Bounds.MatrixNorm
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Bounds.LayerNorm
+public import Nfp.Bounds.MatrixNorm
+public import Nfp.Linear.FinFold
 
 /-!
 Core definitions for induction-head certificates.
@@ -27,7 +27,7 @@ namespace Sound
 open scoped BigOperators
 
 open Nfp.Circuit
-open Nfp.Sound.Bounds
+open Nfp.Bounds
 
 variable {seq : Nat}
 

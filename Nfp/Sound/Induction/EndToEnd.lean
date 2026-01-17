@@ -2,7 +2,7 @@
 
 module
 
-public import Nfp.Sound.Bounds.Transformer
+public import Nfp.Bounds.Transformer
 public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 

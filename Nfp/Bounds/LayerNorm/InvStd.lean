@@ -2,8 +2,8 @@
 
 module
 
-public import Nfp.Sound.Bounds.LayerNorm.MeanVariance
-public import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
+public import Nfp.Bounds.LayerNorm.MeanVariance
+public import Nfp.Bounds.LayerNorm.SqrtBounds
 
 /-!
 Inverse-standard-deviation bounds for LayerNorm.
@@ -16,7 +16,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -135,6 +134,5 @@ theorem invStdBounds_spec {n : Nat} (eps : Rat) (x : Fin n → Rat)
 
 end Bounds
 
-end Sound
 
 end Nfp

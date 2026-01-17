@@ -11,9 +11,9 @@ public import Mathlib.Data.Real.Sqrt
 public import Mathlib.Data.Rat.BigOperators
 public import Mathlib.Data.Rat.Cast.Order
 public import Nfp.Core.Basic
-public import Nfp.Sound.Bounds.LayerNorm.MeanVariance
-public import Nfp.Sound.Bounds.LayerNorm.SqrtBounds
-public import Nfp.Sound.Linear.FinFold
+public import Nfp.Bounds.LayerNorm.MeanVariance
+public import Nfp.Bounds.LayerNorm.SqrtBounds
+public import Nfp.Linear.FinFold
 
 /-!
 LayerNorm interval bounds for rational inputs.
@@ -26,7 +26,6 @@ public section
 
 namespace Nfp
 
-namespace Sound
 
 namespace Bounds
 
@@ -1025,6 +1024,5 @@ theorem layerNormIntervalBounds_spec_real {n : Nat}
 
 end Bounds
 
-end Sound
 
 end Nfp
