@@ -45,6 +45,8 @@ by **untrusted** Python scripts and verified by the Lean CLI; no model forward p
 The input setup follows the standard literature diagnostic: repeated token patterns (pattern
 repeated twice) and attention stripes that look back by one period.
 
+For a step-by-step walkthrough, see `docs/demo.md`.
+
 ### Build a head certificate (untrusted)
 
 ```bash
