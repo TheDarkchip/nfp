@@ -55,6 +55,17 @@ python scripts/build_gpt2_induction_cert.py \
 
 Layer/head indices in the generator are 1-based to match the literature.
 
+To certify a **non-vacuous** logit-diff lower bound, supply a direction:
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --direction-target 1268 --direction-negative 1796
+```
+
 Optional direction metadata:
 
 ```
@@ -71,6 +82,12 @@ Optional gates:
 
 ```
 --min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>
+```
+
+Example non-vacuous check:
+
+```bash
+lake exe nfp induction certify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
 ```
 
 ## File formats
