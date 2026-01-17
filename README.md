@@ -42,6 +42,8 @@ High-level layout:
 
 The current prototype checks **explicit induction-head certificates**. Certificates are produced
 by **untrusted** Python scripts and verified by the Lean CLI; no model forward pass runs in Lean.
+The input setup follows the standard literature diagnostic: repeated token patterns (pattern
+repeated twice) and attention stripes that look back by one period.
 
 ### Build a head certificate (untrusted)
 
@@ -80,7 +82,8 @@ python scripts/build_gpt2_induction_cert.py \
 ```
 
 Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
-explicit certificate.
+explicit certificate. The direction report lists the top-ranked candidates by estimated lower
+bound so you can pick a stable non-vacuous direction.
 
 Optional direction metadata:
 
@@ -134,6 +137,17 @@ All sequence indices (`q`, `k`) are **1-based** (literature convention). Directi
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
 appear, the checker defaults to all non-initial queries (indices 2.. in 1-based indexing).
 
+### Direction report (untrusted)
+
+```
+direction_report
+vocab_min=<n> vocab_max=<n> seed=<n>
+rank\tlb\ttarget\tnegative
+```
+
+This file is an **untrusted helper artifact**; it only ranks candidate directions and does not
+change what the Lean checker accepts.
+
 ## Soundness boundary
 
 - Untrusted scripts may use floating-point numerics to generate candidate certificates.
@@ -144,7 +158,7 @@ For known gaps, see `SOUNDNESS_LIMITATIONS.md`.
 ## Requirements
 
 - **Lean 4** (pinned in `lean-toolchain`) and **Lake**.
-- Optional: **Python** for helper scripts (`scripts/`).
+- Optional: **Python** for helper scripts (`scripts/`), plus `torch`, `transformers`, and `numpy`.
 
 ## Contributing
 
