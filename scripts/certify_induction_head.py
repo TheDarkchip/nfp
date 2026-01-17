@@ -81,6 +81,7 @@ def main() -> int:
     parser.add_argument("--layer", type=int, required=True)
     parser.add_argument("--head", type=int, required=True)
     parser.add_argument("--period", type=int)
+    parser.add_argument("--prev-shift", action="store_true")
     parser.add_argument("--nonvacuous", action="store_true")
     parser.add_argument("--zero-based", action="store_true")
     parser.add_argument("--min-active", type=int)
@@ -168,6 +169,8 @@ def main() -> int:
         cmd.append("--zero-based")
     if args.period is not None:
         cmd += ["--period", str(args.period)]
+    if args.prev_shift:
+        cmd.append("--prev-shift")
     if args.min_active is not None:
         cmd += ["--min-active", str(args.min_active)]
     if args.min_logit_diff is not None:

@@ -66,6 +66,13 @@ Key assumptions and limitations:
 - For `certify_head_model` with `period? = none`, `prev`/`active` are derived
   from tokens and `prev` is the maximal prior match. For head-input files or
   when `period?` is set explicitly, `prev` remains a user-supplied input.
+- The `--prev-shift` flag switches to the **shifted** `prev` map (`q - period + 1`
+  or the token-shifted analogue). This aligns the head-level certificate with
+  the canonical induction circuit (previous-token head → induction head), but
+  it is still a head-level approximation rather than a verified two-head
+  composition.
+- The `certify_circuit_model` CLI uses shifted `prev` for the induction head
+  by default, while the previous-token head uses the unshifted period-1 map.
 - The certificate proves a logit-diff bound along the supplied `direction`
   vector. For model-derived inputs, this vector is the target-minus-negative
   unembedding column difference, but we still assume that the unembedding

@@ -402,9 +402,14 @@ def logitDiffLowerBoundRefineOnDemand
                 | some lbWeight =>
                     if lbWeight ≤ 0 then
                       let valBudget := refineBudgetBoost refineBudget
-                      let valKeys := loAtKeysAt inputs core q0
+                      let valCount := refineLowValueCount refineBudget
+                      let valKeys :=
+                        loAtKeysAt inputs core q0 ∪
+                          lowValueKeysAt inputs core q0 valCount
                       let valsLo := valsLoOverlay inputs core valBudget valKeys
-                      match logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo with
+                      let lbRefined? :=
+                        logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo
+                      match lbRefined? with
                       | some lb2 => some (max lbWeight lb2)
                       | none => some lbWeight
                     else
@@ -445,9 +450,14 @@ theorem logitDiffLowerBoundRefineOnDemand_def
                     | some lbWeight =>
                         if lbWeight ≤ 0 then
                           let valBudget := refineBudgetBoost refineBudget
-                          let valKeys := loAtKeysAt inputs core q0
+                          let valCount := refineLowValueCount refineBudget
+                          let valKeys :=
+                            loAtKeysAt inputs core q0 ∪
+                              lowValueKeysAt inputs core q0 valCount
                           let valsLo := valsLoOverlay inputs core valBudget valKeys
-                          match logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo with
+                          let lbRefined? :=
+                            logitDiffLowerBoundFromCacheWithEpsVals c cache.epsAt valsLo
+                          match lbRefined? with
                           | some lb2 => some (max lbWeight lb2)
                           | none => some lbWeight
                         else

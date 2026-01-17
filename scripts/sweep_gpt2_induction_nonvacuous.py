@@ -239,7 +239,7 @@ def main() -> int:
                         help="Use pattern length as the period override")
     parser.add_argument(
         "--prev-mode",
-        choices=["bigram", "token", "period"],
+        choices=["bigram", "token", "period", "period_shift"],
         default="bigram",
         help="Choose prev/active construction (forwarded to discovery).",
     )

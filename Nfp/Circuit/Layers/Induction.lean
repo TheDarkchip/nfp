@@ -3,6 +3,7 @@
 module
 
 public import Nfp.Circuit.Layers.Induction.Basic
+public import Nfp.Circuit.Layers.Induction.Circuit
 
 /-!
 Induction-head layer wiring and helper lemmas.

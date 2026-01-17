@@ -1217,7 +1217,7 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
 
 /-- Build and check induction certificates from a model binary. -/
 def runInductionCertifyHeadModel (modelPath : System.FilePath)
-    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
@@ -1256,7 +1256,7 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
       | Except.ok ⟨header, start⟩ =>
           let inputsE ← timePure "read head inputs" (fun () =>
             NfptPure.readInductionHeadInputs
-              data start header layer head dirTarget dirNegative period?)
+              data start header layer head dirTarget dirNegative period? shiftPrev)
           match inputsE with
           | Except.error msg =>
               IO.eprintln s!"error: {msg}"
@@ -1296,7 +1296,7 @@ def deriveDirectionFromTokens {seq : Nat} (tokens : Fin seq → Nat) :
 /-- Build and check induction certificates from a model binary, deriving direction tokens from the
 prompt sequence. -/
 def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
-    (layer head : Nat) (period? : Option Nat)
+    (layer head : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
@@ -1349,7 +1349,7 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
                     s!"info: direction-target={dirTarget} direction-negative={dirNegative}"
                   let inputsE ← timePure "read head inputs" (fun () =>
                     NfptPure.readInductionHeadInputs
-                      data start header layer head dirTarget dirNegative period?)
+                      data start header layer head dirTarget dirNegative period? shiftPrev)
                   match inputsE with
                   | Except.error msg =>
                       IO.eprintln s!"error: {msg}"
@@ -1371,7 +1371,7 @@ def runInductionHeadInterval (inputsPath : System.FilePath)
 
 /-- Build head-output interval bounds from a model binary. -/
 def runInductionHeadIntervalModel (modelPath : System.FilePath)
-    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (outPath? : Option System.FilePath) : IO UInt32 := do
   let data ← IO.FS.readBinFile modelPath
   match NfptPure.parseHeader data with
@@ -1381,7 +1381,7 @@ def runInductionHeadIntervalModel (modelPath : System.FilePath)
   | Except.ok ⟨header, start⟩ =>
       match
         NfptPure.readInductionHeadInputs
-          data start header layer head dirTarget dirNegative period?
+          data start header layer head dirTarget dirNegative period? shiftPrev
       with
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"

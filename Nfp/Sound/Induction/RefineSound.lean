@@ -648,7 +648,10 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                       logitDiffLowerBoundRefinedFromCache inputs cache c logitCache spec' with
                   | none =>
                       let valBudget := refineBudgetBoost refineBudget
-                      let valKeys := loAtKeysAt inputs cache q0
+                      let valCount := refineLowValueCount refineBudget
+                      let valKeys :=
+                        loAtKeysAt inputs cache q0 ∪
+                          lowValueKeysAt inputs cache q0 valCount
                       let valsLo := valsLoOverlay inputs cache valBudget valKeys
                       cases hval :
                           logitDiffLowerBoundFromCacheWithEpsVals c logitCache.epsAt valsLo with
@@ -656,7 +659,7 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                           have hlb : lb = lb01 := by
                             simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
                               h1, spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget',
-                              valBudget, valKeys, valsLo, hval] using hbound.symm
+                              valBudget, valCount, valKeys, valsLo, hval] using hbound.symm
                           have hbase := hbase_le (lb0 := lb0) h0
                           have hweight_overlay' :
                               ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
@@ -686,7 +689,7 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                           have hlb : lb = max lb01 lb2 := by
                             simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
                               h1, spec, refineBudget, lb01, hnonpos1, h2, spec', refineBudget',
-                              valBudget, valKeys, valsLo, hval] using hbound.symm
+                              valBudget, valCount, valKeys, valsLo, hval] using hbound.symm
                           have hbase := hbase_le (lb0 := lb0) h0
                           have hweight_overlay' :
                               ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
@@ -801,7 +804,10 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                       let lbWeight : Rat := max lb01 lb2
                       by_cases hweight_nonpos : lbWeight ≤ 0
                       · let valBudget := refineBudgetBoost refineBudget
-                        let valKeys := loAtKeysAt inputs cache q0
+                        let valCount := refineLowValueCount refineBudget
+                        let valKeys :=
+                          loAtKeysAt inputs cache q0 ∪
+                            lowValueKeysAt inputs cache q0 valCount
                         let valsLo := valsLoOverlay inputs cache valBudget valKeys
                         cases hval :
                             logitDiffLowerBoundFromCacheWithEpsVals c logitCache.epsAt valsLo with
@@ -810,14 +816,14 @@ theorem logitDiffLowerBoundRefineOnDemand_le
                               simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
                                 h1, spec, refineBudget, lb01, hnonpos1, h2, spec',
                                 refineBudget', lbWeight, hweight_nonpos, valBudget, valKeys,
-                                valsLo, hval] using hbound.symm
+                                valCount, valsLo, hval] using hbound.symm
                             simpa [hlb, lbWeight] using hmax_weight
                         | some lb3 =>
                             have hlb : lb = max lbWeight lb3 := by
                               simpa [logitDiffLowerBoundRefineOnDemand_def, h0, hnonpos, hargmin,
                                 h1, spec, refineBudget, lb01, hnonpos1, h2, spec',
                                 refineBudget', lbWeight, hweight_nonpos, valBudget, valKeys,
-                                valsLo, hval] using hbound.symm
+                                valCount, valsLo, hval] using hbound.symm
                             have hsound_cache : InductionHeadCertSound inputs cache.cert := by
                               simpa [hcert] using hsound
                             have hvalsLo :

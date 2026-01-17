@@ -408,7 +408,7 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
 
 /-- Build and check a strictly positive induction logit-diff bound from a model binary. -/
 def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
-    (layer head dirTarget dirNegative : Nat) (period? : Option Nat)
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
@@ -445,7 +445,7 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
       | Except.ok ⟨header, start⟩ =>
           let inputsE ← timePure "read head inputs" (fun () =>
             NfptPure.readInductionHeadInputs
-              data start header layer head dirTarget dirNegative period?)
+              data start header layer head dirTarget dirNegative period? shiftPrev)
           match inputsE with
           | Except.error msg =>
               IO.eprintln s!"error: {msg}"
@@ -457,7 +457,7 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
 /-- Build and check a strictly positive induction logit-diff bound from a model binary, deriving
 direction tokens from the prompt sequence. -/
 def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
-    (layer head : Nat) (period? : Option Nat)
+    (layer head : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
@@ -508,7 +508,7 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
                     s!"info: direction-target={dirTarget} direction-negative={dirNegative}"
                   let inputsE ← timePure "read head inputs" (fun () =>
                     NfptPure.readInductionHeadInputs
-                      data start header layer head dirTarget dirNegative period?)
+                      data start header layer head dirTarget dirNegative period? shiftPrev)
                   match inputsE with
                   | Except.error msg =>
                       IO.eprintln s!"error: {msg}"

@@ -44,6 +44,15 @@ theorem refineTopWeightCount_def (budget : Nat) :
     refineTopWeightCount budget = min 8 (max 1 (2 * budget)) := by
   rfl
 
+/-- Heuristic cap on the number of low-value keys to refine. -/
+def refineLowValueCount (budget : Nat) : Nat :=
+  min 8 (max 1 (2 * budget))
+
+/-- Unfolding lemma for `refineLowValueCount`. -/
+theorem refineLowValueCount_def (budget : Nat) :
+    refineLowValueCount budget = min 8 (max 1 (2 * budget)) := by
+  rfl
+
 /-- Scale used for refined value bounds. -/
 def valRefineScale (budget : Nat) : Nat :=
   Bounds.sqrtLowerScale * refineBudgetBoost budget
@@ -159,6 +168,38 @@ theorem topWeightKeysAt_def
         let weighted : Array (Rat × Fin seq) :=
           others.toArray.map (fun k => (cache.weightBoundAt q k, k))
         let sorted := weighted.qsort (fun a b => a.1 > b.1)
+        let keys := (sorted.toList.take count).map (fun p => p.2)
+        keys.foldr (fun k acc => insert k acc) ∅ := by
+  rfl
+
+/-- Low-value keys for a query (excluding `prev`), capped by `count`. -/
+def lowValueKeysAt
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) (count : Nat) : Finset (Fin seq) :=
+  if count = 0 then
+    ∅
+  else
+    let others := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
+    let valued : Array (Rat × Fin seq) :=
+      others.toArray.map (fun k => (cache.valsLo k, k))
+    let sorted := valued.qsort (fun a b => a.1 < b.1)
+    let keys := (sorted.toList.take count).map (fun p => p.2)
+    keys.foldr (fun k acc => insert k acc) ∅
+
+/-- Unfolding lemma for `lowValueKeysAt`. -/
+theorem lowValueKeysAt_def
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (cache : InductionHeadCoreCache seq dModel dHead)
+    (q : Fin seq) (count : Nat) :
+    lowValueKeysAt inputs cache q count =
+      if count = 0 then
+        ∅
+      else
+        let others := (List.finRange seq).filter (fun k => decide (k ≠ inputs.prev q))
+        let valued : Array (Rat × Fin seq) :=
+          others.toArray.map (fun k => (cache.valsLo k, k))
+        let sorted := valued.qsort (fun a b => a.1 < b.1)
         let keys := (sorted.toList.take count).map (fun p => p.2)
         keys.foldr (fun k acc => insert k acc) ∅ := by
   rfl

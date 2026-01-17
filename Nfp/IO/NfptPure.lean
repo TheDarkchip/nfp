@@ -600,19 +600,35 @@ def buildInductionHeadInputs (h : NfptHeader) (scale : Rat)
     (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
     (dirTarget dirNegative : Nat)
     (colTarget colNegative : Fin h.modelDim → Rat)
-    (period? : Option Nat) :
+    (period? : Option Nat) (shiftPrev : Bool) :
     Model.InductionHeadInputs h.seqLen h.modelDim h.headDim :=
   let direction : Fin h.modelDim → Rat := fun i => colTarget i - colNegative i
   let directionSpec : Circuit.DirectionSpec :=
     { target := dirTarget, negative := dirNegative }
   let active :=
     match period? with
-    | some period => Model.activeOfPeriod (seq := h.seqLen) period
-    | none => Model.activeOfTokens (seq := h.seqLen) tokens
+    | some period =>
+        if shiftPrev then
+          Model.activeOfPeriodShift (seq := h.seqLen) period
+        else
+          Model.activeOfPeriod (seq := h.seqLen) period
+    | none =>
+        if shiftPrev then
+          Model.activeOfTokensShift (seq := h.seqLen) tokens
+        else
+          Model.activeOfTokens (seq := h.seqLen) tokens
   let prev :=
     match period? with
-    | some period => Model.prevOfPeriod (seq := h.seqLen) period
-    | none => Model.prevOfTokens (seq := h.seqLen) tokens
+    | some period =>
+        if shiftPrev then
+          Model.prevOfPeriodShift (seq := h.seqLen) period
+        else
+          Model.prevOfPeriod (seq := h.seqLen) period
+    | none =>
+        if shiftPrev then
+          Model.prevOfTokensShift (seq := h.seqLen) tokens
+        else
+          Model.prevOfTokens (seq := h.seqLen) tokens
   { scale := scale
     active := active
     prev := prev
@@ -641,18 +657,34 @@ private theorem buildInductionHeadInputs_def (h : NfptHeader) (scale : Rat)
     (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
     (dirTarget dirNegative : Nat)
     (colTarget colNegative : Fin h.modelDim → Rat)
-    (period? : Option Nat) :
+    (period? : Option Nat) (shiftPrev : Bool) :
     buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-        dirTarget dirNegative colTarget colNegative period? =
+        dirTarget dirNegative colTarget colNegative period? shiftPrev =
       { scale := scale
         active :=
           match period? with
-          | some period => Model.activeOfPeriod (seq := h.seqLen) period
-          | none => Model.activeOfTokens (seq := h.seqLen) tokens
+          | some period =>
+              if shiftPrev then
+                Model.activeOfPeriodShift (seq := h.seqLen) period
+              else
+                Model.activeOfPeriod (seq := h.seqLen) period
+          | none =>
+              if shiftPrev then
+                Model.activeOfTokensShift (seq := h.seqLen) tokens
+              else
+                Model.activeOfTokens (seq := h.seqLen) tokens
         prev :=
           match period? with
-          | some period => Model.prevOfPeriod (seq := h.seqLen) period
-          | none => Model.prevOfTokens (seq := h.seqLen) tokens
+          | some period =>
+              if shiftPrev then
+                Model.prevOfPeriodShift (seq := h.seqLen) period
+              else
+                Model.prevOfPeriod (seq := h.seqLen) period
+          | none =>
+              if shiftPrev then
+                Model.prevOfTokensShift (seq := h.seqLen) tokens
+              else
+                Model.prevOfTokens (seq := h.seqLen) tokens
         embed := embed
         lnEps := h.layerNormEps
         ln1Gamma := ln1Gamma
@@ -678,10 +710,10 @@ theorem buildInductionHeadInputs_direction_def (h : NfptHeader) (scale : Rat)
     (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
     (dirTarget dirNegative : Nat)
     (colTarget colNegative : Fin h.modelDim → Rat)
-    (period? : Option Nat) :
+    (period? : Option Nat) (shiftPrev : Bool) :
     let inputs :=
       buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-        dirTarget dirNegative colTarget colNegative period?
+        dirTarget dirNegative colTarget colNegative period? shiftPrev
     inputs.directionSpec = { target := dirTarget, negative := dirNegative } ∧
       inputs.direction = fun i => colTarget i - colNegative i := by
   simp [buildInductionHeadInputs]
@@ -694,18 +726,34 @@ theorem buildInductionHeadInputs_prev_active_def (h : NfptHeader) (scale : Rat)
     (attnBias ln1Gamma ln1Beta : Fin h.modelDim → Rat)
     (dirTarget dirNegative : Nat)
     (colTarget colNegative : Fin h.modelDim → Rat)
-    (period? : Option Nat) :
+    (period? : Option Nat) (shiftPrev : Bool) :
     let inputs :=
       buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-        dirTarget dirNegative colTarget colNegative period?
+        dirTarget dirNegative colTarget colNegative period? shiftPrev
     inputs.active =
         (match period? with
-        | some period => Model.activeOfPeriod (seq := h.seqLen) period
-        | none => Model.activeOfTokens (seq := h.seqLen) tokens) ∧
+        | some period =>
+            if shiftPrev then
+              Model.activeOfPeriodShift (seq := h.seqLen) period
+            else
+              Model.activeOfPeriod (seq := h.seqLen) period
+        | none =>
+            if shiftPrev then
+              Model.activeOfTokensShift (seq := h.seqLen) tokens
+            else
+              Model.activeOfTokens (seq := h.seqLen) tokens) ∧
     inputs.prev =
         (match period? with
-        | some period => Model.prevOfPeriod (seq := h.seqLen) period
-        | none => Model.prevOfTokens (seq := h.seqLen) tokens) := by
+        | some period =>
+            if shiftPrev then
+              Model.prevOfPeriodShift (seq := h.seqLen) period
+            else
+              Model.prevOfPeriod (seq := h.seqLen) period
+        | none =>
+            if shiftPrev then
+              Model.prevOfTokensShift (seq := h.seqLen) tokens
+            else
+              Model.prevOfTokens (seq := h.seqLen) tokens) := by
   constructor <;> rfl
 
 /-- Active queries pick the maximal matching prior token when `period? = none`. -/
@@ -718,10 +766,10 @@ theorem buildInductionHeadInputs_prev_spec_of_active (h : NfptHeader) (scale : R
     (colTarget colNegative : Fin h.modelDim → Rat) :
     ∀ {q},
         q ∈ (buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-              dirTarget dirNegative colTarget colNegative none).active →
+              dirTarget dirNegative colTarget colNegative none false).active →
           let p :=
             (buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-              dirTarget dirNegative colTarget colNegative none).prev q
+              dirTarget dirNegative colTarget colNegative none false).prev q
           p < q ∧ tokens p = tokens q ∧
             ∀ k, k < q → tokens k = tokens q → k ≤ p := by
   intro q hq
@@ -730,9 +778,13 @@ theorem buildInductionHeadInputs_prev_spec_of_active (h : NfptHeader) (scale : R
   have hspec := Model.prevOfTokens_spec_of_active (tokens := tokens) (q := q) hq'
   simpa [buildInductionHeadInputs] using hspec
 
-/-- Read induction-head inputs directly from the model binary. -/
+/-- Read induction-head inputs directly from the model binary.
+
+`shiftPrev` selects between the unshifted prompt map (`prev = q - period`) and the
+shifted map (`prev = q - period + 1`), with analogous token-derived versions.
+-/
 def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
-    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) :
+    (layer head dirTarget dirNegative : Nat) (period? : Option Nat) (shiftPrev : Bool) :
     Except String (Model.InductionHeadInputs h.seqLen h.modelDim h.headDim) := do
   let scale ← scaleOfHeadDim h.headDim
   let tokens ← readTokens data start h
@@ -743,7 +795,7 @@ def readInductionHeadInputs (data : ByteArray) (start : Nat) (h : NfptHeader)
   let colNegative ← readUnembedColumn data start h dirNegative
   pure <|
     buildInductionHeadInputs h scale tokens embed weights attnBias ln1Gamma ln1Beta
-      dirTarget dirNegative colTarget colNegative period?
+      dirTarget dirNegative colTarget colNegative period? shiftPrev
 
 end NfptPure
 

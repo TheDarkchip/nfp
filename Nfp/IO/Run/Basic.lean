@@ -717,7 +717,7 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
                                                             timePure "read head inputs" (fun () =>
                                                               NfptPure.readInductionHeadInputs
                                                                 data start header layer head
-                                                                dirPos dirNeg period?)
+                                                                dirPos dirNeg period? false)
                                                           match inputsE with
                                                           | Except.error msg =>
                                                               IO.eprintln s!"warning: {msg}"

@@ -60,11 +60,27 @@ def InductionSpec (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
     (out vals : Fin (Nat.succ n) → Val) : Prop :=
   ∀ q, q ≠ 0 → out q = vals (prev q)
 
+/-- Unfolding lemma for `InductionSpec`. -/
+theorem InductionSpec_def (prev : Fin (Nat.succ n) → Fin (Nat.succ n))
+    (out vals : Fin (Nat.succ n) → Val) :
+    InductionSpec (n := n) prev out vals = ∀ q, q ≠ 0 → out q = vals (prev q) := by
+  rfl
+
 /-- Concrete `prev` map on `Fin (n + 1)` (with `0 ↦ 0`). -/
 def prevIndex : Fin (Nat.succ n) → Fin (Nat.succ n)
   | ⟨0, _⟩ => 0
   | ⟨Nat.succ k, hk⟩ =>
       ⟨k, Nat.lt_trans (Nat.lt_of_succ_lt_succ hk) (Nat.lt_succ_self n)⟩
+
+/-- Previous-token head spec: copies the immediately preceding token. -/
+def PrevTokenSpec (out vals : Fin (Nat.succ n) → Val) : Prop :=
+  InductionSpec (n := n) (prevIndex (n := n)) out vals
+
+/-- Unfolding lemma for `PrevTokenSpec`. -/
+theorem PrevTokenSpec_def (out vals : Fin (Nat.succ n) → Val) :
+    PrevTokenSpec (n := n) out vals =
+      InductionSpec (n := n) (prevIndex (n := n)) out vals := by
+  rfl
 
 end Spec
 

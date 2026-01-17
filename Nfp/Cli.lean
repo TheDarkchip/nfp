@@ -66,6 +66,7 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
   let layer? := (p.flag? "layer").map (·.as! Nat)
   let head? := (p.flag? "head").map (·.as! Nat)
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let directionStr? := (p.flag? "direction").map (·.as! String)
   let presetStr? := (p.flag? "preset").map (·.as! String)
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
@@ -94,8 +95,8 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
       Except.ok direction? =>
       match inputsPath?, modelPath? with
       | some inputsPath, none =>
-          if layer?.isSome || head?.isSome || period?.isSome then
-            fail "--layer/--head/--period are only valid with --model"
+          if layer?.isSome || head?.isSome || period?.isSome || prevShift then
+            fail "--layer/--head/--period/--prev-shift are only valid with --model"
           else if direction?.isSome then
             fail "--direction is only valid with --model"
           else if requireNonvacuous && skipLogitDiff then
@@ -124,12 +125,13 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
                       fail "--skip-logit-diff is not allowed with certify_nonvacuous"
                     else if requireNonvacuous then
                       IO.runInductionCertifyHeadModelNonvacuous modelPath layer' head' dirTarget
-                        dirNegative period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                        dirNegative period? prevShift minActive? minLogitDiffStr? minMarginStr?
+                        maxEpsStr?
                         timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
                     else
                       IO.runInductionCertifyHeadModel modelPath layer' head' dirTarget dirNegative
-                        period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                        period? prevShift minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
                         timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
                         skipLogitDiff
@@ -138,11 +140,13 @@ private def runInductionCertifyUnified (requireNonvacuous : Bool) (p : Parsed) :
                       fail "--skip-logit-diff is not allowed with certify_nonvacuous"
                     else if requireNonvacuous then
                       IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer' head' period?
-                        minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+                        prevShift minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                        timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
                     else
-                      IO.runInductionCertifyHeadModelAuto modelPath layer' head' period?
-                        minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+                      IO.runInductionCertifyHeadModelAuto modelPath layer' head' period? prevShift
+                        minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+                        timing? heartbeatMs?
                         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
                         skipLogitDiff
           | _, _ =>
@@ -164,6 +168,7 @@ private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
   let layer? := (p.flag? "layer").map (·.as! Nat)
   let head? := (p.flag? "head").map (·.as! Nat)
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let directionStr? := (p.flag? "direction").map (·.as! String)
   let outPath? := (p.flag? "out").map (·.as! String)
   let zeroBased := p.hasFlag "zero-based"
@@ -179,8 +184,8 @@ private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
   | Except.ok direction? =>
       match inputsPath?, modelPath? with
       | some inputsPath, none =>
-          if layer?.isSome || head?.isSome || period?.isSome then
-            fail "--layer/--head/--period are only valid with --model"
+          if layer?.isSome || head?.isSome || period?.isSome || prevShift then
+            fail "--layer/--head/--period/--prev-shift are only valid with --model"
           else if direction?.isSome then
             fail "--direction is only valid with --model"
           else
@@ -195,7 +200,7 @@ private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
               | _, Except.error msg => fail msg
               | Except.ok layer', Except.ok head' =>
                   IO.runInductionHeadIntervalModel modelPath layer' head' dirTarget dirNegative
-                    period? outPath?
+                    period? prevShift outPath?
           | _, _, none =>
               fail "--direction is required with --model (use \"target,negative\")"
           | _, _, _ =>
@@ -216,6 +221,7 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based, required with --model)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (model only; default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1) for model inputs."
     direction : String; "Optional logit-diff direction as \"target,negative\" (model only). \
                           When omitted with --model, direction is derived from tokens."
     preset : String; "Split-budget preset: fast | balanced | tight (default: balanced)."
@@ -241,6 +247,7 @@ def inductionCertifyNonvacuousSimpleCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based, required with --model)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (model only; default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1) for model inputs."
     direction : String; "Optional logit-diff direction as \"target,negative\" (model only). \
                           When omitted with --model, direction is derived from tokens."
     preset : String; "Split-budget preset: fast | balanced | tight (default: balanced)."
@@ -506,6 +513,7 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let dirTarget := p.flag! "direction-target" |>.as! Nat
   let dirNegative := p.flag! "direction-negative" |>.as! Nat
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
@@ -531,7 +539,7 @@ def runInductionCertifyHeadModel (p : Parsed) : IO UInt32 := do
       return 2
   | Except.ok layer', Except.ok head' =>
       IO.runInductionCertifyHeadModel modelPath layer' head' dirTarget dirNegative period?
-        minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+        prevShift minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? skipLogitDiff
 
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
@@ -540,6 +548,7 @@ def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let dirTarget := p.flag! "direction-target" |>.as! Nat
   let dirNegative := p.flag! "direction-negative" |>.as! Nat
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
@@ -564,7 +573,8 @@ def runInductionCertifyHeadModelNonvacuous (p : Parsed) : IO UInt32 := do
       return 2
   | Except.ok layer', Except.ok head' =>
       IO.runInductionCertifyHeadModelNonvacuous modelPath layer' head' dirTarget dirNegative
-        period? minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+        period? prevShift minActive? minLogitDiffStr? minMarginStr? maxEpsStr?
+        timing? heartbeatMs?
         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
 
 /-- `nfp induction certify_head_model_auto` subcommand. -/
@@ -573,6 +583,7 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
@@ -595,7 +606,7 @@ def runInductionCertifyHeadModelAuto (p : Parsed) : IO UInt32 := do
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok layer', Except.ok head' =>
-      IO.runInductionCertifyHeadModelAuto modelPath layer' head' period?
+      IO.runInductionCertifyHeadModelAuto modelPath layer' head' period? prevShift
         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? skipLogitDiff
 
@@ -605,6 +616,7 @@ def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
   let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
@@ -626,9 +638,64 @@ def runInductionCertifyHeadModelAutoNonvacuous (p : Parsed) : IO UInt32 := do
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok layer', Except.ok head' =>
-      IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer' head' period?
+      IO.runInductionCertifyHeadModelAutoNonvacuous modelPath layer' head' period? prevShift
         minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
         splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+
+/-! `nfp induction certify_circuit_model` subcommand. -/
+/-- CLI entrypoint for `nfp induction certify_circuit_model`. -/
+def runInductionCertifyCircuitModel (p : Parsed) : IO UInt32 := do
+  let modelPath := p.flag! "model" |>.as! String
+  let prevLayer := p.flag! "prev-layer" |>.as! Nat
+  let prevHead := p.flag! "prev-head" |>.as! Nat
+  let indLayer := p.flag! "ind-layer" |>.as! Nat
+  let indHead := p.flag! "ind-head" |>.as! Nat
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let dirTarget := p.flag! "direction-target" |>.as! Nat
+  let dirNegative := p.flag! "direction-negative" |>.as! Nat
+  let minActive? := (p.flag? "min-active").map (·.as! Nat)
+  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
+  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
+  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
+  let timing? := (p.flag? "timing").map (·.as! Nat)
+  let heartbeatMs? := (p.flag? "heartbeat-ms").map (·.as! Nat)
+  let splitBudgetQ? := (p.flag? "split-budget-q").map (·.as! Nat)
+  let splitBudgetK? := (p.flag? "split-budget-k").map (·.as! Nat)
+  let splitBudgetDiffBase? := (p.flag? "split-budget-diff-base").map (·.as! Nat)
+  let splitBudgetDiffRefined? := (p.flag? "split-budget-diff-refined").map (·.as! Nat)
+  let skipLogitDiff := p.hasFlag "skip-logit-diff"
+  let zeroBased := p.hasFlag "zero-based"
+  match period? with
+  | none =>
+      IO.eprintln "error: --period is required for circuit certification"
+      return 2
+  | some period =>
+      if period = 0 then
+        IO.eprintln "error: --period must be positive for circuit certification"
+        return 2
+      let prevLayerE := toZeroBased "prev-layer" prevLayer zeroBased
+      let prevHeadE := toZeroBased "prev-head" prevHead zeroBased
+      let indLayerE := toZeroBased "ind-layer" indLayer zeroBased
+      let indHeadE := toZeroBased "ind-head" indHead zeroBased
+      match prevLayerE, prevHeadE, indLayerE, indHeadE with
+      | Except.error msg, _, _, _ =>
+          IO.eprintln s!"error: {msg}"
+          return 2
+      | _, Except.error msg, _, _ =>
+          IO.eprintln s!"error: {msg}"
+          return 2
+      | _, _, Except.error msg, _ =>
+          IO.eprintln s!"error: {msg}"
+          return 2
+      | _, _, _, Except.error msg =>
+          IO.eprintln s!"error: {msg}"
+          return 2
+      | Except.ok prevLayer', Except.ok prevHead', Except.ok indLayer', Except.ok indHead' =>
+          IO.runInductionCertifyCircuitModel modelPath prevLayer' prevHead' indLayer' indHead'
+            dirTarget dirNegative period
+            minActive? minLogitDiffStr? minMarginStr? maxEpsStr? timing? heartbeatMs?
+            splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
+            skipLogitDiff
 
 /-- `nfp induction certify_head_model` subcommand. -/
 def inductionCertifyHeadModelCmd : Cmd := `[Cli|
@@ -640,6 +707,7 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
     "min-active" : Nat; "Optional minimum number of active queries required \
@@ -669,6 +737,7 @@ def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
     "min-active" : Nat; "Optional minimum number of active queries required \
@@ -698,6 +767,7 @@ def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1)."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
@@ -725,12 +795,45 @@ def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1)."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
                                 (rational literal; default: 0)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
+    "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
+    "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
+    "split-budget-k" : Nat; "Split-budget for key dims in sign-splitting bounds (default: 2)."
+    "split-budget-diff-base" : Nat; "Split-budget for base diff dims in sign-splitting bounds \
+                                      (default: 0)."
+    "split-budget-diff-refined" : Nat; "Split-budget for refined diff dims in sign-splitting \
+                                         bounds (default: 12)."
+]
+
+/-- `nfp induction certify_circuit_model` subcommand. -/
+def inductionCertifyCircuitModelCmd : Cmd := `[Cli|
+  certify_circuit_model VIA runInductionCertifyCircuitModel;
+  "Check a two-head induction circuit by reading a model binary directly \
+  (induction head uses shifted prev)."
+  FLAGS:
+    model : String; "Path to the NFP_BINARY_V1 model file."
+    "prev-layer" : Nat; "Layer index for the previous-token head (1-based)."
+    "prev-head" : Nat; "Head index for the previous-token head (1-based)."
+    "ind-layer" : Nat; "Layer index for the induction head (1-based)."
+    "ind-head" : Nat; "Head index for the induction head (1-based)."
+    "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
+    period : Nat; "Prompt period override (required)."
+    "direction-target" : Nat; "Target token id for logit-diff direction."
+    "direction-negative" : Nat; "Negative token id for logit-diff direction."
+    "min-active" : Nat; "Optional minimum number of active queries required \
+                          (default: max 1 (seq/8))."
+    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
+                                (rational literal). Defaults to 0."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
+    "skip-logit-diff"; "Skip logit-diff lower bound computation."
     timing : Nat; "Emit timing output to stdout (0=off, 1=on)."
     "heartbeat-ms" : Nat; "Emit progress heartbeat every N ms (0 disables)."
     "split-budget-q" : Nat; "Split-budget for query dims in sign-splitting bounds (default: 2)."
@@ -762,6 +865,7 @@ def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
   let layer := p.flag! "layer" |>.as! Nat
   let head := p.flag! "head" |>.as! Nat
   let period? := (p.flag? "period").map (·.as! Nat)
+  let prevShift := p.hasFlag "prev-shift"
   let dirTarget := p.flag! "direction-target" |>.as! Nat
   let dirNegative := p.flag! "direction-negative" |>.as! Nat
   let outPath? := (p.flag? "out").map (·.as! String)
@@ -777,7 +881,7 @@ def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
       return 2
   | Except.ok layer', Except.ok head' =>
       IO.runInductionHeadIntervalModel modelPath layer' head' dirTarget dirNegative period?
-        outPath?
+        prevShift outPath?
 
 /-- `nfp induction head_interval_model` subcommand. -/
 def inductionHeadIntervalModelCmd : Cmd := `[Cli|
@@ -789,6 +893,7 @@ def inductionHeadIntervalModelCmd : Cmd := `[Cli|
     head : Nat; "Head index for the induction head (1-based)."
     "zero-based"; "Interpret --layer/--head as zero-based indices (legacy)."
     period : Nat; "Optional prompt period override (default: derive from tokens)."
+    "prev-shift"; "Use shifted prev/active (prev = q - period + 1)."
     "direction-target" : Nat; "Target token id for logit-diff direction."
     "direction-negative" : Nat; "Negative token id for logit-diff direction."
     out : String; "Optional path to write the residual-interval certificate."
@@ -810,6 +915,7 @@ def inductionAdvancedCmd : Cmd := `[Cli|
     inductionCertifyHeadModelNonvacuousCmd;
     inductionCertifyHeadModelAutoCmd;
     inductionCertifyHeadModelAutoNonvacuousCmd;
+    inductionCertifyCircuitModelCmd;
     inductionHeadIntervalCmd;
     inductionHeadIntervalModelCmd
 ]

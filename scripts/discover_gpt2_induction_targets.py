@@ -196,6 +196,18 @@ def build_prev_period(seq_len: int, period: int) -> Tuple[np.ndarray, np.ndarray
     return prev, active
 
 
+def build_prev_period_shift(seq_len: int, period: int) -> Tuple[np.ndarray, np.ndarray]:
+    prev = np.zeros(seq_len, dtype=np.int64)
+    active = np.zeros(seq_len, dtype=bool)
+    if period <= 0:
+        return prev, active
+    idx = np.arange(seq_len)
+    mask = idx >= period
+    prev[mask] = idx[mask] - period + 1
+    active[mask] = True
+    return prev, active
+
+
 def layer_norm(x: np.ndarray, gamma: np.ndarray, beta: np.ndarray, eps: float) -> np.ndarray:
     mean = x.mean(axis=1, keepdims=True)
     var = ((x - mean) ** 2).mean(axis=1, keepdims=True)
@@ -592,9 +604,12 @@ def main() -> int:
     parser.add_argument("--period", type=int, help="Optional prompt period override")
     parser.add_argument(
         "--prev-mode",
-        choices=["bigram", "token", "period"],
+        choices=["bigram", "token", "period", "period_shift"],
         default="bigram",
-        help="Choose prev/active construction (default: bigram prefix match).",
+        help=(
+            "Choose prev/active construction (default: bigram prefix match). "
+            "period_shift uses q-period+1."
+        ),
     )
     parser.add_argument(
         "--stripe-period",
@@ -654,14 +669,17 @@ def main() -> int:
         else:
             embeddings = read_f64(f, seq_len * model_dim).reshape(seq_len, model_dim)
 
-        if args.prev_mode != "period" and args.period is not None:
+        if args.prev_mode not in {"period", "period_shift"} and args.period is not None:
             raise SystemExit("--period is incompatible with --prev-mode=token/bigram")
-        if args.prev_mode == "period" and args.period is None:
-            raise SystemExit("--prev-mode=period requires --period")
+        if args.prev_mode in {"period", "period_shift"} and args.period is None:
+            raise SystemExit("--prev-mode=period/period_shift requires --period")
 
         if args.prev_mode == "period":
             period = int(args.period)
             prev, active_mask = build_prev_period(seq_len, period)
+        elif args.prev_mode == "period_shift":
+            period = int(args.period)
+            prev, active_mask = build_prev_period_shift(seq_len, period)
         elif args.prev_mode == "bigram":
             prev, active_mask = build_prev_bigram(tokens)
         else:
