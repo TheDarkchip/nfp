@@ -78,6 +78,9 @@ python scripts/build_gpt2_induction_cert.py \
   --direction-min-lb 1/10
 ```
 
+Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
+explicit certificate.
+
 Optional direction metadata:
 
 ```
