@@ -24,6 +24,10 @@ def parseRatOpt (label : String) (raw? : Option String) :
       | Except.ok v => Except.ok (some v)
       | Except.error msg => Except.error s!"invalid {label}: {msg}"
 
+/-- Emit a deprecation warning on stderr. -/
+def warnDeprecated (msg : String) : IO Unit := do
+  IO.eprintln s!"warning: DEPRECATED: {msg}"
+
 end IO
 
 end Nfp

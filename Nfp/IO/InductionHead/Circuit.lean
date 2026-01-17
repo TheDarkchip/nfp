@@ -27,6 +27,9 @@ def runInductionCertifyCircuitModel (modelPath : System.FilePath)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
     (skipLogitDiff : Bool) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_circuit_model builds certificates from a model file; \
+    use explicit certs for each head instead."
   let prevCode ←
     runInductionCertifyHeadModel
       modelPath

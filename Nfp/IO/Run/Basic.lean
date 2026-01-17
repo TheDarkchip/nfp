@@ -150,6 +150,9 @@ def runInductionCertifySound (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (minActive? : Option Nat)
     (minLogitDiffStr? : Option String) (minMarginStr? : Option String)
     (maxEpsStr? : Option String) : IO UInt32 := do
+  warnDeprecated
+    "certify_sound builds certificates from raw scores/values; use explicit certs \
+    via `nfp induction certify` or `nfp induction head_cert_check`."
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -377,6 +380,9 @@ def runInductionCertifyEndToEndMatrix (scoresPath : System.FilePath)
     (valuesPath : System.FilePath) (matrixPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  warnDeprecated
+    "certify_end_to_end_matrix builds downstream bounds from a raw matrix payload; \
+    use a downstream cert instead."
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -505,6 +511,9 @@ def runInductionCertifyEndToEndModel (scoresPath : System.FilePath)
     (layer? : Option Nat) (head? : Option Nat) (period? : Option Nat)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String) : IO UInt32 := do
+  warnDeprecated
+    "certify_end_to_end_model derives residual bounds from a model file; \
+    use an explicit residual-interval cert instead."
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?

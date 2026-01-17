@@ -230,7 +230,7 @@ private def runInductionIntervalSimple (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify` subcommand (streamlined). -/
 def inductionCertifySimpleCmd : Cmd := `[Cli|
   certify VIA runInductionCertifySimple;
-  "Check induction head certificates from an explicit cert, inputs, or a model file."
+  "Check induction head certificates from an explicit cert. Inputs/model modes are DEPRECATED."
   FLAGS:
     cert : String; "Path to the induction head certificate file \
                     (use either --cert or --inputs/--model)."
@@ -258,7 +258,7 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
 /-- `nfp induction certify_nonvacuous` subcommand (streamlined). -/
 def inductionCertifyNonvacuousSimpleCmd : Cmd := `[Cli|
   certify_nonvacuous VIA runInductionCertifyNonvacuousSimple;
-  "Require a strictly positive logit-diff bound from a cert, inputs, or a model file."
+  "Require a strictly positive logit-diff bound from a cert. Inputs/model modes are DEPRECATED."
   FLAGS:
     cert : String; "Path to the induction head certificate file \
                     (use either --cert or --inputs/--model)."
@@ -285,7 +285,7 @@ def inductionCertifyNonvacuousSimpleCmd : Cmd := `[Cli|
 /-- `nfp induction interval` subcommand (streamlined). -/
 def inductionIntervalSimpleCmd : Cmd := `[Cli|
   interval VIA runInductionIntervalSimple;
-  "Build head-output interval bounds from inputs or a model file."
+  "DEPRECATED: build head-output interval bounds from inputs or a model file."
   FLAGS:
     inputs : String; "Path to the induction head input file (use either --inputs or --model)."
     model : String; "Path to the NFP_BINARY_V1 model file (use either --inputs or --model)."
@@ -338,7 +338,7 @@ def runInductionCertifySound (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify_sound` subcommand. -/
 def inductionCertifySoundCmd : Cmd := `[Cli|
   certify_sound VIA runInductionCertifySound;
-  "Check induction certificates from raw scores/values."
+  "DEPRECATED: check induction certificates from raw scores/values."
   FLAGS:
     scores : String; "Path to the raw scores/weights file."
     values : String; "Path to the raw value entries file."
@@ -395,7 +395,7 @@ def runInductionCertifyEndToEndMatrix (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify_end_to_end_matrix` subcommand. -/
 def inductionCertifyEndToEndMatrixCmd : Cmd := `[Cli|
   certify_end_to_end_matrix VIA runInductionCertifyEndToEndMatrix;
-  "Check end-to-end induction bounds using a downstream matrix payload."
+  "DEPRECATED: check end-to-end induction bounds using a downstream matrix payload."
   FLAGS:
     scores : String; "Path to the softmax-margin certificate file."
     values : String; "Path to the value-range certificate file."
@@ -428,7 +428,7 @@ def runInductionCertifyEndToEndModel (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify_end_to_end_model` subcommand. -/
 def inductionCertifyEndToEndModelCmd : Cmd := `[Cli|
   certify_end_to_end_model VIA runInductionCertifyEndToEndModel;
-  "Check end-to-end induction bounds using a model file for the downstream matrix."
+  "DEPRECATED: check end-to-end induction bounds using a model file for downstream bounds."
   FLAGS:
     scores : String; "Path to the softmax-margin certificate file."
     values : String; "Path to the value-range certificate file."
@@ -485,7 +485,7 @@ def runInductionCertifyHeadNonvacuous (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify_head` subcommand. -/
 def inductionCertifyHeadCmd : Cmd := `[Cli|
   certify_head VIA runInductionCertifyHead;
-  "Check induction certificates from exact head inputs."
+  "DEPRECATED: check induction certificates from exact head inputs."
   FLAGS:
     inputs : String; "Path to the induction head input file."
     "min-active" : Nat; "Optional minimum number of active queries required \
@@ -508,7 +508,7 @@ def inductionCertifyHeadCmd : Cmd := `[Cli|
 /-- `nfp induction certify_head_nonvacuous` subcommand. -/
 def inductionCertifyHeadNonvacuousCmd : Cmd := `[Cli|
   certify_head_nonvacuous VIA runInductionCertifyHeadNonvacuous;
-  "Require a strictly positive logit-diff bound from exact head inputs."
+  "DEPRECATED: require a strictly positive logit-diff bound from exact head inputs."
   FLAGS:
     inputs : String; "Path to the induction head input file."
     "min-active" : Nat; "Optional minimum number of active queries required \
@@ -721,7 +721,7 @@ def runInductionCertifyCircuitModel (p : Parsed) : IO UInt32 := do
 /-- `nfp induction certify_head_model` subcommand. -/
 def inductionCertifyHeadModelCmd : Cmd := `[Cli|
   certify_head_model VIA runInductionCertifyHeadModel;
-  "Check induction certificates by reading a model binary directly."
+  "DEPRECATED: check induction certificates by reading a model binary directly."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head (1-based)."
@@ -751,7 +751,7 @@ def inductionCertifyHeadModelCmd : Cmd := `[Cli|
 /-- `nfp induction certify_head_model_nonvacuous` subcommand. -/
 def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
   certify_head_model_nonvacuous VIA runInductionCertifyHeadModelNonvacuous;
-  "Require a strictly positive logit-diff bound from a model binary."
+  "DEPRECATED: require a strictly positive logit-diff bound from a model binary."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head (1-based)."
@@ -780,8 +780,8 @@ def inductionCertifyHeadModelNonvacuousCmd : Cmd := `[Cli|
 /-- `nfp induction certify_head_model_auto` subcommand. -/
 def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
   certify_head_model_auto VIA runInductionCertifyHeadModelAuto;
-  "Check induction certificates by reading a model binary and deriving the direction \
-  from the prompt tokens."
+  "DEPRECATED: check induction certificates by reading a model binary and deriving the \
+  direction from the prompt tokens."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head (1-based)."
@@ -808,8 +808,8 @@ def inductionCertifyHeadModelAutoCmd : Cmd := `[Cli|
 /-- `nfp induction certify_head_model_auto_nonvacuous` subcommand. -/
 def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
   certify_head_model_auto_nonvacuous VIA runInductionCertifyHeadModelAutoNonvacuous;
-  "Require a strictly positive logit-diff bound from a model binary, with the direction \
-  derived from the prompt tokens."
+  "DEPRECATED: require a strictly positive logit-diff bound from a model binary, with the \
+  direction derived from the prompt tokens."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head (1-based)."
@@ -836,7 +836,7 @@ def inductionCertifyHeadModelAutoNonvacuousCmd : Cmd := `[Cli|
 /-- `nfp induction certify_circuit_model` subcommand. -/
 def inductionCertifyCircuitModelCmd : Cmd := `[Cli|
   certify_circuit_model VIA runInductionCertifyCircuitModel;
-  "Check a two-head induction circuit by reading a model binary directly \
+  "DEPRECATED: check a two-head induction circuit by reading a model binary directly \
   (induction head uses shifted prev)."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
@@ -874,7 +874,7 @@ def runInductionHeadInterval (p : Parsed) : IO UInt32 := do
 /-- `nfp induction head_interval` subcommand. -/
 def inductionHeadIntervalCmd : Cmd := `[Cli|
   head_interval VIA runInductionHeadInterval;
-  "Build head-output interval bounds from exact head inputs."
+  "DEPRECATED: build head-output interval bounds from exact head inputs."
   FLAGS:
     inputs : String; "Path to the induction head input file."
     out : String; "Optional path to write the residual-interval certificate."
@@ -930,7 +930,7 @@ def runInductionHeadIntervalModel (p : Parsed) : IO UInt32 := do
 /-- `nfp induction head_interval_model` subcommand. -/
 def inductionHeadIntervalModelCmd : Cmd := `[Cli|
   head_interval_model VIA runInductionHeadIntervalModel;
-  "Build head-output interval bounds by reading a model binary directly."
+  "DEPRECATED: build head-output interval bounds by reading a model binary directly."
   FLAGS:
     model : String; "Path to the NFP_BINARY_V1 model file."
     layer : Nat; "Layer index for the induction head (1-based)."

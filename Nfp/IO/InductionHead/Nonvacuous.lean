@@ -378,6 +378,9 @@ def runInductionCertifyHeadNonvacuous (inputsPath : System.FilePath)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head_nonvacuous builds certificates from head inputs; \
+    use explicit certs via `nfp induction certify_nonvacuous --cert`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -414,6 +417,9 @@ def runInductionCertifyHeadModelNonvacuous (modelPath : System.FilePath)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head_model_nonvacuous builds certificates from a model file; \
+    use explicit certs via `nfp induction certify_nonvacuous --cert`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -463,6 +469,9 @@ def runInductionCertifyHeadModelAutoNonvacuous (modelPath : System.FilePath)
     (timing? : Option Nat) (heartbeatMs? : Option Nat)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head_model_auto_nonvacuous builds certificates from a model file; \
+    use explicit certs via `nfp induction certify_nonvacuous --cert`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?

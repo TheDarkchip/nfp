@@ -1186,6 +1186,9 @@ def runInductionCertifyHead (inputsPath : System.FilePath)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
     (skipLogitDiff : Bool) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head builds certificates from head inputs; use explicit certs \
+    via `nfp induction certify --cert` or `nfp induction head_cert_check`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -1224,6 +1227,9 @@ def runInductionCertifyHeadModel (modelPath : System.FilePath)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
     (skipLogitDiff : Bool) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head_model builds certificates from a model file; use explicit certs \
+    via `nfp induction certify --cert` or `nfp induction head_cert_check`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -1303,6 +1309,9 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
     (splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined? : Option Nat)
     (skipLogitDiff : Bool) :
     IO UInt32 := do
+  warnDeprecated
+    "certify_head_model_auto builds certificates from a model file; use explicit certs \
+    via `nfp induction certify --cert` or `nfp induction head_cert_check`."
   configureTiming timing? heartbeatMs?
   let splitCfg :=
     splitConfigFromOptions splitBudgetQ? splitBudgetK? splitBudgetDiffBase? splitBudgetDiffRefined?
@@ -1361,6 +1370,8 @@ def runInductionCertifyHeadModelAuto (modelPath : System.FilePath)
 /-- Build head-output interval bounds from exact head inputs. -/
 def runInductionHeadInterval (inputsPath : System.FilePath)
     (outPath? : Option System.FilePath) : IO UInt32 := do
+  warnDeprecated
+    "head_interval builds interval bounds from head inputs; use explicit interval certs instead."
   let parsedInputs ← loadInductionHeadInputs inputsPath
   match parsedInputs with
   | Except.error msg =>
@@ -1373,6 +1384,9 @@ def runInductionHeadInterval (inputsPath : System.FilePath)
 def runInductionHeadIntervalModel (modelPath : System.FilePath)
     (layer head dirTarget dirNegative : Nat) (period? : Option Nat) (shiftPrev : Bool)
     (outPath? : Option System.FilePath) : IO UInt32 := do
+  warnDeprecated
+    "head_interval_model builds interval bounds from a model file; \
+    use explicit interval certs instead."
   let data ← IO.FS.readBinFile modelPath
   match NfptPure.parseHeader data with
   | Except.error msg =>
