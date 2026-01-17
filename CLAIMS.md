@@ -25,10 +25,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 
 ## Untrusted / heuristic
 
-- Python helpers that generate explicit induction-head certificates from GPT-2 weights or
-  `.nfpt` files: `scripts/build_gpt2_induction_cert.py`,
-  `scripts/build_gpt2_induction_cert_from_binary.py`.
-- Exporters and dataset generators for `.nfpt` model files.
+- Python helpers that generate explicit induction-head certificates from GPT-2 weights:
+  `scripts/build_gpt2_induction_cert.py`.
 - Any choice of prompts, directions, or candidate heads used by certificate generators.
 
 ## Not yet proven

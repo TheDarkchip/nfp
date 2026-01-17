@@ -26,8 +26,7 @@ lake exe nfp induction --help
 ```
 
 Current subcommands are limited to **induction certificate checking**. The CLI does **not** run a
-full model forward pass and does **not** ingest `.nfpt` weights directly; weight ingestion is done
-by untrusted helper scripts (see below).
+full model forward pass; certificate generation is done by untrusted helper scripts (see below).
 
 ## Module map
 
@@ -57,16 +56,6 @@ Optional direction metadata:
 
 ```
 --direction-target <token_id> --direction-negative <token_id>
-```
-
-If you already have an `NFP_BINARY_V1` model file:
-
-```bash
-python scripts/build_gpt2_induction_cert_from_binary.py \
-  --model models/gpt2_rigorous.nfpt \
-  --layer 5 --head 1 \
-  --direction-target 1 --direction-negative 2 \
-  --output reports/gpt2_induction.cert
 ```
 
 ### Verify a head certificate (trusted checker)
