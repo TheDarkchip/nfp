@@ -1,33 +1,26 @@
-## SOUNDNESS upgrade status
+# SOUNDNESS_LIMITATIONS
 
-This file tracks **current limitations** and **remaining work** for the rigorous
-soundness upgrade. It is intentionally brief and human-readable.
+This file tracks **current limitations** and **remaining work** for the tabula rasa rewrite.
+It is intentionally brief and focused on the soundness boundary.
 
-### Current limitations
-- The bridge theorem in `Nfp/Sound/Bridge.lean` links `LayerAmplificationCert` bounds to
-  `DeepLinearization` residual Jacobians, but it requires external operator-norm assumptions
-  (LN Jacobians, attention full Jacobian, and MLP factors). The trusted checker does not yet
-  discharge those assumptions from model weights.
-- `partitionDepth > 0` is rejected with an explicit error (no partitioning logic yet).
-- Affine arithmetic is only a scaffold (`Nfp/Sound/Affine.lean`) and not wired into SOUND certification.
-- Softmax Jacobian bounds typically use probability intervals defaulted to `[0,1]`, so they
-  reduce to the worst case. Margin-derived tightening is computed by the untrusted path, but
-  trusted IO currently **rejects nonzero** `softmaxMarginLowerBound` because margin evidence is
-  unverified.
-- Best-match pattern certificates now use a margin-derived softmax Jacobian bound with an
-  effort-indexed `expLB` (scaled Taylor + squaring). The lower-bound correctness of `expLB`
-  is not yet formalized in Lean.
-- GeLU derivative bounds are conservative envelopes; the exact interval supremum is not computed yet.
-- Attention Jacobian bounds now include an explicit pattern-term coefficient using max `W_Q/W_K`
-  row-sum norms and a conservative LayerNorm output magnitude bound (`max|gamma|*sqrt(d)+max|beta|`),
-  but this is still very conservative and only connected to the Lean Jacobian theorems
-  under the external norm assumptions above.
+## Current limitations
 
-### Remaining work
-- Implement input-space partitioning in the SOUND local path and plumb it through the certify pipeline.
-- Replace or augment interval propagation with affine forms to preserve correlations.
-- Add sound probability interval extraction for softmax (requires sound exp/log-sum-exp bounds).
-- Verify or compute margin evidence in the trusted path so margin-derived softmax tightening can be enabled.
-- Tighten GeLU derivative envelopes to the exact interval supremum if desired.
-- Discharge the bridge theorem’s component-norm assumptions from certificates/model weights, and
-  connect the resulting statement to the `Linearization` Jacobian theorems.
+- The trusted CLI only **checks explicit certificates**; it does not search for witnesses or
+  run model evaluation.
+- Induction certificates are **head-level** (softmax-margin + value-interval + logit-diff lower
+  bound) and conditional on the supplied `prev`, `active`, and `direction` inputs. They do **not**
+  yet imply full model behavior.
+- Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
+  unembedding columns represent token logits.
+- Any direction search performed by Python helpers is untrusted witness generation; only the
+  resulting explicit certificate is checked by the Lean CLI.
+- The active set is user-supplied (or defaulted by the parser); bounds only hold for
+  `q ∈ active`. You can optionally verify `prev`/`active` against a token list via
+  `nfp induction certify --tokens ...`.
+- Performance: checking large certificates can be expensive for long sequences.
+
+## Remaining work
+
+- Prove or verify that `prev`, `active`, and `direction` are derived from token-level semantics.
+- Add a verified extraction pipeline from model weights to explicit certificates.
+- Extend the bridge from head-level certificates to full circuit/model semantics.

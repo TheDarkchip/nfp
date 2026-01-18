@@ -1,395 +1,193 @@
 # NFP
 
-NFP is a Lean 4 project for **mathematically rigorous** reasoning about transformer-style computations, with a focus on mechanistic interpretability (e.g. induction heads) and provable norm/error bounds.
+NFP is a Lean 4 project for **mathematically rigorous** reasoning about transformer-style
+computations, with a focus on mechanistic interpretability (e.g. induction heads) and provable
+norm/error bounds.
 
 NFP stands for **Neural Formal Pathways**.
-
-This repo contains:
-
-- A **Lean library** (under `Nfp/`) for finite probability and a lightweight “transformer semantics” layer.
-- A **CLI executable** (`lake exe nfp …`) that loads transformer weights stored in a compact binary format (`.nfpt`) and produces rigorous bounds and diagnostics.
-
-> Goal: *no “hand-wavy” numerics in the bound path.* Heuristic estimates (e.g. power iteration) may exist for diagnostics, but the bounds reported as “rigorous” are computed via conservative inequalities.
 
 ## Status
 **Heavy rewrite in progress, please refer to the tabula-rasa branch for current status**
 
-This is research tooling. Interfaces may change; please treat results as experimental unless they are backed by a certificate/check you trust.
+This repository is in a **tabula rasa rewrite**. The new core is intentionally minimal and the API
+surface is still settling. Expect breaking changes.
 
-## Soundness statement (what is proven vs checked)
-
-The Lean library defines the core math objects (finite probability, mixers, linearizations, and operator-norm-style bounds) and proves a number of lemmas about them. The CLI sound path produces certificates using exact `Rat` arithmetic and a trusted checker that verifies internal arithmetic relationships between certificate fields.
-
-At present, the checker does **not** include a bridge theorem that connects certificate validity to the Lean-defined Jacobian bounds (for example, a theorem of the form `||layerJacobian - I|| <= C`). Treat sound certificates as **internally consistent bound reports**, not as a fully formal end-to-end verification of transformer Jacobians.
-
-For known gaps and ongoing upgrades, see `SOUNDNESS_LIMITATIONS.md`.
-
-## North Star
-
-NFP’s long-term direction is **verified circuit discovery**:
-
-- Use fast, exploratory tooling to **propose** candidate circuits (e.g. induction-style head interactions),
-- then produce **checkable evidence** (bounds / certificates) that a skeptical reader can re-run and validate.
-
-Concretely, the intended split is:
-
-- **Discovery / exploration (untrusted, fast):**
-  Heuristic search, ranking, and diagnostics are allowed here (and should be clearly labelled as such).
-  This includes things like candidate search (`induction`) and comparison estimates printed under diagnostics/verbose flags.
-
-- **Certification / checking (trusted, boring):**
-  Anything described as “rigorous” should be justified by conservative inequalities or by a certificate that a checker can validate.
-  The long-term aim is that Lean does as little “real inference” as possible: instead of running large forward passes,
-  it should mostly **check small, structured proof obligations** (e.g. inequality chains, norm bounds, interval/rational arithmetic).
-
-Current state: `certify` is already an example of this direction (sound-mode reporting using exact `Rat` arithmetic rather than trusted floats),
-but the certificate story is still evolving and interfaces may change.
-
-Model trajectory: GPT-2 support is currently a proving ground for the end-to-end workflow (export → analyze/search → bound/certify).
-The goal is to gradually cover more modern decoder blocks (e.g. RoPE-style position handling) while keeping the certification/checking layer lightweight.
-
-## Reproduce results
-
-Minimal local demo (no network needed):
+## Build
 
 ```bash
 lake build -q --wfail
 lake build nfp -q --wfail
-lake exe nfp certify tests/fixtures/tiny_sound_binary.nfpt \
-  --output reports/tiny_sound_demo.txt
 ```
 
-Expected artifacts:
-- `reports/tiny_sound_demo.txt`
-
-Optional (rebuild the tiny binary from text fixtures and run a fixed induction cert):
-
-```bash
-./scripts/demo_tiny_local_binary.sh
-./scripts/demo_tiny_induction_cert.sh
-```
-
-Expected artifacts (optional path):
-- `reports/tiny_sound_local_binary.txt`
-- `reports/tiny_induction_cert.txt`
-
-End-to-end GPT-2 demo (requires network/model download):
-
-```bash
-./scripts/demo_gpt2_sound.sh
-./scripts/demo_gpt2_induction_sound.sh
-```
-
-Expected artifacts:
-- `reports/gpt2_sound_demo.txt`
-- `reports/gpt2_induction_sound_scan.txt`
-
-Notes:
-- If a legacy `.nfpt` header is missing `gelu_kind`, `demo_gpt2_sound.sh` writes
-  `models/gpt2_with_gelu_kind.nfpt` and uses that for certification.
-- `demo_gpt2_induction_sound.sh` can take a while on CPU; use `--top 1`,
-  `--fast`, or `--jobs 2` to shorten the scan or run it on a larger machine.
-- You can also set `NFP_BIN=./.lake/build/bin/nfp` to avoid repeated `lake exe`
-  startup overhead.
-
-
-## Requirements
-
-- **Lean 4** (pinned by `lean-toolchain`) and **Lake**.
-  - Easiest install: `elan` (Lean toolchain manager).
-- A standard build toolchain for Lean (C/C++ compiler, `make`, etc.).
-- (Optional) **Python** for the export scripts in `scripts/`.
-
-Lean version is pinned in `lean-toolchain` (currently `leanprover/lean4:v4.26`).
-
-## Getting started
-
-Clone and build:
-
-```bash
-lake update
-lake build
-```
-
-Run the CLI (see subcommands below):
+## CLI
 
 ```bash
 lake exe nfp --help
+lake exe nfp induction --help
 ```
 
-## Models
+Current subcommands are limited to **induction certificate checking**. The CLI does **not** run a
+full model forward pass; certificate generation is done by untrusted helper scripts (see below).
 
-The CLI expects a model file in **`.nfpt`** format (NFP_BINARY_V1).
+## Module map
 
-- Create a local `models/` directory and place your `.nfpt` files there (the repo does not version model files; the author’s setup may have used local symlinks).
-- You can export GPT-2 weights from Hugging Face using the scripts in `scripts/`.
+The authoritative module map and invariants are tracked in `AGENTS.md`.
 
-`.nfpt` files use a small text header followed by a binary payload:
+High-level layout:
+- `Nfp/Core`, `Nfp/Prob`, `Nfp/Mixer`, `Nfp/System`: core math infrastructure.
+- `Nfp/Circuit`: circuits, typed interfaces, and layer wiring (attention, induction).
+- `Nfp/Sound`: soundness theorems and verified helpers.
+- `Nfp/IO`, `Nfp/Cli`: parsing and CLI entrypoints.
 
-```
-NFP_BINARY_V1
-num_layers=...
-num_heads=...
-model_dim=...
-head_dim=...
-hidden_dim=...
-vocab_size=...
-seq_len=...
-BINARY_START
-```
+## Induction Certification (prototype)
 
-The payload is raw little-endian bytes in a fixed order (tokens, embeddings, then weights).
+The current prototype checks **explicit induction-head certificates**. Certificates are produced
+by **untrusted** Python scripts and verified by the Lean CLI; no model forward pass runs in Lean.
+The input setup follows the standard literature diagnostic: repeated token patterns (pattern
+repeated twice) and attention stripes that look back by one period.
 
-Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
-supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
+For a step-by-step walkthrough, see `docs/demo.md`.
+For a careful statement of what certificates do and do not claim, see
+`docs/cert_usefulness.md`.
 
-### Exporting GPT-2 to `.nfpt`
-
-The export scripts use `torch` + `transformers`.
-
-Example (write `models/gpt2_rigorous.nfpt`):
+### Build a head certificate (untrusted)
 
 ```bash
-python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2
 ```
 
-If you prefer a locked Python environment, use `uv` or a venv and install dependencies from `pyproject.toml`:
+Layer/head indices in the generator are 1-based to match the literature.
+
+To certify a **non-vacuous** logit-diff lower bound, supply a direction:
 
 ```bash
-uv run python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --direction-target 1268 --direction-negative 1796
 ```
 
-### GPT-2 sound demo (global)
-
-This demo downloads GPT-2 weights on demand, exports a binary `.nfpt`, and runs the
-global sound certificate.
+Or let the untrusted script search for a direction in a vocab slice:
 
 ```bash
-./scripts/demo_gpt2_sound.sh
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
+  --direction-min-lb 1/10 \
+  --direction-report-out reports/direction_report.txt --direction-topk 10 \
+  --tokens-out reports/gpt2_induction.tokens
 ```
 
-Artifacts:
-- `models/gpt2.nfpt` (binary export)
-- `reports/gpt2_sound_demo.txt` (sound certificate report)
+Direction search is **untrusted witness generation**; the Lean CLI only verifies the resulting
+explicit certificate. The direction report lists the top-ranked candidates by estimated lower
+bound so you can pick a stable non-vacuous direction.
 
-### GPT-2 induction sound scan
+Optional direction metadata:
 
-This demo builds the rigorous induction dataset (if needed), finds candidate
-induction head pairs, and ranks them by sound logit-diff lower bounds.
+```
+--direction-target <token_id> --direction-negative <token_id>
+```
+
+### Verify a head certificate (trusted checker)
 
 ```bash
-./scripts/demo_gpt2_induction_sound.sh
+lake exe nfp induction certify --cert reports/gpt2_induction.cert
 ```
 
-Artifacts:
-- `models/gpt2_rigorous.nfpt` (binary export)
-- `reports/gpt2_induction_sound_scan.txt` (sound scan report)
+Optional gates:
 
-### Tiny local binary demo
+```
+--min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
+```
 
-This demo converts the tiny text fixtures into a binary `.nfpt` and runs a local
-sound certificate (with `--delta`).
+If `--tokens` is provided, the CLI verifies that the certificate's `prev` and `active`
+match the token-sequence semantics for repeated tokens (previous occurrence).
+
+Example non-vacuous check:
 
 ```bash
-./scripts/demo_tiny_local_binary.sh
+lake exe nfp induction certify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
 ```
 
-Artifacts:
-- `tests/fixtures/tiny_sound_binary.nfpt` (binary fixture)
-- `reports/tiny_sound_local_binary.txt` (local sound certificate report)
+## File formats
 
-### Tiny induction cert demo
+### Induction-head certificate
 
-This demo computes a minimal induction head certificate on the tiny fixture.
-
-```bash
-./scripts/demo_tiny_induction_cert.sh
+```
+seq <n>
+direction-target <tok_id>
+direction-negative <tok_id>
+eps <rat>
+margin <rat>
+active <q>
+prev <q> <k>
+score <q> <k> <rat>
+weight <q> <k> <rat>
+eps-at <q> <rat>
+weight-bound <q> <k> <rat>
+lo <rat>
+hi <rat>
+val <k> <rat>
+val-lo <k> <rat>
+val-hi <k> <rat>
 ```
 
-Artifacts:
-- `reports/tiny_induction_cert.txt` (induction cert report)
+All sequence indices (`q`, `k`) are **1-based** (literature convention). Direction token IDs
+(`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
+`direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
+appear, the checker defaults to all non-initial queries (indices 2.. in 1-based indexing).
 
-## CLI overview
+### Direction report (untrusted)
 
-The main entrypoint is:
-
-```bash
-lake exe nfp <command> [args] [flags]
+```
+direction_report
+vocab_min=<n> vocab_max=<n> seed=<n>
+rank\tlb\ttarget\tnegative
 ```
 
-By default, `nfp` mirrors everything printed to stdout into `logs/` as a timestamped `.log` file.
+This file is an **untrusted helper artifact**; it only ranks candidate directions and does not
+change what the Lean checker accepts.
 
-### `analyze`
+### Token list (untrusted)
 
-Runs the default end-to-end analysis for the supplied model and prints a human-readable report.
-
-```bash
-lake exe nfp analyze models/gpt2_rigorous.nfpt \
-  --threshold 0.1 --verify --verbose --output report.txt
+```
+seq <n>
+token <q> <tok_id>
 ```
 
-- `--threshold` (`-t`) sets the minimum effect threshold used for verification (default: `0.1`).
-- `--verify` optionally runs causal verification using model-provided inputs.
-- `--verbose` prints model metadata and per-stage status messages.
-- `--output` (`-o`) writes the report to a file instead of stdout.
+This file is an **untrusted helper artifact** used to check that `prev` and `active` match the
+token sequence (previous-occurrence semantics) when `--tokens` is supplied to the CLI. Indices
+are 1-based.
 
-### `induction`
+## Soundness boundary
 
-Searches for **candidate induction circuits** and ranks head pairs by a mechanical score.
+- Untrusted scripts may use floating-point numerics to generate candidate certificates.
+- The CLI **only verifies** explicit certificates; it does not search for witnesses or run models.
 
-```bash
-lake exe nfp induction models/gpt2_rigorous.nfpt \
-  --threshold 0.0 --diagnostics --diagTop 5 --adaptive --verbose
-```
+For known gaps, see `SOUNDNESS_LIMITATIONS.md`.
 
-- `--threshold` (`-t`) sets the minimum normalized effect (default: `0.0`).
-- `--correct` / `--incorrect` manually pick logit IDs for the induction target (otherwise the target is inferred from tokens).
-- `--verify` runs causal verification via head ablation on the top-10 candidates.
-- `--diagnostics` enables bound breakdowns; `--diagTop` controls how many candidates receive diagnostics (default: `5`).
-- `--adaptive` turns on the adaptive bound scheduler. Tuning flags include `--targetSlack` (default: `8.0`),
-  `--maxUpgrades` (default: `120`), `--minRelImprove` (default: `0.01`), `--krylovSteps` (default: `2`),
-  and `--adaptiveScope` (`layernorm | all`, default: `layernorm`).
-- `--verbose` prints detailed scoring metrics for each candidate.
+## Requirements
 
-### `certify`
+- **Lean 4** (pinned in `lean-toolchain`) and **Lake**.
+- Optional: **Python** for helper scripts (`scripts/`), plus `torch`, `transformers`, and `numpy`.
 
-Computes a conservative **certificate report** in sound mode using exact `Rat` arithmetic (no trusted floats).
+## References
 
-Note: global sound certification supports `NFP_BINARY_V1`. Local sound certification
-supports `NFP_BINARY_V1` (fixed-point union-box) and legacy `NFP_TEXT_V1/V2`.
+- Elhage et al., “A Mathematical Framework for Transformer Circuits.”
+  Link: `https://transformer-circuits.pub/2021/framework/index.html`
+- Olsson et al., “In-context Learning and Induction Heads.”
+  Link: `https://arxiv.org/abs/2209.11895`
 
-`certify` supports both:
-- **global certification** (weights only), and
-- **local certification** (weights + a small input region around a concrete prompt/input).
+## Contributing
 
-```bash
-lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --output cert.txt
-```
-
-- For local (input-dependent) LayerNorm certification, pass an ℓ∞ radius `δ`:
-
-```bash
-lake exe nfp certify models/gpt2_rigorous.nfpt \
-  --delta 0.01
-```
-
-If you want to override the embedded input, pass a separate input `.nfpt`:
-
-- LayerNorm ε is read from the model header (`layer_norm_eps`).
-- `gelu_kind` in the model header selects the GeLU derivative target (`tanh` or `exact`).
-- `--delta` sets the local ℓ∞ radius `δ` (default: `0`). Providing `--delta` enables local certification.
-- `--partitionDepth` requests input partitioning depth (default: `0`; scaffold only, must remain `0` for now).
-- `--input` optionally provides an input `.nfpt` file used for local certification.
-- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
-
-### `head_bounds`
-
-Computes sound per-head contribution bounds (global weight-only, or local with `--delta`).
-
-```bash
-lake exe nfp head_bounds models/gpt2_rigorous.nfpt
-```
-
-For local bounds (uses input embeddings in the model file when present):
-
-```bash
-lake exe nfp head_bounds models/gpt2_rigorous.nfpt --delta 0.01
-```
-
-- `--delta` enables local head bounds; `--input` can override the embedded input.
-- LayerNorm ε is read from the model header (`layer_norm_eps`).
-- `--scalePow10` controls fixed-point scaling for global bounds (default: `9`).
-- `--output` (`-o`) writes the report to a file (otherwise it prints to stdout).
-
-### `head_pattern`
-
-Computes a sound local attention pattern bound for a single head (binary only),
-propagating per-position intervals up to the target layer (bounded by `maxSeqLen`).
-The pattern compares logits for keys whose token matches the query’s offset token
-(e.g., `--offset -1` matches the previous token).
-
-```bash
-lake exe nfp head_pattern models/gpt2_rigorous.nfpt --layer 0 --head 0 --delta 0.01 --offset -1
-```
-
-- `--offset` selects the target key position relative to the query (default: `-1` for previous token).
-- `--maxSeqLen` caps the sequence length analyzed for pattern bounds (default: `256`).
-- `--delta` sets the local input radius; LayerNorm ε is read from the model header (`layer_norm_eps`).
-- `--tightPattern` enables a slower but tighter pattern bound near the target layer.
-- `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).
-- `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).
-- `--bestMatch` switches to a single-query best-match bound (default query: last position).
-- `--sweep` prints best-match bounds for all valid query positions (requires `--bestMatch`).
-- `--queryPos` chooses the query position for best-match bounds (default: last position).
-
-### `induction_cert`
-
-Computes a minimal sound induction-head certificate by combining two pattern
-certificates and a value-coordinate lower bound (binary only).
-
-```bash
-lake exe nfp induction_cert models/gpt2_rigorous.nfpt \
-  --layer1 0 --head1 0 --layer2 1 --head2 0 --coord 0 --delta 0.01 \
-  --target 42 --negative 17
-```
-
-- `--layer1/--head1` selects the previous-token head; `--layer2/--head2` selects the
-  token-match head.
-- `--coord` chooses the output coordinate used for the value lower bound.
-- `--offset1/--offset2` adjust the token-match offsets (default: `-1`).
-- `--target/--negative` optionally add a logit-diff lower bound using unembedding columns.
-- `--tightPattern` enables a slower but tighter pattern bound near the target layer.
-- `--tightPatternLayers` sets how many layers use tight bounds (default: `1`; implies `--tightPattern`).
-- `--perRowPatternLayers` sets how many layers use per-row MLP propagation (default: `0`).
-- `--bestMatch` switches to single-query best-match bounds (default query: last position).
-- `--queryPos` chooses the query position for best-match bounds (default: last position).
-
-### `rope`
-
-Generates RoPE-related linearization bounds used by the certificate/checking pipeline.
-
-```bash
-lake exe nfp rope --seqLen 4 --pairs 8
-```
-
-- `--seqLen` instantiates the bound at the given sequence length (default: `4`).
-- `--pairs` sets the number of RoPE pairs; the dimension is `2 * pairs` (default: `8`).
-
-## What “rigorous” means here
-
-At a high level, the “rigorous” path avoids heuristic operator-norm estimation and instead uses **upper bounds** derived from standard inequalities (examples you may see in logs):
-
-- Frobenius-norm based bounds.
-- Gram-matrix based bounds.
-- Schur / Brauer-style eigenvalue bounds for symmetric matrices.
-- Row-wise softmax operator bounds using quantities like `rowMaxP`, `rowTrace`, Gershgorin-style estimates, and a “moment” bound.
-
-The CLI may still compute **power-iteration estimates** for comparison, but those are explicitly labelled as diagnostics and are not used to produce the rigorous `ub=…` values.
-
-## Reproducing the example command
-
-A typical workflow:
-
-```bash
-# 1) Build
-lake update
-lake build
-
-# 2) Export a model (optional)
-python scripts/export_gpt2.py models/gpt2_rigorous.nfpt
-
-# 3) Run induction search with diagnostics
-lake exe nfp induction models/gpt2_rigorous.nfpt -v -d | sed -n '1,220p'
-```
-
-## Project layout
-
-- `Main.lean` — CLI wiring and command definitions.
-- `Nfp/` — library code (probability, transformer semantics, soundness/cert machinery, discovery routines).
-- `scripts/` — Python helpers to export models and generate induction datasets.
-- `models/` — local model files (not versioned here if large; author’s setup may have used local symlinks).
-
-## License
-
-This project is licensed under the GNU Affero General Public License v3.0 or later (AGPL-3.0-or-later). See the LICENSE file.
+Please follow the project rules in `AGENTS.md` (no `sorry`, no linter disables, total soundness in
+trusted namespaces).

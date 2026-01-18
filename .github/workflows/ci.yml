@@ -33,33 +33,3 @@ jobs:
             echo "Quiet build failed; retrying verbose..."
             lake build nfp -v --no-ansi --wfail
           }
-
-      - name: SOUND cache regression test (tiny fixture)
-        run: |
-          set -euo pipefail
-          lake exe nfp sound_cache_check --scalePow10 9 --maxTokens 0 tests/fixtures/tiny_sound_model.nfpt
-
-      - name: Python setup
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Cache HF model files
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cache/huggingface
-            ~/.cache/torch
-          key: ${{ runner.os }}-hf-tiny-gpt2-v1
-
-      - name: Install PyTorch + Transformers (CPU)
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install --index-url https://download.pytorch.org/whl/cpu torch
-          python -m pip install transformers numpy
-
-      - name: Sanity check (Lean vs PyTorch forward step)
-        run: |
-          set -euo pipefail
-          python scripts/ci_sanity_forward_step.py --model sshleifer/tiny-gpt2 --seqLen 8 --layer 0 --pos 0 --take 16

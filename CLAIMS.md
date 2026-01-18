@@ -1,12 +1,36 @@
 # CLAIMS
 
 This file lists what is formally proven in Lean, what is soundly checked by the trusted checker,
-what is heuristic, and what is not yet proven.
+what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewrite.
 
-| Claim | Status | Where |
-| --- | --- | --- |
-| Definitions of mixers/signed mixers and linearizations (ReLU, GeLU, LayerNorm, softmax) with basic lemmas (composition, diagonality, etc.) | Proven in Lean | `Nfp/SignedMixer.lean`, `Nfp/Linearization.lean` |
-| The sound certificate checker validates internal arithmetic consistency for layer bounds and the total amplification factor | Soundly checked (Lean) | `Nfp/Sound/Cert.lean` |
-| Sound bound formulas use exact `Rat` arithmetic (LayerNorm/softmax/GeLU envelopes); witness values are produced in untrusted code and then checked | Soundly checked formulas; untrusted witnesses | `Nfp/Sound/Bounds.lean`, `Nfp/Untrusted/SoundCompute.lean` |
-| Heuristic discovery and ranking of induction-style candidates | Heuristic | `Nfp/Discovery.lean`, CLI `induction` |
-| End-to-end statement that certificate validity implies `||layerJacobian - I|| <= C` for Lean-defined Jacobians | Not yet proven | See `SOUNDNESS_LIMITATIONS.md` |
+## Proven in Lean
+
+- Circuit core definitions and semantics (typed circuits, evaluation, interfaces).
+- Softmax-margin certificate soundness: `checkSoftmaxMarginCert` implies
+  `SoftmaxMarginBoundsOn`.
+- Value-range certificate soundness: `checkValueRangeCert` implies `ValueRangeBounds`.
+- Induction-head certificate soundness: `checkInductionHeadCert` implies
+  `InductionHeadCertBounds`.
+- Logit-diff lower bound lemmas: `logitDiffLowerBound_le`, `logitDiffLowerBoundAt_le`, and
+  `logitDiffLowerBoundWeightedAt_le`.
+- The head logit-diff equals the direction dot product of the head output
+  (`headLogitDiff_eq_direction_dot_headOutput`).
+- Row-stochastic attention/one-hot bounds for induction heads and related interval lemmas.
+
+## Soundly checked by the trusted CLI
+
+- `nfp induction certify` verifies explicit induction-head certificates from a single cert
+  file, optionally enforcing minimum `active`, `margin`, `eps`, and logit-diff gates, and
+  optionally checking `prev`/`active` against a supplied token list.
+
+## Untrusted / heuristic
+
+- Python helpers that generate explicit induction-head certificates from GPT-2 weights,
+  including optional direction search: `scripts/build_gpt2_induction_cert.py`.
+- Any choice of prompts, directions, or candidate heads used by certificate generators.
+
+## Not yet proven
+
+- A verified extraction pipeline from model weights to explicit certificates.
+- Model-level claims about logits or Jacobians derived from certificates.
+- A full bridge from explicit head certificates to complete model semantics.
