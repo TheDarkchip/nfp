@@ -6,7 +6,7 @@ public import Nfp.Circuit.Cert.ValueRange
 public import Nfp.IO.Parse.ValueRange.Shared
 
 /-!
-Parse parsing helpers for value-range certificates.
+Parsing helpers for value-range certificates.
 -/
 
 public section

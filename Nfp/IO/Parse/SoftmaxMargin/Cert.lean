@@ -6,7 +6,7 @@ public import Nfp.Circuit.Cert.SoftmaxMargin
 public import Nfp.IO.Parse.SoftmaxMargin.Shared
 
 /-!
-Parse parsing helpers for softmax-margin certificates.
+Parsing helpers for softmax-margin certificates.
 -/
 
 public section
