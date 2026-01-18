@@ -7,10 +7,7 @@ norm/error bounds.
 NFP stands for **Neural Formal Pathways**.
 
 ## Status
-**Heavy rewrite in progress, please refer to the tabula-rasa branch for current status**
-
-This repository is in a **tabula rasa rewrite**. The new core is intentionally minimal and the API
-surface is still settling. Expect breaking changes.
+The core has recently been rewritten and the API is still settling. Expect breaking changes.
 
 ## Build
 
