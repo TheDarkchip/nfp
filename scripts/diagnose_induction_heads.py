@@ -77,19 +77,6 @@ def compute_stripe_stats(attn: torch.Tensor, period: int) -> tuple[torch.Tensor,
     return stripe_mean, stripe_top1
 
 
-def compute_induction_stats(attn: torch.Tensor, period: int) -> tuple[torch.Tensor, torch.Tensor]:
-    batch, heads, seq_len, _ = attn.shape
-    q = torch.arange(period, seq_len, device=attn.device)
-    k = q - period + 1
-    block = attn[:, :, q, :]
-    k_index = k.view(1, 1, -1, 1).expand(batch, heads, -1, 1)
-    ind_vals = block.gather(dim=-1, index=k_index).squeeze(-1)
-    ind_mean = ind_vals.mean(dim=(0, 2))
-    max_vals = block.max(dim=-1).values
-    ind_top1 = (ind_vals >= max_vals - 1e-12).float().mean(dim=(0, 2))
-    return ind_mean, ind_top1
-
-
 def compute_prev_stats(attn: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     batch, heads, seq_len, _ = attn.shape
     q = torch.arange(1, seq_len, device=attn.device)
@@ -150,19 +137,15 @@ def main() -> int:
         raise SystemExit("Model did not return attention weights.")
 
     stripe_scores = []
-    induction_scores = []
     prev_scores = []
     for layer_idx, attn in enumerate(outputs.attentions):
         stripe_mean, stripe_top1 = compute_stripe_stats(attn, args.pattern_len)
-        ind_mean, ind_top1 = compute_induction_stats(attn, args.pattern_len)
         prev_mean, prev_top1 = compute_prev_stats(attn)
         for head_idx in range(attn.shape[1]):
             stripe_scores.append((float(stripe_mean[head_idx]), float(stripe_top1[head_idx]), layer_idx, head_idx))
-            induction_scores.append((float(ind_mean[head_idx]), float(ind_top1[head_idx]), layer_idx, head_idx))
             prev_scores.append((float(prev_mean[head_idx]), float(prev_top1[head_idx]), layer_idx, head_idx))
 
     stripe_scores.sort(key=lambda x: x[0], reverse=True)
-    induction_scores.sort(key=lambda x: x[0], reverse=True)
     prev_scores.sort(key=lambda x: x[0], reverse=True)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -177,9 +160,6 @@ def main() -> int:
         f.write("\nTop induction stripe heads:\n")
         for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
             f.write(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}\n")
-        f.write("\nTop induction (next-token) heads:\n")
-        for rank, (mean, top1, layer, head) in enumerate(induction_scores[: args.top], start=1):
-            f.write(f\"{rank:02d} L{layer}H{head} inductionMean={mean:.6f} inductionTop1={top1:.3f}\\n\")
         f.write("\nTop previous-token heads:\n")
         for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
             f.write(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}\n")
@@ -188,9 +168,6 @@ def main() -> int:
     print("\nTop induction stripe heads:")
     for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
         print(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}")
-    print("\nTop induction (next-token) heads:")
-    for rank, (mean, top1, layer, head) in enumerate(induction_scores[: args.top], start=1):
-        print(f\"{rank:02d} L{layer}H{head} inductionMean={mean:.6f} inductionTop1={top1:.3f}\")
     print("\nTop previous-token heads:")
     for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
         print(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}")

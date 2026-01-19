@@ -14,9 +14,8 @@ If the Lean checker accepts a certificate, then:
   specified active queries; value‑interval bounds hold; and a logit‑diff lower bound is verified
   if `--min-logit-diff` is used with direction metadata.
 - **Kind `induction-aligned`:** the periodic prompt semantics hold (`active`/`prev` match the
-  declared period) and stripe‑mean/top1 plus induction‑mean/top1 are evaluated on the full
-  second repeat (gated by `--min-stripe-*` / `--min-induction-*`, with small non-zero defaults
-  for mean metrics and a zero default for stripe-top1).
+  declared period) and the **prefix matching score** (stripe‑mean) is evaluated on the full
+  second repeat (gated by `--min-stripe-mean`, with a small non-zero default).
 
 These are **formal, exact** statements about the explicit certificate data.
 

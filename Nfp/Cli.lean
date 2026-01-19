@@ -41,8 +41,6 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let tokensPath? := (p.flag? "tokens").map (·.as! String)
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
-  let minInductionMeanStr? := (p.flag? "min-induction-mean").map (·.as! String)
-  let minInductionTop1Str? := (p.flag? "min-induction-top1").map (·.as! String)
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -57,7 +55,6 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
         minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
-        minInductionMeanStr? minInductionTop1Str?
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -89,10 +86,6 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
                                  Applies to induction-aligned or stripe certs."
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
                                  Applies to induction-aligned or stripe certs."
-    "min-induction-mean" : String; "Optional minimum induction-mean (rational literal). \
-                                    Applies to induction-aligned only."
-    "min-induction-top1" : String; "Optional minimum induction-top1 (rational literal). \
-                                    Applies to induction-aligned only."
 ]
 
 

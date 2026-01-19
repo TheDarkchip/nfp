@@ -138,57 +138,6 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
       let row' := row.set! kFin.1 (some v)
       return mat.set! qFin.1 row'
 
-/-- Active queries for induction-aligned prompts (`period ≤ q`). -/
-def activeOfPeriod {seq : Nat} (period : Nat) : Finset (Fin seq) :=
-  (Finset.univ : Finset (Fin seq)).filter (fun q => period ≤ q.val)
-
-private def inductionIndex {seq : Nat} (period : Nat) (q : Fin seq) : Fin seq := by
-  classical
-  by_cases hq : period ≤ q.val
-  · by_cases hper : 0 < period
-    · have hlt : q.val - period + 1 < seq := by
-        have hsub : q.val - period < q.val := Nat.sub_lt_of_pos_le hper hq
-        have hle : q.val - period + 1 ≤ q.val := Nat.succ_le_of_lt hsub
-        exact lt_of_le_of_lt hle q.isLt
-      exact ⟨q.val - period + 1, hlt⟩
-    · have hpos : 0 < seq := lt_of_le_of_lt (Nat.zero_le _) q.isLt
-      exact ⟨0, hpos⟩
-  · have hpos : 0 < seq := lt_of_le_of_lt (Nat.zero_le _) q.isLt
-    exact ⟨0, hpos⟩
-
-private def rowMax {seq : Nat} [NeZero seq] (weights : Fin seq → Fin seq → Rat)
-    (q : Fin seq) : Rat := by
-  classical
-  have hpos : 0 < seq := Nat.pos_of_ne_zero (NeZero.ne _)
-  haveI : Nonempty (Fin seq) := ⟨⟨0, hpos⟩⟩
-  let vals := (Finset.univ : Finset (Fin seq)).image (fun k => weights q k)
-  have hnonempty_univ : (Finset.univ : Finset (Fin seq)).Nonempty :=
-    Finset.univ_nonempty
-  have hnonempty : vals.Nonempty := hnonempty_univ.image (fun k => weights q k)
-  exact vals.max' hnonempty
-
-/-- Induction (next-token) mean attention on the period-shifted stripe. -/
-def inductionMean {seq : Nat} [NeZero seq] (period : Nat)
-    (weights : Fin seq → Fin seq → Rat) : Option Rat := by
-  let active := activeOfPeriod (seq := seq) period
-  if h : active.card = 0 then
-    exact none
-  else
-    let sum :=
-      active.sum (fun q => weights q (inductionIndex period q))
-    exact some (sum / (active.card : Rat))
-
-/-- Induction (next-token) top1 rate on the period-shifted stripe. -/
-def inductionTop1 {seq : Nat} [NeZero seq] (period : Nat)
-    (weights : Fin seq → Fin seq → Rat) : Option Rat := by
-  let active := activeOfPeriod (seq := seq) period
-  if h : active.card = 0 then
-    exact none
-  else
-    let good :=
-      active.filter (fun q =>
-        weights q (inductionIndex period q) ≥ rowMax weights q)
-    exact some (good.card / (active.card : Rat))
 
 /-- Parse a tokenized line into the parse state. -/
 def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
@@ -452,41 +401,30 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
-    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
-    (minInductionMeanStr? : Option String) (minInductionTop1Str? : Option String) : IO UInt32 := do
+    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   let minStripeMean?E := parseRatOpt "min-stripe-mean" minStripeMeanStr?
   let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
-  let minInductionMean?E := parseRatOpt "min-induction-mean" minInductionMeanStr?
-  let minInductionTop1?E := parseRatOpt "min-induction-top1" minInductionTop1Str?
-  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E,
-      minInductionMean?E, minInductionTop1?E with
-  | Except.error msg, _, _, _, _, _, _ =>
+  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
+  | Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, Except.error msg, _, _, _, _, _ =>
+  | _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, Except.error msg, _, _, _, _ =>
+  | _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, Except.error msg, _, _, _ =>
+  | _, _, _, Except.error msg, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, _, Except.error msg, _, _ =>
-      IO.eprintln s!"error: {msg}"
-      return 2
-  | _, _, _, _, _, Except.error msg, _ =>
-      IO.eprintln s!"error: {msg}"
-      return 2
-  | _, _, _, _, _, _, Except.error msg =>
+  | _, _, _, _, Except.error msg =>
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
-      Except.ok minStripeMean?, Except.ok minStripeTop1?,
-      Except.ok minInductionMean?, Except.ok minInductionTop1? =>
+      Except.ok minStripeMean?, Except.ok minStripeTop1? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsed ← loadInductionHeadCert certPath
@@ -509,8 +447,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
               if kind = "onehot-approx" then
-                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome ||
-                    minInductionMeanStr?.isSome || minInductionTop1Str?.isSome then
+                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
                   IO.eprintln
                     "error: stripe/induction thresholds are not used for onehot-approx"
                   return 2
@@ -540,6 +477,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if minLogitDiffStr?.isSome || minMarginStr?.isSome || maxEpsStr?.isSome then
                   IO.eprintln
                     "error: min-logit-diff/min-margin/max-eps are not used for induction-aligned"
+                  return 2
+                if minStripeTop1Str?.isSome then
+                  IO.eprintln "error: stripe-top1 is not used for induction-aligned"
                   return 2
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
@@ -616,46 +556,22 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     weights := cert.weights }
                 let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
                 let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
-                let indMean? :=
-                  InductionHeadCert.inductionMean (seq := seq) period cert.weights
-                let indTop1? :=
-                  InductionHeadCert.inductionTop1 (seq := seq) period cert.weights
-                match stripeMean?, stripeTop1?, indMean?, indTop1? with
-                | some mean, some top1, some indMean, some indTop1 =>
+                match stripeMean?, stripeTop1? with
+                | some mean, some top1 =>
                     let defaultMean : Rat := Rat.divInt 1 1000
-                    let defaultTop1 : Rat := 0
                     let minMean := minStripeMean?.getD defaultMean
-                    let minTop1 := minStripeTop1?.getD defaultTop1
-                    let minIndMean := minInductionMean?.getD defaultMean
-                    let minIndTop1 := minInductionTop1?.getD defaultMean
                     if mean < minMean then
                       IO.eprintln
                         s!"error: stripe-mean {ratToString mean} below minimum \
                         {ratToString minMean}"
                       return 2
-                    if top1 < minTop1 then
-                      IO.eprintln
-                        s!"error: stripe-top1 {ratToString top1} below minimum \
-                        {ratToString minTop1}"
-                      return 2
-                    if indMean < minIndMean then
-                      IO.eprintln
-                        s!"error: induction-mean {ratToString indMean} below minimum \
-                        {ratToString minIndMean}"
-                      return 2
-                    if indTop1 < minIndTop1 then
-                      IO.eprintln
-                        s!"error: induction-top1 {ratToString indTop1} below minimum \
-                        {ratToString minIndTop1}"
-                      return 2
                     IO.println
                       s!"ok: induction-aligned certificate checked \
                       (seq={seq}, active={activeCount}, \
-                      stripeMean={ratToString mean}, stripeTop1={ratToString top1}, \
-                      inductionMean={ratToString indMean}, inductionTop1={ratToString indTop1})"
+                      stripeMean={ratToString mean})"
                     return 0
-                | _, _, _, _ =>
-                    IO.eprintln "error: empty active set for induction stats"
+                | _, _ =>
+                    IO.eprintln "error: empty active set for stripe stats"
                     return 2
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
