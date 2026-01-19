@@ -5,7 +5,8 @@
 Build a batch of induction-head certificates for GPT-2 small.
 
 This script shells out to build_gpt2_induction_cert.py for each seed and then
-writes a batch file listing the resulting certs and token lists.
+writes a batch file listing the resulting certs and token lists. Failed seeds
+are skipped until the requested count is reached (bounded by --max-attempts).
 """
 
 from __future__ import annotations
@@ -21,6 +22,8 @@ def main() -> int:
     parser.add_argument("--batch-out", type=Path)
     parser.add_argument("--count", type=int, default=100)
     parser.add_argument("--seed-start", type=int, default=0)
+    parser.add_argument("--max-attempts", type=int, default=None,
+                        help="Max seeds to try (default: count * 5).")
     parser.add_argument("--layer", type=int, required=True, help="0-based layer index")
     parser.add_argument("--head", type=int, required=True, help="0-based head index")
     parser.add_argument("--seq", type=int, default=32)
@@ -48,10 +51,16 @@ def main() -> int:
     items: list[tuple[Path, Path]] = []
     script = Path(__file__).with_name("build_gpt2_induction_cert.py")
 
-    for idx in range(args.count):
-        seed = args.seed_start + idx
-        cert_path = out_dir / f"cert_{idx:04d}.cert"
-        tokens_path = out_dir / f"tokens_{idx:04d}.tokens"
+    max_attempts = args.max_attempts
+    if max_attempts is None:
+        max_attempts = args.count * 5
+
+    successes = 0
+    attempt = 0
+    seed = args.seed_start
+    while successes < args.count and attempt < max_attempts:
+        cert_path = out_dir / f"cert_{successes:04d}.cert"
+        tokens_path = out_dir / f"tokens_{successes:04d}.tokens"
         cmd = [
             "python",
             str(script),
@@ -95,9 +104,18 @@ def main() -> int:
                 ]
             )
         result = subprocess.run(cmd, check=False)
-        if result.returncode != 0:
-            raise SystemExit(f"certificate generation failed for seed {seed}")
-        items.append((cert_path, tokens_path))
+        if result.returncode == 0:
+            items.append((cert_path, tokens_path))
+            successes += 1
+        else:
+            print(f"warning: certificate generation failed for seed {seed}")
+        attempt += 1
+        seed += 1
+
+    if successes < args.count:
+        raise SystemExit(
+            f"only generated {successes} certs after {attempt} attempts"
+        )
 
     lines = []
     if args.min_active is not None:
