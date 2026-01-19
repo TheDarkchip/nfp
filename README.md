@@ -97,7 +97,7 @@ Optional direction metadata:
 ### Verify a head certificate (trusted checker)
 
 ```bash
-lake exe nfp induction certify --cert reports/gpt2_induction.cert
+lake exe nfp induction verify --cert reports/gpt2_induction.cert
 ```
 
 Optional gates:
@@ -112,7 +112,7 @@ match the token-sequence semantics for repeated tokens (previous occurrence).
 Example non-vacuous check:
 
 ```bash
-lake exe nfp induction certify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
+lake exe nfp induction verify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
 ```
 
 ### Verify a batch (trusted checker)
