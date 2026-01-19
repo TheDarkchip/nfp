@@ -60,12 +60,31 @@ def inductionCertifySimpleCmd : Cmd := `[Cli|
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
 ]
 
+private def runInductionCertifyBatch (p : Parsed) : IO UInt32 := do
+  let batchPath? := (p.flag? "batch").map (·.as! String)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  match batchPath? with
+  | none => fail "provide --batch"
+  | some batchPath =>
+      IO.runInductionHeadBatchCheck batchPath
+
+/-- `nfp induction certifyBatch` subcommand (streamlined). -/
+def inductionCertifyBatchCmd : Cmd := `[Cli|
+  certifyBatch VIA runInductionCertifyBatch;
+  "Check a batch of induction head certificates from a batch file."
+  FLAGS:
+    batch : String; "Path to the batch file listing certs and tokens."
+]
+
 /-- Induction-head subcommands. -/
 def inductionCmd : Cmd := `[Cli|
   induction NOOP;
   "Induction-head utilities (streamlined)."
   SUBCOMMANDS:
-    inductionCertifySimpleCmd
+    inductionCertifySimpleCmd;
+    inductionCertifyBatchCmd
 ]
 
 /-- The root CLI command. -/

@@ -115,6 +115,26 @@ Example non-vacuous check:
 lake exe nfp induction certify --cert reports/gpt2_induction.cert --min-logit-diff 1/10
 ```
 
+### Verify a batch (trusted checker)
+
+```bash
+lake exe nfp induction certifyBatch --batch reports/gpt2_induction.batch
+```
+
+Batch file format (all fields optional unless noted):
+
+```
+min-active <n>
+min-logit-diff <rat>
+min-margin <rat>
+max-eps <rat>
+min-avg-logit-diff <rat>
+item <cert_path> [tokens_path]
+```
+
+`item` entries are required. `min-avg-logit-diff` enforces an average
+logit-diff lower bound across all items (requires direction metadata in each cert).
+
 ## File formats
 
 ### Induction-head certificate
