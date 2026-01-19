@@ -9,7 +9,7 @@ public import Nfp.IO.Parse.Basic
 Shared parsing helpers for softmax-margin payloads.
 
 All sequence indices in the payload are 0-based (file-format convention) and are converted to
-`Fin` indices internally.
+`Fin` indices internally. The payload must declare `kind onehot-approx`.
 -/
 
 public section
@@ -24,6 +24,8 @@ namespace SoftmaxMargin
 
 /-- State for parsing softmax-margin payloads. -/
 structure ParseState (seq : Nat) where
+  /-- Optional certificate kind tag. -/
+  kind : Option String
   /-- Optional epsilon bound. -/
   eps : Option Rat
   /-- Optional margin bound. -/
@@ -42,7 +44,8 @@ structure ParseState (seq : Nat) where
 /-- Initialize a softmax-margin parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
-  { eps := none
+  { kind := none
+    eps := none
     margin := none
     active := ∅
     activeSeen := false
@@ -93,6 +96,11 @@ def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
 def parseLine {seq : Nat} (st : ParseState seq)
     (tokens : List String) : Except String (ParseState seq) := do
   match tokens with
+  | ["kind", k] =>
+      if st.kind.isSome then
+        throw "duplicate kind entry"
+      else
+        return { st with kind := some k }
   | ["eps", val] =>
       if st.eps.isSome then
         throw "duplicate eps entry"

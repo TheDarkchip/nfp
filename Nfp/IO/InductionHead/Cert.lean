@@ -14,7 +14,8 @@ public import Nfp.Model.InductionPrompt
 Untrusted parsing and checking for explicit induction-head certificates.
 
 All sequence indices in the certificate payload are 0-based (file-format convention) and
-are converted to `Fin` indices internally.
+are converted to `Fin` indices internally. The certificate must declare
+`kind onehot-approx`.
 -/
 
 public section
@@ -30,6 +31,8 @@ namespace InductionHeadCert
 
 /-- State for parsing induction-head certificates. -/
 structure ParseState (seq : Nat) where
+  /-- Optional certificate kind tag. -/
+  kind : Option String
   /-- Optional epsilon bound. -/
   eps : Option Rat
   /-- Optional margin bound. -/
@@ -66,7 +69,8 @@ structure ParseState (seq : Nat) where
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
-  { eps := none
+  { kind := none
+    eps := none
     margin := none
     active := ∅
     activeSeen := false
@@ -133,6 +137,11 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
 def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
     Except String (ParseState seq) := do
   match tokens with
+  | ["kind", k] =>
+      if st.kind.isSome then
+        throw "duplicate kind entry"
+      else
+        return { st with kind := some k }
   | ["eps", val] =>
       if st.eps.isSome then
         throw "duplicate eps entry"
@@ -211,6 +220,12 @@ def parseSeq (tokens : List (List String)) : Except String Nat := do
 
 private def finalizeState {seq : Nat} (hpos : 0 < seq) (st : ParseState seq) :
     Except String (Circuit.InductionHeadCert seq) := do
+  let kind ←
+    match st.kind with
+    | some v => pure v
+    | none => throw "missing kind entry"
+  if kind != "onehot-approx" then
+    throw s!"unexpected kind: {kind}"
   let eps ←
     match st.eps with
     | some v => pure v

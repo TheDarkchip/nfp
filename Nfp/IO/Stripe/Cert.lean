@@ -10,7 +10,7 @@ public import Nfp.IO.Util
 Untrusted parsing and checking for stripe-attention certificates.
 
 Sequence indices in the payload are 0-based (file-format convention) and are converted
-to `Fin` indices internally.
+to `Fin` indices internally. The certificate must declare `kind stripe`.
 -/
 
 public section
@@ -87,6 +87,8 @@ def checkStripeCert {seq : Nat} [NeZero seq] (c : StripeCert seq) : Bool :=
 
 /-- State for parsing stripe-attention certificates. -/
 structure ParseState (seq : Nat) where
+  /-- Optional certificate kind tag. -/
+  kind : Option String
   /-- Optional period. -/
   period : Option Nat
   /-- Optional stripe-mean lower bound. -/
@@ -99,7 +101,8 @@ structure ParseState (seq : Nat) where
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
-  { period := none
+  { kind := none
+    period := none
     stripeMeanLB := none
     stripeTop1LB := none
     weights := Array.replicate seq row }
@@ -126,6 +129,11 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
 def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
     Except String (ParseState seq) := do
   match tokens with
+  | ["kind", k] =>
+      if st.kind.isSome then
+        throw "duplicate kind entry"
+      else
+        return { st with kind := some k }
   | ["period", n] =>
       if st.period.isSome then
         throw "duplicate period entry"
@@ -165,6 +173,12 @@ def parseSeq (tokens : List (List String)) : Except String Nat := do
 
 private def finalizeState {seq : Nat} (st : ParseState seq) :
     Except String (StripeCert seq) := do
+  let kind ←
+    match st.kind with
+    | some v => pure v
+    | none => throw "missing kind entry"
+  if kind != "stripe" then
+    throw s!"unexpected kind: {kind}"
   let period ←
     match st.period with
     | some v => pure v

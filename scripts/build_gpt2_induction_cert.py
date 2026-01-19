@@ -122,6 +122,7 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
                  active=None):
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
+        f.write("kind onehot-approx\n")
         if eps is not None:
             f.write(f"eps {rat_to_str(eps)}\n")
         if margin is not None:
@@ -145,6 +146,7 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
+        f.write("kind onehot-approx\n")
         if direction_target is not None and direction_negative is not None:
             f.write(f"direction-target {direction_target}\n")
             f.write(f"direction-negative {direction_negative}\n")
@@ -182,6 +184,7 @@ def write_value_range(path: Path, seq: int, values, decimals: int,
     hi = max(vals_rat)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
+        f.write("kind onehot-approx\n")
         if direction_target is not None and direction_negative is not None:
             f.write(f"direction-target {direction_target}\n")
             f.write(f"direction-negative {direction_negative}\n")

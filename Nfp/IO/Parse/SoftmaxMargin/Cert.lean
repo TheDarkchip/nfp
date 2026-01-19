@@ -21,6 +21,12 @@ open Nfp.Circuit
 
 private def finalizeState {seq : Nat} (hpos : 0 < seq)
     (st : SoftmaxMargin.ParseState seq) : Except String (SoftmaxMarginCert seq) := do
+  let kind ←
+    match st.kind with
+    | some v => pure v
+    | none => throw "missing kind entry"
+  if kind != "onehot-approx" then
+    throw s!"unexpected kind: {kind}"
   let eps ←
     match st.eps with
     | some v => pure v

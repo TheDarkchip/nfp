@@ -123,6 +123,7 @@ def main() -> int:
     output_path.parent.mkdir(parents=True, exist_ok=True)
     with output_path.open("w", encoding="ascii") as f:
         f.write(f"seq {args.seq}\n")
+        f.write("kind stripe\n")
         f.write(f"period {period}\n")
         f.write(f"stripe-mean-lb {rat_to_str(stripe_mean_lb)}\n")
         f.write(f"stripe-top1-lb {rat_to_str(stripe_top1_lb)}\n")

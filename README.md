@@ -169,6 +169,7 @@ item <cert_path>
 
 ```
 seq <n>
+kind onehot-approx
 direction-target <tok_id>
 direction-negative <tok_id>
 eps <rat>
@@ -196,6 +197,7 @@ appear, the checker defaults to all non-initial queries (indices 1.. in 0-based 
 
 ```
 seq <n>
+kind stripe
 period <n>
 stripe-mean-lb <rat>
 stripe-top1-lb <rat>
