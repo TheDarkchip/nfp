@@ -16,7 +16,7 @@ Batch checking for induction-head certificates.
 The batch file lists certificate paths (and optional token lists) and applies the same
 verification checks to each. Sequence indices in per-cert/token payloads are 0-based.
 Both `kind onehot-approx` and `kind induction-aligned` are supported; the latter
-uses stripe metrics instead of softmax-margin/onehot gates.
+uses prefix-matching/copying metrics instead of softmax-margin/onehot gates.
 -/
 
 public section
@@ -49,6 +49,8 @@ structure BatchOpts where
   maxEps : Rat
   /-- Optional per-item minimum stripe mean. -/
   minStripeMean? : Option Rat
+  /-- Optional per-item minimum copying score. -/
+  minCopying? : Option Rat
   /-- Optional average logit-diff lower bound across items. -/
   minAvgLogitDiff? : Option Rat
 
@@ -66,6 +68,8 @@ structure ParseState where
   maxEps? : Option Rat
   /-- Optional per-item minimum stripe mean. -/
   minStripeMean? : Option Rat
+  /-- Optional per-item minimum copying score. -/
+  minCopying? : Option Rat
   /-- Optional average logit-diff lower bound. -/
   minAvgLogitDiff? : Option Rat
 
@@ -77,6 +81,7 @@ def initState : ParseState :=
     minMargin? := none
     maxEps? := none
     minStripeMean? := none
+    minCopying? := none
     minAvgLogitDiff? := none }
 
 private def ratToString (x : Rat) : String :=
@@ -123,6 +128,11 @@ private def setOptRat (label : String) (st : ParseState) (val : Rat) :
         throw s!"duplicate {label} entry"
       else
         pure { st with minAvgLogitDiff? := some val }
+  | "min-copying" =>
+      if st.minCopying?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minCopying? := some val }
   | _ => throw s!"unknown rat option: {label}"
 
 /-- Parse a tokenized line into the batch parse state. -/
@@ -144,6 +154,8 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
       setOptRat "max-eps" st (← parseRat v)
   | ["min-stripe-mean", v] =>
       setOptRat "min-stripe-mean" st (← parseRat v)
+  | ["min-copying", v] =>
+      setOptRat "min-copying" st (← parseRat v)
   | ["min-avg-logit-diff", v] =>
       setOptRat "min-avg-logit-diff" st (← parseRat v)
   | _ =>
@@ -155,6 +167,7 @@ private def finalizeOpts (st : ParseState) : BatchOpts :=
     minMargin := st.minMargin?.getD (0 : Rat)
     maxEps := st.maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
     minStripeMean? := st.minStripeMean?
+    minCopying? := st.minCopying?
     minAvgLogitDiff? := st.minAvgLogitDiff? }
 
 private def effectiveMinLogitDiff (minLogitDiff? : Option Rat)
@@ -187,12 +200,13 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let cert := payload.cert
           let kind := payload.kind
           let period? := payload.period?
+          let copyLogits? := payload.copyLogits?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
           if kind = "onehot-approx" then
-            if opts.minStripeMean?.isSome then
+            if opts.minStripeMean?.isSome || opts.minCopying?.isSome then
               return Except.error
-                "stripe thresholds are not used for onehot-approx"
+                "stripe/copying thresholds are not used for onehot-approx"
           if kind = "induction-aligned" then
             let period ←
               match period? with
@@ -215,6 +229,8 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
               return Except.error
                 "min-logit-diff/min-margin/max-eps are not used for induction-aligned"
+            if copyLogits?.isNone then
+              return Except.error "missing copy-logit entries for induction-aligned"
           let activeCount := cert.active.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := opts.minActive?.getD defaultMinActive
@@ -274,17 +290,27 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 stripeTop1LB := 0
                 weights := cert.weights }
             let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
-            let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
-            match stripeMean?, stripeTop1? with
-            | some mean, some _ =>
-                let defaultMean : Rat := Rat.divInt 1 1000
-                let minMean := opts.minStripeMean?.getD defaultMean
+            match stripeMean? with
+            | some mean =>
+                let minMean := opts.minStripeMean?.getD (0 : Rat)
                 if mean < minMean then
                   return Except.error
                     s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
-                return Except.ok none
-            | _, _ =>
+            | none =>
                 return Except.error "empty active set for stripe stats"
+            let copyScore? :=
+              match copyLogits? with
+              | some logits => copyScore (seq := seq) cert.weights logits
+              | none => none
+            match copyScore? with
+            | none =>
+                return Except.error "empty copy-logit sum for copying score"
+            | some score =>
+                let minCopying := opts.minCopying?.getD (0 : Rat)
+                if score < minCopying then
+                  return Except.error
+                    s!"copying {ratToString score} below minimum {ratToString minCopying}"
+                return Except.ok none
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
           let logitDiffLB? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt

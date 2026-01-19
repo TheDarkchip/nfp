@@ -10,7 +10,7 @@ It is intentionally brief and focused on the soundness boundary.
 - Induction certificates are **head-level** (softmax-margin + value-interval + logit-diff lower
   bound) and conditional on the supplied `prev`, `active`, and `direction` inputs. For
   `kind induction-aligned`, the checker instead evaluates prefix-matching (stripe-mean)
-  on the full period.
+  and copying on the full period using the supplied `copy-logit` data.
   These do **not** yet imply full model behavior.
 - Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
   unembedding columns represent token logits.

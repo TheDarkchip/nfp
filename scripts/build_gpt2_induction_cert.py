@@ -37,6 +37,9 @@ Direction token IDs use the model's raw tokenizer indexing.
 To emit an induction-aligned certificate, pass:
   --kind induction-aligned
 which adds a `period` entry (set to `--pattern-length`).
+
+Induction-aligned certificates also include `copy-logit` entries derived from
+the head's direct logit contribution (mean-subtracted, ReLU).
 """
 
 import argparse
@@ -122,6 +125,25 @@ def compute_scores_weights(model, input_ids, layer: int, head: int, device: str)
             vh.squeeze(0).cpu().numpy())
 
 
+def compute_copy_logits(model, input_ids, layer: int, head: int,
+                        weights: np.ndarray, values: np.ndarray, device: str) -> np.ndarray:
+    head_dim = model.config.n_embd // model.config.n_head
+    start, end = head * head_dim, (head + 1) * head_dim
+    weights_t = torch.tensor(weights, device=device, dtype=torch.float32)
+    values_t = torch.tensor(values, device=device, dtype=torch.float32)
+    head_out = torch.matmul(weights_t, values_t)
+    w_o = model.h[layer].attn.c_proj.weight.to(device)
+    w_o_head = w_o[:, start:end]
+    head_resid = torch.matmul(head_out, w_o_head.T)
+    wte = model.wte.weight.to(device)
+    logits = torch.matmul(head_resid, wte.T)
+    logits = logits - logits.mean(dim=-1, keepdim=True)
+    logits = torch.relu(logits)
+    token_ids = input_ids.squeeze(0)
+    copy_logits = logits[:, token_ids]
+    return copy_logits.detach().cpu().numpy()
+
+
 def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=None, margin=None,
                  active=None, kind: str = "onehot-approx", period: int | None = None):
     with path.open("w", encoding="ascii") as f:
@@ -150,7 +172,8 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
 def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights,
                          eps, margin, active, eps_at, weight_bound_at,
                          vals, direction_target=None, direction_negative=None,
-                         kind: str = "onehot-approx", period: int | None = None) -> None:
+                         kind: str = "onehot-approx", period: int | None = None,
+                         copy_logits=None) -> None:
     lo = min(vals)
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
@@ -176,6 +199,10 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
         for q in range(seq):
             for k in range(seq):
                 f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
+        if copy_logits is not None:
+            for q in range(seq):
+                for k in range(seq):
+                    f.write(f"copy-logit {q} {k} {rat_to_str(copy_logits[q][k])}\n")
         for q in range(seq):
             f.write(f"eps-at {q} {rat_to_str(eps_at[q])}\n")
         for q in range(seq):
@@ -374,11 +401,22 @@ def main() -> None:
     input_ids = torch.tensor(tokens, dtype=torch.long, device=args.device).unsqueeze(0)
 
     scores, weights, values = compute_scores_weights(model, input_ids, layer, head, args.device)
+    copy_logits = None
+    if args.kind == "induction-aligned":
+        copy_logits = compute_copy_logits(
+            model, input_ids, layer, head, weights, values, args.device
+        )
 
     scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals) for k in range(args.seq)]
                   for q in range(args.seq)]
     weights_rat = [[rat_from_float(float(weights[q, k]), args.decimals) for k in range(args.seq)]
                    for q in range(args.seq)]
+    copy_logits_rat = None
+    if copy_logits is not None:
+        copy_logits_rat = [
+            [rat_from_float(float(copy_logits[q, k]), args.decimals) for k in range(args.seq)]
+            for q in range(args.seq)
+        ]
 
     for q in range(args.seq):
         total = sum(weights_rat[q], Fraction(0))
@@ -529,6 +567,7 @@ def main() -> None:
         direction_negative=direction_negative,
         kind=args.kind,
         period=period,
+        copy_logits=copy_logits_rat,
     )
 
     if args.scores_out:

@@ -41,6 +41,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let tokensPath? := (p.flag? "tokens").map (·.as! String)
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
+  let minCopyingStr? := (p.flag? "min-copying").map (·.as! String)
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -55,6 +56,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
         minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
+        minCopyingStr?
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -85,7 +87,9 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "min-stripe-mean" : String; "Optional minimum stripe-mean (rational literal). \
                                  Applies to induction-aligned or stripe certs."
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
-                                 Applies to induction-aligned or stripe certs."
+                                 Applies to stripe certs."
+    "min-copying" : String; "Optional minimum copying score (rational literal). \
+                             Applies to induction-aligned certs."
 ]
 
 

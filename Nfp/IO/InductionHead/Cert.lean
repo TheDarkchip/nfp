@@ -17,7 +17,7 @@ Untrusted parsing and checking for explicit induction-head certificates.
 All sequence indices in the certificate payload are 0-based (file-format convention) and
 are converted to `Fin` indices internally. Supported certificate kinds:
 - `kind onehot-approx` (proxy bounds only)
-- `kind induction-aligned` (requires `period` and checks stripe metrics)
+- `kind induction-aligned` (requires `period` and checks prefix-matching/copying metrics)
 -/
 
 public section
@@ -51,6 +51,10 @@ structure ParseState (seq : Nat) where
   scores : Array (Array (Option Rat))
   /-- Optional weight matrix entries. -/
   weights : Array (Array (Option Rat))
+  /-- Optional copy-logit matrix entries. -/
+  copyLogits : Array (Array (Option Rat))
+  /-- Whether any copy-logit entries were parsed. -/
+  copyLogitsSeen : Bool
   /-- Optional per-query epsilon bounds. -/
   epsAt : Array (Option Rat)
   /-- Optional per-key weight bounds. -/
@@ -84,6 +88,8 @@ def initState (seq : Nat) : ParseState seq :=
     weights := Array.replicate seq row
     epsAt := Array.replicate seq none
     weightBoundAt := Array.replicate seq row
+    copyLogits := Array.replicate seq row
+    copyLogitsSeen := false
     lo := none
     hi := none
     valsLo := Array.replicate seq none
@@ -175,6 +181,10 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
       let mat ← setMatrixEntry (seq := seq) st.weights (← parseNat q) (← parseNat k)
         (← parseRat val)
       return { st with weights := mat }
+  | ["copy-logit", q, k, val] =>
+      let mat ← setMatrixEntry (seq := seq) st.copyLogits (← parseNat q) (← parseNat k)
+        (← parseRat val)
+      return { st with copyLogits := mat, copyLogitsSeen := true }
   | ["eps-at", q, val] =>
       let arr ← setVecEntry (seq := seq) st.epsAt (← parseNat q) (← parseRat val)
       return { st with epsAt := arr }
@@ -235,6 +245,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   kind : String
   /-- Optional prompt period (only for `kind induction-aligned`). -/
   period? : Option Nat
+  /-- Optional copy-logit matrix (only required for `kind induction-aligned`). -/
+  copyLogits? : Option (Fin seq → Fin seq → Rat)
   /-- Verified certificate payload. -/
   cert : Circuit.InductionHeadCert seq
 
@@ -322,6 +334,17 @@ private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq)
       weights := weightsFun
       values := values }
 
+private def finalizeCopyLogits? {seq : Nat} (st : ParseState seq) :
+    Except String (Option (Fin seq → Fin seq → Rat)) := do
+  if !st.copyLogitsSeen then
+    return none
+  if !st.copyLogits.all (fun row => row.all Option.isSome) then
+    throw "missing copy-logit entries"
+  let copyLogitsFun : Fin seq → Fin seq → Rat := fun q k =>
+    let row := st.copyLogits[q.1]!
+    (row[k.1]!).getD 0
+  return some copyLogitsFun
+
 end InductionHeadCert
 
 /-- Parse an explicit induction-head certificate from a text payload. -/
@@ -352,8 +375,11 @@ def parseInductionHeadCert (input : String) :
       if kind = "induction-aligned" && period?.isNone then
         throw "missing period entry for kind induction-aligned"
       let cert ← InductionHeadCert.finalizeStateCore hpos st
+      let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
+      if kind = "induction-aligned" && copyLogits?.isNone then
+        throw "missing copy-logit entries for kind induction-aligned"
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
-        { kind := kind, period? := period?, cert := cert }
+        { kind := kind, period? := period?, copyLogits? := copyLogits?, cert := cert }
       return ⟨seq, payload⟩
 
 /-- Load an induction-head certificate from disk. -/
@@ -396,35 +422,54 @@ private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat)
     else
       true)
 
+private def sumOver {seq : Nat} (f : Fin seq → Fin seq → Rat) : Rat :=
+  (List.finRange seq).foldl (fun acc q =>
+    acc + (List.finRange seq).foldl (fun acc' k => acc' + f q k) 0) 0
+
+/-- Copying score for induction-aligned checks (ratio scaled to [-1, 1]). -/
+def copyScore {seq : Nat} (weights copyLogits : Fin seq → Fin seq → Rat) : Option Rat :=
+  let total := sumOver (seq := seq) copyLogits
+  if total = 0 then
+    none
+  else
+    let weighted := sumOver (seq := seq) (fun q k => weights q k * copyLogits q k)
+    let ratio := weighted / total
+    some ((4 : Rat) * ratio - 1)
+
 /-- Check an explicit induction-head certificate from disk. -/
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
-    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String) : IO UInt32 := do
+    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
+    (minCopyingStr? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   let minStripeMean?E := parseRatOpt "min-stripe-mean" minStripeMeanStr?
   let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
-  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
-  | Except.error msg, _, _, _, _ =>
+  let minCopying?E := parseRatOpt "min-copying" minCopyingStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E, minCopying?E with
+  | Except.error msg, _, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, Except.error msg, _, _, _ =>
+  | _, Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, Except.error msg, _, _ =>
+  | _, _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, Except.error msg, _ =>
+  | _, _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, _, Except.error msg =>
+  | _, _, _, _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, _, _, _, Except.error msg =>
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
-      Except.ok minStripeMean?, Except.ok minStripeTop1? =>
+      Except.ok minStripeMean?, Except.ok minStripeTop1?, Except.ok minCopying? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsed ← loadInductionHeadCert certPath
@@ -443,13 +488,15 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let cert := payload.cert
               let kind := payload.kind
               let period? := payload.period?
+              let copyLogits? := payload.copyLogits?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
               if kind = "onehot-approx" then
-                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
+                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome ||
+                    minCopyingStr?.isSome then
                   IO.eprintln
-                    "error: stripe/induction thresholds are not used for onehot-approx"
+                    "error: stripe/copying thresholds are not used for onehot-approx"
                   return 2
               if kind = "induction-aligned" then
                 let period ←
@@ -480,6 +527,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   return 2
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
+                  return 2
+                if copyLogits?.isNone then
+                  IO.eprintln "error: missing copy-logit entries for induction-aligned"
                   return 2
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
@@ -555,24 +605,39 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     stripeTop1LB := 0
                     weights := cert.weights }
                 let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
-                let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
-                match stripeMean?, stripeTop1? with
-                | some mean, some top1 =>
-                    let defaultMean : Rat := Rat.divInt 1 1000
-                    let minMean := minStripeMean?.getD defaultMean
-                    if mean < minMean then
+                let mean ←
+                  match stripeMean? with
+                  | some mean =>
+                      let minMean := minStripeMean?.getD (0 : Rat)
+                      if mean < minMean then
+                        IO.eprintln
+                          s!"error: stripe-mean {ratToString mean} below minimum \
+                          {ratToString minMean}"
+                        return 2
+                      pure mean
+                  | none =>
+                      IO.eprintln "error: empty active set for stripe stats"
+                      return 2
+                let copyScore? :=
+                  match copyLogits? with
+                  | some logits => copyScore (seq := seq) cert.weights logits
+                  | none => none
+                match copyScore? with
+                | none =>
+                    IO.eprintln "error: empty copy-logit sum for copying score"
+                    return 2
+                | some score =>
+                    let minCopying := minCopying?.getD (0 : Rat)
+                    if score < minCopying then
                       IO.eprintln
-                        s!"error: stripe-mean {ratToString mean} below minimum \
-                        {ratToString minMean}"
+                        s!"error: copying {ratToString score} below minimum \
+                        {ratToString minCopying}"
                       return 2
                     IO.println
                       s!"ok: induction-aligned certificate checked \
                       (seq={seq}, active={activeCount}, \
-                      stripeMean={ratToString mean})"
+                      stripeMean={ratToString mean}, copying={ratToString score})"
                     return 0
-                | _, _ =>
-                    IO.eprintln "error: empty active set for stripe stats"
-                    return 2
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
                 | some v, _ => some v

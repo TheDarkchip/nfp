@@ -46,6 +46,7 @@ def main() -> int:
     parser.add_argument("--min-active", type=int, default=None)
     parser.add_argument("--max-eps", default=None)
     parser.add_argument("--min-stripe-mean", default=None)
+    parser.add_argument("--min-copying", default=None)
     args = parser.parse_args()
 
     out_dir: Path = args.out_dir
@@ -134,6 +135,8 @@ def main() -> int:
         lines.append(f"max-eps {args.max_eps}")
     if args.min_stripe_mean is not None:
         lines.append(f"min-stripe-mean {args.min_stripe_mean}")
+    if args.min_copying is not None:
+        lines.append(f"min-copying {args.min_copying}")
     for cert_path, tokens_path in items:
         lines.append(f"item {cert_path} {tokens_path}")
 
