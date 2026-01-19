@@ -78,13 +78,55 @@ def inductionCertifyBatchCmd : Cmd := `[Cli|
     batch : String; "Path to the batch file listing certs and tokens."
 ]
 
+private def runStripeCertify (p : Parsed) : IO UInt32 := do
+  let certPath? := (p.flag? "cert").map (·.as! String)
+  let minMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
+  let minTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  match certPath? with
+  | none => fail "provide --cert"
+  | some certPath =>
+      IO.runStripeCertCheck certPath minMeanStr? minTop1Str?
+
+/-- `nfp induction stripeCertify` subcommand (streamlined). -/
+def inductionStripeCertifyCmd : Cmd := `[Cli|
+  stripeCertify VIA runStripeCertify;
+  "Check stripe-attention certificates from an explicit cert."
+  FLAGS:
+    cert : String; "Path to the stripe certificate file."
+    "min-stripe-mean" : String; "Optional minimum stripe-mean (rational literal)."
+    "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal)."
+]
+
+private def runStripeCertifyBatch (p : Parsed) : IO UInt32 := do
+  let batchPath? := (p.flag? "batch").map (·.as! String)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  match batchPath? with
+  | none => fail "provide --batch"
+  | some batchPath =>
+      IO.runStripeBatchCheck batchPath
+
+/-- `nfp induction stripeBatch` subcommand (streamlined). -/
+def inductionStripeBatchCmd : Cmd := `[Cli|
+  stripeBatch VIA runStripeCertifyBatch;
+  "Check a batch of stripe-attention certificates from a batch file."
+  FLAGS:
+    batch : String; "Path to the stripe batch file."
+]
+
 /-- Induction-head subcommands. -/
 def inductionCmd : Cmd := `[Cli|
   induction NOOP;
   "Induction-head utilities (streamlined)."
   SUBCOMMANDS:
     inductionCertifySimpleCmd;
-    inductionCertifyBatchCmd
+    inductionCertifyBatchCmd;
+    inductionStripeCertifyCmd;
+    inductionStripeBatchCmd
 ]
 
 /-- The root CLI command. -/

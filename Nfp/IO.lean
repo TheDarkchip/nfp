@@ -3,6 +3,7 @@
 module
 
 public import Nfp.IO.InductionHead
+public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 
 /-!

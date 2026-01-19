@@ -135,6 +135,34 @@ item <cert_path> [tokens_path]
 `item` entries are required. `min-avg-logit-diff` enforces an average
 logit-diff lower bound across all items (requires direction metadata in each cert).
 
+### Verify a stripe certificate (trusted checker)
+
+```bash
+lake exe nfp induction stripeCertify --cert reports/gpt2_stripe.cert
+```
+
+Optional gates:
+
+```
+--min-stripe-mean <rat>   --min-stripe-top1 <rat>
+```
+
+### Verify a stripe batch (trusted checker)
+
+```bash
+lake exe nfp induction stripeBatch --batch reports/gpt2_stripe.batch
+```
+
+Stripe batch file format:
+
+```
+min-stripe-mean <rat>
+min-stripe-top1 <rat>
+min-avg-stripe-mean <rat>
+min-avg-stripe-top1 <rat>
+item <cert_path>
+```
+
 ## File formats
 
 ### Induction-head certificate
@@ -163,6 +191,19 @@ elsewhere in the tooling are **0-based** to match the literature. Direction toke
 (`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
 appear, the checker defaults to all non-initial queries (indices 1.. in 0-based indexing).
+
+### Stripe-attention certificate
+
+```
+seq <n>
+period <n>
+stripe-mean-lb <rat>
+stripe-top1-lb <rat>
+weight <q> <k> <rat>
+```
+
+All sequence indices (`q`, `k`) are **0-based**. The checker recomputes stripe-mean and
+stripe-top1 from the provided weights and enforces the certificate’s lower bounds.
 
 ### Direction report (untrusted)
 
