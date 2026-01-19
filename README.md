@@ -59,6 +59,17 @@ python scripts/build_gpt2_induction_cert.py \
 
 Layer/head indices in the generator are 0-based to match the literature.
 
+To emit an **induction-aligned** certificate (explicit prompt period metadata):
+
+```bash
+python scripts/build_gpt2_induction_cert.py \
+  --output reports/gpt2_induction.cert \
+  --layer 0 --head 5 --seq 32 --pattern-length 16 \
+  --random-pattern --seed 0 \
+  --active-eps-max 1/2 \
+  --kind induction-aligned
+```
+
 To certify a **non-vacuous** logit-diff lower bound, supply a direction:
 
 ```bash
@@ -106,8 +117,12 @@ Optional gates:
 --min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
 ```
 
-If `--tokens` is provided, the CLI verifies that the certificate's `prev` and `active`
-match the token-sequence semantics for repeated tokens (previous occurrence).
+The CLI reports the certificate kind in its success message (e.g., `onehot-approx (proxy)`
+or `induction-aligned`).
+
+If `--tokens` is provided, the CLI verifies:
+- `kind onehot-approx`: `prev`/`active` match previous-occurrence semantics.
+- `kind induction-aligned`: the token sequence is periodic with the declared `period`.
 
 Example non-vacuous check:
 
@@ -167,9 +182,12 @@ item <cert_path>
 
 ### Induction-head certificate
 
+Supported kinds: `onehot-approx` (proxy bounds) and `induction-aligned` (periodic prompt).
+
 ```
 seq <n>
 kind onehot-approx
+period <n>        # only for kind induction-aligned
 direction-target <tok_id>
 direction-negative <tok_id>
 eps <rat>
@@ -192,6 +210,8 @@ elsewhere in the tooling are **0-based** to match the literature. Direction toke
 (`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
 appear, the checker defaults to all non-initial queries (indices 1.. in 0-based indexing).
+For `kind induction-aligned`, the checker additionally verifies that `active` and `prev` match
+the periodic prompt defined by `period`.
 
 ### Stripe-attention certificate
 
@@ -225,9 +245,9 @@ seq <n>
 token <q> <tok_id>
 ```
 
-This file is an **untrusted helper artifact** used to check that `prev` and `active` match the
-token sequence (previous-occurrence semantics) when `--tokens` is supplied to the CLI. Sequence
-indices are 0-based.
+This file is an **untrusted helper artifact** used to check token semantics when `--tokens`
+is supplied to the CLI (previous-occurrence for `onehot-approx`, periodicity for
+`induction-aligned`). Sequence indices are 0-based.
 
 ## Soundness boundary
 

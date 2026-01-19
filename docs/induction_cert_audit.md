@@ -6,7 +6,8 @@ induction heads, and spell out the scope and limitations of that claim.
 ## Formal proof chain (Lean)
 
 - Explicit induction-head certificates are parsed from text in
-  `Nfp/IO/InductionHead/Cert.lean` (sequence indices are 0-based in the payload).
+  `Nfp/IO/InductionHead/Cert.lean` (sequence indices are 0-based in the payload). The parser
+  supports `kind onehot-approx` (proxy bounds) and `kind induction-aligned` (periodic prompt).
 - `checkInductionHeadCert` and `checkInductionHeadCert_sound` show that a
   passing certificate satisfies `InductionHeadCertBounds`
   (`Nfp/Circuit/Cert/InductionHead.lean`).
@@ -39,7 +40,8 @@ We follow the standard induction-head diagnostic setup from the literature:
 repeated-token sequences (a pattern repeated twice) and attention stripes that
 look back by one period (`q -> q - period`). The diagnostic script
 `scripts/diagnose_induction_heads.py` mirrors this setup, and the certificate
-generator uses repeated patterns for its inputs.
+generator uses repeated patterns for its inputs. For `kind induction-aligned`,
+Lean additionally checks that `active`/`prev` match the declared `period`.
 
 ## Preconditions and scope limits
 
@@ -50,13 +52,16 @@ without additional assumptions.
 
 Key assumptions and limitations:
 - `prev`, `active`, and `direction` are user-supplied or produced by untrusted
-  scripts; Lean does not (yet) verify their derivation from token-level semantics.
+  scripts. For `kind onehot-approx`, Lean does not (yet) verify their derivation
+  from token-level semantics; for `kind induction-aligned`, it checks that
+  `prev`/`active` match the declared periodic prompt.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
 
 Optional safeguard:
-- If a token list is supplied to the CLI (`--tokens`), the checker verifies that `prev`
-  and `active` match the previous-occurrence semantics for that sequence.
+- If a token list is supplied to the CLI (`--tokens`), the checker verifies
+  previous-occurrence semantics for `kind onehot-approx`, and periodicity for
+  `kind induction-aligned`.
 
 ## Conclusion
 

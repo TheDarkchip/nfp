@@ -14,6 +14,7 @@ Batch checking for induction-head certificates.
 
 The batch file lists certificate paths (and optional token lists) and applies the same
 verification checks to each. Sequence indices in per-cert/token payloads are 0-based.
+Both `kind onehot-approx` and `kind induction-aligned` are supported.
 -/
 
 public section
@@ -150,19 +151,49 @@ private def effectiveMinLogitDiff (minLogitDiff? : Option Rat)
       | some _ => some (0 : Rat)
       | none => none
 
+private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat) : Bool :=
+  (List.finRange seq).all (fun q =>
+    if period ≤ q.val then
+      decide (tokens q = tokens (Model.prevOfPeriod (seq := seq) period q))
+    else
+      true)
+
 private def checkOne (item : BatchItem) (opts : BatchOpts)
     (requireLogitDiff : Bool) : IO (Except String (Option Rat)) := do
   let parsed ← loadInductionHeadCert item.certPath
   match parsed with
   | Except.error msg => return Except.error msg
-  | Except.ok ⟨seq, cert⟩ =>
+  | Except.ok ⟨seq, payload⟩ =>
       match seq with
       | 0 => return Except.error "seq must be positive"
       | Nat.succ n =>
           let seq := Nat.succ n
           let _ : NeZero seq := ⟨by simp⟩
+          let cert := payload.cert
+          let kind := payload.kind
+          let period? := payload.period?
+          if kind != "onehot-approx" && kind != "induction-aligned" then
+            return Except.error s!"unexpected kind {kind}"
           if !Circuit.checkInductionHeadCert cert then
             return Except.error "induction-head certificate rejected"
+          if kind = "induction-aligned" then
+            let period ←
+              match period? with
+              | some v => pure v
+              | none =>
+                  return Except.error "missing period entry for induction-aligned"
+            if period = 0 then
+              return Except.error "period must be positive for induction-aligned"
+            if seq ≤ period then
+              return Except.error "period must be less than seq for induction-aligned"
+            let expectedActive := Model.activeOfPeriod (seq := seq) period
+            if !decide (cert.active = expectedActive) then
+              return Except.error "active set does not match induction-aligned period"
+            let prevOk :=
+              (List.finRange seq).all (fun q =>
+                decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
+            if !prevOk then
+              return Except.error "prev map does not match induction-aligned period"
           let activeCount := cert.active.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := opts.minActive?.getD defaultMinActive
@@ -183,18 +214,27 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 if hseq : seqTokens = seq then
                   let tokens' : Fin seq → Nat := by
                     simpa [hseq] using tokens
-                  let activeTokens := Model.activeOfTokens (seq := seq) tokens'
-                  if !decide (cert.active ⊆ activeTokens) then
-                    return Except.error "active set not contained in token repeats"
-                  let prevTokens := Model.prevOfTokens (seq := seq) tokens'
-                  let prevOk :=
-                    (List.finRange seq).all (fun q =>
-                      if decide (q ∈ cert.active) then
-                        decide (prevTokens q = cert.prev q)
-                      else
-                        true)
-                  if !prevOk then
-                    return Except.error "prev map does not match tokens on active queries"
+                  if kind = "induction-aligned" then
+                    let period ←
+                      match period? with
+                      | some v => pure v
+                      | none =>
+                          return Except.error "missing period entry for induction-aligned"
+                    if !tokensPeriodic (seq := seq) period tokens' then
+                      return Except.error "tokens are not periodic for induction-aligned period"
+                  else
+                    let activeTokens := Model.activeOfTokens (seq := seq) tokens'
+                    if !decide (cert.active ⊆ activeTokens) then
+                      return Except.error "active set not contained in token repeats"
+                    let prevTokens := Model.prevOfTokens (seq := seq) tokens'
+                    let prevOk :=
+                      (List.finRange seq).all (fun q =>
+                        if decide (q ∈ cert.active) then
+                          decide (prevTokens q = cert.prev q)
+                        else
+                          true)
+                    if !prevOk then
+                      return Except.error "prev map does not match tokens on active queries"
                 else
                   return Except.error
                     s!"tokens seq {seqTokens} does not match cert seq {seq}"

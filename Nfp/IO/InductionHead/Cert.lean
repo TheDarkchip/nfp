@@ -14,8 +14,9 @@ public import Nfp.Model.InductionPrompt
 Untrusted parsing and checking for explicit induction-head certificates.
 
 All sequence indices in the certificate payload are 0-based (file-format convention) and
-are converted to `Fin` indices internally. The certificate must declare
-`kind onehot-approx`.
+are converted to `Fin` indices internally. Supported certificate kinds:
+- `kind onehot-approx` (proxy bounds only)
+- `kind induction-aligned` (requires an explicit `period` entry)
 -/
 
 public section
@@ -33,6 +34,8 @@ namespace InductionHeadCert
 structure ParseState (seq : Nat) where
   /-- Optional certificate kind tag. -/
   kind : Option String
+  /-- Optional induction prompt period (for `kind induction-aligned`). -/
+  period : Option Nat
   /-- Optional epsilon bound. -/
   eps : Option Rat
   /-- Optional margin bound. -/
@@ -70,6 +73,7 @@ structure ParseState (seq : Nat) where
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
   { kind := none
+    period := none
     eps := none
     margin := none
     active := ∅
@@ -142,6 +146,11 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
         throw "duplicate kind entry"
       else
         return { st with kind := some k }
+  | ["period", val] =>
+      if st.period.isSome then
+        throw "duplicate period entry"
+      else
+        return { st with period := some (← parseNat val) }
   | ["eps", val] =>
       if st.eps.isSome then
         throw "duplicate eps entry"
@@ -218,14 +227,17 @@ def parseSeq (tokens : List (List String)) : Except String Nat := do
   | some v => pure v
   | none => throw "missing seq entry"
 
-private def finalizeState {seq : Nat} (hpos : 0 < seq) (st : ParseState seq) :
+/-- Parsed induction-head certificate payload plus kind metadata. -/
+structure InductionHeadCertPayload (seq : Nat) where
+  /-- Certificate kind tag. -/
+  kind : String
+  /-- Optional prompt period (only for `kind induction-aligned`). -/
+  period? : Option Nat
+  /-- Verified certificate payload. -/
+  cert : Circuit.InductionHeadCert seq
+
+private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq) :
     Except String (Circuit.InductionHeadCert seq) := do
-  let kind ←
-    match st.kind with
-    | some v => pure v
-    | none => throw "missing kind entry"
-  if kind != "onehot-approx" then
-    throw s!"unexpected kind: {kind}"
   let eps ←
     match st.eps with
     | some v => pure v
@@ -312,7 +324,7 @@ end InductionHeadCert
 
 /-- Parse an explicit induction-head certificate from a text payload. -/
 def parseInductionHeadCert (input : String) :
-    Except String (Sigma Circuit.InductionHeadCert) := do
+    Except String (Sigma InductionHeadCert.InductionHeadCertPayload) := do
   let lines := input.splitOn "\n"
   let tokens := lines.filterMap cleanTokens
   let seq ← InductionHeadCert.parseSeq tokens
@@ -326,12 +338,25 @@ def parseInductionHeadCert (input : String) :
           match t with
           | ["seq", _] => pure st
           | _ => InductionHeadCert.parseLine st t) st0
-      let cert ← InductionHeadCert.finalizeState hpos st
-      return ⟨seq, cert⟩
+      let kind ←
+        match st.kind with
+        | some v => pure v
+        | none => throw "missing kind entry"
+      if kind != "onehot-approx" && kind != "induction-aligned" then
+        throw s!"unexpected kind: {kind}"
+      let period? := st.period
+      if kind = "onehot-approx" && period?.isSome then
+        throw "unexpected period entry for kind onehot-approx"
+      if kind = "induction-aligned" && period?.isNone then
+        throw "missing period entry for kind induction-aligned"
+      let cert ← InductionHeadCert.finalizeStateCore hpos st
+      let payload : InductionHeadCert.InductionHeadCertPayload seq :=
+        { kind := kind, period? := period?, cert := cert }
+      return ⟨seq, payload⟩
 
 /-- Load an induction-head certificate from disk. -/
 def loadInductionHeadCert (path : System.FilePath) :
-    IO (Except String (Sigma Circuit.InductionHeadCert)) := do
+    IO (Except String (Sigma InductionHeadCert.InductionHeadCertPayload)) := do
   let data ← IO.FS.readFile path
   return parseInductionHeadCert data
 
@@ -362,6 +387,13 @@ def loadInductionHeadTokens (path : System.FilePath) :
 private def ratToString (x : Rat) : String :=
   toString x
 
+private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat) : Bool :=
+  (List.finRange seq).all (fun q =>
+    if period ≤ q.val then
+      decide (tokens q = tokens (Model.prevOfPeriod (seq := seq) period q))
+    else
+      true)
+
 /-- Check an explicit induction-head certificate from disk. -/
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
@@ -388,7 +420,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"
           return 1
-      | Except.ok ⟨seq, cert⟩ =>
+      | Except.ok ⟨seq, payload⟩ =>
           match seq with
           | 0 =>
               IO.eprintln "error: seq must be positive"
@@ -396,10 +428,39 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
           | Nat.succ n =>
               let seq := Nat.succ n
               let _ : NeZero seq := ⟨by simp⟩
+              let cert := payload.cert
+              let kind := payload.kind
+              let period? := payload.period?
+              if kind != "onehot-approx" && kind != "induction-aligned" then
+                IO.eprintln s!"error: unexpected kind {kind}"
+                return 2
               let ok := Circuit.checkInductionHeadCert cert
               if !ok then
                 IO.eprintln "error: induction-head certificate rejected"
                 return 2
+              if kind = "induction-aligned" then
+                let period ←
+                  match period? with
+                  | some v => pure v
+                  | none =>
+                      IO.eprintln "error: missing period entry for induction-aligned"
+                      return 2
+                if period = 0 then
+                  IO.eprintln "error: period must be positive for induction-aligned"
+                  return 2
+                if seq ≤ period then
+                  IO.eprintln "error: period must be less than seq for induction-aligned"
+                  return 2
+                let expectedActive := Model.activeOfPeriod (seq := seq) period
+                if !decide (cert.active = expectedActive) then
+                  IO.eprintln "error: active set does not match induction-aligned period"
+                  return 2
+                let prevOk :=
+                  (List.finRange seq).all (fun q =>
+                    decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
+                if !prevOk then
+                  IO.eprintln "error: prev map does not match induction-aligned period"
+                  return 2
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
               let minActive := minActive?.getD defaultMinActive
@@ -427,20 +488,31 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     if hseq : seqTokens = seq then
                       let tokens' : Fin seq → Nat := by
                         simpa [hseq] using tokens
-                      let activeTokens := Model.activeOfTokens (seq := seq) tokens'
-                      if !decide (cert.active ⊆ activeTokens) then
-                        IO.eprintln "error: active set not contained in token repeats"
-                        return 2
-                      let prevTokens := Model.prevOfTokens (seq := seq) tokens'
-                      let prevOk :=
-                        (List.finRange seq).all (fun q =>
-                          if decide (q ∈ cert.active) then
-                            decide (prevTokens q = cert.prev q)
-                          else
-                            true)
-                      if !prevOk then
-                        IO.eprintln "error: prev map does not match tokens on active queries"
-                        return 2
+                      if kind = "induction-aligned" then
+                        let period ←
+                          match period? with
+                          | some v => pure v
+                          | none =>
+                              IO.eprintln "error: missing period entry for induction-aligned"
+                              return 2
+                        if !tokensPeriodic (seq := seq) period tokens' then
+                          IO.eprintln "error: tokens are not periodic for induction-aligned period"
+                          return 2
+                      else
+                        let activeTokens := Model.activeOfTokens (seq := seq) tokens'
+                        if !decide (cert.active ⊆ activeTokens) then
+                          IO.eprintln "error: active set not contained in token repeats"
+                          return 2
+                        let prevTokens := Model.prevOfTokens (seq := seq) tokens'
+                        let prevOk :=
+                          (List.finRange seq).all (fun q =>
+                            if decide (q ∈ cert.active) then
+                              decide (prevTokens q = cert.prev q)
+                            else
+                              true)
+                        if !prevOk then
+                          IO.eprintln "error: prev map does not match tokens on active queries"
+                          return 2
                     else
                       IO.eprintln
                         s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
@@ -452,8 +524,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | none, none => none
               match effectiveMinLogitDiff with
               | none =>
+                  let kindLabel :=
+                    if kind = "onehot-approx" then "onehot-approx (proxy)" else kind
                   IO.println
-                    s!"ok: induction head certificate checked \
+                    s!"ok: {kindLabel} certificate checked \
                     (seq={seq}, active={activeCount}, \
                     margin={ratToString cert.margin}, eps={ratToString cert.eps})"
                   return 0
@@ -472,8 +546,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           below minimum {ratToString minLogitDiff}"
                         return 2
                       else
+                        let kindLabel :=
+                          if kind = "onehot-approx" then "onehot-approx (proxy)" else kind
                         IO.println
-                          s!"ok: induction head certificate checked \
+                          s!"ok: {kindLabel} certificate checked \
                           (seq={seq}, active={activeCount}, \
                           margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
                           logitDiffLB={ratToString logitDiffLB})"

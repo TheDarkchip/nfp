@@ -3,6 +3,10 @@
 This document summarizes the **useful, limited guarantees** provided by an induction‑head
 certificate, without overselling.
 
+Two certificate kinds are supported:
+- `onehot-approx` (proxy bounds only)
+- `induction-aligned` (adds a periodic prompt check via `period`)
+
 ## What the certificate **does** guarantee
 
 If the Lean checker accepts a certificate, then:
@@ -12,6 +16,8 @@ If the Lean checker accepts a certificate, then:
 - **Value‑interval bounds** hold for the supplied value ranges.
 - **Logit‑diff lower bound** holds for the supplied direction (if direction metadata is present
   and the checker is run with `--min-logit-diff`).
+- **Induction‑aligned prompt check** (only for `kind induction-aligned`): `active` and `prev`
+  must match the declared periodic prompt.
 
 These are **formal, exact** statements about the explicit certificate data.
 
@@ -28,12 +34,16 @@ These are **formal, exact** statements about the explicit certificate data.
 - **No full‑model claim:** this is a head‑level certificate; it does not imply end‑to‑end model
   behavior.
 - **Input‑specific:** guarantees apply only to the specified inputs / token patterns.
-- **Untrusted semantics:** unless you pass `--tokens`, the `prev` and `active` sets are not
-  verified against a token sequence.
+- **Untrusted semantics:** unless you pass `--tokens`, the token sequence is not verified. For
+  `kind onehot-approx`, this means `prev`/`active` are unchecked against tokens; for
+  `kind induction-aligned`, only the periodic prompt is checked.
 - **Direction is untrusted:** `direction-target` / `direction-negative` are supplied metadata.
 
 ## Optional token verification
 
-If you provide a token list to the CLI (`--tokens`), the checker verifies that `prev` and `active`
-match **previous‑occurrence semantics** for that token sequence. This strengthens the link to the
-induction‑head diagnostic while keeping the trusted checker lightweight.
+If you provide a token list to the CLI (`--tokens`), the checker verifies:
+- `kind onehot-approx`: `prev`/`active` match **previous‑occurrence semantics**.
+- `kind induction-aligned`: the token sequence is periodic with the declared `period`.
+
+This strengthens the link to the induction‑head diagnostic while keeping the trusted checker
+lightweight.

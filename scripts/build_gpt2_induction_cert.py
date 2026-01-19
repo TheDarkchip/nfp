@@ -5,7 +5,7 @@
 Build an induction-head certificate for a GPT-2-small induction head.
 
 This script is untrusted and uses floating-point arithmetic to produce a
-rational induction-head certificate compatible with `nfp induction certify`.
+rational induction-head certificate compatible with `nfp induction verify`.
 Active induction positions are recorded as `active <q>` lines in the output.
 All sequence indices in the certificate are 0-based (file-format convention).
 
@@ -33,6 +33,10 @@ Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
 Layer/head indices are 0-based in the CLI to match the literature.
 Direction token IDs use the model's raw tokenizer indexing.
+
+To emit an induction-aligned certificate, pass:
+  --kind induction-aligned
+which adds a `period` entry (set to `--pattern-length`).
 """
 
 import argparse
@@ -119,10 +123,14 @@ def compute_scores_weights(model, input_ids, layer: int, head: int, device: str)
 
 
 def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=None, margin=None,
-                 active=None):
+                 active=None, kind: str = "onehot-approx", period: int | None = None):
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
-        f.write("kind onehot-approx\n")
+        f.write(f"kind {kind}\n")
+        if kind == "induction-aligned":
+            if period is None:
+                raise ValueError("period is required for induction-aligned certificates")
+            f.write(f"period {period}\n")
         if eps is not None:
             f.write(f"eps {rat_to_str(eps)}\n")
         if margin is not None:
@@ -141,12 +149,17 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
 
 def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights,
                          eps, margin, active, eps_at, weight_bound_at,
-                         vals, direction_target=None, direction_negative=None) -> None:
+                         vals, direction_target=None, direction_negative=None,
+                         kind: str = "onehot-approx", period: int | None = None) -> None:
     lo = min(vals)
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {seq}\n")
-        f.write("kind onehot-approx\n")
+        f.write(f"kind {kind}\n")
+        if kind == "induction-aligned":
+            if period is None:
+                raise ValueError("period is required for induction-aligned certificates")
+            f.write(f"period {period}\n")
         if direction_target is not None and direction_negative is not None:
             f.write(f"direction-target {direction_target}\n")
             f.write(f"direction-negative {direction_negative}\n")
@@ -299,6 +312,9 @@ def main() -> None:
     parser.add_argument("--pattern-length", type=int, default=16, help="Pattern length")
     parser.add_argument("--random-pattern", action="store_true", help="Use random token pattern")
     parser.add_argument("--seed", type=int, default=0, help="RNG seed for random pattern")
+    parser.add_argument("--kind", default="onehot-approx",
+                        choices=["onehot-approx", "induction-aligned"],
+                        help="Certificate kind (default: onehot-approx).")
     parser.add_argument("--decimals", type=int, default=6, help="Decimal rounding for rationals")
     parser.add_argument("--model", default="gpt2", help="HuggingFace model name")
     parser.add_argument("--device", default="cpu", help="Torch device")
@@ -332,6 +348,11 @@ def main() -> None:
 
     if args.seq <= 0:
         raise SystemExit("seq must be positive")
+    if args.kind == "induction-aligned":
+        if args.pattern_length <= 0:
+            raise SystemExit("pattern-length must be positive for induction-aligned")
+        if args.pattern_length >= args.seq:
+            raise SystemExit("pattern-length must be less than seq for induction-aligned")
 
     tokens = build_tokens(args.seq, args.pattern_length, args.random_pattern, args.seed)
     prev, active_mask = build_prev(tokens)
@@ -488,6 +509,7 @@ def main() -> None:
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    period = args.pattern_length if args.kind == "induction-aligned" else None
     write_induction_cert(
         output_path,
         args.seq,
@@ -502,13 +524,15 @@ def main() -> None:
         vals_rat,
         direction_target=direction_target,
         direction_negative=direction_negative,
+        kind=args.kind,
+        period=period,
     )
 
     if args.scores_out:
         scores_path = Path(args.scores_out)
         scores_path.parent.mkdir(parents=True, exist_ok=True)
         write_scores(scores_path, args.seq, prev, scores_rat, weights_rat,
-                     active=active_positions)
+                     active=active_positions, kind=args.kind, period=period)
 
     if args.values_out:
         values_path = Path(args.values_out)

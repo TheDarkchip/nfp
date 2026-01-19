@@ -43,7 +43,7 @@ This enforces a **non-vacuous** logit-diff lower bound and checks `prev/active`
 against the token list.
 
 ```bash
-lake exe nfp induction certify \
+lake exe nfp induction verify \
   --cert reports/gpt2_induction.cert \
   --min-logit-diff 1/10 \
   --tokens reports/gpt2_induction.tokens
@@ -52,10 +52,11 @@ lake exe nfp induction certify \
 Expected output (example):
 
 ```
-ok: induction head certificate checked (seq=32, active=15, margin=..., eps=..., logitDiffLB=...)
+ok: onehot-approx (proxy) certificate checked (seq=32, active=15, margin=..., eps=..., logitDiffLB=...)
 ```
 
 ## Notes
 
 - Everything in `scripts/` is **untrusted witness generation**.
 - The Lean CLI **only verifies** explicit certificates and token semantics.
+- To emit an induction-aligned certificate, add `--kind induction-aligned` when generating.

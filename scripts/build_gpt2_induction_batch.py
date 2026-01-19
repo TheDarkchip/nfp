@@ -33,6 +33,9 @@ def main() -> int:
     parser.add_argument("--min-margin", default="0")
     parser.add_argument("--model", default="gpt2")
     parser.add_argument("--device", default="cpu")
+    parser.add_argument("--kind", default="onehot-approx",
+                        choices=["onehot-approx", "induction-aligned"],
+                        help="Certificate kind (default: onehot-approx).")
     parser.add_argument("--search-direction", action="store_true")
     parser.add_argument("--direction-vocab-min", type=int, default=1000)
     parser.add_argument("--direction-vocab-max", type=int, default=2000)
@@ -82,6 +85,8 @@ def main() -> int:
             str(args.min_margin),
             "--tokens-out",
             str(tokens_path),
+            "--kind",
+            str(args.kind),
             "--model",
             str(args.model),
             "--device",
