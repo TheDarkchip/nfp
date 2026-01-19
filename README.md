@@ -118,7 +118,7 @@ lake exe nfp induction verify --cert reports/gpt2_induction.cert --min-logit-dif
 ### Verify a batch (trusted checker)
 
 ```bash
-lake exe nfp induction certifyBatch --batch reports/gpt2_induction.batch
+lake exe nfp induction verify --batch reports/gpt2_induction.batch
 ```
 
 Batch file format (all fields optional unless noted):
@@ -138,7 +138,7 @@ logit-diff lower bound across all items (requires direction metadata in each cer
 ### Verify a stripe certificate (trusted checker)
 
 ```bash
-lake exe nfp induction stripeCertify --cert reports/gpt2_stripe.cert
+lake exe nfp induction verify --stripe-cert reports/gpt2_stripe.cert
 ```
 
 Optional gates:
@@ -150,7 +150,7 @@ Optional gates:
 ### Verify a stripe batch (trusted checker)
 
 ```bash
-lake exe nfp induction stripeBatch --batch reports/gpt2_stripe.batch
+lake exe nfp induction verify --stripe-batch reports/gpt2_stripe.batch
 ```
 
 Stripe batch file format:
