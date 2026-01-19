@@ -60,4 +60,5 @@ ok: onehot-approx (proxy) certificate checked (seq=32, active=15, margin=..., ep
 - Everything in `scripts/` is **untrusted witness generation**.
 - The Lean CLI **only verifies** explicit certificates and token semantics.
 - To emit an induction-aligned certificate, add `--kind induction-aligned` when generating.
-  Induction-aligned verification uses stripe metrics (not softmax-margin/onehot gates).
+  Induction-aligned verification uses stripe and induction (next-token) metrics
+  (not softmax-margin/onehot gates).

@@ -51,6 +51,10 @@ structure BatchOpts where
   minStripeMean? : Option Rat
   /-- Optional per-item minimum stripe top1. -/
   minStripeTop1? : Option Rat
+  /-- Optional per-item minimum induction mean. -/
+  minInductionMean? : Option Rat
+  /-- Optional per-item minimum induction top1. -/
+  minInductionTop1? : Option Rat
   /-- Optional average logit-diff lower bound across items. -/
   minAvgLogitDiff? : Option Rat
 
@@ -70,6 +74,10 @@ structure ParseState where
   minStripeMean? : Option Rat
   /-- Optional per-item minimum stripe top1. -/
   minStripeTop1? : Option Rat
+  /-- Optional per-item minimum induction mean. -/
+  minInductionMean? : Option Rat
+  /-- Optional per-item minimum induction top1. -/
+  minInductionTop1? : Option Rat
   /-- Optional average logit-diff lower bound. -/
   minAvgLogitDiff? : Option Rat
 
@@ -82,6 +90,8 @@ def initState : ParseState :=
     maxEps? := none
     minStripeMean? := none
     minStripeTop1? := none
+    minInductionMean? := none
+    minInductionTop1? := none
     minAvgLogitDiff? := none }
 
 private def ratToString (x : Rat) : String :=
@@ -128,6 +138,16 @@ private def setOptRat (label : String) (st : ParseState) (val : Rat) :
         throw s!"duplicate {label} entry"
       else
         pure { st with minStripeTop1? := some val }
+  | "min-induction-mean" =>
+      if st.minInductionMean?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minInductionMean? := some val }
+  | "min-induction-top1" =>
+      if st.minInductionTop1?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minInductionTop1? := some val }
   | "min-avg-logit-diff" =>
       if st.minAvgLogitDiff?.isSome then
         throw s!"duplicate {label} entry"
@@ -156,6 +176,10 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
       setOptRat "min-stripe-mean" st (← parseRat v)
   | ["min-stripe-top1", v] =>
       setOptRat "min-stripe-top1" st (← parseRat v)
+  | ["min-induction-mean", v] =>
+      setOptRat "min-induction-mean" st (← parseRat v)
+  | ["min-induction-top1", v] =>
+      setOptRat "min-induction-top1" st (← parseRat v)
   | ["min-avg-logit-diff", v] =>
       setOptRat "min-avg-logit-diff" st (← parseRat v)
   | _ =>
@@ -168,6 +192,8 @@ private def finalizeOpts (st : ParseState) : BatchOpts :=
     maxEps := st.maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
     minStripeMean? := st.minStripeMean?
     minStripeTop1? := st.minStripeTop1?
+    minInductionMean? := st.minInductionMean?
+    minInductionTop1? := st.minInductionTop1?
     minAvgLogitDiff? := st.minAvgLogitDiff? }
 
 private def effectiveMinLogitDiff (minLogitDiff? : Option Rat)
@@ -202,6 +228,11 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let period? := payload.period?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
+          if kind = "onehot-approx" then
+            if opts.minStripeMean?.isSome || opts.minStripeTop1?.isSome ||
+                opts.minInductionMean?.isSome || opts.minInductionTop1?.isSome then
+              return Except.error
+                "stripe/induction thresholds are not used for onehot-approx"
           if kind = "induction-aligned" then
             let period ←
               match period? with
@@ -284,19 +315,33 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 weights := cert.weights }
             let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
             let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
-            match stripeMean?, stripeTop1? with
-            | some mean, some top1 =>
-                if let some minMean := opts.minStripeMean? then
-                  if mean < minMean then
-                    return Except.error
-                      s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
-                if let some minTop1 := opts.minStripeTop1? then
-                  if top1 < minTop1 then
-                    return Except.error
-                      s!"stripe-top1 {ratToString top1} below minimum {ratToString minTop1}"
+            let indMean? :=
+              InductionHeadCert.inductionMean (seq := seq) period cert.weights
+            let indTop1? :=
+              InductionHeadCert.inductionTop1 (seq := seq) period cert.weights
+            match stripeMean?, stripeTop1?, indMean?, indTop1? with
+            | some mean, some top1, some indMean, some indTop1 =>
+                let defaultMean : Rat := Rat.divInt 1 1000
+                let defaultTop1 : Rat := 0
+                let minMean := opts.minStripeMean?.getD defaultMean
+                let minTop1 := opts.minStripeTop1?.getD defaultTop1
+                let minIndMean := opts.minInductionMean?.getD defaultMean
+                let minIndTop1 := opts.minInductionTop1?.getD defaultMean
+                if mean < minMean then
+                  return Except.error
+                    s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
+                if top1 < minTop1 then
+                  return Except.error
+                    s!"stripe-top1 {ratToString top1} below minimum {ratToString minTop1}"
+                if indMean < minIndMean then
+                  return Except.error
+                    s!"induction-mean {ratToString indMean} below minimum {ratToString minIndMean}"
+                if indTop1 < minIndTop1 then
+                  return Except.error
+                    s!"induction-top1 {ratToString indTop1} below minimum {ratToString minIndTop1}"
                 return Except.ok none
-            | _, _ =>
-                return Except.error "empty active set for stripe stats"
+            | _, _, _, _ =>
+                return Except.error "empty active set for induction stats"
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
           let logitDiffLB? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt

@@ -9,7 +9,8 @@ It is intentionally brief and focused on the soundness boundary.
   run model evaluation.
 - Induction certificates are **head-level** (softmax-margin + value-interval + logit-diff lower
   bound) and conditional on the supplied `prev`, `active`, and `direction` inputs. For
-  `kind induction-aligned`, the checker instead evaluates stripe-mean/top1 on the full period.
+  `kind induction-aligned`, the checker instead evaluates stripe-mean/top1 and
+  induction-mean/top1 on the full period.
   These do **not** yet imply full model behavior.
 - Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
   unembedding columns represent token logits.

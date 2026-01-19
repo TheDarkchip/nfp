@@ -42,7 +42,7 @@ look back by one period (`q -> q - period`). The diagnostic script
 `scripts/diagnose_induction_heads.py` mirrors this setup, and the certificate
 generator uses repeated patterns for its inputs. For `kind induction-aligned`,
 Lean additionally checks that `active`/`prev` match the declared `period` and
-evaluates stripe-mean/top1 on the full second repeat.
+evaluates stripe-mean/top1 and induction-mean/top1 on the full second repeat.
 
 ## Preconditions and scope limits
 

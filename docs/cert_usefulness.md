@@ -14,8 +14,9 @@ If the Lean checker accepts a certificate, then:
   specified active queries; value‑interval bounds hold; and a logit‑diff lower bound is verified
   if `--min-logit-diff` is used with direction metadata.
 - **Kind `induction-aligned`:** the periodic prompt semantics hold (`active`/`prev` match the
-  declared period) and stripe‑mean/top1 are evaluated on the full second repeat (gated by
-  `--min-stripe-mean` / `--min-stripe-top1` if provided).
+  declared period) and stripe‑mean/top1 plus induction‑mean/top1 are evaluated on the full
+  second repeat (gated by `--min-stripe-*` / `--min-induction-*`, with small non-zero defaults
+  for mean metrics and a zero default for stripe-top1).
 
 These are **formal, exact** statements about the explicit certificate data.
 
@@ -32,8 +33,8 @@ These are **formal, exact** statements about the explicit certificate data.
 - **No full‑model claim:** this is a head‑level certificate; it does not imply end‑to‑end model
   behavior.
 - **Input‑specific:** guarantees apply only to the specified inputs / token patterns.
-- **No onehot bounds for induction‑aligned:** stripe metrics do not certify one‑hot attention or
-  positive score margins on every query.
+- **No onehot bounds for induction‑aligned:** stripe/induction metrics do not certify one‑hot
+  attention or positive score margins on every query.
 - **Untrusted semantics:** unless you pass `--tokens`, the token sequence is not verified. For
   `kind onehot-approx`, this means `prev`/`active` are unchecked against tokens; for
   `kind induction-aligned`, only the periodic prompt is checked (not actual token periodicity).

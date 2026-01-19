@@ -47,6 +47,8 @@ def main() -> int:
     parser.add_argument("--max-eps", default=None)
     parser.add_argument("--min-stripe-mean", default=None)
     parser.add_argument("--min-stripe-top1", default=None)
+    parser.add_argument("--min-induction-mean", default=None)
+    parser.add_argument("--min-induction-top1", default=None)
     args = parser.parse_args()
 
     out_dir: Path = args.out_dir
@@ -137,6 +139,10 @@ def main() -> int:
         lines.append(f"min-stripe-mean {args.min_stripe_mean}")
     if args.min_stripe_top1 is not None:
         lines.append(f"min-stripe-top1 {args.min_stripe_top1}")
+    if args.min_induction_mean is not None:
+        lines.append(f"min-induction-mean {args.min_induction_mean}")
+    if args.min_induction_top1 is not None:
+        lines.append(f"min-induction-top1 {args.min_induction_top1}")
     for cert_path, tokens_path in items:
         lines.append(f"item {cert_path} {tokens_path}")
 
