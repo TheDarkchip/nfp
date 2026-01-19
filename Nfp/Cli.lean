@@ -29,38 +29,6 @@ def versionCmd : Cmd := `[Cli|
   "Print the NFP version."
 ]
 
-private def runInductionCertifySimple (p : Parsed) : IO UInt32 := do
-  Nfp.IO.warnDeprecated "`induction certify` is deprecated; use `induction verify` instead."
-  let certPath? := (p.flag? "cert").map (·.as! String)
-  let minActive? := (p.flag? "min-active").map (·.as! Nat)
-  let minLogitDiffStr? := (p.flag? "min-logit-diff").map (·.as! String)
-  let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
-  let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
-  let tokensPath? := (p.flag? "tokens").map (·.as! String)
-  let fail (msg : String) : IO UInt32 := do
-    IO.eprintln s!"error: {msg}"
-    return 2
-  match certPath? with
-  | none => fail "provide --cert"
-  | some certPath =>
-      IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr? tokensPath?
-
-/-- `nfp induction certify` subcommand (streamlined). -/
-def inductionCertifySimpleCmd : Cmd := `[Cli|
-  certify VIA runInductionCertifySimple;
-  "Check induction head certificates from an explicit cert. (DEPRECATED: use verify)"
-  FLAGS:
-    cert : String; "Path to the induction head certificate file."
-    tokens : String; "Optional path to a token list to verify prev/active."
-    "min-active" : Nat; "Optional minimum number of active queries required \
-                          (default: max 1 (seq/8))."
-    "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
-                                (rational literal; default: 0)."
-    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
-    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
-]
-
 private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let certPath? := (p.flag? "cert").map (·.as! String)
   let minActive? := (p.flag? "min-active").map (·.as! Nat)
@@ -156,7 +124,6 @@ def inductionCmd : Cmd := `[Cli|
   "Induction-head utilities (streamlined)."
   SUBCOMMANDS:
     inductionVerifySimpleCmd;
-    inductionCertifySimpleCmd;
     inductionCertifyBatchCmd;
     inductionStripeCertifyCmd;
     inductionStripeBatchCmd
