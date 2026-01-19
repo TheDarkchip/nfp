@@ -10,14 +10,12 @@ Two certificate kinds are supported:
 ## What the certificate **does** guarantee
 
 If the Lean checker accepts a certificate, then:
-- **Softmax‑margin bounds** hold on the specified active queries (the `prev` score dominates other
-  keys by the declared margin).
-- **One‑hot‑style weight bounds** hold on those queries (non‑`prev` weights are bounded by `ε`).
-- **Value‑interval bounds** hold for the supplied value ranges.
-- **Logit‑diff lower bound** holds for the supplied direction (if direction metadata is present
-  and the checker is run with `--min-logit-diff`).
-- **Induction‑aligned prompt check** (only for `kind induction-aligned`): `active` and `prev`
-  must match the declared periodic prompt.
+- **Kind `onehot-approx`:** softmax‑margin bounds and one‑hot‑style weight bounds hold on the
+  specified active queries; value‑interval bounds hold; and a logit‑diff lower bound is verified
+  if `--min-logit-diff` is used with direction metadata.
+- **Kind `induction-aligned`:** the periodic prompt semantics hold (`active`/`prev` match the
+  declared period) and stripe‑mean/top1 are evaluated on the full second repeat (gated by
+  `--min-stripe-mean` / `--min-stripe-top1` if provided).
 
 These are **formal, exact** statements about the explicit certificate data.
 
@@ -34,9 +32,11 @@ These are **formal, exact** statements about the explicit certificate data.
 - **No full‑model claim:** this is a head‑level certificate; it does not imply end‑to‑end model
   behavior.
 - **Input‑specific:** guarantees apply only to the specified inputs / token patterns.
+- **No onehot bounds for induction‑aligned:** stripe metrics do not certify one‑hot attention or
+  positive score margins on every query.
 - **Untrusted semantics:** unless you pass `--tokens`, the token sequence is not verified. For
   `kind onehot-approx`, this means `prev`/`active` are unchecked against tokens; for
-  `kind induction-aligned`, only the periodic prompt is checked.
+  `kind induction-aligned`, only the periodic prompt is checked (not actual token periodicity).
 - **Direction is untrusted:** `direction-target` / `direction-negative` are supplied metadata.
 
 ## Optional token verification

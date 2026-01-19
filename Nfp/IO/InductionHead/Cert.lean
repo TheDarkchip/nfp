@@ -7,6 +7,7 @@ public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.Parse.Basic
+public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Model.InductionPrompt
 
@@ -16,7 +17,7 @@ Untrusted parsing and checking for explicit induction-head certificates.
 All sequence indices in the certificate payload are 0-based (file-format convention) and
 are converted to `Fin` indices internally. Supported certificate kinds:
 - `kind onehot-approx` (proxy bounds only)
-- `kind induction-aligned` (requires an explicit `period` entry)
+- `kind induction-aligned` (requires `period` and checks stripe metrics)
 -/
 
 public section
@@ -398,21 +399,31 @@ private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat)
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (tokensPath? : Option String) : IO UInt32 := do
+    (tokensPath? : Option String)
+    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
-  match minLogitDiff?E, minMargin?E, maxEps?E with
-  | Except.error msg, _, _ =>
+  let minStripeMean?E := parseRatOpt "min-stripe-mean" minStripeMeanStr?
+  let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
+  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
+  | Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, Except.error msg, _ =>
+  | _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, Except.error msg =>
+  | _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps? =>
+  | _, _, _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | _, _, _, _, Except.error msg =>
+      IO.eprintln s!"error: {msg}"
+      return 2
+  | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
+      Except.ok minStripeMean?, Except.ok minStripeTop1? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsed ← loadInductionHeadCert certPath
@@ -433,10 +444,6 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let period? := payload.period?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
-                return 2
-              let ok := Circuit.checkInductionHeadCert cert
-              if !ok then
-                IO.eprintln "error: induction-head certificate rejected"
                 return 2
               if kind = "induction-aligned" then
                 let period ←
@@ -461,6 +468,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if !prevOk then
                   IO.eprintln "error: prev map does not match induction-aligned period"
                   return 2
+                if minLogitDiffStr?.isSome || minMarginStr?.isSome || maxEpsStr?.isSome then
+                  IO.eprintln
+                    "error: min-logit-diff/min-margin/max-eps are not used for induction-aligned"
+                  return 2
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
               let minActive := minActive?.getD defaultMinActive
@@ -468,16 +479,21 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 IO.eprintln
                   s!"error: active queries {activeCount} below minimum {minActive}"
                 return 2
-              if cert.margin < minMargin then
-                IO.eprintln
-                  s!"error: margin {ratToString cert.margin} \
-                  below minimum {ratToString minMargin}"
-                return 2
-              if maxEps < cert.eps then
-                IO.eprintln
-                  s!"error: eps {ratToString cert.eps} \
-                  above maximum {ratToString maxEps}"
-                return 2
+              if kind = "onehot-approx" then
+                let ok := Circuit.checkInductionHeadCert cert
+                if !ok then
+                  IO.eprintln "error: induction-head certificate rejected"
+                  return 2
+                if cert.margin < minMargin then
+                  IO.eprintln
+                    s!"error: margin {ratToString cert.margin} \
+                    below minimum {ratToString minMargin}"
+                  return 2
+                if maxEps < cert.eps then
+                  IO.eprintln
+                    s!"error: eps {ratToString cert.eps} \
+                    above maximum {ratToString maxEps}"
+                  return 2
               if let some tokensPath := tokensPath? then
                 let tokensParsed ← loadInductionHeadTokens tokensPath
                 match tokensParsed with
@@ -517,6 +533,42 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       IO.eprintln
                         s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
                       return 2
+              if kind = "induction-aligned" then
+                let period ←
+                  match period? with
+                  | some v => pure v
+                  | none =>
+                      IO.eprintln "error: missing period entry for induction-aligned"
+                      return 2
+                let stripeCert : Stripe.StripeCert seq :=
+                  { period := period
+                    stripeMeanLB := 0
+                    stripeTop1LB := 0
+                    weights := cert.weights }
+                let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
+                let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
+                match stripeMean?, stripeTop1? with
+                | some mean, some top1 =>
+                    if let some minMean := minStripeMean? then
+                      if mean < minMean then
+                        IO.eprintln
+                          s!"error: stripe-mean {ratToString mean} below minimum \
+                          {ratToString minMean}"
+                        return 2
+                    if let some minTop1 := minStripeTop1? then
+                      if top1 < minTop1 then
+                        IO.eprintln
+                          s!"error: stripe-top1 {ratToString top1} below minimum \
+                          {ratToString minTop1}"
+                        return 2
+                    IO.println
+                      s!"ok: induction-aligned certificate checked \
+                      (seq={seq}, active={activeCount}, \
+                      stripeMean={ratToString mean}, stripeTop1={ratToString top1})"
+                    return 0
+                | _, _ =>
+                    IO.eprintln "error: empty active set for stripe stats"
+                    return 2
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
                 | some v, _ => some v
@@ -524,8 +576,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | none, none => none
               match effectiveMinLogitDiff with
               | none =>
-                  let kindLabel :=
-                    if kind = "onehot-approx" then "onehot-approx (proxy)" else kind
+                  let kindLabel := "onehot-approx (proxy)"
                   IO.println
                     s!"ok: {kindLabel} certificate checked \
                     (seq={seq}, active={activeCount}, \
@@ -546,8 +597,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           below minimum {ratToString minLogitDiff}"
                         return 2
                       else
-                        let kindLabel :=
-                          if kind = "onehot-approx" then "onehot-approx (proxy)" else kind
+                        let kindLabel := "onehot-approx (proxy)"
                         IO.println
                           s!"ok: {kindLabel} certificate checked \
                           (seq={seq}, active={activeCount}, \

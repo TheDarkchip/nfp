@@ -6,6 +6,7 @@ public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.Circuit.Cert.ValueRange
 public import Nfp.IO.InductionHead.Cert
 public import Nfp.IO.Parse.Basic
+public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Model.InductionPrompt
 
@@ -14,7 +15,8 @@ Batch checking for induction-head certificates.
 
 The batch file lists certificate paths (and optional token lists) and applies the same
 verification checks to each. Sequence indices in per-cert/token payloads are 0-based.
-Both `kind onehot-approx` and `kind induction-aligned` are supported.
+Both `kind onehot-approx` and `kind induction-aligned` are supported; the latter
+uses stripe metrics instead of softmax-margin/onehot gates.
 -/
 
 public section
@@ -45,6 +47,10 @@ structure BatchOpts where
   minMargin : Rat
   /-- Maximum eps threshold. -/
   maxEps : Rat
+  /-- Optional per-item minimum stripe mean. -/
+  minStripeMean? : Option Rat
+  /-- Optional per-item minimum stripe top1. -/
+  minStripeTop1? : Option Rat
   /-- Optional average logit-diff lower bound across items. -/
   minAvgLogitDiff? : Option Rat
 
@@ -60,6 +66,10 @@ structure ParseState where
   minMargin? : Option Rat
   /-- Optional maximum eps threshold. -/
   maxEps? : Option Rat
+  /-- Optional per-item minimum stripe mean. -/
+  minStripeMean? : Option Rat
+  /-- Optional per-item minimum stripe top1. -/
+  minStripeTop1? : Option Rat
   /-- Optional average logit-diff lower bound. -/
   minAvgLogitDiff? : Option Rat
 
@@ -70,6 +80,8 @@ def initState : ParseState :=
     minLogitDiff? := none
     minMargin? := none
     maxEps? := none
+    minStripeMean? := none
+    minStripeTop1? := none
     minAvgLogitDiff? := none }
 
 private def ratToString (x : Rat) : String :=
@@ -106,6 +118,16 @@ private def setOptRat (label : String) (st : ParseState) (val : Rat) :
         throw s!"duplicate {label} entry"
       else
         pure { st with maxEps? := some val }
+  | "min-stripe-mean" =>
+      if st.minStripeMean?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minStripeMean? := some val }
+  | "min-stripe-top1" =>
+      if st.minStripeTop1?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minStripeTop1? := some val }
   | "min-avg-logit-diff" =>
       if st.minAvgLogitDiff?.isSome then
         throw s!"duplicate {label} entry"
@@ -130,6 +152,10 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
       setOptRat "min-margin" st (← parseRat v)
   | ["max-eps", v] =>
       setOptRat "max-eps" st (← parseRat v)
+  | ["min-stripe-mean", v] =>
+      setOptRat "min-stripe-mean" st (← parseRat v)
+  | ["min-stripe-top1", v] =>
+      setOptRat "min-stripe-top1" st (← parseRat v)
   | ["min-avg-logit-diff", v] =>
       setOptRat "min-avg-logit-diff" st (← parseRat v)
   | _ =>
@@ -140,6 +166,8 @@ private def finalizeOpts (st : ParseState) : BatchOpts :=
     minLogitDiff? := st.minLogitDiff?
     minMargin := st.minMargin?.getD (0 : Rat)
     maxEps := st.maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
+    minStripeMean? := st.minStripeMean?
+    minStripeTop1? := st.minStripeTop1?
     minAvgLogitDiff? := st.minAvgLogitDiff? }
 
 private def effectiveMinLogitDiff (minLogitDiff? : Option Rat)
@@ -174,8 +202,6 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let period? := payload.period?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
-          if !Circuit.checkInductionHeadCert cert then
-            return Except.error "induction-head certificate rejected"
           if kind = "induction-aligned" then
             let period ←
               match period? with
@@ -194,18 +220,25 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
             if !prevOk then
               return Except.error "prev map does not match induction-aligned period"
+            if opts.minLogitDiff?.isSome || opts.minAvgLogitDiff?.isSome ||
+                opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
+              return Except.error
+                "min-logit-diff/min-margin/max-eps are not used for induction-aligned"
           let activeCount := cert.active.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := opts.minActive?.getD defaultMinActive
           if activeCount < minActive then
             return Except.error
               s!"active queries {activeCount} below minimum {minActive}"
-          if cert.margin < opts.minMargin then
-            return Except.error
-              s!"margin {ratToString cert.margin} below minimum {ratToString opts.minMargin}"
-          if opts.maxEps < cert.eps then
-            return Except.error
-              s!"eps {ratToString cert.eps} above maximum {ratToString opts.maxEps}"
+          if kind = "onehot-approx" then
+            if !Circuit.checkInductionHeadCert cert then
+              return Except.error "induction-head certificate rejected"
+            if cert.margin < opts.minMargin then
+              return Except.error
+                s!"margin {ratToString cert.margin} below minimum {ratToString opts.minMargin}"
+            if opts.maxEps < cert.eps then
+              return Except.error
+                s!"eps {ratToString cert.eps} above maximum {ratToString opts.maxEps}"
           if let some tokensPath := item.tokensPath? then
             let tokensParsed ← loadInductionHeadTokens tokensPath
             match tokensParsed with
@@ -238,6 +271,32 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 else
                   return Except.error
                     s!"tokens seq {seqTokens} does not match cert seq {seq}"
+          if kind = "induction-aligned" then
+            let period ←
+              match period? with
+              | some v => pure v
+              | none =>
+                  return Except.error "missing period entry for induction-aligned"
+            let stripeCert : Stripe.StripeCert seq :=
+              { period := period
+                stripeMeanLB := 0
+                stripeTop1LB := 0
+                weights := cert.weights }
+            let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
+            let stripeTop1? := Stripe.stripeTop1 (seq := seq) stripeCert
+            match stripeMean?, stripeTop1? with
+            | some mean, some top1 =>
+                if let some minMean := opts.minStripeMean? then
+                  if mean < minMean then
+                    return Except.error
+                      s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
+                if let some minTop1 := opts.minStripeTop1? then
+                  if top1 < minTop1 then
+                    return Except.error
+                      s!"stripe-top1 {ratToString top1} below minimum {ratToString minTop1}"
+                return Except.ok none
+            | _, _ =>
+                return Except.error "empty active set for stripe stats"
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
           let logitDiffLB? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt

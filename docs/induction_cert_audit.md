@@ -41,7 +41,8 @@ repeated-token sequences (a pattern repeated twice) and attention stripes that
 look back by one period (`q -> q - period`). The diagnostic script
 `scripts/diagnose_induction_heads.py` mirrors this setup, and the certificate
 generator uses repeated patterns for its inputs. For `kind induction-aligned`,
-Lean additionally checks that `active`/`prev` match the declared `period`.
+Lean additionally checks that `active`/`prev` match the declared `period` and
+evaluates stripe-mean/top1 on the full second repeat.
 
 ## Preconditions and scope limits
 
@@ -54,7 +55,7 @@ Key assumptions and limitations:
 - `prev`, `active`, and `direction` are user-supplied or produced by untrusted
   scripts. For `kind onehot-approx`, Lean does not (yet) verify their derivation
   from token-level semantics; for `kind induction-aligned`, it checks that
-  `prev`/`active` match the declared periodic prompt.
+  `prev`/`active` match the declared periodic prompt and applies stripe metrics.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
 

@@ -54,7 +54,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   match certPath?, batchPath?, stripeCertPath?, stripeBatchPath? with
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr? tokensPath?
+        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -78,10 +78,14 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
                                 (rational literal; default: 0)."
-    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0)."
-    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2)."
-    "min-stripe-mean" : String; "Optional minimum stripe-mean (rational literal)."
-    "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal)."
+    "min-margin" : String; "Optional minimum score margin (rational literal; default: 0). \
+                             Applies to onehot-approx only."
+    "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2). \
+                          Applies to onehot-approx only."
+    "min-stripe-mean" : String; "Optional minimum stripe-mean (rational literal). \
+                                 Applies to induction-aligned or stripe certs."
+    "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
+                                 Applies to induction-aligned or stripe certs."
 ]
 
 

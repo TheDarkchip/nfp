@@ -406,15 +406,18 @@ def main() -> None:
 
     eps_threshold = Fraction(args.active_eps_max)
     min_margin = Fraction(args.min_margin)
-    active_positions = [
-        q for q in candidate_positions
-        if eps_by_q[q] <= eps_threshold and margin_by_q[q] >= min_margin
-    ]
-    if not active_positions:
-        raise SystemExit(
-            "No active positions satisfy active-eps-max/min-margin. "
-            "Try a different head/layer, random-pattern/seed, or relax the thresholds."
-        )
+    if args.kind == "induction-aligned":
+        active_positions = [q for q in range(args.seq) if q >= args.pattern_length]
+    else:
+        active_positions = [
+            q for q in candidate_positions
+            if eps_by_q[q] <= eps_threshold and margin_by_q[q] >= min_margin
+        ]
+        if not active_positions:
+            raise SystemExit(
+                "No active positions satisfy active-eps-max/min-margin. "
+                "Try a different head/layer, random-pattern/seed, or relax the thresholds."
+            )
     if active_positions:
         eps = max(eps_by_q[q] for q in active_positions)
         margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))

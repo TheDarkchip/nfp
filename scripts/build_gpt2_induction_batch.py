@@ -45,6 +45,8 @@ def main() -> int:
     parser.add_argument("--min-avg-logit-diff", default=None)
     parser.add_argument("--min-active", type=int, default=None)
     parser.add_argument("--max-eps", default=None)
+    parser.add_argument("--min-stripe-mean", default=None)
+    parser.add_argument("--min-stripe-top1", default=None)
     args = parser.parse_args()
 
     out_dir: Path = args.out_dir
@@ -131,6 +133,10 @@ def main() -> int:
         lines.append(f"min-avg-logit-diff {args.min_avg_logit_diff}")
     if args.max_eps is not None:
         lines.append(f"max-eps {args.max_eps}")
+    if args.min_stripe_mean is not None:
+        lines.append(f"min-stripe-mean {args.min_stripe_mean}")
+    if args.min_stripe_top1 is not None:
+        lines.append(f"min-stripe-top1 {args.min_stripe_top1}")
     for cert_path, tokens_path in items:
         lines.append(f"item {cert_path} {tokens_path}")
 

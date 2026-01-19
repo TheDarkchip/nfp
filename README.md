@@ -115,6 +115,7 @@ Optional gates:
 
 ```
 --min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
+--min-stripe-mean <rat>   --min-stripe-top1 <rat>
 ```
 
 The CLI reports the certificate kind in its success message (e.g., `onehot-approx (proxy)`
@@ -123,6 +124,10 @@ or `induction-aligned`).
 If `--tokens` is provided, the CLI verifies:
 - `kind onehot-approx`: `prev`/`active` match previous-occurrence semantics.
 - `kind induction-aligned`: the token sequence is periodic with the declared `period`.
+
+For `kind induction-aligned`, the checker uses **stripe metrics** (not softmax-margin/onehot)
+and honors `--min-stripe-mean` / `--min-stripe-top1`. The `min-margin`, `max-eps`, and
+`min-logit-diff` gates apply only to `onehot-approx`.
 
 Example non-vacuous check:
 
@@ -143,6 +148,8 @@ min-active <n>
 min-logit-diff <rat>
 min-margin <rat>
 max-eps <rat>
+min-stripe-mean <rat>
+min-stripe-top1 <rat>
 min-avg-logit-diff <rat>
 item <cert_path> [tokens_path]
 ```
@@ -211,7 +218,7 @@ elsewhere in the tooling are **0-based** to match the literature. Direction toke
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
 appear, the checker defaults to all non-initial queries (indices 1.. in 0-based indexing).
 For `kind induction-aligned`, the checker additionally verifies that `active` and `prev` match
-the periodic prompt defined by `period`.
+the periodic prompt defined by `period` and evaluates stripe-mean/top1 on the full period.
 
 ### Stripe-attention certificate
 
