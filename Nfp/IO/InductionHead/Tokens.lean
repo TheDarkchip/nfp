@@ -28,18 +28,15 @@ structure ParseState (seq : Nat) where
 def initState (seq : Nat) : ParseState seq :=
   { tokens := Array.replicate seq none }
 
-private def toIndex1 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
-  if idx = 0 then
-    throw s!"{label} index must be >= 1"
-  let idx' := idx - 1
-  if h : idx' < seq then
-    return ⟨idx', h⟩
+private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
+  if h : idx < seq then
+    return ⟨idx, h⟩
   else
     throw s!"{label} index out of range: {idx}"
 
 private def setToken {seq : Nat} (st : ParseState seq) (q tok : Nat) :
     Except String (ParseState seq) := do
-  let qFin ← toIndex1 (seq := seq) "q" q
+  let qFin ← toIndex0 (seq := seq) "q" q
   match st.tokens[qFin.1]! with
   | some _ =>
       throw s!"duplicate token entry for q={q}"

@@ -13,7 +13,7 @@ public import Nfp.Model.InductionPrompt
 /-!
 Untrusted parsing and checking for explicit induction-head certificates.
 
-All sequence indices in the certificate payload are 1-based (literature convention) and
+All sequence indices in the certificate payload are 0-based (file-format convention) and
 are converted to `Fin` indices internally.
 -/
 
@@ -83,18 +83,15 @@ def initState (seq : Nat) : ParseState seq :=
     directionTarget := none
     directionNegative := none }
 
-private def toIndex1 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
-  if idx = 0 then
-    throw s!"{label} index must be >= 1"
-  let idx' := idx - 1
-  if h : idx' < seq then
-    return ⟨idx', h⟩
+private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
+  if h : idx < seq then
+    return ⟨idx, h⟩
   else
     throw s!"{label} index out of range: {idx}"
 
 private def setActive {seq : Nat} (st : ParseState seq) (q : Nat) :
     Except String (ParseState seq) := do
-  let qFin ← toIndex1 (seq := seq) "q" q
+  let qFin ← toIndex0 (seq := seq) "q" q
   if qFin ∈ st.active then
     throw s!"duplicate active entry for q={q}"
   else
@@ -102,8 +99,8 @@ private def setActive {seq : Nat} (st : ParseState seq) (q : Nat) :
 
 private def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) :
     Except String (ParseState seq) := do
-  let qFin ← toIndex1 (seq := seq) "q" q
-  let kFin ← toIndex1 (seq := seq) "k" k
+  let qFin ← toIndex0 (seq := seq) "q" q
+  let kFin ← toIndex0 (seq := seq) "k" k
   match st.prev[qFin.1]! with
   | some _ =>
       throw s!"duplicate prev entry for q={q}"
@@ -113,7 +110,7 @@ private def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) :
 
 private def setVecEntry {seq : Nat} (arr : Array (Option Rat)) (idx : Nat) (v : Rat) :
     Except String (Array (Option Rat)) := do
-  let kFin ← toIndex1 (seq := seq) "k" idx
+  let kFin ← toIndex0 (seq := seq) "k" idx
   match arr[kFin.1]! with
   | some _ =>
       throw s!"duplicate entry for k={idx}"
@@ -122,8 +119,8 @@ private def setVecEntry {seq : Nat} (arr : Array (Option Rat)) (idx : Nat) (v : 
 
 private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
     (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
-  let qFin ← toIndex1 (seq := seq) "q" q
-  let kFin ← toIndex1 (seq := seq) "k" k
+  let qFin ← toIndex0 (seq := seq) "q" q
+  let kFin ← toIndex0 (seq := seq) "k" k
   let row := mat[qFin.1]!
   match row[kFin.1]! with
   | some _ =>

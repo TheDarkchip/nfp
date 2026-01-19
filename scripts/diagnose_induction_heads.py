@@ -10,7 +10,7 @@ This mirrors the common literature setup:
 - rank heads by induction stripe attention (q -> q - period),
 - rank heads by previous-token attention (q -> q - 1).
 
-Layer/head indices in the report are 1-based to match the literature.
+Layer/head indices in the report are 0-based to match the literature.
 """
 
 from __future__ import annotations
@@ -159,18 +159,18 @@ def main() -> int:
         )
         f.write("\nTop induction stripe heads:\n")
         for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
-            f.write(f"{rank:02d} L{layer+1}H{head+1} stripeMean={mean:.6f} stripeTop1={top1:.3f}\n")
+            f.write(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}\n")
         f.write("\nTop previous-token heads:\n")
         for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
-            f.write(f"{rank:02d} L{layer+1}H{head+1} prevMean={mean:.6f} prevTop1={top1:.3f}\n")
+            f.write(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}\n")
 
     print(f"Wrote report to {args.output}")
     print("\nTop induction stripe heads:")
     for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
-        print(f"{rank:02d} L{layer+1}H{head+1} stripeMean={mean:.6f} stripeTop1={top1:.3f}")
+        print(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}")
     print("\nTop previous-token heads:")
     for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
-        print(f"{rank:02d} L{layer+1}H{head+1} prevMean={mean:.6f} prevTop1={top1:.3f}")
+        print(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}")
 
     return 0
 

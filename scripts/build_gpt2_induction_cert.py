@@ -7,14 +7,14 @@ Build an induction-head certificate for a GPT-2-small induction head.
 This script is untrusted and uses floating-point arithmetic to produce a
 rational induction-head certificate compatible with `nfp induction certify`.
 Active induction positions are recorded as `active <q>` lines in the output.
-All sequence indices in the certificate are 1-based (literature convention).
+All sequence indices in the certificate are 0-based (file-format convention).
 
 The repeated-pattern inputs match the standard induction-head diagnostic setup
 from the literature (pattern repeated twice).
 
 Usage:
   python scripts/build_gpt2_induction_cert.py --output reports/gpt2_induction.cert \
-    --layer 1 --head 6 --seq 32 --pattern-length 16 \
+    --layer 0 --head 5 --seq 32 --pattern-length 16 \
     --random-pattern --seed 0 \
     --values-out reports/gpt2_induction.values --value-dim 0 \
     --active-eps-max 0.2 --min-margin 0
@@ -31,7 +31,7 @@ Optional token dump (for Lean-side prev/active verification):
 
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
-Layer/head indices are 1-based in the CLI and converted to 0-based internally.
+Layer/head indices are 0-based in the CLI to match the literature.
 Direction token IDs use the model's raw tokenizer indexing.
 """
 
@@ -128,15 +128,15 @@ def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=No
             f.write(f"margin {rat_to_str(margin)}\n")
         if active is not None:
             for q in active:
-                f.write(f"active {q + 1}\n")
+                f.write(f"active {q}\n")
         for q, k in enumerate(prev.tolist()):
-            f.write(f"prev {q + 1} {k + 1}\n")
+            f.write(f"prev {q} {k}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"score {q + 1} {k + 1} {rat_to_str(scores[q][k])}\n")
+                f.write(f"score {q} {k} {rat_to_str(scores[q][k])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight {q + 1} {k + 1} {rat_to_str(weights[q][k])}\n")
+                f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
 
 def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights,
                          eps, margin, active, eps_at, weight_bound_at,
@@ -152,27 +152,27 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
         f.write(f"margin {rat_to_str(margin)}\n")
         if active is not None:
             for q in active:
-                f.write(f"active {q + 1}\n")
+                f.write(f"active {q}\n")
         for q, k in enumerate(prev.tolist()):
-            f.write(f"prev {q + 1} {k + 1}\n")
+            f.write(f"prev {q} {k}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"score {q + 1} {k + 1} {rat_to_str(scores[q][k])}\n")
+                f.write(f"score {q} {k} {rat_to_str(scores[q][k])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight {q + 1} {k + 1} {rat_to_str(weights[q][k])}\n")
+                f.write(f"weight {q} {k} {rat_to_str(weights[q][k])}\n")
         for q in range(seq):
-            f.write(f"eps-at {q + 1} {rat_to_str(eps_at[q])}\n")
+            f.write(f"eps-at {q} {rat_to_str(eps_at[q])}\n")
         for q in range(seq):
             for k in range(seq):
-                f.write(f"weight-bound {q + 1} {k + 1} {rat_to_str(weight_bound_at[q][k])}\n")
+                f.write(f"weight-bound {q} {k} {rat_to_str(weight_bound_at[q][k])}\n")
         f.write(f"lo {rat_to_str(lo)}\n")
         f.write(f"hi {rat_to_str(hi)}\n")
         for k, val in enumerate(vals):
             val_str = rat_to_str(val)
-            f.write(f"val {k + 1} {val_str}\n")
-            f.write(f"val-lo {k + 1} {val_str}\n")
-            f.write(f"val-hi {k + 1} {val_str}\n")
+            f.write(f"val {k} {val_str}\n")
+            f.write(f"val-lo {k} {val_str}\n")
+            f.write(f"val-hi {k} {val_str}\n")
 
 
 def write_value_range(path: Path, seq: int, values, decimals: int,
@@ -188,14 +188,14 @@ def write_value_range(path: Path, seq: int, values, decimals: int,
         f.write(f"lo {rat_to_str(lo)}\n")
         f.write(f"hi {rat_to_str(hi)}\n")
         for k, val in enumerate(vals_rat):
-            f.write(f"val {k + 1} {rat_to_str(val)}\n")
+            f.write(f"val {k} {rat_to_str(val)}\n")
 
 
 def write_tokens(path: Path, tokens: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="ascii") as f:
         f.write(f"seq {len(tokens)}\n")
-        for idx, tok in enumerate(tokens.tolist(), start=1):
+        for idx, tok in enumerate(tokens.tolist()):
             f.write(f"token {idx} {tok}\n")
 
 def search_direction(
@@ -288,10 +288,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, help="Path to write certificate")
     parser.add_argument("--scores-out", help="Optional path for raw scores/weights dump")
-    parser.add_argument("--layer", type=int, default=1,
-                        help="Transformer layer index (1-based)")
-    parser.add_argument("--head", type=int, default=1,
-                        help="Attention head index (1-based)")
+    parser.add_argument("--layer", type=int, default=0,
+                        help="Transformer layer index (0-based)")
+    parser.add_argument("--head", type=int, default=0,
+                        help="Attention head index (0-based)")
     parser.add_argument("--seq", type=int, default=32, help="Sequence length")
     parser.add_argument("--pattern-length", type=int, default=16, help="Pattern length")
     parser.add_argument("--random-pattern", action="store_true", help="Use random token pattern")
@@ -334,18 +334,18 @@ def main() -> None:
     prev, active_mask = build_prev(tokens)
     candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
 
-    if args.layer <= 0:
-        raise SystemExit("layer must be >= 1")
-    if args.head <= 0:
-        raise SystemExit("head must be >= 1")
+    if args.layer < 0:
+        raise SystemExit("layer must be >= 0")
+    if args.head < 0:
+        raise SystemExit("head must be >= 0")
 
     model = GPT2Model.from_pretrained(args.model)
-    layer = args.layer - 1
-    head = args.head - 1
+    layer = args.layer
+    head = args.head
     if layer >= model.config.n_layer:
-        raise SystemExit(f"layer must be in [1, {model.config.n_layer}]")
+        raise SystemExit(f"layer must be in [0, {model.config.n_layer - 1}]")
     if head >= model.config.n_head:
-        raise SystemExit(f"head must be in [1, {model.config.n_head}]")
+        raise SystemExit(f"head must be in [0, {model.config.n_head - 1}]")
     model.to(args.device)
     input_ids = torch.tensor(tokens, dtype=torch.long, device=args.device).unsqueeze(0)
 

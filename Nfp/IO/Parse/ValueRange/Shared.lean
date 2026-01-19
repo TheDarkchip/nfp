@@ -8,7 +8,7 @@ public import Nfp.IO.Parse.Basic
 /-!
 Shared parsing helpers for value-range payloads.
 
-All sequence indices in the payload are 1-based (literature convention) and are converted to
+All sequence indices in the payload are 0-based (file-format convention) and are converted to
 `Fin` indices internally.
 -/
 
@@ -50,11 +50,8 @@ def initState (seq : Nat) : ParseState seq :=
 /-- Set a value entry from `(k, v)` tokens. -/
 def setVal {seq : Nat} (st : ParseState seq) (k : Nat) (v : Rat) :
     Except String (ParseState seq) := do
-  if k = 0 then
-    throw "value index must be >= 1"
-  let k' := k - 1
-  if hk : k' < seq then
-    let kFin : Fin seq := ⟨k', hk⟩
+  if hk : k < seq then
+    let kFin : Fin seq := ⟨k, hk⟩
     match st.vals kFin with
     | some _ =>
         throw s!"duplicate value entry for k={k}"

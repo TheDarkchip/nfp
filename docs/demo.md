@@ -23,7 +23,7 @@ non-vacuous logit-diff direction.
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --layer 0 --head 5 --seq 32 --pattern-length 16 \
   --random-pattern --seed 0 \
   --active-eps-max 1/2 \
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \

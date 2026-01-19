@@ -52,19 +52,19 @@ For a careful statement of what certificates do and do not claim, see
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --layer 0 --head 5 --seq 32 --pattern-length 16 \
   --random-pattern --seed 0 \
   --active-eps-max 1/2
 ```
 
-Layer/head indices in the generator are 1-based to match the literature.
+Layer/head indices in the generator are 0-based to match the literature.
 
 To certify a **non-vacuous** logit-diff lower bound, supply a direction:
 
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --layer 0 --head 5 --seq 32 --pattern-length 16 \
   --random-pattern --seed 0 \
   --active-eps-max 1/2 \
   --direction-target 1268 --direction-negative 1796
@@ -75,7 +75,7 @@ Or let the untrusted script search for a direction in a vocab slice:
 ```bash
 python scripts/build_gpt2_induction_cert.py \
   --output reports/gpt2_induction.cert \
-  --layer 1 --head 6 --seq 32 --pattern-length 16 \
+  --layer 0 --head 5 --seq 32 --pattern-length 16 \
   --random-pattern --seed 0 \
   --active-eps-max 1/2 \
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000 \
@@ -138,10 +138,11 @@ val-lo <k> <rat>
 val-hi <k> <rat>
 ```
 
-All sequence indices (`q`, `k`) are **1-based** (literature convention). Direction token IDs
+All sequence indices (`q`, `k`) are **0-based** (file-format convention). Layer/head indices
+elsewhere in the tooling are **0-based** to match the literature. Direction token IDs
 (`direction-target`, `direction-negative`) are raw model IDs (tokenizer convention).
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
-appear, the checker defaults to all non-initial queries (indices 2.. in 1-based indexing).
+appear, the checker defaults to all non-initial queries (indices 1.. in 0-based indexing).
 
 ### Direction report (untrusted)
 
@@ -162,8 +163,8 @@ token <q> <tok_id>
 ```
 
 This file is an **untrusted helper artifact** used to check that `prev` and `active` match the
-token sequence (previous-occurrence semantics) when `--tokens` is supplied to the CLI. Indices
-are 1-based.
+token sequence (previous-occurrence semantics) when `--tokens` is supplied to the CLI. Sequence
+indices are 0-based.
 
 ## Soundness boundary
 
