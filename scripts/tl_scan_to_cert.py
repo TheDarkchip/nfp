@@ -8,7 +8,8 @@ Workflow:
 - build a batch of repeated token sequences (pattern repeated twice),
 - score heads with the TransformerLens induction detection pattern ("mul" or "abs"),
 - write a TL score report,
-- generate Lean-verifiable certificates for top-K heads using the chosen tokens.
+- generate Lean-verifiable certificates for top-K heads across one or more prompts,
+- emit a batch file for `nfp induction verify --batch`.
 
 Certificates are produced by calling scripts/build_gpt2_induction_cert.py with --tokens-in.
 By default, the script emits induction-aligned certificates.
@@ -18,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -79,21 +81,17 @@ def write_tokens(path: Path, tokens: np.ndarray) -> None:
             f.write(f"token {idx} {tok}\n")
 
 
-def score_heads(
-    model: HookedTransformer,
+def score_heads_from_cache(
+    cache,
     input_ids: torch.Tensor,
     *,
+    num_layers: int,
+    num_heads: int,
     exclude_bos: bool,
     exclude_current_token: bool,
     error_measure: str,
 ) -> np.ndarray:
-    with torch.no_grad():
-        _, cache = model.run_with_cache(input_ids, remove_batch_dim=False)
-
-    num_layers = model.cfg.n_layers
-    num_heads = model.cfg.n_heads
     scores = np.zeros((num_layers, num_heads), dtype=np.float64)
-
     for b in range(input_ids.shape[0]):
         tokens = input_ids[b : b + 1]
         det_pat = head_detector.get_induction_head_detection_pattern(tokens.cpu()).to(input_ids.device)
@@ -108,8 +106,34 @@ def score_heads(
                     error_measure=error_measure,
                 )
                 scores[layer, head] += score
-
     scores /= input_ids.shape[0]
+    return scores
+
+
+def score_prompt_from_cache(
+    cache,
+    input_ids: torch.Tensor,
+    prompt_index: int,
+    *,
+    num_layers: int,
+    num_heads: int,
+    exclude_bos: bool,
+    exclude_current_token: bool,
+    error_measure: str,
+) -> np.ndarray:
+    scores = np.zeros((num_layers, num_heads), dtype=np.float64)
+    tokens = input_ids[prompt_index : prompt_index + 1]
+    det_pat = head_detector.get_induction_head_detection_pattern(tokens.cpu()).to(input_ids.device)
+    for layer in range(num_layers):
+        layer_attn = cache["pattern", layer, "attn"][prompt_index]
+        for head in range(num_heads):
+            scores[layer, head] = head_detector.compute_head_attention_similarity_score(
+                layer_attn[head],
+                detection_pattern=det_pat,
+                exclude_bos=exclude_bos,
+                exclude_current_token=exclude_current_token,
+                error_measure=error_measure,
+            )
     return scores
 
 
@@ -132,6 +156,13 @@ def main() -> int:
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--cert-dir", type=Path, default=Path("reports/tl_scan"))
     parser.add_argument("--report", type=Path, default=Path("reports/tl_scan/tl_scores.json"))
+    parser.add_argument("--batch-out", type=Path, default=Path("reports/tl_scan/tl_scan.batch"))
+    parser.add_argument("--batch-min-stripe-mean", default=None)
+    parser.add_argument("--batch-min-copying", default=None)
+    parser.add_argument("--batch-min-logit-diff", default=None)
+    parser.add_argument("--batch-min-margin", default=None)
+    parser.add_argument("--batch-max-eps", default=None)
+    parser.add_argument("--batch-min-active", default=None)
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -141,8 +172,10 @@ def main() -> int:
     parser.add_argument("--decimals", type=int, default=6)
     parser.add_argument("--active-eps-max", default="1/2")
     parser.add_argument("--min-margin", default="0")
-    parser.add_argument("--cert-index", type=int, default=0,
-                        help="Which batch item to use for certificates (0-based)")
+    parser.add_argument("--cert-prompts", type=int, default=1,
+                        help="How many prompts from the batch to certify (default: 1).")
+    parser.add_argument("--cert-indices", type=int, nargs="*",
+                        help="Optional explicit prompt indices to certify.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -173,17 +206,25 @@ def main() -> int:
         seq_len=args.seq_len,
     )
 
-    if args.cert_index < 0 or args.cert_index >= args.batch:
-        raise SystemExit("cert-index out of range")
+    if args.cert_prompts <= 0:
+        raise SystemExit("cert-prompts must be positive")
+    if args.cert_indices is not None and len(args.cert_indices) == 0:
+        raise SystemExit("cert-indices must be non-empty if provided")
 
     input_ids = torch.tensor(batch_tokens, dtype=torch.long, device=args.device)
 
     model = HookedTransformer.from_pretrained(args.model, device=args.device)
     model.eval()
+    with torch.no_grad():
+        _, cache = model.run_with_cache(input_ids, remove_batch_dim=False)
 
-    scores = score_heads(
-        model,
+    num_layers = model.cfg.n_layers
+    num_heads = model.cfg.n_heads
+    scores = score_heads_from_cache(
+        cache,
         input_ids,
+        num_layers=num_layers,
+        num_heads=num_heads,
         exclude_bos=args.exclude_bos,
         exclude_current_token=args.exclude_current_token,
         error_measure=args.error_measure,
@@ -192,28 +233,49 @@ def main() -> int:
     flat = [(float(scores[l, h]), l, h) for l in range(scores.shape[0]) for h in range(scores.shape[1])]
     flat.sort(key=lambda x: x[0], reverse=True)
 
-    cert_tokens = batch_tokens[args.cert_index]
-    cert_tokens_path = args.cert_dir / "tokens.txt"
-    if not args.dry_run:
-        write_tokens(cert_tokens_path, cert_tokens)
+    if args.cert_indices is None:
+        prompt_indices = list(range(min(args.cert_prompts, args.batch)))
+    else:
+        prompt_indices = args.cert_indices
+    for idx in prompt_indices:
+        if idx < 0 or idx >= args.batch:
+            raise SystemExit("cert-indices out of range for batch")
 
-    single_scores = score_heads(
-        model,
-        torch.tensor(cert_tokens, dtype=torch.long, device=args.device).unsqueeze(0),
-        exclude_bos=args.exclude_bos,
-        exclude_current_token=args.exclude_current_token,
-        error_measure=args.error_measure,
-    )
+    tokens_dir = args.cert_dir / "tokens"
+    tokens_dir.mkdir(parents=True, exist_ok=True)
+    prompt_tokens = {}
+    for idx in prompt_indices:
+        tokens_path = tokens_dir / f"prompt_{idx}.tokens"
+        prompt_tokens[idx] = tokens_path
+        if not args.dry_run:
+            write_tokens(tokens_path, batch_tokens[idx])
+
+    prompt_scores = {}
+    for idx in prompt_indices:
+        scores_prompt = score_prompt_from_cache(
+            cache,
+            input_ids,
+            idx,
+            num_layers=num_layers,
+            num_heads=num_heads,
+            exclude_bos=args.exclude_bos,
+            exclude_current_token=args.exclude_current_token,
+            error_measure=args.error_measure,
+        )
+        prompt_scores[idx] = scores_prompt
 
     report_entries = []
     for rank, (score, layer, head) in enumerate(flat[: args.top], start=1):
+        per_prompt = {}
+        for idx in prompt_indices:
+            per_prompt[str(idx)] = float(prompt_scores[idx][layer, head])
         report_entries.append(
             {
                 "rank": rank,
                 "layer": layer,
                 "head": head,
                 "score": score,
-                "score_single": float(single_scores[layer, head]),
+                "scores_by_prompt": per_prompt,
             }
         )
 
@@ -230,8 +292,9 @@ def main() -> int:
         "exclude_bos": args.exclude_bos,
         "exclude_current_token": args.exclude_current_token,
         "error_measure": args.error_measure,
-        "cert_index": args.cert_index,
-        "cert_tokens": str(cert_tokens_path),
+        "cert_indices": prompt_indices,
+        "cert_tokens": {str(k): str(v) for k, v in prompt_tokens.items()},
+        "batch_out": str(args.batch_out),
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -241,48 +304,73 @@ def main() -> int:
     if args.dry_run:
         return 0
 
+    batch_items = []
+    env = {**os.environ, "TOKENIZERS_PARALLELISM": "false"}
     for entry in report_entries:
         layer = entry["layer"]
         head = entry["head"]
-        cert_path = args.cert_dir / f"gpt2_induction_L{layer}H{head}.cert"
-        cmd = [
-            sys.executable,
-            "scripts/build_gpt2_induction_cert.py",
-            "--output",
-            str(cert_path),
-            "--layer",
-            str(layer),
-            "--head",
-            str(head),
-            "--seq",
-            str(args.seq_len),
-            "--pattern-length",
-            str(args.pattern_len),
-            "--tokens-in",
-            str(cert_tokens_path),
-            "--kind",
-            args.cert_kind,
-            "--decimals",
-            str(args.decimals),
-            "--model",
-            args.model,
-            "--device",
-            args.device,
-            "--active-eps-max",
-            str(args.active_eps_max),
-            "--min-margin",
-            str(args.min_margin),
-        ]
-        print(f"Building cert for L{layer}H{head}...")
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            print(result.stderr.strip())
-            print(result.stdout.strip())
-            print(f"warning: certificate failed for L{layer}H{head}")
-            continue
-        entry["cert_path"] = str(cert_path)
+        certs_for_head = {}
+        for idx in prompt_indices:
+            cert_path = args.cert_dir / "certs" / f"L{layer}H{head}" / f"prompt_{idx}.cert"
+            cert_path.parent.mkdir(parents=True, exist_ok=True)
+            cmd = [
+                sys.executable,
+                "scripts/build_gpt2_induction_cert.py",
+                "--output",
+                str(cert_path),
+                "--layer",
+                str(layer),
+                "--head",
+                str(head),
+                "--seq",
+                str(args.seq_len),
+                "--pattern-length",
+                str(args.pattern_len),
+                "--tokens-in",
+                str(prompt_tokens[idx]),
+                "--kind",
+                args.cert_kind,
+                "--decimals",
+                str(args.decimals),
+                "--model",
+                args.model,
+                "--device",
+                args.device,
+                "--active-eps-max",
+                str(args.active_eps_max),
+                "--min-margin",
+                str(args.min_margin),
+            ]
+            print(f"Building cert for L{layer}H{head} (prompt {idx})...")
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+            if result.returncode != 0:
+                print(result.stderr.strip())
+                print(result.stdout.strip())
+                print(f"warning: certificate failed for L{layer}H{head} prompt {idx}")
+                continue
+            certs_for_head[str(idx)] = str(cert_path)
+            batch_items.append((cert_path, prompt_tokens[idx]))
+        entry["cert_paths"] = certs_for_head
 
     args.report.write_text(json.dumps(report_payload, indent=2), encoding="ascii")
+
+    args.batch_out.parent.mkdir(parents=True, exist_ok=True)
+    with args.batch_out.open("w", encoding="ascii") as f:
+        if args.batch_min_active is not None:
+            f.write(f"min-active {args.batch_min_active}\n")
+        if args.batch_min_logit_diff is not None:
+            f.write(f"min-logit-diff {args.batch_min_logit_diff}\n")
+        if args.batch_min_margin is not None:
+            f.write(f"min-margin {args.batch_min_margin}\n")
+        if args.batch_max_eps is not None:
+            f.write(f"max-eps {args.batch_max_eps}\n")
+        if args.batch_min_stripe_mean is not None:
+            f.write(f"min-stripe-mean {args.batch_min_stripe_mean}\n")
+        if args.batch_min_copying is not None:
+            f.write(f"min-copying {args.batch_min_copying}\n")
+        for cert_path, tokens_path in batch_items:
+            f.write(f"item {cert_path} {tokens_path}\n")
+    print(f"Wrote batch file to {args.batch_out}")
     return 0
 
 
