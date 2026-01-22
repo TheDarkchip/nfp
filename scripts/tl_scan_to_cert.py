@@ -23,6 +23,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from statistics import median
 
 import numpy as np
 
@@ -156,6 +157,7 @@ def main() -> int:
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--cert-dir", type=Path, default=Path("reports/tl_scan"))
     parser.add_argument("--report", type=Path, default=Path("reports/tl_scan/tl_scores.json"))
+    parser.add_argument("--summary-out", type=Path, default=Path("reports/tl_scan/tl_summary.json"))
     parser.add_argument("--batch-out", type=Path, default=Path("reports/tl_scan/tl_scan.batch"))
     parser.add_argument("--batch-min-pass", default=None)
     parser.add_argument("--batch-min-stripe-mean", default=None)
@@ -355,6 +357,36 @@ def main() -> int:
         entry["cert_paths"] = certs_for_head
 
     args.report.write_text(json.dumps(report_payload, indent=2), encoding="ascii")
+
+    summary = {
+        "model": args.model,
+        "seq_len": args.seq_len,
+        "pattern_len": args.pattern_len,
+        "batch": args.batch,
+        "cert_indices": prompt_indices,
+        "top": [],
+    }
+    for entry in report_entries:
+        score_vals = list(entry["scores_by_prompt"].values())
+        cert_paths = entry.get("cert_paths", {})
+        passed = len(cert_paths)
+        failed = len(prompt_indices) - passed
+        summary["top"].append(
+            {
+                "layer": entry["layer"],
+                "head": entry["head"],
+                "score_mean": entry["score"],
+                "score_min": min(score_vals) if score_vals else None,
+                "score_median": median(score_vals) if score_vals else None,
+                "score_max": max(score_vals) if score_vals else None,
+                "passed": passed,
+                "failed": failed,
+                "pass_rate": passed / len(prompt_indices) if prompt_indices else 0,
+                "cert_paths": cert_paths,
+            }
+        )
+    args.summary_out.write_text(json.dumps(summary, indent=2), encoding="ascii")
+    print(f"Wrote summary report to {args.summary_out}")
 
     args.batch_out.parent.mkdir(parents=True, exist_ok=True)
     with args.batch_out.open("w", encoding="ascii") as f:
