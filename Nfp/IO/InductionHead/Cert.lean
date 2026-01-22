@@ -73,6 +73,12 @@ structure ParseState (seq : Nat) where
   directionTarget : Option Nat
   /-- Optional direction negative index. -/
   directionNegative : Option Nat
+  /-- Optional TL exclude_bos flag. -/
+  tlExcludeBos : Option Bool
+  /-- Optional TL exclude_current_token flag. -/
+  tlExcludeCurrent : Option Bool
+  /-- Optional TL mul score lower bound. -/
+  tlScoreLB : Option Rat
 
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
@@ -96,7 +102,10 @@ def initState (seq : Nat) : ParseState seq :=
     valsHi := Array.replicate seq none
     vals := Array.replicate seq none
     directionTarget := none
-    directionNegative := none }
+    directionNegative := none
+    tlExcludeBos := none
+    tlExcludeCurrent := none
+    tlScoreLB := none }
 
 private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
   if h : idx < seq then
@@ -144,6 +153,14 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
       let row' := row.set! kFin.1 (some v)
       return mat.set! qFin.1 row'
 
+/-- Parse a boolean literal. -/
+private def parseBool (s : String) : Except String Bool := do
+  match s.toLower with
+  | "true" => pure true
+  | "false" => pure false
+  | "1" => pure true
+  | "0" => pure false
+  | _ => throw s!"expected Bool, got '{s}'"
 
 /-- Parse a tokenized line into the parse state. -/
 def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
@@ -221,6 +238,21 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
         throw "duplicate direction-negative entry"
       else
         return { st with directionNegative := some (← parseNat tok) }
+  | ["tl-exclude-bos", val] =>
+      if st.tlExcludeBos.isSome then
+        throw "duplicate tl-exclude-bos entry"
+      else
+        return { st with tlExcludeBos := some (← parseBool val) }
+  | ["tl-exclude-current-token", val] =>
+      if st.tlExcludeCurrent.isSome then
+        throw "duplicate tl-exclude-current-token entry"
+      else
+        return { st with tlExcludeCurrent := some (← parseBool val) }
+  | ["tl-score-lb", val] =>
+      if st.tlScoreLB.isSome then
+        throw "duplicate tl-score-lb entry"
+      else
+        return { st with tlScoreLB := some (← parseRat val) }
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
@@ -245,6 +277,12 @@ structure InductionHeadCertPayload (seq : Nat) where
   kind : String
   /-- Optional prompt period (only for `kind induction-aligned`). -/
   period? : Option Nat
+  /-- Optional TL exclude_bos flag. -/
+  tlExcludeBos? : Option Bool
+  /-- Optional TL exclude_current_token flag. -/
+  tlExcludeCurrent? : Option Bool
+  /-- Optional TL mul score lower bound. -/
+  tlScoreLB? : Option Rat
   /-- Optional copy-logit matrix (may be present for `kind induction-aligned`). -/
   copyLogits? : Option (Fin seq → Fin seq → Rat)
   /-- Verified certificate payload. -/
@@ -374,10 +412,27 @@ def parseInductionHeadCert (input : String) :
         throw "unexpected period entry for kind onehot-approx"
       if kind = "induction-aligned" && period?.isNone then
         throw "missing period entry for kind induction-aligned"
+      let tlExcludeBos? := st.tlExcludeBos
+      let tlExcludeCurrent? := st.tlExcludeCurrent
+      let tlScoreLB? := st.tlScoreLB
+      if tlScoreLB?.isSome then
+        match tlExcludeBos?, tlExcludeCurrent? with
+        | some _, some _ => pure ()
+        | _, _ =>
+            throw "tl-score-lb requires tl-exclude-bos and tl-exclude-current-token"
+      else
+        if tlExcludeBos?.isSome || tlExcludeCurrent?.isSome then
+          throw "tl-exclude-bos/current-token requires tl-score-lb"
       let cert ← InductionHeadCert.finalizeStateCore hpos st
       let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
-        { kind := kind, period? := period?, copyLogits? := copyLogits?, cert := cert }
+        { kind := kind
+          period? := period?
+          tlExcludeBos? := tlExcludeBos?
+          tlExcludeCurrent? := tlExcludeCurrent?
+          tlScoreLB? := tlScoreLB?
+          copyLogits? := copyLogits?
+          cert := cert }
       return ⟨seq, payload⟩
 
 /-- Load an induction-head certificate from disk. -/
@@ -429,6 +484,32 @@ private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat)
 private def sumOver {seq : Nat} (f : Fin seq → Fin seq → Rat) : Rat :=
   (List.finRange seq).foldl (fun acc q =>
     acc + (List.finRange seq).foldl (fun acc' k => acc' + f q k) 0) 0
+
+/-- Boolean TL induction pattern indicator (duplicate head shifted right). -/
+private def tlPatternBool {seq : Nat} (tokens : Fin seq → Nat) (q k : Fin seq) : Bool :=
+  (List.finRange seq).any (fun r =>
+    decide (r < q) && decide (tokens r = tokens q) && decide (k.val = r.val + 1))
+
+/-- Numeric TL induction pattern indicator (0/1). -/
+private def tlPatternIndicator {seq : Nat} (tokens : Fin seq → Nat) (q k : Fin seq) : Rat :=
+  if tlPatternBool (seq := seq) tokens q k then 1 else 0
+
+/-- TL mul numerator with TL-style masking. -/
+private def tlMulNumeratorMasked {seq : Nat} (excludeBos excludeCurrent : Bool)
+    (weights : Fin seq → Fin seq → Rat) (tokens : Fin seq → Nat) : Rat :=
+  sumOver (seq := seq) (fun q k =>
+    Model.tlMaskedWeights (seq := seq) excludeBos excludeCurrent weights q k *
+      tlPatternIndicator (seq := seq) tokens q k)
+
+/-- TL mul score with TL-style masking. -/
+private def tlMulScoreMasked {seq : Nat} (excludeBos excludeCurrent : Bool)
+    (weights : Fin seq → Fin seq → Rat) (tokens : Fin seq → Nat) : Rat :=
+  let masked := Model.tlMaskedWeights (seq := seq) excludeBos excludeCurrent weights
+  let denom := sumOver (seq := seq) masked
+  if denom = 0 then
+    0
+  else
+    tlMulNumeratorMasked (seq := seq) excludeBos excludeCurrent weights tokens / denom
 
 /-- Copying score utility (ratio scaled to [-1, 1]); not used by the checker. -/
 def copyScore {seq : Nat} (weights copyLogits : Fin seq → Fin seq → Rat) : Option Rat :=
@@ -488,6 +569,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let kind := payload.kind
               let period? := payload.period?
               let copyLogits? := payload.copyLogits?
+              let tlExcludeBos? := payload.tlExcludeBos?
+              let tlExcludeCurrent? := payload.tlExcludeCurrent?
+              let tlScoreLB? := payload.tlScoreLB?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
@@ -548,44 +632,70 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     s!"error: eps {ratToString cert.eps} \
                     above maximum {ratToString maxEps}"
                   return 2
-              if let some tokensPath := tokensPath? then
-                let tokensParsed ← loadInductionHeadTokens tokensPath
-                match tokensParsed with
-                | Except.error msg =>
-                    IO.eprintln s!"error: {msg}"
-                    return 2
-                | Except.ok ⟨seqTokens, tokens⟩ =>
-                    if hseq : seqTokens = seq then
-                      let tokens' : Fin seq → Nat := by
-                        simpa [hseq] using tokens
-                      if kind = "induction-aligned" then
-                        let period ←
-                          match period? with
-                          | some v => pure v
-                          | none =>
-                              IO.eprintln "error: missing period entry for induction-aligned"
-                              return 2
-                        if !tokensPeriodic (seq := seq) period tokens' then
-                          IO.eprintln "error: tokens are not periodic for induction-aligned period"
-                          return 2
-                      else
-                        let activeTokens := Model.activeOfTokens (seq := seq) tokens'
-                        if !decide (cert.active ⊆ activeTokens) then
-                          IO.eprintln "error: active set not contained in token repeats"
-                          return 2
-                        let prevTokens := Model.prevOfTokens (seq := seq) tokens'
-                        let prevOk :=
-                          (List.finRange seq).all (fun q =>
-                            if decide (q ∈ cert.active) then
-                              decide (prevTokens q = cert.prev q)
-                            else
-                              true)
-                        if !prevOk then
-                          IO.eprintln "error: prev map does not match tokens on active queries"
-                          return 2
+              let tokensOpt ←
+                match tokensPath? with
+                | none =>
+                    if tlScoreLB?.isSome then
+                      IO.eprintln "error: tl-score-lb requires a tokens file"
+                      return 2
                     else
+                      pure none
+                | some tokensPath =>
+                    let tokensParsed ← loadInductionHeadTokens tokensPath
+                    match tokensParsed with
+                    | Except.error msg =>
+                        IO.eprintln s!"error: {msg}"
+                        return 2
+                    | Except.ok ⟨seqTokens, tokens⟩ =>
+                        if hseq : seqTokens = seq then
+                          let tokens' : Fin seq → Nat := by
+                            simpa [hseq] using tokens
+                          pure (some tokens')
+                        else
+                          IO.eprintln
+                            s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
+                          return 2
+              if let some tokens' := tokensOpt then
+                if kind = "induction-aligned" then
+                  let period ←
+                    match period? with
+                    | some v => pure v
+                    | none =>
+                        IO.eprintln "error: missing period entry for induction-aligned"
+                        return 2
+                  if !tokensPeriodic (seq := seq) period tokens' then
+                    IO.eprintln "error: tokens are not periodic for induction-aligned period"
+                    return 2
+                else
+                  let activeTokens := Model.activeOfTokens (seq := seq) tokens'
+                  if !decide (cert.active ⊆ activeTokens) then
+                    IO.eprintln "error: active set not contained in token repeats"
+                    return 2
+                  let prevTokens := Model.prevOfTokens (seq := seq) tokens'
+                  let prevOk :=
+                    (List.finRange seq).all (fun q =>
+                      if decide (q ∈ cert.active) then
+                        decide (prevTokens q = cert.prev q)
+                      else
+                        true)
+                  if !prevOk then
+                    IO.eprintln "error: prev map does not match tokens on active queries"
+                    return 2
+              if let some tlScoreLB := tlScoreLB? then
+                match tokensOpt with
+                | none =>
+                    IO.eprintln "error: tl-score-lb requires a tokens file"
+                    return 2
+                | some tokens' =>
+                    let excludeBos := tlExcludeBos?.getD false
+                    let excludeCurrent := tlExcludeCurrent?.getD false
+                    let tlScore :=
+                      tlMulScoreMasked (seq := seq) excludeBos excludeCurrent
+                        cert.weights tokens'
+                    if tlScore < tlScoreLB then
                       IO.eprintln
-                        s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
+                        s!"error: tl-score {ratToString tlScore} \
+                        below minimum {ratToString tlScoreLB}"
                       return 2
               if kind = "induction-aligned" then
                 let period ←

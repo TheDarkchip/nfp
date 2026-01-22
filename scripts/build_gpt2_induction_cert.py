@@ -66,6 +66,11 @@ def rat_from_float(x: float, decimals: int) -> Fraction:
     return Fraction(int(round(x * scale)), scale)
 
 
+def rat_from_float_floor(x: float, decimals: int) -> Fraction:
+    scale = 10 ** decimals
+    return Fraction(int(math.floor(x * scale)), scale)
+
+
 def rat_to_str(q: Fraction) -> str:
     if q.denominator == 1:
         return str(q.numerator)
@@ -147,6 +152,30 @@ def compute_copy_logits(model, input_ids, layer: int, head: int,
     return copy_logits.detach().cpu().numpy()
 
 
+def compute_tl_mul_score(
+    weights: np.ndarray,
+    tokens: np.ndarray,
+    exclude_bos: bool,
+    exclude_current_token: bool,
+) -> float:
+    seq = len(tokens)
+    numerator = 0.0
+    denominator = 0.0
+    for q in range(seq):
+        for k in range(seq):
+            w = float(weights[q][k])
+            if exclude_bos and k == 0:
+                w = 0.0
+            if exclude_current_token and k == q:
+                w = 0.0
+            denominator += w
+            if k > 0 and (k - 1) < q and tokens[k - 1] == tokens[q]:
+                numerator += w
+    if denominator == 0.0:
+        return 0.0
+    return numerator / denominator
+
+
 def write_scores(path: Path, seq: int, prev: np.ndarray, scores, weights, eps=None, margin=None,
                  active=None, kind: str = "onehot-approx", period: int | None = None):
     with path.open("w", encoding="ascii") as f:
@@ -176,7 +205,10 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
                          eps, margin, active, eps_at, weight_bound_at,
                          vals, direction_target=None, direction_negative=None,
                          kind: str = "onehot-approx", period: int | None = None,
-                         copy_logits=None) -> None:
+                         copy_logits=None,
+                         tl_score_lb: Fraction | None = None,
+                         tl_exclude_bos: bool = False,
+                         tl_exclude_current_token: bool = False) -> None:
     lo = min(vals)
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
@@ -186,6 +218,10 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             if period is None:
                 raise ValueError("period is required for induction-aligned certificates")
             f.write(f"period {period}\n")
+        if tl_score_lb is not None:
+            f.write(f"tl-exclude-bos {str(tl_exclude_bos).lower()}\n")
+            f.write(f"tl-exclude-current-token {str(tl_exclude_current_token).lower()}\n")
+            f.write(f"tl-score-lb {rat_to_str(tl_score_lb)}\n")
         if direction_target is not None and direction_negative is not None:
             f.write(f"direction-target {direction_target}\n")
             f.write(f"direction-negative {direction_negative}\n")
@@ -411,6 +447,14 @@ def main() -> None:
                         help="Optional path to write a ranked direction report.")
     parser.add_argument("--direction-topk", type=int, default=10,
                         help="How many top directions to report (default: 10).")
+    parser.add_argument("--tl-score", action="store_true",
+                        help="Include TL mul score lower bound in the certificate.")
+    parser.add_argument("--tl-exclude-bos", action="store_true",
+                        help="Match TL exclude_bos when computing TL score.")
+    parser.add_argument("--tl-exclude-current-token", action="store_true",
+                        help="Match TL exclude_current_token when computing TL score.")
+    parser.add_argument("--tl-score-decimals", type=int, default=None,
+                        help="Decimal rounding for TL score LB (defaults to --decimals).")
     args = parser.parse_args()
 
     tokens = None
@@ -603,6 +647,17 @@ def main() -> None:
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     period = args.pattern_length if args.kind == "induction-aligned" else None
+    tl_score_lb = None
+    if args.tl_score:
+        tl_score = compute_tl_mul_score(
+            weights,
+            tokens,
+            exclude_bos=args.tl_exclude_bos,
+            exclude_current_token=args.tl_exclude_current_token,
+        )
+        tl_decimals = args.decimals if args.tl_score_decimals is None else args.tl_score_decimals
+        tl_score_lb = rat_from_float_floor(tl_score, tl_decimals)
+
     write_induction_cert(
         output_path,
         args.seq,
@@ -620,6 +675,9 @@ def main() -> None:
         kind=args.kind,
         period=period,
         copy_logits=copy_logits_rat,
+        tl_score_lb=tl_score_lb,
+        tl_exclude_bos=args.tl_exclude_bos,
+        tl_exclude_current_token=args.tl_exclude_current_token,
     )
 
     if args.scores_out:

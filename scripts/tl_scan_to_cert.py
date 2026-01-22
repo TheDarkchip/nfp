@@ -344,6 +344,12 @@ def main() -> int:
                 "--min-margin",
                 str(args.min_margin),
             ]
+            if args.error_measure == "mul":
+                cmd.append("--tl-score")
+                if args.exclude_bos:
+                    cmd.append("--tl-exclude-bos")
+                if args.exclude_current_token:
+                    cmd.append("--tl-exclude-current-token")
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:
