@@ -603,9 +603,13 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if !prevOk then
                   IO.eprintln "error: prev map does not match induction-aligned period"
                   return 2
-                if minLogitDiffStr?.isSome || minMarginStr?.isSome || maxEpsStr?.isSome then
+                if minMarginStr?.isSome || maxEpsStr?.isSome then
                   IO.eprintln
-                    "error: min-logit-diff/min-margin/max-eps are not used for induction-aligned"
+                    "error: min-margin/max-eps are not used for induction-aligned"
+                  return 2
+                if minLogitDiffStr?.isSome && cert.values.direction.isNone then
+                  IO.eprintln
+                    "error: min-logit-diff requires direction metadata"
                   return 2
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
@@ -697,36 +701,36 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                         s!"error: tl-score {ratToString tlScore} \
                         below minimum {ratToString tlScoreLB}"
                       return 2
-              if kind = "induction-aligned" then
-                let period ←
-                  match period? with
-                  | some v => pure v
-                  | none =>
-                      IO.eprintln "error: missing period entry for induction-aligned"
-                      return 2
-                let stripeCert : Stripe.StripeCert seq :=
-                  { period := period
-                    stripeMeanLB := 0
-                    stripeTop1LB := 0
-                    weights := cert.weights }
-                let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
-                let mean ←
-                  match stripeMean? with
-                  | some mean =>
-                      let minMean := minStripeMean?.getD (0 : Rat)
-                      if mean < minMean then
-                        IO.eprintln
-                          s!"error: stripe-mean {ratToString mean} below minimum \
-                          {ratToString minMean}"
+              let stripeMeanOpt ←
+                if kind = "induction-aligned" then
+                  let period ←
+                    match period? with
+                    | some v => pure v
+                    | none =>
+                        IO.eprintln "error: missing period entry for induction-aligned"
                         return 2
-                      pure mean
-                  | none =>
-                      IO.eprintln "error: empty active set for stripe stats"
-                      return 2
-                IO.println
-                  s!"ok: induction-aligned certificate checked \
-                  (seq={seq}, active={activeCount}, stripeMean={ratToString mean})"
-                return 0
+                  let stripeCert : Stripe.StripeCert seq :=
+                    { period := period
+                      stripeMeanLB := 0
+                      stripeTop1LB := 0
+                      weights := cert.weights }
+                  let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
+                  let mean ←
+                    match stripeMean? with
+                    | some mean =>
+                        let minMean := minStripeMean?.getD (0 : Rat)
+                        if mean < minMean then
+                          IO.eprintln
+                            s!"error: stripe-mean {ratToString mean} below minimum \
+                            {ratToString minMean}"
+                          return 2
+                        pure mean
+                    | none =>
+                        IO.eprintln "error: empty active set for stripe stats"
+                        return 2
+                  pure (some mean)
+                else
+                  pure none
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
                 | some v, _ => some v
@@ -734,12 +738,23 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | none, none => none
               match effectiveMinLogitDiff with
               | none =>
-                  let kindLabel := "onehot-approx (proxy)"
-                  IO.println
-                    s!"ok: {kindLabel} certificate checked \
-                    (seq={seq}, active={activeCount}, \
-                    margin={ratToString cert.margin}, eps={ratToString cert.eps})"
-                  return 0
+                  if kind = "induction-aligned" then
+                    match stripeMeanOpt with
+                    | some mean =>
+                        IO.println
+                          s!"ok: induction-aligned certificate checked \
+                          (seq={seq}, active={activeCount}, stripeMean={ratToString mean})"
+                        return 0
+                    | none =>
+                        IO.eprintln "error: missing stripe mean for induction-aligned"
+                        return 2
+                  else
+                    let kindLabel := "onehot-approx (proxy)"
+                    IO.println
+                      s!"ok: {kindLabel} certificate checked \
+                      (seq={seq}, active={activeCount}, \
+                      margin={ratToString cert.margin}, eps={ratToString cert.eps})"
+                    return 0
               | some minLogitDiff =>
                   let logitDiffLB? :=
                     Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
@@ -755,13 +770,26 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           below minimum {ratToString minLogitDiff}"
                         return 2
                       else
-                        let kindLabel := "onehot-approx (proxy)"
-                        IO.println
-                          s!"ok: {kindLabel} certificate checked \
-                          (seq={seq}, active={activeCount}, \
-                          margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
-                          logitDiffLB={ratToString logitDiffLB})"
-                        return 0
+                        if kind = "induction-aligned" then
+                          match stripeMeanOpt with
+                          | some mean =>
+                              IO.println
+                                s!"ok: induction-aligned certificate checked \
+                                (seq={seq}, active={activeCount}, \
+                                stripeMean={ratToString mean}, \
+                                logitDiffLB={ratToString logitDiffLB})"
+                              return 0
+                          | none =>
+                              IO.eprintln "error: missing stripe mean for induction-aligned"
+                              return 2
+                        else
+                          let kindLabel := "onehot-approx (proxy)"
+                          IO.println
+                            s!"ok: {kindLabel} certificate checked \
+                            (seq={seq}, active={activeCount}, \
+                            margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
+                            logitDiffLB={ratToString logitDiffLB})"
+                          return 0
 
 end IO
 

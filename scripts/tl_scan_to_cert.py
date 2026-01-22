@@ -165,6 +165,19 @@ def main() -> int:
     parser.add_argument("--batch-min-margin", default=None)
     parser.add_argument("--batch-max-eps", default=None)
     parser.add_argument("--batch-min-active", default=None)
+    parser.add_argument("--direction-search", action="store_true",
+                        help="Search for a direction and embed it in certs (untrusted).")
+    parser.add_argument("--direction-vocab-min", type=int, default=1000,
+                        help="Minimum vocab id for direction search (inclusive).")
+    parser.add_argument("--direction-vocab-max", type=int, default=2000,
+                        help="Maximum vocab id for direction search (exclusive).")
+    parser.add_argument("--direction-max-candidates", type=int, default=0,
+                        help="Limit number of direction candidates (0 = all in range).")
+    parser.add_argument("--direction-min-lb", default=None,
+                        help="Minimum untrusted direction LB required to emit cert.")
+    parser.add_argument("--direction-topk", type=int, default=10,
+                        help="How many top directions to report (default: 10).")
+    parser.add_argument("--direction-report-dir", type=Path, default=Path("reports/tl_scan/directions"))
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -298,6 +311,12 @@ def main() -> int:
         "cert_tokens": {str(k): str(v) for k, v in prompt_tokens.items()},
         "batch_out": str(args.batch_out),
         "batch_min_pass": args.batch_min_pass,
+        "direction_search": args.direction_search,
+        "direction_vocab_range": [args.direction_vocab_min, args.direction_vocab_max],
+        "direction_max_candidates": args.direction_max_candidates,
+        "direction_min_lb": args.direction_min_lb,
+        "direction_topk": args.direction_topk,
+        "direction_report_dir": str(args.direction_report_dir) if args.direction_search else None,
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -339,11 +358,33 @@ def main() -> int:
                 args.model,
                 "--device",
                 args.device,
+                "--seed",
+                str(args.seed),
                 "--active-eps-max",
                 str(args.active_eps_max),
                 "--min-margin",
                 str(args.min_margin),
             ]
+            direction_report_path = None
+            if args.direction_search:
+                direction_report_path = (
+                    args.direction_report_dir / f"L{layer}H{head}" / f"prompt_{idx}.txt"
+                )
+                cmd.extend([
+                    "--search-direction",
+                    "--direction-vocab-min",
+                    str(args.direction_vocab_min),
+                    "--direction-vocab-max",
+                    str(args.direction_vocab_max),
+                    "--direction-max-candidates",
+                    str(args.direction_max_candidates),
+                    "--direction-topk",
+                    str(args.direction_topk),
+                    "--direction-report-out",
+                    str(direction_report_path),
+                ])
+                if args.direction_min_lb is not None:
+                    cmd.extend(["--direction-min-lb", str(args.direction_min_lb)])
             if args.error_measure == "mul":
                 cmd.append("--tl-score")
                 if args.exclude_bos:
@@ -358,6 +399,8 @@ def main() -> int:
                 print(f"warning: certificate failed for L{layer}H{head} prompt {idx}")
                 continue
             certs_for_head[str(idx)] = str(cert_path)
+            if direction_report_path is not None:
+                entry.setdefault("direction_reports", {})[str(idx)] = str(direction_report_path)
             batch_items.append((cert_path, prompt_tokens[idx]))
         entry["cert_paths"] = certs_for_head
 
@@ -374,6 +417,7 @@ def main() -> int:
     for entry in report_entries:
         score_vals = list(entry["scores_by_prompt"].values())
         cert_paths = entry.get("cert_paths", {})
+        direction_reports = entry.get("direction_reports", {})
         passed = len(cert_paths)
         failed = len(prompt_indices) - passed
         summary["top"].append(
@@ -388,6 +432,7 @@ def main() -> int:
                 "failed": failed,
                 "pass_rate": passed / len(prompt_indices) if prompt_indices else 0,
                 "cert_paths": cert_paths,
+                "direction_reports": direction_reports,
             }
         )
     args.summary_out.write_text(json.dumps(summary, indent=2), encoding="ascii")
