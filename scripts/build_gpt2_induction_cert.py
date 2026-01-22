@@ -71,6 +71,10 @@ def rat_from_float_floor(x: float, decimals: int) -> Fraction:
     return Fraction(int(math.floor(x * scale)), scale)
 
 
+def rat_from_float_exact(x: float) -> Fraction:
+    return Fraction.from_float(float(x))
+
+
 def rat_to_str(q: Fraction) -> str:
     if q.denominator == 1:
         return str(q.numerator)
@@ -131,6 +135,79 @@ def compute_scores_weights(model, input_ids, layer: int, head: int, device: str)
     return (scores.squeeze(0).cpu().numpy(),
             weights.squeeze(0).cpu().numpy(),
             vh.squeeze(0).cpu().numpy())
+
+
+def extract_model_slice(model, input_ids, layer: int, head: int):
+    model.eval()
+    with torch.no_grad():
+        outputs = model(input_ids, output_hidden_states=True)
+        hidden_states = outputs.hidden_states[layer]
+        block = model.h[layer]
+        x = block.ln_1(hidden_states).squeeze(0).cpu().numpy()
+        w = block.attn.c_attn.weight.detach().cpu().numpy()
+        b = block.attn.c_attn.bias.detach().cpu().numpy()
+    d_model = w.shape[0]
+    n_head = model.config.n_head
+    head_dim = d_model // n_head
+    start = head * head_dim
+    end = (head + 1) * head_dim
+    wq = w[:, start:end]
+    wk = w[:, d_model + start: d_model + end]
+    bq = b[start:end]
+    bk = b[d_model + start: d_model + end]
+    scale = 1.0 / math.sqrt(head_dim)
+    score_mask = -10000.0
+    return {
+        "d_model": int(d_model),
+        "head_dim": int(head_dim),
+        "layer": int(layer),
+        "head": int(head),
+        "scale": float(scale),
+        "mask": float(score_mask),
+        "resid": x,
+        "wq": wq,
+        "wk": wk,
+        "bq": bq,
+        "bk": bk,
+    }
+
+
+def compute_scores_from_model_slice(model_slice: dict) -> list[list[Fraction]]:
+    d_model = model_slice["d_model"]
+    head_dim = model_slice["head_dim"]
+    scale = model_slice["scale"]
+    mask = model_slice["mask"]
+    resid = model_slice["resid"]
+    wq = model_slice["wq"]
+    wk = model_slice["wk"]
+    bq = model_slice["bq"]
+    bk = model_slice["bk"]
+    seq = len(resid)
+
+    q_vecs = []
+    k_vecs = []
+    for q in range(seq):
+        q_row = []
+        k_row = []
+        for j in range(head_dim):
+            q_sum = sum(resid[q][i] * wq[i][j] for i in range(d_model)) + bq[j]
+            k_sum = sum(resid[q][i] * wk[i][j] for i in range(d_model)) + bk[j]
+            q_row.append(q_sum)
+            k_row.append(k_sum)
+        q_vecs.append(q_row)
+        k_vecs.append(k_row)
+
+    scores = []
+    for q in range(seq):
+        row = []
+        for k in range(seq):
+            if k > q:
+                row.append(mask)
+            else:
+                dot = sum(q_vecs[q][j] * k_vecs[k][j] for j in range(head_dim))
+                row.append(scale * dot)
+        scores.append(row)
+    return scores
 
 
 def compute_copy_logits(model, input_ids, layer: int, head: int,
@@ -208,7 +285,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
                          copy_logits=None,
                          tl_score_lb: Fraction | None = None,
                          tl_exclude_bos: bool = False,
-                         tl_exclude_current_token: bool = False) -> None:
+                         tl_exclude_current_token: bool = False,
+                         model_slice=None) -> None:
     lo = min(vals)
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
@@ -218,6 +296,33 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             if period is None:
                 raise ValueError("period is required for induction-aligned certificates")
             f.write(f"period {period}\n")
+        if model_slice is not None:
+            f.write(f"model-d-model {model_slice['d_model']}\n")
+            f.write(f"model-head-dim {model_slice['head_dim']}\n")
+            f.write(f"model-layer {model_slice['layer']}\n")
+            f.write(f"model-head {model_slice['head']}\n")
+            f.write(f"model-score-scale {rat_to_str(model_slice['scale'])}\n")
+            f.write(f"model-score-mask {rat_to_str(model_slice['mask'])}\n")
+            resid = model_slice["resid"]
+            wq = model_slice["wq"]
+            wk = model_slice["wk"]
+            bq = model_slice["bq"]
+            bk = model_slice["bk"]
+            d_model = model_slice["d_model"]
+            head_dim = model_slice["head_dim"]
+            for q in range(seq):
+                for i in range(d_model):
+                    f.write(f"model-resid {q} {i} {rat_to_str(resid[q][i])}\n")
+            for i in range(d_model):
+                for j in range(head_dim):
+                    f.write(f"model-wq {i} {j} {rat_to_str(wq[i][j])}\n")
+            for i in range(d_model):
+                for j in range(head_dim):
+                    f.write(f"model-wk {i} {j} {rat_to_str(wk[i][j])}\n")
+            for j in range(head_dim):
+                f.write(f"model-bq {j} {rat_to_str(bq[j])}\n")
+            for j in range(head_dim):
+                f.write(f"model-bk {j} {rat_to_str(bk[j])}\n")
         if tl_score_lb is not None:
             f.write(f"tl-exclude-bos {str(tl_exclude_bos).lower()}\n")
             f.write(f"tl-exclude-current-token {str(tl_exclude_current_token).lower()}\n")
@@ -455,6 +560,8 @@ def main() -> None:
                         help="Match TL exclude_current_token when computing TL score.")
     parser.add_argument("--tl-score-decimals", type=int, default=None,
                         help="Decimal rounding for TL score LB (defaults to --decimals).")
+    parser.add_argument("--emit-model-slice", action="store_true",
+                        help="Embed model slice used to compute attention scores.")
     args = parser.parse_args()
 
     tokens = None
@@ -503,8 +610,45 @@ def main() -> None:
             model, input_ids, layer, head, weights, values, args.device
         )
 
-    scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals) for k in range(args.seq)]
-                  for q in range(args.seq)]
+    model_slice = None
+    if args.emit_model_slice:
+        raw_slice = extract_model_slice(model, input_ids, layer, head)
+        resid = [
+            [rat_from_float_exact(float(raw_slice["resid"][q, i]))
+             for i in range(raw_slice["d_model"])]
+            for q in range(args.seq)
+        ]
+        wq = [
+            [rat_from_float_exact(float(raw_slice["wq"][i, j]))
+             for j in range(raw_slice["head_dim"])]
+            for i in range(raw_slice["d_model"])
+        ]
+        wk = [
+            [rat_from_float_exact(float(raw_slice["wk"][i, j]))
+             for j in range(raw_slice["head_dim"])]
+            for i in range(raw_slice["d_model"])
+        ]
+        bq = [rat_from_float_exact(float(raw_slice["bq"][j]))
+              for j in range(raw_slice["head_dim"])]
+        bk = [rat_from_float_exact(float(raw_slice["bk"][j]))
+              for j in range(raw_slice["head_dim"])]
+        model_slice = {
+            "d_model": raw_slice["d_model"],
+            "head_dim": raw_slice["head_dim"],
+            "layer": raw_slice["layer"],
+            "head": raw_slice["head"],
+            "scale": rat_from_float_exact(raw_slice["scale"]),
+            "mask": rat_from_float_exact(raw_slice["mask"]),
+            "resid": resid,
+            "wq": wq,
+            "wk": wk,
+            "bq": bq,
+            "bk": bk,
+        }
+        scores_rat = compute_scores_from_model_slice(model_slice)
+    else:
+        scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals) for k in range(args.seq)]
+                      for q in range(args.seq)]
     weights_rat = [[rat_from_float(float(weights[q, k]), args.decimals) for k in range(args.seq)]
                    for q in range(args.seq)]
     copy_logits_rat = None
@@ -678,6 +822,7 @@ def main() -> None:
         tl_score_lb=tl_score_lb,
         tl_exclude_bos=args.tl_exclude_bos,
         tl_exclude_current_token=args.tl_exclude_current_token,
+        model_slice=model_slice,
     )
 
     if args.scores_out:

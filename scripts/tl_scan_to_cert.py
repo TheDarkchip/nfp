@@ -178,6 +178,8 @@ def main() -> int:
     parser.add_argument("--direction-topk", type=int, default=10,
                         help="How many top directions to report (default: 10).")
     parser.add_argument("--direction-report-dir", type=Path, default=Path("reports/tl_scan/directions"))
+    parser.add_argument("--emit-model-slice", action="store_true",
+                        help="Embed model slice data in emitted certs.")
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -391,6 +393,8 @@ def main() -> int:
                     cmd.append("--tl-exclude-bos")
                 if args.exclude_current_token:
                     cmd.append("--tl-exclude-current-token")
+            if args.emit_model_slice:
+                cmd.append("--emit-model-slice")
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:

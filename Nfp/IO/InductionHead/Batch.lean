@@ -201,6 +201,7 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let kind := payload.kind
           let period? := payload.period?
           let copyLogits? := payload.copyLogits?
+          let modelSlice? := payload.modelSlice?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
           if kind = "onehot-approx" then
@@ -225,10 +226,11 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
             if !prevOk then
               return Except.error "prev map does not match induction-aligned period"
-            if opts.minLogitDiff?.isSome || opts.minAvgLogitDiff?.isSome ||
-                opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
-              return Except.error
-                "min-logit-diff/min-margin/max-eps are not used for induction-aligned"
+            if opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
+              return Except.error "min-margin/max-eps are not used for induction-aligned"
+            if (opts.minLogitDiff?.isSome || opts.minAvgLogitDiff?.isSome) &&
+                cert.values.direction.isNone then
+              return Except.error "min-logit-diff requires direction metadata"
             if copyLogits?.isNone then
               return Except.error "missing copy-logit entries for induction-aligned"
           let activeCount := cert.active.card
@@ -237,6 +239,11 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           if activeCount < minActive then
             return Except.error
               s!"active queries {activeCount} below minimum {minActive}"
+          if let some modelSlice := modelSlice? then
+            let okScores :=
+              InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
+            if !okScores then
+              return Except.error "scores do not match model slice"
           if kind = "onehot-approx" then
             if !Circuit.checkInductionHeadCert cert then
               return Except.error "induction-head certificate rejected"

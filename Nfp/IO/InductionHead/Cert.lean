@@ -79,6 +79,53 @@ structure ParseState (seq : Nat) where
   tlExcludeCurrent : Option Bool
   /-- Optional TL mul score lower bound. -/
   tlScoreLB : Option Rat
+  /-- Optional model hidden dimension (for score anchoring). -/
+  modelDModel : Option Nat
+  /-- Optional model head dimension (for score anchoring). -/
+  modelHeadDim : Option Nat
+  /-- Optional model layer index (for score anchoring). -/
+  modelLayer : Option Nat
+  /-- Optional model head index (for score anchoring). -/
+  modelHead : Option Nat
+  /-- Optional model score scale factor. -/
+  modelScoreScale : Option Rat
+  /-- Optional model score mask value. -/
+  modelScoreMask : Option Rat
+  /-- Optional model residual inputs (seq × d_model). -/
+  modelResid : Array (Array (Option Rat))
+  /-- Optional model Wq slice (d_model × head_dim). -/
+  modelWq : Array (Array (Option Rat))
+  /-- Optional model Wk slice (d_model × head_dim). -/
+  modelWk : Array (Array (Option Rat))
+  /-- Optional model bq slice (head_dim). -/
+  modelBq : Array (Option Rat)
+  /-- Optional model bk slice (head_dim). -/
+  modelBk : Array (Option Rat)
+
+/-- Minimal model slice for recomputing attention scores. -/
+structure ModelSlice (seq : Nat) where
+  /-- Hidden dimension. -/
+  dModel : Nat
+  /-- Head dimension. -/
+  headDim : Nat
+  /-- Layer index (metadata). -/
+  layer : Nat
+  /-- Head index (metadata). -/
+  head : Nat
+  /-- Scale factor for attention scores. -/
+  scoreScale : Rat
+  /-- Mask value for causal attention (k > q). -/
+  scoreMask : Rat
+  /-- Residual inputs (post-layernorm). -/
+  resid : Fin seq → Fin dModel → Rat
+  /-- Q projection slice. -/
+  wq : Fin dModel → Fin headDim → Rat
+  /-- K projection slice. -/
+  wk : Fin dModel → Fin headDim → Rat
+  /-- Q bias slice. -/
+  bq : Fin headDim → Rat
+  /-- K bias slice. -/
+  bk : Fin headDim → Rat
 
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
@@ -105,10 +152,27 @@ def initState (seq : Nat) : ParseState seq :=
     directionNegative := none
     tlExcludeBos := none
     tlExcludeCurrent := none
-    tlScoreLB := none }
+    tlScoreLB := none
+    modelDModel := none
+    modelHeadDim := none
+    modelLayer := none
+    modelHead := none
+    modelScoreScale := none
+    modelScoreMask := none
+    modelResid := #[]
+    modelWq := #[]
+    modelWk := #[]
+    modelBq := #[]
+    modelBk := #[] }
 
 private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
   if h : idx < seq then
+    return ⟨idx, h⟩
+  else
+    throw s!"{label} index out of range: {idx}"
+
+private def toIndex0Sized (label : String) (size idx : Nat) : Except String (Fin size) := do
+  if h : idx < size then
     return ⟨idx, h⟩
   else
     throw s!"{label} index out of range: {idx}"
@@ -152,6 +216,104 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
   | none =>
       let row' := row.set! kFin.1 (some v)
       return mat.set! qFin.1 row'
+
+private def allocModelResid (seq dModel : Nat) : Array (Array (Option Rat)) :=
+  Array.replicate seq (Array.replicate dModel none)
+
+private def allocModelW (dModel headDim : Nat) : Array (Array (Option Rat)) :=
+  Array.replicate dModel (Array.replicate headDim none)
+
+private def allocModelB (headDim : Nat) : Array (Option Rat) :=
+  Array.replicate headDim none
+
+private def ensureModelResid {seq : Nat} (st : ParseState seq) :
+    Except String (ParseState seq × Nat) := do
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "model-d-model required before model-resid"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  let st :=
+    if st.modelResid.isEmpty then
+      { st with modelResid := allocModelResid seq dModel }
+    else
+      st
+  return (st, dModel)
+
+private def ensureModelW {seq : Nat} (st : ParseState seq) :
+    Except String (ParseState seq × Nat × Nat) := do
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "model-d-model required before model-wq/wk/bq/bk"
+  let headDim ←
+    match st.modelHeadDim with
+    | some v => pure v
+    | none => throw "model-head-dim required before model-wq/wk/bq/bk"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  if headDim = 0 then
+    throw "model-head-dim must be positive"
+  let st :=
+    if st.modelWq.isEmpty then
+      { st with modelWq := allocModelW dModel headDim, modelWk := allocModelW dModel headDim }
+    else
+      st
+  let st :=
+    if st.modelBq.isEmpty then
+      { st with modelBq := allocModelB headDim, modelBk := allocModelB headDim }
+    else
+      st
+  return (st, dModel, headDim)
+
+private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
+    Except String (ParseState seq) := do
+  let (st, dModel) ← ensureModelResid st
+  let qFin ← toIndex0 (seq := seq) "q" q
+  let iFin ← toIndex0Sized "i" dModel i
+  let row := st.modelResid[qFin.1]!
+  match row[iFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-resid entry at ({q}, {i})"
+  | none =>
+      let row' := row.set! iFin.1 (some v)
+      return { st with modelResid := st.modelResid.set! qFin.1 row' }
+
+private def setModelWEntry {seq : Nat} (st : ParseState seq)
+    (i j : Nat) (v : Rat) (which : String) :
+    Except String (ParseState seq) := do
+  let (st, dModel, headDim) ← ensureModelW st
+  let iFin ← toIndex0Sized "i" dModel i
+  let jFin ← toIndex0Sized "j" headDim j
+  let mat := if which = "wq" then st.modelWq else st.modelWk
+  let row := mat[iFin.1]!
+  match row[jFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-{which} entry at ({i}, {j})"
+  | none =>
+      let row' := row.set! jFin.1 (some v)
+      let mat' := mat.set! iFin.1 row'
+      if which = "wq" then
+        return { st with modelWq := mat' }
+      else
+        return { st with modelWk := mat' }
+
+private def setModelBEntry {seq : Nat} (st : ParseState seq)
+    (j : Nat) (v : Rat) (which : String) :
+    Except String (ParseState seq) := do
+  let (st, _dModel, headDim) ← ensureModelW st
+  let jFin ← toIndex0Sized "j" headDim j
+  let arr := if which = "bq" then st.modelBq else st.modelBk
+  match arr[jFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-{which} entry for j={j}"
+  | none =>
+      let arr' := arr.set! jFin.1 (some v)
+      if which = "bq" then
+        return { st with modelBq := arr' }
+      else
+        return { st with modelBk := arr' }
 
 /-- Parse a boolean literal. -/
 private def parseBool (s : String) : Except String Bool := do
@@ -253,6 +415,70 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
         throw "duplicate tl-score-lb entry"
       else
         return { st with tlScoreLB := some (← parseRat val) }
+  | ["model-d-model", val] =>
+      if st.modelDModel.isSome then
+        throw "duplicate model-d-model entry"
+      else
+        let dModel := (← parseNat val)
+        let mut st' := { st with modelDModel := some dModel }
+        if !st'.modelResid.isEmpty then
+          return st'
+        if dModel > 0 then
+          st' := { st' with modelResid := allocModelResid seq dModel }
+        if let some headDim := st'.modelHeadDim then
+          if headDim > 0 then
+            if st'.modelWq.isEmpty then
+              st' := { st' with modelWq := allocModelW dModel headDim,
+                                modelWk := allocModelW dModel headDim }
+            if st'.modelBq.isEmpty then
+              st' := { st' with modelBq := allocModelB headDim,
+                                modelBk := allocModelB headDim }
+        return st'
+  | ["model-head-dim", val] =>
+      if st.modelHeadDim.isSome then
+        throw "duplicate model-head-dim entry"
+      else
+        let headDim := (← parseNat val)
+        let mut st' := { st with modelHeadDim := some headDim }
+        if let some dModel := st'.modelDModel then
+          if dModel > 0 && headDim > 0 then
+            if st'.modelWq.isEmpty then
+              st' := { st' with modelWq := allocModelW dModel headDim,
+                                modelWk := allocModelW dModel headDim }
+            if st'.modelBq.isEmpty then
+              st' := { st' with modelBq := allocModelB headDim,
+                                modelBk := allocModelB headDim }
+        return st'
+  | ["model-layer", val] =>
+      if st.modelLayer.isSome then
+        throw "duplicate model-layer entry"
+      else
+        return { st with modelLayer := some (← parseNat val) }
+  | ["model-head", val] =>
+      if st.modelHead.isSome then
+        throw "duplicate model-head entry"
+      else
+        return { st with modelHead := some (← parseNat val) }
+  | ["model-score-scale", val] =>
+      if st.modelScoreScale.isSome then
+        throw "duplicate model-score-scale entry"
+      else
+        return { st with modelScoreScale := some (← parseRat val) }
+  | ["model-score-mask", val] =>
+      if st.modelScoreMask.isSome then
+        throw "duplicate model-score-mask entry"
+      else
+        return { st with modelScoreMask := some (← parseRat val) }
+  | ["model-resid", q, i, val] =>
+      setModelResidEntry st (← parseNat q) (← parseNat i) (← parseRat val)
+  | ["model-wq", i, j, val] =>
+      setModelWEntry st (← parseNat i) (← parseNat j) (← parseRat val) "wq"
+  | ["model-wk", i, j, val] =>
+      setModelWEntry st (← parseNat i) (← parseNat j) (← parseRat val) "wk"
+  | ["model-bq", j, val] =>
+      setModelBEntry st (← parseNat j) (← parseRat val) "bq"
+  | ["model-bk", j, val] =>
+      setModelBEntry st (← parseNat j) (← parseRat val) "bk"
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 
@@ -277,6 +503,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   kind : String
   /-- Optional prompt period (only for `kind induction-aligned`). -/
   period? : Option Nat
+  /-- Optional model slice for score anchoring. -/
+  modelSlice? : Option (InductionHeadCert.ModelSlice seq)
   /-- Optional TL exclude_bos flag. -/
   tlExcludeBos? : Option Bool
   /-- Optional TL exclude_current_token flag. -/
@@ -383,6 +611,119 @@ private def finalizeCopyLogits? {seq : Nat} (st : ParseState seq) :
     (row[k.1]!).getD 0
   return some copyLogitsFun
 
+private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
+    Except String (Option (ModelSlice seq)) := do
+  let any :=
+    st.modelDModel.isSome || st.modelHeadDim.isSome || st.modelLayer.isSome ||
+      st.modelHead.isSome || st.modelScoreScale.isSome || st.modelScoreMask.isSome ||
+      !st.modelResid.isEmpty || !st.modelWq.isEmpty || !st.modelWk.isEmpty ||
+      !st.modelBq.isEmpty || !st.modelBk.isEmpty
+  if !any then
+    return none
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "missing model-d-model entry"
+  let headDim ←
+    match st.modelHeadDim with
+    | some v => pure v
+    | none => throw "missing model-head-dim entry"
+  let layer ←
+    match st.modelLayer with
+    | some v => pure v
+    | none => throw "missing model-layer entry"
+  let head ←
+    match st.modelHead with
+    | some v => pure v
+    | none => throw "missing model-head entry"
+  let scoreScale ←
+    match st.modelScoreScale with
+    | some v => pure v
+    | none => throw "missing model-score-scale entry"
+  let scoreMask ←
+    match st.modelScoreMask with
+    | some v => pure v
+    | none => throw "missing model-score-mask entry"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  if headDim = 0 then
+    throw "model-head-dim must be positive"
+  if st.modelResid.size ≠ seq then
+    throw "model-resid has unexpected row count"
+  if !st.modelResid.all (fun row => row.size = dModel) then
+    throw "model-resid has unexpected column count"
+  if !st.modelResid.all (fun row => row.all Option.isSome) then
+    throw "missing model-resid entries"
+  if st.modelWq.size ≠ dModel || st.modelWk.size ≠ dModel then
+    throw "model-wq/wk has unexpected row count"
+  if !st.modelWq.all (fun row => row.size = headDim) then
+    throw "model-wq has unexpected column count"
+  if !st.modelWk.all (fun row => row.size = headDim) then
+    throw "model-wk has unexpected column count"
+  if !st.modelWq.all (fun row => row.all Option.isSome) then
+    throw "missing model-wq entries"
+  if !st.modelWk.all (fun row => row.all Option.isSome) then
+    throw "missing model-wk entries"
+  if st.modelBq.size ≠ headDim || st.modelBk.size ≠ headDim then
+    throw "model-bq/bk has unexpected length"
+  if !st.modelBq.all Option.isSome then
+    throw "missing model-bq entries"
+  if !st.modelBk.all Option.isSome then
+    throw "missing model-bk entries"
+  let residFun : Fin seq → Fin dModel → Rat := fun q i =>
+    let row := st.modelResid[q.1]!
+    (row[i.1]!).getD 0
+  let wqFun : Fin dModel → Fin headDim → Rat := fun i j =>
+    let row := st.modelWq[i.1]!
+    (row[j.1]!).getD 0
+  let wkFun : Fin dModel → Fin headDim → Rat := fun i j =>
+    let row := st.modelWk[i.1]!
+    (row[j.1]!).getD 0
+  let bqFun : Fin headDim → Rat := fun j =>
+    (st.modelBq[j.1]!).getD 0
+  let bkFun : Fin headDim → Rat := fun j =>
+    (st.modelBk[j.1]!).getD 0
+  return some
+    { dModel := dModel
+      headDim := headDim
+      layer := layer
+      head := head
+      scoreScale := scoreScale
+      scoreMask := scoreMask
+      resid := residFun
+      wq := wqFun
+      wk := wkFun
+      bq := bqFun
+      bk := bkFun }
+
+private def dot {n : Nat} (u v : Fin n → Rat) : Rat :=
+  (Finset.univ : Finset (Fin n)).sum (fun i => u i * v i)
+
+private def modelQVec {seq : Nat} (slice : ModelSlice seq) (q : Fin seq) :
+    Fin slice.headDim → Rat :=
+  fun j =>
+    (Finset.univ : Finset (Fin slice.dModel)).sum (fun i =>
+      slice.resid q i * slice.wq i j) + slice.bq j
+
+private def modelKVec {seq : Nat} (slice : ModelSlice seq) (k : Fin seq) :
+    Fin slice.headDim → Rat :=
+  fun j =>
+    (Finset.univ : Finset (Fin slice.dModel)).sum (fun i =>
+      slice.resid k i * slice.wk i j) + slice.bk j
+
+private def modelScore {seq : Nat} (slice : ModelSlice seq) (q k : Fin seq) : Rat :=
+  if decide (q.val < k.val) then
+    slice.scoreMask
+  else
+    slice.scoreScale * dot (modelQVec slice q) (modelKVec slice k)
+
+/-- Check whether scores match the model slice computation. -/
+def scoresMatchModelSlice {seq : Nat} (slice : ModelSlice seq)
+    (scores : Fin seq → Fin seq → Rat) : Bool :=
+  (List.finRange seq).all (fun q =>
+    (List.finRange seq).all (fun k =>
+      decide (scores q k = modelScore slice q k)))
+
 end InductionHeadCert
 
 /-- Parse an explicit induction-head certificate from a text payload. -/
@@ -425,9 +766,11 @@ def parseInductionHeadCert (input : String) :
           throw "tl-exclude-bos/current-token requires tl-score-lb"
       let cert ← InductionHeadCert.finalizeStateCore hpos st
       let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
+      let modelSlice? ← InductionHeadCert.finalizeModelSlice? st
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
         { kind := kind
           period? := period?
+          modelSlice? := modelSlice?
           tlExcludeBos? := tlExcludeBos?
           tlExcludeCurrent? := tlExcludeCurrent?
           tlScoreLB? := tlScoreLB?
@@ -572,6 +915,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let tlExcludeBos? := payload.tlExcludeBos?
               let tlExcludeCurrent? := payload.tlExcludeCurrent?
               let tlScoreLB? := payload.tlScoreLB?
+              let modelSlice? := payload.modelSlice?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
@@ -621,6 +965,12 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 IO.eprintln
                   s!"error: active queries {activeCount} below minimum {minActive}"
                 return 2
+              if let some modelSlice := modelSlice? then
+                let okScores :=
+                  InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
+                if !okScores then
+                  IO.eprintln "error: scores do not match model slice"
+                  return 2
               if kind = "onehot-approx" then
                 let ok := Circuit.checkInductionHeadCert cert
                 if !ok then
