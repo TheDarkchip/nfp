@@ -10,6 +10,7 @@ public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Model.InductionPrompt
+public import Nfp.Sound.Induction.ScoreSlice
 
 /-!
 Untrusted parsing and checking for explicit induction-head certificates.
@@ -696,33 +697,17 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
       bq := bqFun
       bk := bkFun }
 
-private def dot {n : Nat} (u v : Fin n → Rat) : Rat :=
-  (Finset.univ : Finset (Fin n)).sum (fun i => u i * v i)
-
-private def modelQVec {seq : Nat} (slice : ModelSlice seq) (q : Fin seq) :
-    Fin slice.headDim → Rat :=
-  fun j =>
-    (Finset.univ : Finset (Fin slice.dModel)).sum (fun i =>
-      slice.resid q i * slice.wq i j) + slice.bq j
-
-private def modelKVec {seq : Nat} (slice : ModelSlice seq) (k : Fin seq) :
-    Fin slice.headDim → Rat :=
-  fun j =>
-    (Finset.univ : Finset (Fin slice.dModel)).sum (fun i =>
-      slice.resid k i * slice.wk i j) + slice.bk j
-
-private def modelScore {seq : Nat} (slice : ModelSlice seq) (q k : Fin seq) : Rat :=
-  if decide (q.val < k.val) then
-    slice.scoreMask
-  else
-    slice.scoreScale * dot (modelQVec slice q) (modelKVec slice k)
-
 /-- Check whether scores match the model slice computation. -/
 def scoresMatchModelSlice {seq : Nat} (slice : ModelSlice seq)
     (scores : Fin seq → Fin seq → Rat) : Bool :=
+  let scoresRef :=
+    Sound.Induction.scoresRatOfSlice (seq := seq)
+      (dModel := slice.dModel) (dHead := slice.headDim)
+      slice.scoreScale slice.scoreMask true
+      slice.resid slice.wq slice.bq slice.wk slice.bk
   (List.finRange seq).all (fun q =>
     (List.finRange seq).all (fun k =>
-      decide (scores q k = modelScore slice q k)))
+      decide (scores q k = scoresRef q k)))
 
 end InductionHeadCert
 
