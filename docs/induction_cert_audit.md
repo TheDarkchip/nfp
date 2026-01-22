@@ -45,8 +45,8 @@ repeated patterns, this corresponds to the shifted stripe target (`q -> q -
 period + 1`) rather than the unshifted stripe (`q -> q - period`). The
 certificate generator still uses repeated patterns for its inputs. For `kind
 induction-aligned`, Lean additionally checks that `active`/`prev` match the
-declared `period` and evaluates stripe-mean (prefix matching score) and the
-copying score on the full second repeat.
+declared `period` and evaluates stripe-mean (prefix matching score) on the full
+second repeat.
 
 ## Preconditions and scope limits
 
@@ -60,7 +60,7 @@ Key assumptions and limitations:
   scripts. For `kind onehot-approx`, Lean does not (yet) verify their derivation
   from token-level semantics; for `kind induction-aligned`, it checks that
   `prev`/`active` match the declared periodic prompt and applies prefix-matching
-  and copying metrics derived from the certificate payload.
+  metrics derived from the certificate payload.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
 

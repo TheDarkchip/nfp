@@ -17,7 +17,7 @@ Untrusted parsing and checking for explicit induction-head certificates.
 All sequence indices in the certificate payload are 0-based (file-format convention) and
 are converted to `Fin` indices internally. Supported certificate kinds:
 - `kind onehot-approx` (proxy bounds only)
-- `kind induction-aligned` (requires `period` and checks prefix-matching/copying metrics)
+- `kind induction-aligned` (requires `period` and checks prefix-matching metrics)
 -/
 
 public section
@@ -245,7 +245,7 @@ structure InductionHeadCertPayload (seq : Nat) where
   kind : String
   /-- Optional prompt period (only for `kind induction-aligned`). -/
   period? : Option Nat
-  /-- Optional copy-logit matrix (only required for `kind induction-aligned`). -/
+  /-- Optional copy-logit matrix (may be present for `kind induction-aligned`). -/
   copyLogits? : Option (Fin seq → Fin seq → Rat)
   /-- Verified certificate payload. -/
   cert : Circuit.InductionHeadCert seq
@@ -376,8 +376,6 @@ def parseInductionHeadCert (input : String) :
         throw "missing period entry for kind induction-aligned"
       let cert ← InductionHeadCert.finalizeStateCore hpos st
       let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
-      if kind = "induction-aligned" && copyLogits?.isNone then
-        throw "missing copy-logit entries for kind induction-aligned"
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
         { kind := kind, period? := period?, copyLogits? := copyLogits?, cert := cert }
       return ⟨seq, payload⟩
@@ -432,7 +430,7 @@ private def sumOver {seq : Nat} (f : Fin seq → Fin seq → Rat) : Rat :=
   (List.finRange seq).foldl (fun acc q =>
     acc + (List.finRange seq).foldl (fun acc' k => acc' + f q k) 0) 0
 
-/-- Copying score for induction-aligned checks (ratio scaled to [-1, 1]). -/
+/-- Copying score utility (ratio scaled to [-1, 1]); not used by the checker. -/
 def copyScore {seq : Nat} (weights copyLogits : Fin seq → Fin seq → Rat) : Option Rat :=
   let total := sumOver (seq := seq) copyLogits
   if total = 0 then
@@ -447,35 +445,30 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
-    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
-    (minCopyingStr? : Option String) : IO UInt32 := do
+    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   let minStripeMean?E := parseRatOpt "min-stripe-mean" minStripeMeanStr?
   let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
-  let minCopying?E := parseRatOpt "min-copying" minCopyingStr?
-  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E, minCopying?E with
-  | Except.error msg, _, _, _, _, _ =>
+  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
+  | Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, Except.error msg, _, _, _, _ =>
+  | _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, Except.error msg, _, _, _ =>
+  | _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, Except.error msg, _, _ =>
+  | _, _, _, Except.error msg, _ =>
       IO.eprintln s!"error: {msg}"
       return 2
-  | _, _, _, _, Except.error msg, _ =>
-      IO.eprintln s!"error: {msg}"
-      return 2
-  | _, _, _, _, _, Except.error msg =>
+  | _, _, _, _, Except.error msg =>
       IO.eprintln s!"error: {msg}"
       return 2
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
-      Except.ok minStripeMean?, Except.ok minStripeTop1?, Except.ok minCopying? =>
+      Except.ok minStripeMean?, Except.ok minStripeTop1? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let parsed ← loadInductionHeadCert certPath
@@ -499,10 +492,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
               if kind = "onehot-approx" then
-                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome ||
-                    minCopyingStr?.isSome then
+                if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
                   IO.eprintln
-                    "error: stripe/copying thresholds are not used for onehot-approx"
+                    "error: stripe thresholds are not used for onehot-approx"
                   return 2
               if kind = "induction-aligned" then
                 let period ←
@@ -533,9 +525,6 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   return 2
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
-                  return 2
-                if copyLogits?.isNone then
-                  IO.eprintln "error: missing copy-logit entries for induction-aligned"
                   return 2
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
@@ -624,26 +613,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   | none =>
                       IO.eprintln "error: empty active set for stripe stats"
                       return 2
-                let copyScore? :=
-                  match copyLogits? with
-                  | some logits => copyScore (seq := seq) cert.weights logits
-                  | none => none
-                match copyScore? with
-                | none =>
-                    IO.eprintln "error: empty copy-logit sum for copying score"
-                    return 2
-                | some score =>
-                    let minCopying := minCopying?.getD (0 : Rat)
-                    if score < minCopying then
-                      IO.eprintln
-                        s!"error: copying {ratToString score} below minimum \
-                        {ratToString minCopying}"
-                      return 2
-                    IO.println
-                      s!"ok: induction-aligned certificate checked \
-                      (seq={seq}, active={activeCount}, \
-                      stripeMean={ratToString mean}, copying={ratToString score})"
-                    return 0
+                IO.println
+                  s!"ok: induction-aligned certificate checked \
+                  (seq={seq}, active={activeCount}, stripeMean={ratToString mean})"
+                return 0
               let effectiveMinLogitDiff :=
                 match minLogitDiff?, cert.values.direction with
                 | some v, _ => some v

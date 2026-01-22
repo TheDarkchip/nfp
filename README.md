@@ -115,7 +115,7 @@ Optional gates:
 
 ```
 --min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
---min-stripe-mean <rat>   --min-copying <rat>   --min-stripe-top1 <rat>
+--min-stripe-mean <rat>   --min-stripe-top1 <rat>
 ```
 
 The CLI reports the certificate kind in its success message (e.g., `onehot-approx (proxy)`
@@ -125,11 +125,10 @@ If `--tokens` is provided, the CLI verifies:
 - `kind onehot-approx`: `prev`/`active` match previous-occurrence semantics.
 - `kind induction-aligned`: the token sequence is periodic with the declared `period`.
 
-For `kind induction-aligned`, the checker uses the **prefix-matching (stripe-mean)** and
-**copying** metrics (not softmax-margin/onehot). The `min-margin`, `max-eps`, and `min-logit-diff`
-gates apply only to `onehot-approx`. Defaults for stripe-mean and copying are `0`. `stripe-top1`
-is only used for stripe certificates.
-Induction-aligned certificates must include `copy-logit` entries.
+For `kind induction-aligned`, the checker uses the **prefix-matching (stripe-mean)**
+metric (not softmax-margin/onehot). The `min-margin`, `max-eps`, and `min-logit-diff`
+gates apply only to `onehot-approx`. The default stripe-mean threshold is `0`.
+`stripe-top1` is only used for stripe certificates.
 
 Example non-vacuous check:
 
@@ -152,7 +151,6 @@ min-logit-diff <rat>
 min-margin <rat>
 max-eps <rat>
 min-stripe-mean <rat>
-min-copying <rat>
 min-avg-logit-diff <rat>
 item <cert_path> [tokens_path]
 ```
@@ -222,8 +220,8 @@ elsewhere in the tooling are **0-based** to match the literature. Direction toke
 `direction-*` lines are optional metadata; if present, both must appear. If no `active` lines
 appear, the checker defaults to all non-initial queries (indices 1.. in 0-based indexing).
 For `kind induction-aligned`, the checker additionally verifies that `active` and `prev` match
-the periodic prompt defined by `period` and evaluates stripe-mean and copying on the full period
-(copying requires `copy-logit` entries). Stripe-top1 is not used for induction-aligned.
+the periodic prompt defined by `period` and evaluates stripe-mean on the full period.
+Stripe-top1 is not used for induction-aligned.
 `copy-logit` entries store mean-subtracted, ReLUed head logit contributions for the token at
 position `k` (untrusted generator output).
 

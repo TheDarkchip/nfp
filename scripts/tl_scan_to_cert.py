@@ -161,7 +161,6 @@ def main() -> int:
     parser.add_argument("--batch-out", type=Path, default=Path("reports/tl_scan/tl_scan.batch"))
     parser.add_argument("--batch-min-pass", default=None)
     parser.add_argument("--batch-min-stripe-mean", default=None)
-    parser.add_argument("--batch-min-copying", default=None)
     parser.add_argument("--batch-min-logit-diff", default=None)
     parser.add_argument("--batch-min-margin", default=None)
     parser.add_argument("--batch-max-eps", default=None)
@@ -402,8 +401,6 @@ def main() -> int:
             f.write(f"max-eps {args.batch_max_eps}\n")
         if args.batch_min_stripe_mean is not None:
             f.write(f"min-stripe-mean {args.batch_min_stripe_mean}\n")
-        if args.batch_min_copying is not None:
-            f.write(f"min-copying {args.batch_min_copying}\n")
         for cert_path, tokens_path in batch_items:
             f.write(f"item {cert_path} {tokens_path}\n")
     print(f"Wrote batch file to {args.batch_out}")
