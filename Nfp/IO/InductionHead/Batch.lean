@@ -202,6 +202,7 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let period? := payload.period?
           let copyLogits? := payload.copyLogits?
           let modelSlice? := payload.modelSlice?
+          let modelLnSlice? := payload.modelLnSlice?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
           if kind = "onehot-approx" then
@@ -239,6 +240,23 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           if activeCount < minActive then
             return Except.error
               s!"active queries {activeCount} below minimum {minActive}"
+          if let some modelLnSlice := modelLnSlice? then
+            match modelSlice? with
+            | none =>
+                return Except.error "model-ln data requires model-resid slice"
+            | some modelSlice =>
+                if h : modelLnSlice.dModel = modelSlice.dModel then
+                  if modelLnSlice.lnEps ≤ 0 then
+                    return Except.error "model-ln-eps must be positive"
+                  let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
+                    simpa [h] using modelSlice.resid
+                  let okResid :=
+                    InductionHeadCert.residWithinLayerNormBounds
+                      (seq := seq) modelLnSlice resid'
+                  if !okResid then
+                    return Except.error "residuals not within LayerNorm bounds"
+                else
+                  return Except.error "model-ln dModel does not match model slice"
           if let some modelSlice := modelSlice? then
             let okScores :=
               InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores

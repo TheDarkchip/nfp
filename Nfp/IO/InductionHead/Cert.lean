@@ -9,6 +9,7 @@ public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
+public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
 public import Nfp.Sound.Induction.ScoreSlice
 
@@ -92,8 +93,20 @@ structure ParseState (seq : Nat) where
   modelScoreScale : Option Rat
   /-- Optional model score mask value. -/
   modelScoreMask : Option Rat
+  /-- Optional model mask-causal flag. -/
+  modelMaskCausal : Option Bool
   /-- Optional model residual inputs (seq × d_model). -/
   modelResid : Array (Array (Option Rat))
+  /-- Optional model embedding inputs (seq × d_model). -/
+  modelEmbed : Array (Array (Option Rat))
+  /-- Optional LayerNorm epsilon. -/
+  modelLnEps : Option Rat
+  /-- Optional LayerNorm bound slack. -/
+  modelLnSlack : Option Rat
+  /-- Optional LayerNorm gamma. -/
+  modelLnGamma : Array (Option Rat)
+  /-- Optional LayerNorm beta. -/
+  modelLnBeta : Array (Option Rat)
   /-- Optional model Wq slice (d_model × head_dim). -/
   modelWq : Array (Array (Option Rat))
   /-- Optional model Wk slice (d_model × head_dim). -/
@@ -117,6 +130,8 @@ structure ModelSlice (seq : Nat) where
   scoreScale : Rat
   /-- Mask value for causal attention (k > q). -/
   scoreMask : Rat
+  /-- Whether to apply a causal mask to attention scores. -/
+  maskCausal : Bool
   /-- Residual inputs (post-layernorm). -/
   resid : Fin seq → Fin dModel → Rat
   /-- Q projection slice. -/
@@ -127,6 +142,21 @@ structure ModelSlice (seq : Nat) where
   bq : Fin headDim → Rat
   /-- K bias slice. -/
   bk : Fin headDim → Rat
+
+/-- LayerNorm inputs for anchoring post-LN residuals. -/
+structure ModelLnSlice (seq : Nat) where
+  /-- Hidden dimension. -/
+  dModel : Nat
+  /-- LayerNorm epsilon. -/
+  lnEps : Rat
+  /-- Nonnegative slack for LayerNorm bounds. -/
+  lnSlack : Rat
+  /-- LayerNorm gamma. -/
+  lnGamma : Fin dModel → Rat
+  /-- LayerNorm beta. -/
+  lnBeta : Fin dModel → Rat
+  /-- Pre-LN embeddings/residual stream. -/
+  embed : Fin seq → Fin dModel → Rat
 
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
@@ -160,7 +190,13 @@ def initState (seq : Nat) : ParseState seq :=
     modelHead := none
     modelScoreScale := none
     modelScoreMask := none
+    modelMaskCausal := none
     modelResid := #[]
+    modelEmbed := #[]
+    modelLnEps := none
+    modelLnSlack := none
+    modelLnGamma := #[]
+    modelLnBeta := #[]
     modelWq := #[]
     modelWk := #[]
     modelBq := #[]
@@ -221,6 +257,12 @@ private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
 private def allocModelResid (seq dModel : Nat) : Array (Array (Option Rat)) :=
   Array.replicate seq (Array.replicate dModel none)
 
+private def allocModelEmbed (seq dModel : Nat) : Array (Array (Option Rat)) :=
+  Array.replicate seq (Array.replicate dModel none)
+
+private def allocModelLnVec (dModel : Nat) : Array (Option Rat) :=
+  Array.replicate dModel none
+
 private def allocModelW (dModel headDim : Nat) : Array (Array (Option Rat)) :=
   Array.replicate dModel (Array.replicate headDim none)
 
@@ -238,6 +280,26 @@ private def ensureModelResid {seq : Nat} (st : ParseState seq) :
   let st :=
     if st.modelResid.isEmpty then
       { st with modelResid := allocModelResid seq dModel }
+    else
+      st
+  return (st, dModel)
+
+private def ensureModelEmbed {seq : Nat} (st : ParseState seq) :
+    Except String (ParseState seq × Nat) := do
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "model-d-model required before model-embed"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  let st :=
+    if st.modelEmbed.isEmpty then
+      { st with modelEmbed := allocModelEmbed seq dModel }
+    else
+      st
+  let st :=
+    if st.modelLnGamma.isEmpty then
+      { st with modelLnGamma := allocModelLnVec dModel, modelLnBeta := allocModelLnVec dModel }
     else
       st
   return (st, dModel)
@@ -280,6 +342,34 @@ private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v 
   | none =>
       let row' := row.set! iFin.1 (some v)
       return { st with modelResid := st.modelResid.set! qFin.1 row' }
+
+private def setModelEmbedEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
+    Except String (ParseState seq) := do
+  let (st, dModel) ← ensureModelEmbed st
+  let qFin ← toIndex0 (seq := seq) "q" q
+  let iFin ← toIndex0Sized "i" dModel i
+  let row := st.modelEmbed[qFin.1]!
+  match row[iFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-embed entry at ({q}, {i})"
+  | none =>
+      let row' := row.set! iFin.1 (some v)
+      return { st with modelEmbed := st.modelEmbed.set! qFin.1 row' }
+
+private def setModelLnEntry {seq : Nat} (st : ParseState seq)
+    (i : Nat) (v : Rat) (which : String) : Except String (ParseState seq) := do
+  let (st, dModel) ← ensureModelEmbed st
+  let iFin ← toIndex0Sized "i" dModel i
+  let arr := if which = "gamma" then st.modelLnGamma else st.modelLnBeta
+  match arr[iFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-ln-{which} entry for i={i}"
+  | none =>
+      let arr' := arr.set! iFin.1 (some v)
+      if which = "gamma" then
+        return { st with modelLnGamma := arr' }
+      else
+        return { st with modelLnBeta := arr' }
 
 private def setModelWEntry {seq : Nat} (st : ParseState seq)
     (i j : Nat) (v : Rat) (which : String) :
@@ -470,6 +560,27 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
         throw "duplicate model-score-mask entry"
       else
         return { st with modelScoreMask := some (← parseRat val) }
+  | ["model-mask-causal", val] =>
+      if st.modelMaskCausal.isSome then
+        throw "duplicate model-mask-causal entry"
+      else
+        return { st with modelMaskCausal := some (← parseBool val) }
+  | ["model-ln-eps", val] =>
+      if st.modelLnEps.isSome then
+        throw "duplicate model-ln-eps entry"
+      else
+        return { st with modelLnEps := some (← parseRat val) }
+  | ["model-ln-slack", val] =>
+      if st.modelLnSlack.isSome then
+        throw "duplicate model-ln-slack entry"
+      else
+        return { st with modelLnSlack := some (← parseRat val) }
+  | ["model-ln-gamma", i, val] =>
+      setModelLnEntry st (← parseNat i) (← parseRat val) "gamma"
+  | ["model-ln-beta", i, val] =>
+      setModelLnEntry st (← parseNat i) (← parseRat val) "beta"
+  | ["model-embed", q, i, val] =>
+      setModelEmbedEntry st (← parseNat q) (← parseNat i) (← parseRat val)
   | ["model-resid", q, i, val] =>
       setModelResidEntry st (← parseNat q) (← parseNat i) (← parseRat val)
   | ["model-wq", i, j, val] =>
@@ -506,6 +617,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   period? : Option Nat
   /-- Optional model slice for score anchoring. -/
   modelSlice? : Option (InductionHeadCert.ModelSlice seq)
+  /-- Optional LayerNorm inputs for anchoring residuals. -/
+  modelLnSlice? : Option (InductionHeadCert.ModelLnSlice seq)
   /-- Optional TL exclude_bos flag. -/
   tlExcludeBos? : Option Bool
   /-- Optional TL exclude_current_token flag. -/
@@ -617,6 +730,7 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
   let any :=
     st.modelDModel.isSome || st.modelHeadDim.isSome || st.modelLayer.isSome ||
       st.modelHead.isSome || st.modelScoreScale.isSome || st.modelScoreMask.isSome ||
+      st.modelMaskCausal.isSome ||
       !st.modelResid.isEmpty || !st.modelWq.isEmpty || !st.modelWk.isEmpty ||
       !st.modelBq.isEmpty || !st.modelBk.isEmpty
   if !any then
@@ -645,6 +759,7 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
     match st.modelScoreMask with
     | some v => pure v
     | none => throw "missing model-score-mask entry"
+  let maskCausal := st.modelMaskCausal.getD true
   if dModel = 0 then
     throw "model-d-model must be positive"
   if headDim = 0 then
@@ -691,11 +806,69 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
       head := head
       scoreScale := scoreScale
       scoreMask := scoreMask
+      maskCausal := maskCausal
       resid := residFun
       wq := wqFun
       wk := wkFun
       bq := bqFun
       bk := bkFun }
+
+private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
+    Except String (Option (ModelLnSlice seq)) := do
+  let any :=
+    st.modelLnEps.isSome || st.modelLnSlack.isSome || !st.modelEmbed.isEmpty ||
+      !st.modelLnGamma.isEmpty || !st.modelLnBeta.isEmpty
+  if !any then
+    return none
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "missing model-d-model entry"
+  let lnEps ←
+    match st.modelLnEps with
+    | some v => pure v
+    | none => throw "missing model-ln-eps entry"
+  let lnSlack := st.modelLnSlack.getD 0
+  if lnSlack < 0 then
+    throw "model-ln-slack must be nonnegative"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  if st.modelEmbed.size ≠ seq then
+    throw "model-embed has unexpected row count"
+  if !st.modelEmbed.all (fun row => row.size = dModel) then
+    throw "model-embed has unexpected column count"
+  if !st.modelEmbed.all (fun row => row.all Option.isSome) then
+    throw "missing model-embed entries"
+  if st.modelLnGamma.size ≠ dModel || st.modelLnBeta.size ≠ dModel then
+    throw "model-ln-gamma/beta has unexpected length"
+  if !st.modelLnGamma.all Option.isSome then
+    throw "missing model-ln-gamma entries"
+  if !st.modelLnBeta.all Option.isSome then
+    throw "missing model-ln-beta entries"
+  let embedFun : Fin seq → Fin dModel → Rat := fun q i =>
+    let row := st.modelEmbed[q.1]!
+    (row[i.1]!).getD 0
+  let gammaFun : Fin dModel → Rat := fun i =>
+    (st.modelLnGamma[i.1]!).getD 0
+  let betaFun : Fin dModel → Rat := fun i =>
+    (st.modelLnBeta[i.1]!).getD 0
+  return some
+    { dModel := dModel
+      lnEps := lnEps
+      lnSlack := lnSlack
+      lnGamma := gammaFun
+      lnBeta := betaFun
+      embed := embedFun }
+
+/-- Check that residual entries fall within LayerNorm bounds from pre-LN inputs. -/
+def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
+    (resid : Fin seq → Fin slice.dModel → Rat) : Bool :=
+  (List.finRange seq).all (fun q =>
+    let bounds := Bounds.layerNormBounds slice.lnEps slice.lnGamma slice.lnBeta (slice.embed q)
+    (List.finRange slice.dModel).all (fun i =>
+      let lo := bounds.1 i - slice.lnSlack
+      let hi := bounds.2 i + slice.lnSlack
+      decide (lo ≤ resid q i) && decide (resid q i ≤ hi)))
 
 /-- Check whether scores match the model slice computation. -/
 def scoresMatchModelSlice {seq : Nat} (slice : ModelSlice seq)
@@ -703,7 +876,7 @@ def scoresMatchModelSlice {seq : Nat} (slice : ModelSlice seq)
   let scoresRef :=
     Sound.Induction.scoresRatOfSlice (seq := seq)
       (dModel := slice.dModel) (dHead := slice.headDim)
-      slice.scoreScale slice.scoreMask true
+      slice.scoreScale slice.scoreMask slice.maskCausal
       slice.resid slice.wq slice.bq slice.wk slice.bk
   (List.finRange seq).all (fun q =>
     (List.finRange seq).all (fun k =>
@@ -752,10 +925,12 @@ def parseInductionHeadCert (input : String) :
       let cert ← InductionHeadCert.finalizeStateCore hpos st
       let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
       let modelSlice? ← InductionHeadCert.finalizeModelSlice? st
+      let modelLnSlice? ← InductionHeadCert.finalizeModelLnSlice? st
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
         { kind := kind
           period? := period?
           modelSlice? := modelSlice?
+          modelLnSlice? := modelLnSlice?
           tlExcludeBos? := tlExcludeBos?
           tlExcludeCurrent? := tlExcludeCurrent?
           tlScoreLB? := tlScoreLB?
@@ -901,6 +1076,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let tlExcludeCurrent? := payload.tlExcludeCurrent?
               let tlScoreLB? := payload.tlScoreLB?
               let modelSlice? := payload.modelSlice?
+              let modelLnSlice? := payload.modelLnSlice?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
                 return 2
@@ -950,6 +1126,27 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 IO.eprintln
                   s!"error: active queries {activeCount} below minimum {minActive}"
                 return 2
+              if let some modelLnSlice := modelLnSlice? then
+                match modelSlice? with
+                | none =>
+                    IO.eprintln "error: model-ln data requires model-resid slice"
+                    return 2
+                | some modelSlice =>
+                    if h : modelLnSlice.dModel = modelSlice.dModel then
+                      if modelLnSlice.lnEps ≤ 0 then
+                        IO.eprintln "error: model-ln-eps must be positive"
+                        return 2
+                      let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
+                        simpa [h] using modelSlice.resid
+                      let okResid :=
+                        InductionHeadCert.residWithinLayerNormBounds
+                          (seq := seq) modelLnSlice resid'
+                      if !okResid then
+                        IO.eprintln "error: residuals not within LayerNorm bounds"
+                        return 2
+                    else
+                      IO.eprintln "error: model-ln dModel does not match model slice"
+                      return 2
               if let some modelSlice := modelSlice? then
                 let okScores :=
                   InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores

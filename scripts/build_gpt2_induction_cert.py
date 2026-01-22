@@ -143,9 +143,20 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
         outputs = model(input_ids, output_hidden_states=True)
         hidden_states = outputs.hidden_states[layer]
         block = model.h[layer]
-        x = block.ln_1(hidden_states).squeeze(0).cpu().numpy()
+        # Recompute LayerNorm in float64 to reduce numeric error versus float32.
+        x64 = hidden_states.double()
+        mean = x64.mean(dim=-1, keepdim=True)
+        var = x64.var(dim=-1, unbiased=False, keepdim=True)
+        x_hat = (x64 - mean) / torch.sqrt(var + float(block.ln_1.eps))
+        gamma64 = block.ln_1.weight.double()
+        beta64 = block.ln_1.bias.double()
+        x = (x_hat * gamma64 + beta64).squeeze(0).cpu().numpy()
+        embed = hidden_states.squeeze(0).cpu().numpy()
         w = block.attn.c_attn.weight.detach().cpu().numpy()
         b = block.attn.c_attn.bias.detach().cpu().numpy()
+        ln_eps = float(block.ln_1.eps)
+        ln_gamma = block.ln_1.weight.detach().cpu().numpy()
+        ln_beta = block.ln_1.bias.detach().cpu().numpy()
     d_model = w.shape[0]
     n_head = model.config.n_head
     head_dim = d_model // n_head
@@ -157,6 +168,7 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
     bk = b[d_model + start: d_model + end]
     scale = 1.0 / math.sqrt(head_dim)
     score_mask = -10000.0
+    mask_causal = True
     return {
         "d_model": int(d_model),
         "head_dim": int(head_dim),
@@ -164,7 +176,12 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
         "head": int(head),
         "scale": float(scale),
         "mask": float(score_mask),
+        "mask_causal": bool(mask_causal),
         "resid": x,
+        "embed": embed,
+        "ln_eps": ln_eps,
+        "ln_gamma": ln_gamma,
+        "ln_beta": ln_beta,
         "wq": wq,
         "wk": wk,
         "bq": bq,
@@ -177,6 +194,7 @@ def compute_scores_from_model_slice(model_slice: dict) -> list[list[Fraction]]:
     head_dim = model_slice["head_dim"]
     scale = model_slice["scale"]
     mask = model_slice["mask"]
+    mask_causal = model_slice.get("mask_causal", True)
     resid = model_slice["resid"]
     wq = model_slice["wq"]
     wk = model_slice["wk"]
@@ -201,7 +219,7 @@ def compute_scores_from_model_slice(model_slice: dict) -> list[list[Fraction]]:
     for q in range(seq):
         row = []
         for k in range(seq):
-            if k > q:
+            if mask_causal and k > q:
                 row.append(mask)
             else:
                 dot = sum(q_vecs[q][j] * k_vecs[k][j] for j in range(head_dim))
@@ -303,13 +321,30 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             f.write(f"model-head {model_slice['head']}\n")
             f.write(f"model-score-scale {rat_to_str(model_slice['scale'])}\n")
             f.write(f"model-score-mask {rat_to_str(model_slice['mask'])}\n")
+            f.write(
+                "model-mask-causal "
+                f"{str(model_slice.get('mask_causal', True)).lower()}\n"
+            )
+            f.write(f"model-ln-eps {rat_to_str(model_slice['ln_eps'])}\n")
+            if "ln_slack" in model_slice:
+                f.write(f"model-ln-slack {rat_to_str(model_slice['ln_slack'])}\n")
             resid = model_slice["resid"]
+            embed = model_slice["embed"]
+            ln_gamma = model_slice["ln_gamma"]
+            ln_beta = model_slice["ln_beta"]
             wq = model_slice["wq"]
             wk = model_slice["wk"]
             bq = model_slice["bq"]
             bk = model_slice["bk"]
             d_model = model_slice["d_model"]
             head_dim = model_slice["head_dim"]
+            for q in range(seq):
+                for i in range(d_model):
+                    f.write(f"model-embed {q} {i} {rat_to_str(embed[q][i])}\n")
+            for i in range(d_model):
+                f.write(f"model-ln-gamma {i} {rat_to_str(ln_gamma[i])}\n")
+            for i in range(d_model):
+                f.write(f"model-ln-beta {i} {rat_to_str(ln_beta[i])}\n")
             for q in range(seq):
                 for i in range(d_model):
                     f.write(f"model-resid {q} {i} {rat_to_str(resid[q][i])}\n")
@@ -562,6 +597,8 @@ def main() -> None:
                         help="Decimal rounding for TL score LB (defaults to --decimals).")
     parser.add_argument("--emit-model-slice", action="store_true",
                         help="Embed model slice used to compute attention scores.")
+    parser.add_argument("--model-ln-slack", default="1/1000",
+                        help="Slack for LayerNorm bounds when emitting model slice.")
     args = parser.parse_args()
 
     tokens = None
@@ -612,12 +649,32 @@ def main() -> None:
 
     model_slice = None
     if args.emit_model_slice:
+        try:
+            ln_slack = Fraction(args.model_ln_slack)
+        except (ValueError, ZeroDivisionError) as exc:
+            raise SystemExit("model-ln-slack must be a rational literal") from exc
+        if ln_slack < 0:
+            raise SystemExit("model-ln-slack must be nonnegative")
         raw_slice = extract_model_slice(model, input_ids, layer, head)
         resid = [
             [rat_from_float_exact(float(raw_slice["resid"][q, i]))
              for i in range(raw_slice["d_model"])]
             for q in range(args.seq)
         ]
+        embed = [
+            [rat_from_float_exact(float(raw_slice["embed"][q, i]))
+             for i in range(raw_slice["d_model"])]
+            for q in range(args.seq)
+        ]
+        ln_gamma = [
+            rat_from_float_exact(float(raw_slice["ln_gamma"][i]))
+            for i in range(raw_slice["d_model"])
+        ]
+        ln_beta = [
+            rat_from_float_exact(float(raw_slice["ln_beta"][i]))
+            for i in range(raw_slice["d_model"])
+        ]
+        ln_eps = rat_from_float_exact(raw_slice["ln_eps"])
         wq = [
             [rat_from_float_exact(float(raw_slice["wq"][i, j]))
              for j in range(raw_slice["head_dim"])]
@@ -639,6 +696,12 @@ def main() -> None:
             "head": raw_slice["head"],
             "scale": rat_from_float_exact(raw_slice["scale"]),
             "mask": rat_from_float_exact(raw_slice["mask"]),
+            "mask_causal": raw_slice["mask_causal"],
+            "embed": embed,
+            "ln_eps": ln_eps,
+            "ln_slack": ln_slack,
+            "ln_gamma": ln_gamma,
+            "ln_beta": ln_beta,
             "resid": resid,
             "wq": wq,
             "wk": wk,
