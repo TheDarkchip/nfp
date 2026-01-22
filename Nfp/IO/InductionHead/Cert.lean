@@ -385,8 +385,11 @@ def parseInductionHeadCert (input : String) :
 /-- Load an induction-head certificate from disk. -/
 def loadInductionHeadCert (path : System.FilePath) :
     IO (Except String (Sigma InductionHeadCert.InductionHeadCertPayload)) := do
-  let data ← IO.FS.readFile path
-  return parseInductionHeadCert data
+  try
+    let data ← IO.FS.readFile path
+    return parseInductionHeadCert data
+  catch e =>
+    return Except.error s!"failed to read cert file: {e.toString}"
 
 /-- Parse a token list payload. -/
 def parseInductionHeadTokens (input : String) :
@@ -409,8 +412,11 @@ def parseInductionHeadTokens (input : String) :
 /-- Load a token list from disk. -/
 def loadInductionHeadTokens (path : System.FilePath) :
     IO (Except String (Sigma fun seq => Fin seq → Nat)) := do
-  let data ← IO.FS.readFile path
-  return parseInductionHeadTokens data
+  try
+    let data ← IO.FS.readFile path
+    return parseInductionHeadTokens data
+  catch e =>
+    return Except.error s!"failed to read tokens file: {e.toString}"
 
 private def ratToString (x : Rat) : String :=
   toString x

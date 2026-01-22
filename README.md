@@ -147,6 +147,7 @@ Batch file format (all fields optional unless noted):
 
 ```
 min-active <n>
+min-pass <n>
 min-logit-diff <rat>
 min-margin <rat>
 max-eps <rat>

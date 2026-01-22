@@ -157,6 +157,7 @@ def main() -> int:
     parser.add_argument("--cert-dir", type=Path, default=Path("reports/tl_scan"))
     parser.add_argument("--report", type=Path, default=Path("reports/tl_scan/tl_scores.json"))
     parser.add_argument("--batch-out", type=Path, default=Path("reports/tl_scan/tl_scan.batch"))
+    parser.add_argument("--batch-min-pass", default=None)
     parser.add_argument("--batch-min-stripe-mean", default=None)
     parser.add_argument("--batch-min-copying", default=None)
     parser.add_argument("--batch-min-logit-diff", default=None)
@@ -295,6 +296,7 @@ def main() -> int:
         "cert_indices": prompt_indices,
         "cert_tokens": {str(k): str(v) for k, v in prompt_tokens.items()},
         "batch_out": str(args.batch_out),
+        "batch_min_pass": args.batch_min_pass,
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -358,6 +360,8 @@ def main() -> int:
     with args.batch_out.open("w", encoding="ascii") as f:
         if args.batch_min_active is not None:
             f.write(f"min-active {args.batch_min_active}\n")
+        if args.batch_min_pass is not None:
+            f.write(f"min-pass {args.batch_min_pass}\n")
         if args.batch_min_logit_diff is not None:
             f.write(f"min-logit-diff {args.batch_min_logit_diff}\n")
         if args.batch_min_margin is not None:

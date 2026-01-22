@@ -41,6 +41,8 @@ structure BatchItem where
 structure BatchOpts where
   /-- Optional minimum active count. -/
   minActive? : Option Nat
+  /-- Optional minimum pass count for batch items. -/
+  minPass? : Option Nat
   /-- Optional per-item logit-diff lower bound. -/
   minLogitDiff? : Option Rat
   /-- Minimum margin threshold. -/
@@ -60,6 +62,8 @@ structure ParseState where
   items : Array BatchItem
   /-- Optional minimum active count. -/
   minActive? : Option Nat
+  /-- Optional minimum pass count. -/
+  minPass? : Option Nat
   /-- Optional per-item logit-diff lower bound. -/
   minLogitDiff? : Option Rat
   /-- Optional minimum margin threshold. -/
@@ -77,6 +81,7 @@ structure ParseState where
 def initState : ParseState :=
   { items := #[]
     minActive? := none
+    minPass? := none
     minLogitDiff? := none
     minMargin? := none
     maxEps? := none
@@ -98,6 +103,11 @@ private def setOptNat (label : String) (st : ParseState) (val : Nat) :
         throw s!"duplicate {label} entry"
       else
         pure { st with minActive? := some val }
+  | "min-pass" =>
+      if st.minPass?.isSome then
+        throw s!"duplicate {label} entry"
+      else
+        pure { st with minPass? := some val }
   | _ => throw s!"unknown nat option: {label}"
 
 private def setOptRat (label : String) (st : ParseState) (val : Rat) :
@@ -146,6 +156,8 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
       pure { st with items := st.items.push item }
   | ["min-active", n] =>
       setOptNat "min-active" st (← parseNat n)
+  | ["min-pass", n] =>
+      setOptNat "min-pass" st (← parseNat n)
   | ["min-logit-diff", v] =>
       setOptRat "min-logit-diff" st (← parseRat v)
   | ["min-margin", v] =>
@@ -163,6 +175,7 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
 
 private def finalizeOpts (st : ParseState) : BatchOpts :=
   { minActive? := st.minActive?
+    minPass? := st.minPass?
     minLogitDiff? := st.minLogitDiff?
     minMargin := st.minMargin?.getD (0 : Rat)
     maxEps := st.maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
@@ -354,16 +367,34 @@ def runInductionHeadBatchCheck (batchPath : System.FilePath) : IO UInt32 := do
       let requireLogitDiff := opts.minAvgLogitDiff?.isSome
       let mut sum : Rat := 0
       let mut count : Nat := 0
+      let mut passCount : Nat := 0
+      let mut failCount : Nat := 0
+      let mut firstErr : Option String := none
+      let total := st.items.size
       for item in st.items do
         let res ← InductionHeadBatch.checkOne item opts requireLogitDiff
         match res with
         | Except.error msg =>
-            IO.eprintln s!"error: {msg}"
-            return 2
+            if firstErr.isNone then
+              firstErr := some msg
+            failCount := failCount + 1
+            if opts.minPass?.isNone then
+              IO.eprintln s!"error: {msg}"
+              return 2
         | Except.ok logitDiffLB? =>
+            passCount := passCount + 1
             if let some v := logitDiffLB? then
               sum := sum + v
               count := count + 1
+      if let some minPass := opts.minPass? then
+        if total < minPass then
+          IO.eprintln s!"error: min-pass {minPass} exceeds total items {total}"
+          return 2
+        if passCount < minPass then
+          let firstMsg := (firstErr.getD "unknown failure")
+          IO.eprintln s!"error: only {passCount}/{total} items passed (min-pass {minPass}); \
+            first failure: {firstMsg}"
+          return 2
       if let some minAvg := opts.minAvgLogitDiff? then
         if count = 0 then
           IO.eprintln "error: no logit-diff bounds available for avg check"
@@ -374,7 +405,10 @@ def runInductionHeadBatchCheck (batchPath : System.FilePath) : IO UInt32 := do
             s!"error: avg logitDiffLB {InductionHeadBatch.ratToString avg} \
             below minimum {InductionHeadBatch.ratToString minAvg}"
           return 2
-      IO.println s!"ok: batch checked ({st.items.size} items)"
+      if opts.minPass?.isSome then
+        IO.println s!"ok: batch checked ({passCount}/{total} items passed, {failCount} failed)"
+      else
+        IO.println s!"ok: batch checked ({total} items)"
       return 0
 
 end IO
