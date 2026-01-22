@@ -29,6 +29,9 @@ Or ask the script to search for a direction (untrusted):
 Optional token dump (for Lean-side prev/active verification):
   --tokens-out reports/gpt2_induction.tokens
 
+Optional token input (bypass random pattern):
+  --tokens-in reports/gpt2_induction.tokens
+
 Note: active positions are filtered by --active-eps-max and --min-margin. If
 none qualify, the script exits with an error.
 Layer/head indices are 0-based in the CLI to match the literature.
@@ -241,6 +244,42 @@ def write_tokens(path: Path, tokens: np.ndarray) -> None:
         for idx, tok in enumerate(tokens.tolist()):
             f.write(f"token {idx} {tok}\n")
 
+
+def read_tokens(path: Path) -> np.ndarray:
+    seq = None
+    tokens: dict[int, int] = {}
+    for raw in path.read_text(encoding="ascii").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        parts = line.split()
+        if parts[0] == "seq" and len(parts) == 2:
+            if seq is not None:
+                raise ValueError("duplicate seq entry in tokens file")
+            seq = int(parts[1])
+            continue
+        if parts[0] == "token" and len(parts) == 3:
+            idx = int(parts[1])
+            tok = int(parts[2])
+            if idx in tokens:
+                raise ValueError(f"duplicate token entry for index {idx}")
+            tokens[idx] = tok
+            continue
+        raise ValueError(f"unrecognized tokens line: {line}")
+
+    if seq is None:
+        raise ValueError("missing seq entry in tokens file")
+    if seq <= 0:
+        raise ValueError("seq must be positive in tokens file")
+    if len(tokens) != seq:
+        raise ValueError("tokens file missing entries (expected seq tokens)")
+    arr = np.zeros(seq, dtype=np.int64)
+    for idx in range(seq):
+        if idx not in tokens:
+            raise ValueError(f"missing token entry for index {idx}")
+        arr[idx] = tokens[idx]
+    return arr
+
 def search_direction(
     model,
     values: np.ndarray,
@@ -348,6 +387,7 @@ def main() -> None:
     parser.add_argument("--values-out", help="Optional path for a value-range certificate")
     parser.add_argument("--value-dim", type=int, default=0,
                         help="Value dimension index for the value-range certificate")
+    parser.add_argument("--tokens-in", type=Path, help="Optional path to load the token list")
     parser.add_argument("--tokens-out", help="Optional path to write the token list")
     parser.add_argument("--active-eps-max", default="1/2",
                         help="Maximum eps to include an active position (default: 1/2).")
@@ -373,15 +413,27 @@ def main() -> None:
                         help="How many top directions to report (default: 10).")
     args = parser.parse_args()
 
-    if args.seq <= 0:
-        raise SystemExit("seq must be positive")
+    tokens = None
+    if args.tokens_in is not None:
+        try:
+            tokens = read_tokens(args.tokens_in)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if args.seq != len(tokens):
+            print("warning: overriding --seq to match tokens-in length")
+            args.seq = len(tokens)
+        if args.random_pattern:
+            print("warning: tokens-in provided; ignoring --random-pattern and --seed")
+    else:
+        if args.seq <= 0:
+            raise SystemExit("seq must be positive")
+        tokens = build_tokens(args.seq, args.pattern_length, args.random_pattern, args.seed)
+
     if args.kind == "induction-aligned":
         if args.pattern_length <= 0:
             raise SystemExit("pattern-length must be positive for induction-aligned")
         if args.pattern_length >= args.seq:
             raise SystemExit("pattern-length must be less than seq for induction-aligned")
-
-    tokens = build_tokens(args.seq, args.pattern_length, args.random_pattern, args.seed)
     prev, active_mask = build_prev(tokens)
     candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
 
