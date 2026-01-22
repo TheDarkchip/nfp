@@ -37,13 +37,16 @@ contributions, but only for the specific inputs and direction supplied.
 ## Literature alignment
 
 We follow the standard induction-head diagnostic setup from the literature:
-repeated-token sequences (a pattern repeated twice) and attention stripes that
-look back by one period (`q -> q - period`). The diagnostic script
-`scripts/diagnose_induction_heads.py` mirrors this setup, and the certificate
-generator uses repeated patterns for its inputs. For `kind induction-aligned`,
-Lean additionally checks that `active`/`prev` match the declared `period` and
-evaluates stripe-mean (prefix matching score) and the copying score on the full
-second repeat.
+repeated-token sequences (a pattern repeated twice). The diagnostic script
+`scripts/diagnose_induction_heads.py` now aligns with TransformerLens detection,
+using the induction detection pattern (duplicate-token mask shifted right) and
+the `"mul"` scoring metric (fraction of attention on the detection pattern). On
+repeated patterns, this corresponds to the shifted stripe target (`q -> q -
+period + 1`) rather than the unshifted stripe (`q -> q - period`). The
+certificate generator still uses repeated patterns for its inputs. For `kind
+induction-aligned`, Lean additionally checks that `active`/`prev` match the
+declared `period` and evaluates stripe-mean (prefix matching score) and the
+copying score on the full second repeat.
 
 ## Preconditions and scope limits
 

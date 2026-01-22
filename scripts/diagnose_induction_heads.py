@@ -4,11 +4,14 @@
 """
 Diagnostic scan for induction heads on repeated random sequences.
 
-This mirrors the common literature setup:
+This aligns with TransformerLens head detection:
 - build a batch of repeated random token sequences (pattern_len repeated twice),
 - run GPT-2 with output_attentions,
-- rank heads by induction stripe attention (q -> q - period),
-- rank heads by previous-token attention (q -> q - 1).
+- score heads via the induction detection pattern (duplicate-token mask shifted right),
+- score previous-token heads via the previous-token detection pattern.
+
+Scores use the TransformerLens "mul" metric by default:
+  score = sum(attn * detection_pattern) / sum(attn)
 
 Layer/head indices in the report are 0-based to match the literature.
 """
@@ -16,7 +19,6 @@ Layer/head indices in the report are 0-based to match the literature.
 from __future__ import annotations
 
 import argparse
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -64,30 +66,55 @@ def build_batch(
     return batch
 
 
-def compute_stripe_stats(attn: torch.Tensor, period: int) -> tuple[torch.Tensor, torch.Tensor]:
-    batch, heads, seq_len, _ = attn.shape
-    q = torch.arange(period, seq_len, device=attn.device)
-    k = q - period
-    block = attn[:, :, q, :]
-    k_index = k.view(1, 1, -1, 1).expand(batch, heads, -1, 1)
-    stripe_vals = block.gather(dim=-1, index=k_index).squeeze(-1)
-    stripe_mean = stripe_vals.mean(dim=(0, 2))
-    max_vals = block.max(dim=-1).values
-    stripe_top1 = (stripe_vals >= max_vals - 1e-12).float().mean(dim=(0, 2))
-    return stripe_mean, stripe_top1
+def previous_token_detection_pattern(tokens: torch.Tensor) -> torch.Tensor:
+    seq_len = tokens.shape[-1]
+    detection_pattern = torch.zeros((seq_len, seq_len), device=tokens.device)
+    detection_pattern[1:, :-1] = torch.eye(seq_len - 1, device=tokens.device)
+    return torch.tril(detection_pattern)
 
 
-def compute_prev_stats(attn: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    batch, heads, seq_len, _ = attn.shape
-    q = torch.arange(1, seq_len, device=attn.device)
-    k = q - 1
-    block = attn[:, :, q, :]
-    k_index = k.view(1, 1, -1, 1).expand(batch, heads, -1, 1)
-    prev_vals = block.gather(dim=-1, index=k_index).squeeze(-1)
-    prev_mean = prev_vals.mean(dim=(0, 2))
-    max_vals = block.max(dim=-1).values
-    prev_top1 = (prev_vals >= max_vals - 1e-12).float().mean(dim=(0, 2))
-    return prev_mean, prev_top1
+def duplicate_token_detection_pattern(tokens: torch.Tensor) -> torch.Tensor:
+    tok = tokens.view(-1)
+    eq_mask = tok.unsqueeze(0).eq(tok.unsqueeze(1))
+    eq_mask.fill_diagonal_(False)
+    return torch.tril(eq_mask.to(dtype=torch.float32))
+
+
+def induction_detection_pattern(tokens: torch.Tensor) -> torch.Tensor:
+    duplicate_pattern = duplicate_token_detection_pattern(tokens)
+    shifted = torch.roll(duplicate_pattern, shifts=1, dims=1)
+    zeros_column = torch.zeros((duplicate_pattern.shape[0], 1), device=duplicate_pattern.device)
+    result = torch.cat((zeros_column, shifted[:, 1:]), dim=1)
+    return torch.tril(result)
+
+
+def compute_head_score(
+    attention_pattern: torch.Tensor,
+    detection_pattern: torch.Tensor,
+    *,
+    exclude_bos: bool,
+    exclude_current_token: bool,
+    error_measure: str,
+) -> float:
+    if error_measure == "mul":
+        mask = torch.ones_like(attention_pattern)
+        if exclude_bos:
+            mask[:, 0] = 0
+        if exclude_current_token:
+            mask.fill_diagonal_(0)
+        masked_attn = attention_pattern * mask
+        denom = masked_attn.sum()
+        if denom == 0:
+            return 0.0
+        return ((masked_attn * detection_pattern).sum() / denom).item()
+
+    abs_diff = (attention_pattern - detection_pattern).abs()
+    if exclude_bos:
+        abs_diff[:, 0] = 0
+    if exclude_current_token:
+        abs_diff.fill_diagonal_(0)
+    size = abs_diff.shape[0]
+    return 1 - round((abs_diff.mean() * size).item(), 3)
 
 
 def main() -> int:
@@ -106,6 +133,14 @@ def main() -> int:
     parser.add_argument("--attn-implementation", default="eager")
     parser.add_argument("--top", type=int, default=20)
     parser.add_argument("--output", type=Path, default=Path("reports/induction_diagnostic.txt"))
+    parser.add_argument("--exclude-bos", action="store_true")
+    parser.add_argument("--exclude-current-token", action="store_true")
+    parser.add_argument(
+        "--error-measure",
+        choices=("mul", "abs"),
+        default="mul",
+        help="TransformerLens-style scoring metric",
+    )
     args = parser.parse_args()
 
     require_leading_space = args.require_leading_space and not args.allow_no_leading_space
@@ -136,17 +171,41 @@ def main() -> int:
     if outputs.attentions is None:
         raise SystemExit("Model did not return attention weights.")
 
-    stripe_scores = []
-    prev_scores = []
-    for layer_idx, attn in enumerate(outputs.attentions):
-        stripe_mean, stripe_top1 = compute_stripe_stats(attn, args.pattern_len)
-        prev_mean, prev_top1 = compute_prev_stats(attn)
-        for head_idx in range(attn.shape[1]):
-            stripe_scores.append((float(stripe_mean[head_idx]), float(stripe_top1[head_idx]), layer_idx, head_idx))
-            prev_scores.append((float(prev_mean[head_idx]), float(prev_top1[head_idx]), layer_idx, head_idx))
+    num_layers = len(outputs.attentions)
+    num_heads = outputs.attentions[0].shape[1]
+    induction_scores = np.zeros((num_layers, num_heads), dtype=np.float64)
+    prev_scores = np.zeros((num_layers, num_heads), dtype=np.float64)
 
-    stripe_scores.sort(key=lambda x: x[0], reverse=True)
-    prev_scores.sort(key=lambda x: x[0], reverse=True)
+    for batch_idx in range(input_ids.shape[0]):
+        tokens = input_ids[batch_idx]
+        induction_pattern = induction_detection_pattern(tokens)
+        prev_pattern = previous_token_detection_pattern(tokens)
+        for layer_idx, attn in enumerate(outputs.attentions):
+            layer_attn = attn[batch_idx]
+            for head_idx in range(layer_attn.shape[0]):
+                head_attn = layer_attn[head_idx]
+                induction_scores[layer_idx, head_idx] += compute_head_score(
+                    head_attn,
+                    detection_pattern=induction_pattern,
+                    exclude_bos=args.exclude_bos,
+                    exclude_current_token=args.exclude_current_token,
+                    error_measure=args.error_measure,
+                )
+                prev_scores[layer_idx, head_idx] += compute_head_score(
+                    head_attn,
+                    detection_pattern=prev_pattern,
+                    exclude_bos=args.exclude_bos,
+                    exclude_current_token=args.exclude_current_token,
+                    error_measure=args.error_measure,
+                )
+
+    induction_scores /= input_ids.shape[0]
+    prev_scores /= input_ids.shape[0]
+
+    induction_flat = [(float(induction_scores[l, h]), l, h) for l in range(num_layers) for h in range(num_heads)]
+    prev_flat = [(float(prev_scores[l, h]), l, h) for l in range(num_layers) for h in range(num_heads)]
+    induction_flat.sort(key=lambda x: x[0], reverse=True)
+    prev_flat.sort(key=lambda x: x[0], reverse=True)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="ascii") as f:
@@ -157,20 +216,24 @@ def main() -> int:
             f"vocab_range=[{args.vocab_min},{args.vocab_max}) min_word_length={args.min_word_length} "
             f"leading_space={require_leading_space}\n"
         )
-        f.write("\nTop induction stripe heads:\n")
-        for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
-            f.write(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}\n")
-        f.write("\nTop previous-token heads:\n")
-        for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
-            f.write(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}\n")
+        f.write(
+            f"exclude_bos={args.exclude_bos} exclude_current_token={args.exclude_current_token} "
+            f"error_measure={args.error_measure}\n"
+        )
+        f.write("\nTop induction heads (TransformerLens detection):\n")
+        for rank, (score, layer, head) in enumerate(induction_flat[: args.top], start=1):
+            f.write(f"{rank:02d} L{layer}H{head} score={score:.6f}\n")
+        f.write("\nTop previous-token heads (TransformerLens detection):\n")
+        for rank, (score, layer, head) in enumerate(prev_flat[: args.top], start=1):
+            f.write(f"{rank:02d} L{layer}H{head} score={score:.6f}\n")
 
     print(f"Wrote report to {args.output}")
-    print("\nTop induction stripe heads:")
-    for rank, (mean, top1, layer, head) in enumerate(stripe_scores[: args.top], start=1):
-        print(f"{rank:02d} L{layer}H{head} stripeMean={mean:.6f} stripeTop1={top1:.3f}")
-    print("\nTop previous-token heads:")
-    for rank, (mean, top1, layer, head) in enumerate(prev_scores[: args.top], start=1):
-        print(f"{rank:02d} L{layer}H{head} prevMean={mean:.6f} prevTop1={top1:.3f}")
+    print("\nTop induction heads (TransformerLens detection):")
+    for rank, (score, layer, head) in enumerate(induction_flat[: args.top], start=1):
+        print(f"{rank:02d} L{layer}H{head} score={score:.6f}")
+    print("\nTop previous-token heads (TransformerLens detection):")
+    for rank, (score, layer, head) in enumerate(prev_flat[: args.top], start=1):
+        print(f"{rank:02d} L{layer}H{head} score={score:.6f}")
 
     return 0
 
