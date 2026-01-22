@@ -11,6 +11,7 @@ Workflow:
 - generate Lean-verifiable certificates for top-K heads using the chosen tokens.
 
 Certificates are produced by calling scripts/build_gpt2_induction_cert.py with --tokens-in.
+By default, the script emits induction-aligned certificates.
 """
 
 from __future__ import annotations
@@ -131,7 +132,12 @@ def main() -> int:
     parser.add_argument("--top", type=int, default=10)
     parser.add_argument("--cert-dir", type=Path, default=Path("reports/tl_scan"))
     parser.add_argument("--report", type=Path, default=Path("reports/tl_scan/tl_scores.json"))
-    parser.add_argument("--cert-kind", choices=["onehot-approx", "induction-aligned"], default="onehot-approx")
+    parser.add_argument(
+        "--cert-kind",
+        choices=["onehot-approx", "induction-aligned"],
+        default="induction-aligned",
+        help="Certificate kind to emit for top heads (default: induction-aligned).",
+    )
     parser.add_argument("--decimals", type=int, default=6)
     parser.add_argument("--active-eps-max", default="1/2")
     parser.add_argument("--min-margin", default="0")
