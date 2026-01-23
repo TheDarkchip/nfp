@@ -10,11 +10,6 @@ public import Nfp.IO.Util
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
 public import Nfp.Sound.Induction.ScoreSlice
-/-!
-Untrusted parsing/checking for explicit induction-head certificates.
-Payload indices are 0-based and converted to `Fin`.
-Supported kinds: `onehot-approx` (proxy bounds), `induction-aligned` (needs `period`).
--/
 public section
 namespace Nfp
 namespace IO
@@ -1202,8 +1197,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
       let tParse? ← if timeParse then some <$> IO.monoMsNow else pure none
       let parsed ← loadInductionHeadCert certPath
       if let some t0 := tParse? then
-        let t1 ← IO.monoMsNow
-        IO.eprintln s!"info: parse-ms {t1 - t0}"
+        let t1 ← IO.monoMsNow; IO.eprintln s!"info: parse-ms {t1 - t0}"
       match parsed with
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"
@@ -1225,13 +1219,12 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let tlScoreLB? := payload.tlScoreLB?
               let modelSlice? := payload.modelSlice?
               let modelLnSlice? := payload.modelLnSlice?
+              let tPre? ← if timeStages then some <$> IO.monoMsNow else pure none
               if kind != "onehot-approx" && kind != "induction-aligned" then
-                IO.eprintln s!"error: unexpected kind {kind}"
-                return (← finish 2)
+                IO.eprintln s!"error: unexpected kind {kind}"; return (← finish 2)
               if kind = "onehot-approx" then
                 if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
-                  IO.eprintln
-                    "error: stripe thresholds are not used for onehot-approx"
+                  IO.eprintln "error: stripe thresholds are not used for onehot-approx"
                   return (← finish 2)
               if kind = "induction-aligned" then
                 let period ←
@@ -1262,17 +1255,19 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     "error: min-margin/max-eps are not used for induction-aligned"
                   return (← finish 2)
                 if minLogitDiffStr?.isSome && cert.values.direction.isNone then
-                  IO.eprintln
-                    "error: min-logit-diff requires direction metadata"
+                  IO.eprintln "error: min-logit-diff requires direction metadata"
                   return (← finish 2)
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
                   return (← finish 2)
               let activeCount := cert.active.card; let defaultMinActive := max 1 (seq / 8)
               let minActive := minActive?.getD defaultMinActive; if activeCount < minActive then
-                IO.eprintln
-                  s!"error: active queries {activeCount} below minimum {minActive}"
+                IO.eprintln s!"error: active queries {activeCount} below minimum {minActive}"
                 return (← finish 2)
+              if let some t0 := tPre? then
+                let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-pre-ms {t1 - t0}"
+              let tModel? ← if timeStages then some <$> IO.monoMsNow else pure none
+              let tLnPhase? ← if timeStages then some <$> IO.monoMsNow else pure none
               if let some modelLnSlice := modelLnSlice? then
                 match modelSlice? with
                 | none =>
@@ -1281,7 +1276,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | some modelSlice =>
                     if h : modelLnSlice.dModel = modelSlice.dModel then
                       if modelLnSlice.lnEps ≤ 0 then
-                        IO.eprintln "error: model-ln-eps must be positive"; return (← finish 2)
+                        IO.eprintln "error: model-ln-eps must be positive"
+                        return (← finish 2)
                       let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
                         simpa [h] using modelSlice.resid
                       let t0? ←
@@ -1294,36 +1290,41 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           (seq := seq) modelLnSlice resid'
                       if !okResid then
                         if let some t0 := t0? then
-                          let t1 ← IO.monoMsNow
-                          IO.eprintln s!"info: ln-check-ms {t1 - t0}"
+                          let t1 ← IO.monoMsNow; IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                         IO.eprintln "error: residuals not within LayerNorm bounds"
                         return (← finish 2)
                       if let some t0 := t0? then
-                        let t1 ← IO.monoMsNow
-                        IO.eprintln s!"info: ln-check-ms {t1 - t0}"
+                        let t1 ← IO.monoMsNow; IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                     else
                       IO.eprintln "error: model-ln dModel does not match model slice"
                       return (← finish 2)
+              if let some t0 := tLnPhase? then
+                let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-ln-ms {t1 - t0}"
+              let tScoresPhase? ← if timeStages then some <$> IO.monoMsNow else pure none
               if let some modelSlice := modelSlice? then
-                let t0? ←
+                let okScores ←
                   if timeScores then
-                    some <$> IO.monoMsNow
+                    let t0 ← IO.monoMsNow
+                    let okScores :=
+                      InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
+                    let _ ← (if okScores then pure () else pure ())
+                    let t1 ← IO.monoMsNow
+                    IO.eprintln s!"info: scores-check-ms {t1 - t0}"
+                    pure okScores
                   else
-                    pure none
-                let okScores :=
-                  InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
-                if let some t0 := t0? then
-                  let t1 ← IO.monoMsNow
-                  IO.eprintln s!"info: scores-check-ms {t1 - t0}"
+                    pure
+                      (InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores)
                 if !okScores then
-                  IO.eprintln "error: scores do not match model slice"
-                  return (← finish 2)
+                  IO.eprintln "error: scores do not match model slice"; return (← finish 2)
+              if let some t0 := tScoresPhase? then
+                let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-scores-ms {t1 - t0}"
+              if let some t0 := tModel? then
+                let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-model-ms {t1 - t0}"
               if kind = "onehot-approx" then
                 let ok ← timeIO timeStages "cert-check"
                   (fun _ => pure (Circuit.checkInductionHeadCert cert))
                 if !ok then
-                  IO.eprintln "error: induction-head certificate rejected"
-                  return (← finish 2)
+                  IO.eprintln "error: induction-head certificate rejected"; return (← finish 2)
                 if cert.margin < minMargin then
                   IO.eprintln
                     s!"error: margin {ratToString cert.margin} \
@@ -1338,8 +1339,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 match tokensPath? with
                 | none =>
                     if tlScoreLB?.isSome then
-                      IO.eprintln "error: tl-score-lb requires a tokens file"
-                      return (← finish 2)
+                      IO.eprintln "error: tl-score-lb requires a tokens file"; return (← finish 2)
                     else
                       pure none
                 | some tokensPath =>
