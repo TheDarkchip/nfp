@@ -319,6 +319,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             f.write(f"model-head-dim {model_slice['head_dim']}\n")
             f.write(f"model-layer {model_slice['layer']}\n")
             f.write(f"model-head {model_slice['head']}\n")
+            if model_slice.get("model_decimals") is not None:
+                f.write(f"model-decimals {model_slice['model_decimals']}\n")
             f.write(f"model-score-scale {rat_to_str(model_slice['scale'])}\n")
             f.write(f"model-score-mask {rat_to_str(model_slice['mask'])}\n")
             f.write(
@@ -330,6 +332,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
                 f.write(f"model-ln-slack {rat_to_str(model_slice['ln_slack'])}\n")
             if "ln_scale" in model_slice and model_slice["ln_scale"] is not None:
                 f.write(f"model-ln-scale {model_slice['ln_scale']}\n")
+            if model_slice.get("ln_fast"):
+                f.write("model-ln-fast true\n")
             resid = model_slice["resid"]
             embed = model_slice["embed"]
             ln_gamma = model_slice["ln_gamma"]
@@ -607,6 +611,8 @@ def main() -> None:
                               "and 1/100 for model-decimals <= 3."))
     parser.add_argument("--model-ln-scale", type=int, default=None,
                         help="Optional LayerNorm sqrt bound scale (positive).")
+    parser.add_argument("--model-ln-fast", action="store_true",
+                        help="Use the fixed-denominator fast path in the verifier.")
     args = parser.parse_args()
 
     tokens = None
@@ -718,6 +724,7 @@ def main() -> None:
             "head_dim": raw_slice["head_dim"],
             "layer": raw_slice["layer"],
             "head": raw_slice["head"],
+            "model_decimals": model_decimals,
             "scale": rat_from_float_model(raw_slice["scale"]),
             "mask": rat_from_float_model(raw_slice["mask"]),
             "mask_causal": raw_slice["mask_causal"],
@@ -725,6 +732,7 @@ def main() -> None:
             "ln_eps": ln_eps,
             "ln_slack": ln_slack,
             "ln_scale": args.model_ln_scale,
+            "ln_fast": args.model_ln_fast,
             "ln_gamma": ln_gamma,
             "ln_beta": ln_beta,
             "resid": resid,

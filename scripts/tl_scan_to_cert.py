@@ -187,6 +187,8 @@ def main() -> int:
                         help="Slack for LayerNorm bounds when emitting model slice.")
     parser.add_argument("--model-ln-scale", type=int, default=None,
                         help="Optional LayerNorm sqrt bound scale (positive).")
+    parser.add_argument("--model-ln-fast", action="store_true",
+                        help="Use the fixed-denominator fast path in the verifier.")
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -332,6 +334,7 @@ def main() -> int:
         "model_decimals": args.model_decimals,
         "model_ln_slack": args.model_ln_slack,
         "model_ln_scale": args.model_ln_scale,
+        "model_ln_fast": args.model_ln_fast,
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -414,6 +417,8 @@ def main() -> int:
                     cmd.extend(["--model-ln-slack", str(args.model_ln_slack)])
                 if args.model_ln_scale is not None:
                     cmd.extend(["--model-ln-scale", str(args.model_ln_scale)])
+                if args.model_ln_fast:
+                    cmd.append("--model-ln-fast")
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:
