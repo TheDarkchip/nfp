@@ -599,8 +599,10 @@ def main() -> None:
                         help="Embed model slice used to compute attention scores.")
     parser.add_argument("--model-decimals", type=int, default=None,
                         help="Decimal rounding for model slice entries (default: exact).")
-    parser.add_argument("--model-ln-slack", default="1/1000",
-                        help="Slack for LayerNorm bounds when emitting model slice.")
+    parser.add_argument("--model-ln-slack", default=None,
+                        help=("Slack for LayerNorm bounds when emitting model slice. "
+                              "Defaults to 1/1000 for model-decimals >= 4 or exact, "
+                              "and 1/100 for model-decimals <= 3."))
     args = parser.parse_args()
 
     tokens = None
@@ -654,12 +656,18 @@ def main() -> None:
         model_decimals = args.model_decimals
         if model_decimals is not None and model_decimals < 0:
             raise SystemExit("model-decimals must be nonnegative")
-        try:
-            ln_slack = Fraction(args.model_ln_slack)
-        except (ValueError, ZeroDivisionError) as exc:
-            raise SystemExit("model-ln-slack must be a rational literal") from exc
-        if ln_slack < 0:
-            raise SystemExit("model-ln-slack must be nonnegative")
+        if args.model_ln_slack is None:
+            if model_decimals is not None and model_decimals <= 3:
+                ln_slack = Fraction(1, 100)
+            else:
+                ln_slack = Fraction(1, 1000)
+        else:
+            try:
+                ln_slack = Fraction(args.model_ln_slack)
+            except (ValueError, ZeroDivisionError) as exc:
+                raise SystemExit("model-ln-slack must be a rational literal") from exc
+            if ln_slack < 0:
+                raise SystemExit("model-ln-slack must be nonnegative")
         def rat_from_float_model(x: float) -> Fraction:
             if model_decimals is None:
                 return rat_from_float_exact(x)
@@ -683,7 +691,8 @@ def main() -> None:
             rat_from_float_model(float(raw_slice["ln_beta"][i]))
             for i in range(raw_slice["d_model"])
         ]
-        ln_eps = rat_from_float_model(raw_slice["ln_eps"])
+        # Keep epsilon exact to avoid rounding to zero at coarse precisions.
+        ln_eps = rat_from_float_exact(raw_slice["ln_eps"])
         wq = [
             [rat_from_float_model(float(raw_slice["wq"][i, j]))
              for j in range(raw_slice["head_dim"])]
