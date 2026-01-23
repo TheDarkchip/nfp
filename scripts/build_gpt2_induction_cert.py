@@ -377,6 +377,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
         if unembed_target is not None:
             if direction_target is None or direction_negative is None:
                 raise ValueError("unembed rows require direction-target/negative")
+            if model_slice is None:
+                f.write(f"model-d-model {len(unembed_target)}\n")
             for i, val in enumerate(unembed_target):
                 f.write(f"model-unembed-target {i} {rat_to_str(val)}\n")
             for i, val in enumerate(unembed_negative):

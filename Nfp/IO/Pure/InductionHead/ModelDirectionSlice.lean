@@ -9,7 +9,7 @@ Pure validation for unembedding-based direction inputs.
 
 This module is in the trusted IO.Pure boundary. It validates raw arrays and
 produces a checked direction slice with explicit size/positivity proofs.
--/-
+-/
 
 public section
 

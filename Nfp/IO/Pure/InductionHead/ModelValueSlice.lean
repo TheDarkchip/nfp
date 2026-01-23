@@ -9,7 +9,7 @@ Pure validation for value-path model-slice inputs.
 
 This module is in the trusted IO.Pure boundary. It validates raw arrays and
 produces a checked value slice with explicit size/positivity proofs.
--/-
+-/
 
 public section
 
