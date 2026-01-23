@@ -4,8 +4,10 @@ public import Mathlib.Data.Finset.Insert
 public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
+public import Nfp.IO.InductionHead.ModelDirectionSlice
 public import Nfp.IO.InductionHead.ModelLnSlice
 public import Nfp.IO.InductionHead.ModelValueSlice
+public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
 public import Nfp.IO.Pure.InductionHead.ModelLnSlice
 public import Nfp.IO.Pure.InductionHead.ModelValueSlice
@@ -117,6 +119,10 @@ structure ParseState (seq : Nat) where
   modelBv : Array (Option Rat)
   /-- Optional attention output bias (d_model). -/
   modelAttnBias : Array (Option Rat)
+  /-- Optional unembedding row for the target token (d_model). -/
+  modelUnembedTarget : Array (Option Rat)
+  /-- Optional unembedding row for the negative token (d_model). -/
+  modelUnembedNegative : Array (Option Rat)
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
@@ -166,7 +172,9 @@ def initState (seq : Nat) : ParseState seq :=
     modelWv := #[]
     modelWo := #[]
     modelBv := #[]
-    modelAttnBias := #[] }
+    modelAttnBias := #[]
+    modelUnembedTarget := #[]
+    modelUnembedNegative := #[] }
 private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
   if h : idx < seq then
     return ⟨idx, h⟩
@@ -224,6 +232,8 @@ private def allocModelW (dModel headDim : Nat) : Array (Array (Option Rat)) :=
 private def allocModelB (headDim : Nat) : Array (Option Rat) :=
   Array.replicate headDim none
 private def allocModelAttnBias (dModel : Nat) : Array (Option Rat) :=
+  Array.replicate dModel none
+private def allocModelUnembed (dModel : Nat) : Array (Option Rat) :=
   Array.replicate dModel none
 private def ensureModelResid {seq : Nat} (st : ParseState seq) :
     Except String (ParseState seq × Nat) := do
@@ -313,6 +323,22 @@ private def ensureModelV {seq : Nat} (st : ParseState seq) :
     else
       st
   return (st, dModel, headDim)
+private def ensureModelUnembed {seq : Nat} (st : ParseState seq) :
+    Except String (ParseState seq × Nat) := do
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "model-d-model required before model-unembed"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  let st :=
+    if st.modelUnembedTarget.isEmpty then
+      { st with
+        modelUnembedTarget := allocModelUnembed dModel
+        modelUnembedNegative := allocModelUnembed dModel }
+    else
+      st
+  return (st, dModel)
 private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
   let (st, dModel) ← ensureModelResid st
@@ -420,6 +446,20 @@ private def setModelAttnBiasEntry {seq : Nat} (st : ParseState seq) (i : Nat) (v
       throw s!"duplicate model-attn-bias entry for i={i}"
   | none =>
       return { st with modelAttnBias := st.modelAttnBias.set! iFin.1 (some v) }
+private def setModelUnembedEntry {seq : Nat} (st : ParseState seq) (i : Nat) (v : Rat)
+    (which : String) : Except String (ParseState seq) := do
+  let (st, dModel) ← ensureModelUnembed st
+  let iFin ← toIndex0Sized "i" dModel i
+  let arr := if which = "target" then st.modelUnembedTarget else st.modelUnembedNegative
+  match arr[iFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-unembed-{which} entry for i={i}"
+  | none =>
+      let arr' := arr.set! iFin.1 (some v)
+      if which = "target" then
+        return { st with modelUnembedTarget := arr' }
+      else
+        return { st with modelUnembedNegative := arr' }
 /-- Parse a boolean literal. -/
 private def parseBool (s : String) : Except String Bool := do
   match s.toLower with
@@ -627,6 +667,10 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
       setModelBvEntry st (← parseNat j) (← parseRat val)
   | ["model-attn-bias", i, val] =>
       setModelAttnBiasEntry st (← parseNat i) (← parseRat val)
+  | ["model-unembed-target", i, val] =>
+      setModelUnembedEntry st (← parseNat i) (← parseRat val) "target"
+  | ["model-unembed-negative", i, val] =>
+      setModelUnembedEntry st (← parseNat i) (← parseRat val) "negative"
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 /-- Extract the `seq` header from tokenized lines. -/
@@ -655,6 +699,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   modelLnSlice? : Option (InductionHeadCert.ModelLnSlice seq)
   /-- Optional value-path inputs for anchoring per-key values. -/
   modelValueSlice? : Option InductionHeadCert.ModelValueSlice
+  /-- Optional direction inputs anchored to unembedding rows. -/
+  modelDirectionSlice? : Option InductionHeadCert.ModelDirectionSlice
   /-- Optional TL exclude_bos flag. -/
   tlExcludeBos? : Option Bool
   /-- Optional TL exclude_current_token flag. -/
@@ -927,6 +973,41 @@ private def finalizeModelValueSlice? {seq : Nat} (st : ParseState seq) :
     | Except.ok checked => pure checked
     | Except.error msg => throw msg
   return some checked.toSlice
+private def finalizeModelDirectionSlice? {seq : Nat} (st : ParseState seq) :
+    Except String (Option ModelDirectionSlice) := do
+  let any :=
+    !st.modelUnembedTarget.isEmpty || !st.modelUnembedNegative.isEmpty
+  if !any then
+    return none
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "missing model-d-model entry"
+  let target ←
+    match st.directionTarget with
+    | some v => pure v
+    | none => throw "model-unembed requires direction-target/negative"
+  let negative ←
+    match st.directionNegative with
+    | some v => pure v
+    | none => throw "model-unembed requires direction-target/negative"
+  if !st.modelUnembedTarget.all Option.isSome then
+    throw "missing model-unembed-target entries"
+  if !st.modelUnembedNegative.all Option.isSome then
+    throw "missing model-unembed-negative entries"
+  let targetArr : Array Rat := st.modelUnembedTarget.map (fun v => v.getD 0)
+  let negativeArr : Array Rat := st.modelUnembedNegative.map (fun v => v.getD 0)
+  let raw : Nfp.IO.Pure.InductionHeadCert.ModelDirectionSliceRaw :=
+    { dModel := dModel
+      target := target
+      negative := negative
+      unembedTarget := targetArr
+      unembedNegative := negativeArr }
+  let checked ←
+    match Nfp.IO.Pure.InductionHeadCert.checkModelDirectionSliceRaw raw with
+    | Except.ok checked => pure checked
+    | Except.error msg => throw msg
+  return some checked.toSlice
 /-- Check that residual entries fall within LayerNorm bounds from pre-LN inputs. -/
 def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
     (resid : Fin seq → Fin slice.dModel → Rat) : Bool :=
@@ -1132,12 +1213,14 @@ def parseInductionHeadCert (input : String) :
       let modelSlice? ← InductionHeadCert.finalizeModelSlice? st
       let modelLnSlice? ← InductionHeadCert.finalizeModelLnSlice? st
       let modelValueSlice? ← InductionHeadCert.finalizeModelValueSlice? st
+      let modelDirectionSlice? ← InductionHeadCert.finalizeModelDirectionSlice? st
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
         { kind := kind
           period? := period?
           modelSlice? := modelSlice?
           modelLnSlice? := modelLnSlice?
           modelValueSlice? := modelValueSlice?
+          modelDirectionSlice? := modelDirectionSlice?
           tlExcludeBos? := tlExcludeBos?
           tlExcludeCurrent? := tlExcludeCurrent?
           tlScoreLB? := tlScoreLB?
