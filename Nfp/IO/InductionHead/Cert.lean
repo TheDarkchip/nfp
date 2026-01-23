@@ -1442,19 +1442,19 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   if kind = "induction-aligned" then
                     match stripeMeanOpt with
                     | some mean =>
-                        IO.println
-                          s!"ok: induction-aligned certificate checked \
-                          (seq={seq}, active={activeCount}, stripeMean={ratToString mean})"
+                        let _ ← timeIO timeStages "print-ok" (fun _ =>
+                          IO.println s!"ok: induction-aligned certificate checked \
+                            (seq={seq}, active={activeCount}, stripeMean={ratToString mean})")
                         return 0
                     | none =>
                         IO.eprintln "error: missing stripe mean for induction-aligned"
                         return 2
                   else
                     let kindLabel := "onehot-approx (proxy)"
-                    IO.println
-                      s!"ok: {kindLabel} certificate checked \
-                      (seq={seq}, active={activeCount}, \
-                      margin={ratToString cert.margin}, eps={ratToString cert.eps})"
+                    let _ ← timeIO timeStages "print-ok" (fun _ =>
+                      IO.println s!"ok: {kindLabel} certificate checked \
+                        (seq={seq}, active={activeCount}, \
+                        margin={ratToString cert.margin}, eps={ratToString cert.eps})")
                     return 0
               | some minLogitDiff =>
                   let logitDiffLB? ← timeIO timeStages "logit-diff" (fun _ =>
@@ -1474,22 +1474,22 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                         if kind = "induction-aligned" then
                           match stripeMeanOpt with
                           | some mean =>
-                              IO.println
-                                s!"ok: induction-aligned certificate checked \
-                                (seq={seq}, active={activeCount}, \
-                                stripeMean={ratToString mean}, \
-                                logitDiffLB={ratToString logitDiffLB})"
+                              let _ ← timeIO timeStages "print-ok" (fun _ =>
+                                IO.println s!"ok: induction-aligned certificate checked \
+                                  (seq={seq}, active={activeCount}, \
+                                  stripeMean={ratToString mean}, \
+                                  logitDiffLB={ratToString logitDiffLB})")
                               return 0
                           | none =>
                               IO.eprintln "error: missing stripe mean for induction-aligned"
                               return 2
                         else
                           let kindLabel := "onehot-approx (proxy)"
-                          IO.println
-                            s!"ok: {kindLabel} certificate checked \
-                            (seq={seq}, active={activeCount}, \
-                            margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
-                            logitDiffLB={ratToString logitDiffLB})"
+                          let _ ← timeIO timeStages "print-ok" (fun _ =>
+                            IO.println s!"ok: {kindLabel} certificate checked \
+                              (seq={seq}, active={activeCount}, \
+                              margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
+                              logitDiffLB={ratToString logitDiffLB})")
                           return 0
 end IO
 end Nfp
