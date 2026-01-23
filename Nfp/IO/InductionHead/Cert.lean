@@ -1167,8 +1167,15 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
-    (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool) :
+    (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
+    (timeTotal : Bool) :
     IO UInt32 := do
+  let tTotal? ← if timeTotal then some <$> IO.monoMsNow else pure none
+  let finish (code : UInt32) : IO UInt32 := do
+    if let some t0 := tTotal? then
+      let t1 ← IO.monoMsNow
+      IO.eprintln s!"info: total-ms {t1 - t0}"
+    return code
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1177,28 +1184,24 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
   match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
   | Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"
-      return 2
+      return (← finish 2)
   | _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"
-      return 2
+      return (← finish 2)
   | _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"
-      return 2
+      return (← finish 2)
   | _, _, _, Except.error msg, _ =>
       IO.eprintln s!"error: {msg}"
-      return 2
+      return (← finish 2)
   | _, _, _, _, Except.error msg =>
       IO.eprintln s!"error: {msg}"
-      return 2
+      return (← finish 2)
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
       Except.ok minStripeMean?, Except.ok minStripeTop1? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
-      let tParse? ←
-        if timeParse then
-          some <$> IO.monoMsNow
-        else
-          pure none
+      let tParse? ← if timeParse then some <$> IO.monoMsNow else pure none
       let parsed ← loadInductionHeadCert certPath
       if let some t0 := tParse? then
         let t1 ← IO.monoMsNow
@@ -1206,12 +1209,12 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
       match parsed with
       | Except.error msg =>
           IO.eprintln s!"error: {msg}"
-          return 1
+          return (← finish 1)
       | Except.ok ⟨seq, payload⟩ =>
           match seq with
           | 0 =>
               IO.eprintln "error: seq must be positive"
-              return 2
+              return (← finish 2)
           | Nat.succ n =>
               let seq := Nat.succ n
               let _ : NeZero seq := ⟨by simp⟩
@@ -1226,63 +1229,63 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let modelLnSlice? := payload.modelLnSlice?
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"
-                return 2
+                return (← finish 2)
               if kind = "onehot-approx" then
                 if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
                   IO.eprintln
                     "error: stripe thresholds are not used for onehot-approx"
-                  return 2
+                  return (← finish 2)
               if kind = "induction-aligned" then
                 let period ←
                   match period? with
                   | some v => pure v
                   | none =>
                       IO.eprintln "error: missing period entry for induction-aligned"
-                      return 2
+                      return (← finish 2)
                 if period = 0 then
                   IO.eprintln "error: period must be positive for induction-aligned"
-                  return 2
+                  return (← finish 2)
                 if seq ≤ period then
                   IO.eprintln "error: period must be less than seq for induction-aligned"
-                  return 2
+                  return (← finish 2)
                 let expectedActive := Model.activeOfPeriod (seq := seq) period
                 if !decide (cert.active = expectedActive) then
                   IO.eprintln "error: active set does not match induction-aligned period"
-                  return 2
+                  return (← finish 2)
                 let prevOk :=
                   (List.finRange seq).all (fun q =>
                     decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
                 if !prevOk then
                   IO.eprintln "error: prev map does not match induction-aligned period"
-                  return 2
+                  return (← finish 2)
                 if minMarginStr?.isSome || maxEpsStr?.isSome then
                   IO.eprintln
                     "error: min-margin/max-eps are not used for induction-aligned"
-                  return 2
+                  return (← finish 2)
                 if minLogitDiffStr?.isSome && cert.values.direction.isNone then
                   IO.eprintln
                     "error: min-logit-diff requires direction metadata"
-                  return 2
+                  return (← finish 2)
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
-                  return 2
+                  return (← finish 2)
               let activeCount := cert.active.card
               let defaultMinActive := max 1 (seq / 8)
               let minActive := minActive?.getD defaultMinActive
               if activeCount < minActive then
                 IO.eprintln
                   s!"error: active queries {activeCount} below minimum {minActive}"
-                return 2
+                return (← finish 2)
               if let some modelLnSlice := modelLnSlice? then
                 match modelSlice? with
                 | none =>
                     IO.eprintln "error: model-ln data requires model-resid slice"
-                    return 2
+                    return (← finish 2)
                 | some modelSlice =>
                     if h : modelLnSlice.dModel = modelSlice.dModel then
                       if modelLnSlice.lnEps ≤ 0 then
                         IO.eprintln "error: model-ln-eps must be positive"
-                        return 2
+                        return (← finish 2)
                       let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
                         simpa [h] using modelSlice.resid
                       let t0? ←
@@ -1298,13 +1301,13 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           let t1 ← IO.monoMsNow
                           IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                         IO.eprintln "error: residuals not within LayerNorm bounds"
-                        return 2
+                        return (← finish 2)
                       if let some t0 := t0? then
                         let t1 ← IO.monoMsNow
                         IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                     else
                       IO.eprintln "error: model-ln dModel does not match model slice"
-                      return 2
+                      return (← finish 2)
               if let some modelSlice := modelSlice? then
                 let t0? ←
                   if timeScores then
@@ -1318,29 +1321,29 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   IO.eprintln s!"info: scores-check-ms {t1 - t0}"
                 if !okScores then
                   IO.eprintln "error: scores do not match model slice"
-                  return 2
+                  return (← finish 2)
               if kind = "onehot-approx" then
                 let ok ← timeIO timeStages "cert-check"
                   (fun _ => pure (Circuit.checkInductionHeadCert cert))
                 if !ok then
                   IO.eprintln "error: induction-head certificate rejected"
-                  return 2
+                  return (← finish 2)
                 if cert.margin < minMargin then
                   IO.eprintln
                     s!"error: margin {ratToString cert.margin} \
                     below minimum {ratToString minMargin}"
-                  return 2
+                  return (← finish 2)
                 if maxEps < cert.eps then
                   IO.eprintln
                     s!"error: eps {ratToString cert.eps} \
                     above maximum {ratToString maxEps}"
-                  return 2
+                  return (← finish 2)
               let tokensOpt ←
                 match tokensPath? with
                 | none =>
                     if tlScoreLB?.isSome then
                       IO.eprintln "error: tl-score-lb requires a tokens file"
-                      return 2
+                      return (← finish 2)
                     else
                       pure none
                 | some tokensPath =>
@@ -1349,7 +1352,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     match tokensParsed with
                     | Except.error msg =>
                         IO.eprintln s!"error: {msg}"
-                        return 2
+                        return (← finish 2)
                     | Except.ok ⟨seqTokens, tokens⟩ =>
                         if hseq : seqTokens = seq then
                           let tokens' : Fin seq → Nat := by
@@ -1358,7 +1361,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                         else
                           IO.eprintln
                             s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
-                          return 2
+                          return (← finish 2)
               if let some tokens' := tokensOpt then
                 if kind = "induction-aligned" then
                   let period ←
@@ -1366,15 +1369,15 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     | some v => pure v
                     | none =>
                         IO.eprintln "error: missing period entry for induction-aligned"
-                        return 2
+                        return (← finish 2)
                   if !tokensPeriodic (seq := seq) period tokens' then
                     IO.eprintln "error: tokens are not periodic for induction-aligned period"
-                    return 2
+                    return (← finish 2)
                 else
                   let activeTokens := Model.activeOfTokens (seq := seq) tokens'
                   if !decide (cert.active ⊆ activeTokens) then
                     IO.eprintln "error: active set not contained in token repeats"
-                    return 2
+                    return (← finish 2)
                   let prevTokens := Model.prevOfTokens (seq := seq) tokens'
                   let prevOk :=
                     (List.finRange seq).all (fun q =>
@@ -1384,12 +1387,12 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                         true)
                   if !prevOk then
                     IO.eprintln "error: prev map does not match tokens on active queries"
-                    return 2
+                    return (← finish 2)
               if let some tlScoreLB := tlScoreLB? then
                 match tokensOpt with
                 | none =>
                     IO.eprintln "error: tl-score-lb requires a tokens file"
-                    return 2
+                    return (← finish 2)
                 | some tokens' =>
                     let excludeBos := tlExcludeBos?.getD false
                     let excludeCurrent := tlExcludeCurrent?.getD false
@@ -1400,7 +1403,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       IO.eprintln
                         s!"error: tl-score {ratToString tlScore} \
                         below minimum {ratToString tlScoreLB}"
-                      return 2
+                      return (← finish 2)
               let stripeMeanOpt ←
                 if kind = "induction-aligned" then
                   let period ←
@@ -1408,7 +1411,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     | some v => pure v
                     | none =>
                         IO.eprintln "error: missing period entry for induction-aligned"
-                        return 2
+                        return (← finish 2)
                   let stripeCert : Stripe.StripeCert seq :=
                     { period := period
                       stripeMeanLB := 0
@@ -1424,11 +1427,11 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           IO.eprintln
                             s!"error: stripe-mean {ratToString mean} below minimum \
                             {ratToString minMean}"
-                          return 2
+                          return (← finish 2)
                         pure mean
                     | none =>
                         IO.eprintln "error: empty active set for stripe stats"
-                        return 2
+                        return (← finish 2)
                   pure (some mean)
                 else
                   pure none
@@ -1442,20 +1445,20 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   if kind = "induction-aligned" then
                     match stripeMeanOpt with
                     | some mean =>
-                        let _ ← timeIO timeStages "print-ok" (fun _ =>
-                          IO.println s!"ok: induction-aligned certificate checked \
-                            (seq={seq}, active={activeCount}, stripeMean={ratToString mean})")
-                        return 0
+                      let _ ← timeIO timeStages "print-ok" (fun _ =>
+                        IO.println s!"ok: induction-aligned certificate checked \
+                          (seq={seq}, active={activeCount}, stripeMean={ratToString mean})")
+                        return (← finish 0)
                     | none =>
                         IO.eprintln "error: missing stripe mean for induction-aligned"
-                        return 2
+                        return (← finish 2)
                   else
                     let kindLabel := "onehot-approx (proxy)"
                     let _ ← timeIO timeStages "print-ok" (fun _ =>
                       IO.println s!"ok: {kindLabel} certificate checked \
                         (seq={seq}, active={activeCount}, \
                         margin={ratToString cert.margin}, eps={ratToString cert.eps})")
-                    return 0
+                    return (← finish 0)
               | some minLogitDiff =>
                   let logitDiffLB? ← timeIO timeStages "logit-diff" (fun _ =>
                     pure (Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
@@ -1463,13 +1466,13 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   match logitDiffLB? with
                   | none =>
                       IO.eprintln "error: empty active set for logit-diff bound"
-                      return 2
+                      return (← finish 2)
                   | some logitDiffLB =>
                       if logitDiffLB < minLogitDiff then
                         IO.eprintln
                           s!"error: logitDiffLB {ratToString logitDiffLB} \
                           below minimum {ratToString minLogitDiff}"
-                        return 2
+                        return (← finish 2)
                       else
                         if kind = "induction-aligned" then
                           match stripeMeanOpt with
@@ -1479,10 +1482,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                                   (seq={seq}, active={activeCount}, \
                                   stripeMean={ratToString mean}, \
                                   logitDiffLB={ratToString logitDiffLB})")
-                              return 0
+                              return (← finish 0)
                           | none =>
                               IO.eprintln "error: missing stripe mean for induction-aligned"
-                              return 2
+                              return (← finish 2)
                         else
                           let kindLabel := "onehot-approx (proxy)"
                           let _ ← timeIO timeStages "print-ok" (fun _ =>
@@ -1490,6 +1493,6 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                               (seq={seq}, active={activeCount}, \
                               margin={ratToString cert.margin}, eps={ratToString cert.eps}, \
                               logitDiffLB={ratToString logitDiffLB})")
-                          return 0
+                          return (← finish 0)
 end IO
 end Nfp
