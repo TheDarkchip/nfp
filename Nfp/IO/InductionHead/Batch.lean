@@ -203,8 +203,18 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
           let copyLogits? := payload.copyLogits?
           let modelSlice? := payload.modelSlice?
           let modelLnSlice? := payload.modelLnSlice?
+          let modelDirectionSlice? := payload.modelDirectionSlice?
           if kind != "onehot-approx" && kind != "induction-aligned" then
             return Except.error s!"unexpected kind {kind}"
+          if let some dirSlice := modelDirectionSlice? then
+            match cert.values.direction with
+            | none =>
+                return Except.error "model-unembed requires direction metadata"
+            | some dirSpec =>
+                if dirSpec.target != dirSlice.target ||
+                    dirSpec.negative != dirSlice.negative then
+                  return Except.error
+                    "direction metadata does not match model-unembed target/negative"
           if kind = "onehot-approx" then
             if opts.minStripeMean?.isSome then
               return Except.error

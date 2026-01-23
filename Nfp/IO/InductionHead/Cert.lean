@@ -1361,9 +1361,21 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let tlScoreLB? := payload.tlScoreLB?
               let modelSlice? := payload.modelSlice?
               let modelLnSlice? := payload.modelLnSlice?
+              let modelDirectionSlice? := payload.modelDirectionSlice?
               let tPre? ← if timeStages then some <$> IO.monoMsNow else pure none
               if kind != "onehot-approx" && kind != "induction-aligned" then
                 IO.eprintln s!"error: unexpected kind {kind}"; return (← finish 2)
+              if let some dirSlice := modelDirectionSlice? then
+                match cert.values.direction with
+                | none =>
+                    IO.eprintln "error: model-unembed requires direction metadata"
+                    return (← finish 2)
+                | some dirSpec =>
+                    if dirSpec.target != dirSlice.target ||
+                        dirSpec.negative != dirSlice.negative then
+                      IO.eprintln
+                        "error: direction metadata does not match model-unembed target/negative"
+                      return (← finish 2)
               if kind = "onehot-approx" then
                 if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe thresholds are not used for onehot-approx"

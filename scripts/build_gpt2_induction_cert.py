@@ -304,7 +304,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
                          tl_score_lb: Fraction | None = None,
                          tl_exclude_bos: bool = False,
                          tl_exclude_current_token: bool = False,
-                         model_slice=None) -> None:
+                         model_slice=None,
+                         unembed_target=None, unembed_negative=None) -> None:
     lo = min(vals)
     hi = max(vals)
     with path.open("w", encoding="ascii") as f:
@@ -368,9 +369,18 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             f.write(f"tl-exclude-bos {str(tl_exclude_bos).lower()}\n")
             f.write(f"tl-exclude-current-token {str(tl_exclude_current_token).lower()}\n")
             f.write(f"tl-score-lb {rat_to_str(tl_score_lb)}\n")
+        if (unembed_target is None) != (unembed_negative is None):
+            raise ValueError("unembed rows must be provided together")
         if direction_target is not None and direction_negative is not None:
             f.write(f"direction-target {direction_target}\n")
             f.write(f"direction-negative {direction_negative}\n")
+        if unembed_target is not None:
+            if direction_target is None or direction_negative is None:
+                raise ValueError("unembed rows require direction-target/negative")
+            for i, val in enumerate(unembed_target):
+                f.write(f"model-unembed-target {i} {rat_to_str(val)}\n")
+            for i, val in enumerate(unembed_negative):
+                f.write(f"model-unembed-negative {i} {rat_to_str(val)}\n")
         f.write(f"eps {rat_to_str(eps)}\n")
         f.write(f"margin {rat_to_str(margin)}\n")
         if active is not None:
@@ -662,6 +672,7 @@ def main() -> None:
         )
 
     model_slice = None
+    rat_from_float_model = rat_from_float_exact
     if args.emit_model_slice:
         model_decimals = args.model_decimals
         if model_decimals is not None and model_decimals < 0:
@@ -865,13 +876,25 @@ def main() -> None:
         direction_target = args.direction_target
         direction_negative = args.direction_negative
 
+    unembed_target = None
+    unembed_negative = None
     if direction_target is not None:
         wte = model.wte.weight.detach().cpu().numpy()
         if direction_target < 0 or direction_target >= wte.shape[0]:
             raise SystemExit("direction-target out of vocab range")
         if direction_negative < 0 or direction_negative >= wte.shape[0]:
             raise SystemExit("direction-negative out of vocab range")
-        direction = wte[direction_target] - wte[direction_negative]
+        target_row = wte[direction_target]
+        negative_row = wte[direction_negative]
+        unembed_target = [
+            rat_from_float_model(float(target_row[i]))
+            for i in range(target_row.shape[0])
+        ]
+        unembed_negative = [
+            rat_from_float_model(float(negative_row[i]))
+            for i in range(negative_row.shape[0])
+        ]
+        direction = target_row - negative_row
         head_dim = model.config.n_embd // model.config.n_head
         start, end = head * head_dim, (head + 1) * head_dim
         w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
@@ -919,6 +942,8 @@ def main() -> None:
         tl_exclude_bos=args.tl_exclude_bos,
         tl_exclude_current_token=args.tl_exclude_current_token,
         model_slice=model_slice,
+        unembed_target=unembed_target,
+        unembed_negative=unembed_negative,
     )
 
     if args.scores_out:
