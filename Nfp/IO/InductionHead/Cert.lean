@@ -4,12 +4,15 @@ public import Mathlib.Data.Finset.Insert
 public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
+public import Nfp.IO.InductionHead.ModelLnSlice
+public import Nfp.IO.Pure.InductionHead.ModelSlice
+public import Nfp.IO.Pure.InductionHead.ModelLnSlice
+public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
-public import Nfp.Sound.Induction.ScoreSlice
 public section
 namespace Nfp
 namespace IO
@@ -104,52 +107,6 @@ structure ParseState (seq : Nat) where
   modelBq : Array (Option Rat)
   /-- Optional model bk slice (head_dim). -/
   modelBk : Array (Option Rat)
-/-- Minimal model slice for recomputing attention scores. -/
-structure ModelSlice (seq : Nat) where
-  /-- Hidden dimension. -/
-  dModel : Nat
-  /-- Head dimension. -/
-  headDim : Nat
-  /-- Layer index (metadata). -/
-  layer : Nat
-  /-- Head index (metadata). -/
-  head : Nat
-  /-- Scale factor for attention scores. -/
-  scoreScale : Rat
-  /-- Mask value for causal attention (k > q). -/
-  scoreMask : Rat
-  /-- Whether to apply a causal mask to attention scores. -/
-  maskCausal : Bool
-  /-- Residual inputs (post-layernorm). -/
-  resid : Fin seq → Fin dModel → Rat
-  /-- Q projection slice. -/
-  wq : Fin dModel → Fin headDim → Rat
-  /-- K projection slice. -/
-  wk : Fin dModel → Fin headDim → Rat
-  /-- Q bias slice. -/
-  bq : Fin headDim → Rat
-  /-- K bias slice. -/
-  bk : Fin headDim → Rat
-/-- LayerNorm inputs for anchoring post-LN residuals. -/
-structure ModelLnSlice (seq : Nat) where
-  /-- Hidden dimension. -/
-  dModel : Nat
-  /-- LayerNorm epsilon. -/
-  lnEps : Rat
-  /-- Nonnegative slack for LayerNorm bounds. -/
-  lnSlack : Rat
-  /-- Optional LayerNorm sqrt bound scale (positive when present). -/
-  lnScale? : Option Nat
-  /-- Optional fast-path toggle for fixed-denominator checks. -/
-  lnFast? : Option Bool
-  /-- Optional decimal precision for fixed-denominator checks. -/
-  lnDecimals? : Option Nat
-  /-- LayerNorm gamma. -/
-  lnGamma : Fin dModel → Rat
-  /-- LayerNorm beta. -/
-  lnBeta : Fin dModel → Rat
-  /-- Pre-LN embeddings/residual stream. -/
-  embed : Fin seq → Fin dModel → Rat
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
@@ -744,46 +701,25 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
     | some v => pure v
     | none => throw "missing model-score-mask entry"
   let maskCausal := st.modelMaskCausal.getD true
-  if dModel = 0 then
-    throw "model-d-model must be positive"
-  if headDim = 0 then
-    throw "model-head-dim must be positive"
-  if st.modelResid.size ≠ seq then
-    throw "model-resid has unexpected row count"
-  if !st.modelResid.all (fun row => row.size = dModel) then
-    throw "model-resid has unexpected column count"
   if !st.modelResid.all (fun row => row.all Option.isSome) then
     throw "missing model-resid entries"
-  if st.modelWq.size ≠ dModel || st.modelWk.size ≠ dModel then
-    throw "model-wq/wk has unexpected row count"
-  if !st.modelWq.all (fun row => row.size = headDim) then
-    throw "model-wq has unexpected column count"
-  if !st.modelWk.all (fun row => row.size = headDim) then
-    throw "model-wk has unexpected column count"
   if !st.modelWq.all (fun row => row.all Option.isSome) then
     throw "missing model-wq entries"
   if !st.modelWk.all (fun row => row.all Option.isSome) then
     throw "missing model-wk entries"
-  if st.modelBq.size ≠ headDim || st.modelBk.size ≠ headDim then
-    throw "model-bq/bk has unexpected length"
   if !st.modelBq.all Option.isSome then
     throw "missing model-bq entries"
   if !st.modelBk.all Option.isSome then
     throw "missing model-bk entries"
-  let residFun : Fin seq → Fin dModel → Rat := fun q i =>
-    let row := st.modelResid[q.1]!
-    (row[i.1]!).getD 0
-  let wqFun : Fin dModel → Fin headDim → Rat := fun i j =>
-    let row := st.modelWq[i.1]!
-    (row[j.1]!).getD 0
-  let wkFun : Fin dModel → Fin headDim → Rat := fun i j =>
-    let row := st.modelWk[i.1]!
-    (row[j.1]!).getD 0
-  let bqFun : Fin headDim → Rat := fun j =>
-    (st.modelBq[j.1]!).getD 0
-  let bkFun : Fin headDim → Rat := fun j =>
-    (st.modelBk[j.1]!).getD 0
-  return some
+  let residArr : Array (Array Rat) :=
+    st.modelResid.map (fun row => row.map (fun v => v.getD 0))
+  let wqArr : Array (Array Rat) :=
+    st.modelWq.map (fun row => row.map (fun v => v.getD 0))
+  let wkArr : Array (Array Rat) :=
+    st.modelWk.map (fun row => row.map (fun v => v.getD 0))
+  let bqArr : Array Rat := st.modelBq.map (fun v => v.getD 0)
+  let bkArr : Array Rat := st.modelBk.map (fun v => v.getD 0)
+  let raw : Nfp.IO.Pure.InductionHeadCert.ModelSliceRaw seq :=
     { dModel := dModel
       headDim := headDim
       layer := layer
@@ -791,11 +727,17 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
       scoreScale := scoreScale
       scoreMask := scoreMask
       maskCausal := maskCausal
-      resid := residFun
-      wq := wqFun
-      wk := wkFun
-      bq := bqFun
-      bk := bkFun }
+      decimals? := st.modelDecimals
+      resid := residArr
+      wq := wqArr
+      wk := wkArr
+      bq := bqArr
+      bk := bkArr }
+  let checked ←
+    match Nfp.IO.Pure.InductionHeadCert.checkModelSliceRaw (seq := seq) raw with
+    | Except.ok checked => pure checked
+    | Except.error msg => throw msg
+  return some checked.toSlice
 private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     Except String (Option (ModelLnSlice seq)) := do
   let any :=
@@ -814,45 +756,34 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     | some v => pure v
     | none => throw "missing model-ln-eps entry"
   let lnSlack := st.modelLnSlack.getD 0
-  if lnSlack < 0 then
-    throw "model-ln-slack must be nonnegative"
   let lnScale? := st.modelLnScale
-  if let some scale := lnScale? then
-    if scale = 0 then
-      throw "model-ln-scale must be positive"
   let lnFast? := st.modelLnFast
   let lnDecimals? := st.modelDecimals
-  if dModel = 0 then
-    throw "model-d-model must be positive"
-  if st.modelEmbed.size ≠ seq then
-    throw "model-embed has unexpected row count"
-  if !st.modelEmbed.all (fun row => row.size = dModel) then
-    throw "model-embed has unexpected column count"
   if !st.modelEmbed.all (fun row => row.all Option.isSome) then
     throw "missing model-embed entries"
-  if st.modelLnGamma.size ≠ dModel || st.modelLnBeta.size ≠ dModel then
-    throw "model-ln-gamma/beta has unexpected length"
   if !st.modelLnGamma.all Option.isSome then
     throw "missing model-ln-gamma entries"
   if !st.modelLnBeta.all Option.isSome then
     throw "missing model-ln-beta entries"
-  let embedFun : Fin seq → Fin dModel → Rat := fun q i =>
-    let row := st.modelEmbed[q.1]!
-    (row[i.1]!).getD 0
-  let gammaFun : Fin dModel → Rat := fun i =>
-    (st.modelLnGamma[i.1]!).getD 0
-  let betaFun : Fin dModel → Rat := fun i =>
-    (st.modelLnBeta[i.1]!).getD 0
-  return some
+  let embedArr : Array (Array Rat) :=
+    st.modelEmbed.map (fun row => row.map (fun v => v.getD 0))
+  let gammaArr : Array Rat := st.modelLnGamma.map (fun v => v.getD 0)
+  let betaArr : Array Rat := st.modelLnBeta.map (fun v => v.getD 0)
+  let raw : Nfp.IO.Pure.InductionHeadCert.ModelLnSliceRaw seq :=
     { dModel := dModel
       lnEps := lnEps
       lnSlack := lnSlack
       lnScale? := lnScale?
       lnFast? := lnFast?
       lnDecimals? := lnDecimals?
-      lnGamma := gammaFun
-      lnBeta := betaFun
-      embed := embedFun }
+      lnGamma := gammaArr
+      lnBeta := betaArr
+      embed := embedArr }
+  let checked ←
+    match Nfp.IO.Pure.InductionHeadCert.checkModelLnSliceRaw (seq := seq) raw with
+    | Except.ok checked => pure checked
+    | Except.error msg => throw msg
+  return some checked.toSlice
 /-- Check that residual entries fall within LayerNorm bounds from pre-LN inputs. -/
 def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
     (resid : Fin seq → Fin slice.dModel → Rat) : Bool :=
@@ -1014,17 +945,6 @@ def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
           let lo := bounds.1 i - slice.lnSlack
           let hi := bounds.2 i + slice.lnSlack
           decide (lo ≤ resid q i) && decide (resid q i ≤ hi)))
-/-- Check whether scores match the model slice computation. -/
-def scoresMatchModelSlice {seq : Nat} (slice : ModelSlice seq)
-    (scores : Fin seq → Fin seq → Rat) : Bool :=
-  let scoresRef :=
-    Sound.Induction.scoresRatOfSlice (seq := seq)
-      (dModel := slice.dModel) (dHead := slice.headDim)
-      slice.scoreScale slice.scoreMask slice.maskCausal
-      slice.resid slice.wq slice.bq slice.wk slice.bk
-  (List.finRange seq).all (fun q =>
-    (List.finRange seq).all (fun k =>
-      decide (scores q k = scoresRef q k)))
 end InductionHeadCert
 /-- Parse an explicit induction-head certificate from a text payload. -/
 def parseInductionHeadCert (input : String) :
@@ -1298,21 +1218,18 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 let okScores ←
                   if timeScores then
                     let t0 ← IO.monoMsNow
-                    let scoresRef :=
-                      Sound.Induction.scoresRatOfSlice (seq := seq)
-                        (dModel := modelSlice.dModel) (dHead := modelSlice.headDim)
-                        modelSlice.scoreScale modelSlice.scoreMask modelSlice.maskCausal
-                        modelSlice.resid modelSlice.wq modelSlice.bq modelSlice.wk modelSlice.bk
-                    let t1 ← IO.monoMsNow
-                    let okScores :=
-                      (List.finRange seq).all (fun q =>
-                        (List.finRange seq).all (fun k =>
-                          decide (cert.scores q k = scoresRef q k)))
+                    let (fastUsed, okScores) :=
+                      match InductionHeadCert.scoresMatchModelSliceFast?
+                          (seq := seq) modelSlice cert.scores with
+                      | some ok => (true, ok)
+                      | none =>
+                          (false,
+                            InductionHeadCert.scoresMatchModelSliceSlow
+                              (seq := seq) modelSlice cert.scores)
                     if okScores then pure () else IO.eprintln ""
-                    let t2 ← IO.monoMsNow
-                    IO.eprintln s!"info: scores-ref-ms {t1 - t0}"
-                    IO.eprintln s!"info: scores-eq-ms {t2 - t1}"
-                    IO.eprintln s!"info: scores-check-ms {t2 - t0}"
+                    let t1 ← IO.monoMsNow
+                    IO.eprintln s!"info: scores-fast {fastUsed}"
+                    IO.eprintln s!"info: scores-check-ms {t1 - t0}"
                     pure okScores
                   else
                     pure
