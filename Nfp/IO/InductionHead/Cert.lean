@@ -11,11 +11,9 @@ public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
 public import Nfp.Sound.Induction.ScoreSlice
 /-!
-Untrusted parsing and checking for explicit induction-head certificates.
-All sequence indices in the certificate payload are 0-based (file-format convention) and
-are converted to `Fin` indices internally. Supported certificate kinds:
-- `kind onehot-approx` (proxy bounds only)
--- `kind induction-aligned` (requires `period` and checks prefix-matching metrics)
+Untrusted parsing/checking for explicit induction-head certificates.
+Payload indices are 0-based and converted to `Fin`.
+Supported kinds: `onehot-approx` (proxy bounds), `induction-aligned` (needs `period`).
 -/
 public section
 namespace Nfp
@@ -1248,13 +1246,14 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if seq ≤ period then
                   IO.eprintln "error: period must be less than seq for induction-aligned"
                   return (← finish 2)
-                let expectedActive := Model.activeOfPeriod (seq := seq) period
+                let expectedActive ← timeIO timeStages "period-active"
+                  (fun _ => pure (Model.activeOfPeriod (seq := seq) period))
                 if !decide (cert.active = expectedActive) then
                   IO.eprintln "error: active set does not match induction-aligned period"
                   return (← finish 2)
-                let prevOk :=
-                  (List.finRange seq).all (fun q =>
-                    decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
+                let prevOk ← timeIO timeStages "period-prev"
+                  (fun _ => pure ((List.finRange seq).all (fun q =>
+                    decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))))
                 if !prevOk then
                   IO.eprintln "error: prev map does not match induction-aligned period"
                   return (← finish 2)
@@ -1269,10 +1268,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe-top1 is not used for induction-aligned"
                   return (← finish 2)
-              let activeCount := cert.active.card
-              let defaultMinActive := max 1 (seq / 8)
-              let minActive := minActive?.getD defaultMinActive
-              if activeCount < minActive then
+              let activeCount := cert.active.card; let defaultMinActive := max 1 (seq / 8)
+              let minActive := minActive?.getD defaultMinActive; if activeCount < minActive then
                 IO.eprintln
                   s!"error: active queries {activeCount} below minimum {minActive}"
                 return (← finish 2)
@@ -1284,8 +1281,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | some modelSlice =>
                     if h : modelLnSlice.dModel = modelSlice.dModel then
                       if modelLnSlice.lnEps ≤ 0 then
-                        IO.eprintln "error: model-ln-eps must be positive"
-                        return (← finish 2)
+                        IO.eprintln "error: model-ln-eps must be positive"; return (← finish 2)
                       let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
                         simpa [h] using modelSlice.resid
                       let t0? ←
@@ -1370,21 +1366,25 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     | none =>
                         IO.eprintln "error: missing period entry for induction-aligned"
                         return (← finish 2)
-                  if !tokensPeriodic (seq := seq) period tokens' then
+                  let periodicOk ← timeIO timeStages "tokens-periodic" (fun _ =>
+                    pure (tokensPeriodic (seq := seq) period tokens'))
+                  if !periodicOk then
                     IO.eprintln "error: tokens are not periodic for induction-aligned period"
                     return (← finish 2)
                 else
-                  let activeTokens := Model.activeOfTokens (seq := seq) tokens'
+                  let activeTokens ← timeIO timeStages "tokens-active" (fun _ =>
+                    pure (Model.activeOfTokens (seq := seq) tokens'))
                   if !decide (cert.active ⊆ activeTokens) then
                     IO.eprintln "error: active set not contained in token repeats"
                     return (← finish 2)
-                  let prevTokens := Model.prevOfTokens (seq := seq) tokens'
-                  let prevOk :=
-                    (List.finRange seq).all (fun q =>
+                  let prevTokens ← timeIO timeStages "tokens-prev-map" (fun _ =>
+                    pure (Model.prevOfTokens (seq := seq) tokens'))
+                  let prevOk ← timeIO timeStages "tokens-prev-ok" (fun _ =>
+                    pure ((List.finRange seq).all (fun q =>
                       if decide (q ∈ cert.active) then
                         decide (prevTokens q = cert.prev q)
                       else
-                        true)
+                        true)))
                   if !prevOk then
                     IO.eprintln "error: prev map does not match tokens on active queries"
                     return (← finish 2)
