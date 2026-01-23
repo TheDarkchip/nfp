@@ -10,7 +10,6 @@ public import Nfp.IO.Util
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
 public import Nfp.Sound.Induction.ScoreSlice
-
 /-!
 Untrusted parsing and checking for explicit induction-head certificates.
 All sequence indices in the certificate payload are 0-based (file-format convention) and
@@ -112,7 +111,6 @@ structure ParseState (seq : Nat) where
   modelBq : Array (Option Rat)
   /-- Optional model bk slice (head_dim). -/
   modelBk : Array (Option Rat)
-
 /-- Minimal model slice for recomputing attention scores. -/
 structure ModelSlice (seq : Nat) where
   /-- Hidden dimension. -/
@@ -139,7 +137,6 @@ structure ModelSlice (seq : Nat) where
   bq : Fin headDim → Rat
   /-- K bias slice. -/
   bk : Fin headDim → Rat
-
 /-- LayerNorm inputs for anchoring post-LN residuals. -/
 structure ModelLnSlice (seq : Nat) where
   /-- Hidden dimension. -/
@@ -160,7 +157,6 @@ structure ModelLnSlice (seq : Nat) where
   lnBeta : Fin dModel → Rat
   /-- Pre-LN embeddings/residual stream. -/
   embed : Fin seq → Fin dModel → Rat
-
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
@@ -234,7 +230,6 @@ private def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) :
   | none =>
       let prev' := st.prev.set! qFin.1 (some kFin)
       return { st with prev := prev' }
-
 private def setVecEntry {seq : Nat} (arr : Array (Option Rat)) (idx : Nat) (v : Rat) :
     Except String (Array (Option Rat)) := do
   let kFin ← toIndex0 (seq := seq) "k" idx
@@ -243,7 +238,6 @@ private def setVecEntry {seq : Nat} (arr : Array (Option Rat)) (idx : Nat) (v : 
       throw s!"duplicate entry for k={idx}"
   | none =>
       return arr.set! kFin.1 (some v)
-
 private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
     (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
   let qFin ← toIndex0 (seq := seq) "q" q
@@ -279,7 +273,6 @@ private def ensureModelResid {seq : Nat} (st : ParseState seq) :
     else
       st
   return (st, dModel)
-
 private def ensureModelEmbed {seq : Nat} (st : ParseState seq) :
     Except String (ParseState seq × Nat) := do
   let dModel ←
@@ -299,7 +292,6 @@ private def ensureModelEmbed {seq : Nat} (st : ParseState seq) :
     else
       st
   return (st, dModel)
-
 private def ensureModelW {seq : Nat} (st : ParseState seq) :
     Except String (ParseState seq × Nat × Nat) := do
   let dModel ←
@@ -322,10 +314,9 @@ private def ensureModelW {seq : Nat} (st : ParseState seq) :
   let st :=
     if st.modelBq.isEmpty then
       { st with modelBq := allocModelB headDim, modelBk := allocModelB headDim }
-    else
+  else
       st
   return (st, dModel, headDim)
-
 private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
   let (st, dModel) ← ensureModelResid st
@@ -338,7 +329,6 @@ private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v 
   | none =>
       let row' := row.set! iFin.1 (some v)
       return { st with modelResid := st.modelResid.set! qFin.1 row' }
-
 private def setModelEmbedEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
   let (st, dModel) ← ensureModelEmbed st
@@ -351,7 +341,6 @@ private def setModelEmbedEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v 
   | none =>
       let row' := row.set! iFin.1 (some v)
       return { st with modelEmbed := st.modelEmbed.set! qFin.1 row' }
-
 private def setModelLnEntry {seq : Nat} (st : ParseState seq)
     (i : Nat) (v : Rat) (which : String) : Except String (ParseState seq) := do
   let (st, dModel) ← ensureModelEmbed st
@@ -366,7 +355,6 @@ private def setModelLnEntry {seq : Nat} (st : ParseState seq)
         return { st with modelLnGamma := arr' }
       else
         return { st with modelLnBeta := arr' }
-
 private def setModelWEntry {seq : Nat} (st : ParseState seq)
     (i j : Nat) (v : Rat) (which : String) :
     Except String (ParseState seq) := do
@@ -1199,7 +1187,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
-    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String) : IO UInt32 := do
+    (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
+    (timeLn : Bool) : IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1308,12 +1297,23 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                         return 2
                       let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
                         simpa [h] using modelSlice.resid
+                      let t0? ←
+                        if timeLn then
+                          some <$> IO.monoMsNow
+                        else
+                          pure none
                       let okResid :=
                         InductionHeadCert.residWithinLayerNormBounds
                           (seq := seq) modelLnSlice resid'
                       if !okResid then
+                        if let some t0 := t0? then
+                          let t1 ← IO.monoMsNow
+                          IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                         IO.eprintln "error: residuals not within LayerNorm bounds"
                         return 2
+                      if let some t0 := t0? then
+                        let t1 ← IO.monoMsNow
+                        IO.eprintln s!"info: ln-check-ms {t1 - t0}"
                     else
                       IO.eprintln "error: model-ln dModel does not match model slice"
                       return 2

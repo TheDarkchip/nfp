@@ -41,6 +41,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let tokensPath? := (p.flag? "tokens").map (·.as! String)
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
+  let timeLn := p.hasFlag "time-ln"
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -54,7 +55,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   match certPath?, batchPath?, stripeCertPath?, stripeBatchPath? with
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
+        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str? timeLn
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -86,6 +87,7 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
                                  Applies to induction-aligned or stripe certs."
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
                                  Applies to stripe certs."
+    "time-ln"; "Print the time spent in LayerNorm residual checks."
 ]
 
 
