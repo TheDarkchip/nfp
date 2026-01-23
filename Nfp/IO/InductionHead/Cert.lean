@@ -5,8 +5,10 @@ public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.InductionHead.ModelLnSlice
+public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
 public import Nfp.IO.Pure.InductionHead.ModelLnSlice
+public import Nfp.IO.Pure.InductionHead.ModelValueSlice
 public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
@@ -107,6 +109,14 @@ structure ParseState (seq : Nat) where
   modelBq : Array (Option Rat)
   /-- Optional model bk slice (head_dim). -/
   modelBk : Array (Option Rat)
+  /-- Optional model Wv slice (d_model × head_dim). -/
+  modelWv : Array (Array (Option Rat))
+  /-- Optional model Wo slice (d_model × head_dim). -/
+  modelWo : Array (Array (Option Rat))
+  /-- Optional model bv slice (head_dim). -/
+  modelBv : Array (Option Rat)
+  /-- Optional attention output bias (d_model). -/
+  modelAttnBias : Array (Option Rat)
 /-- Initialize a parse state. -/
 def initState (seq : Nat) : ParseState seq :=
   let row : Array (Option Rat) := Array.replicate seq none
@@ -152,7 +162,11 @@ def initState (seq : Nat) : ParseState seq :=
     modelWq := #[]
     modelWk := #[]
     modelBq := #[]
-    modelBk := #[] }
+    modelBk := #[]
+    modelWv := #[]
+    modelWo := #[]
+    modelBv := #[]
+    modelAttnBias := #[] }
 private def toIndex0 {seq : Nat} (label : String) (idx : Nat) : Except String (Fin seq) := do
   if h : idx < seq then
     return ⟨idx, h⟩
@@ -209,6 +223,8 @@ private def allocModelW (dModel headDim : Nat) : Array (Array (Option Rat)) :=
   Array.replicate dModel (Array.replicate headDim none)
 private def allocModelB (headDim : Nat) : Array (Option Rat) :=
   Array.replicate headDim none
+private def allocModelAttnBias (dModel : Nat) : Array (Option Rat) :=
+  Array.replicate dModel none
 private def ensureModelResid {seq : Nat} (st : ParseState seq) :
     Except String (ParseState seq × Nat) := do
   let dModel ←
@@ -265,6 +281,36 @@ private def ensureModelW {seq : Nat} (st : ParseState seq) :
     if st.modelBq.isEmpty then
       { st with modelBq := allocModelB headDim, modelBk := allocModelB headDim }
   else
+      st
+  return (st, dModel, headDim)
+private def ensureModelV {seq : Nat} (st : ParseState seq) :
+    Except String (ParseState seq × Nat × Nat) := do
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "model-d-model required before model-wv/wo/bv/attn-bias"
+  let headDim ←
+    match st.modelHeadDim with
+    | some v => pure v
+    | none => throw "model-head-dim required before model-wv/wo/bv/attn-bias"
+  if dModel = 0 then
+    throw "model-d-model must be positive"
+  if headDim = 0 then
+    throw "model-head-dim must be positive"
+  let st :=
+    if st.modelWv.isEmpty then
+      { st with modelWv := allocModelW dModel headDim, modelWo := allocModelW dModel headDim }
+    else
+      st
+  let st :=
+    if st.modelBv.isEmpty then
+      { st with modelBv := allocModelB headDim }
+    else
+      st
+  let st :=
+    if st.modelAttnBias.isEmpty then
+      { st with modelAttnBias := allocModelAttnBias dModel }
+    else
       st
   return (st, dModel, headDim)
 private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
@@ -338,6 +384,42 @@ private def setModelBEntry {seq : Nat} (st : ParseState seq)
         return { st with modelBq := arr' }
       else
         return { st with modelBk := arr' }
+private def setModelVEntry {seq : Nat} (st : ParseState seq)
+    (i j : Nat) (v : Rat) (which : String) :
+    Except String (ParseState seq) := do
+  let (st, dModel, headDim) ← ensureModelV st
+  let iFin ← toIndex0Sized "i" dModel i
+  let jFin ← toIndex0Sized "j" headDim j
+  let mat := if which = "wv" then st.modelWv else st.modelWo
+  let row := mat[iFin.1]!
+  match row[jFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-{which} entry at ({i}, {j})"
+  | none =>
+      let row' := row.set! jFin.1 (some v)
+      let mat' := mat.set! iFin.1 row'
+      if which = "wv" then
+        return { st with modelWv := mat' }
+      else
+        return { st with modelWo := mat' }
+private def setModelBvEntry {seq : Nat} (st : ParseState seq) (j : Nat) (v : Rat) :
+    Except String (ParseState seq) := do
+  let (st, _dModel, headDim) ← ensureModelV st
+  let jFin ← toIndex0Sized "j" headDim j
+  match st.modelBv[jFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-bv entry for j={j}"
+  | none =>
+      return { st with modelBv := st.modelBv.set! jFin.1 (some v) }
+private def setModelAttnBiasEntry {seq : Nat} (st : ParseState seq) (i : Nat) (v : Rat) :
+    Except String (ParseState seq) := do
+  let (st, dModel, _headDim) ← ensureModelV st
+  let iFin ← toIndex0Sized "i" dModel i
+  match st.modelAttnBias[iFin.1]! with
+  | some _ =>
+      throw s!"duplicate model-attn-bias entry for i={i}"
+  | none =>
+      return { st with modelAttnBias := st.modelAttnBias.set! iFin.1 (some v) }
 /-- Parse a boolean literal. -/
 private def parseBool (s : String) : Except String Bool := do
   match s.toLower with
@@ -537,6 +619,14 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
       setModelBEntry st (← parseNat j) (← parseRat val) "bq"
   | ["model-bk", j, val] =>
       setModelBEntry st (← parseNat j) (← parseRat val) "bk"
+  | ["model-wv", i, j, val] =>
+      setModelVEntry st (← parseNat i) (← parseNat j) (← parseRat val) "wv"
+  | ["model-wo", i, j, val] =>
+      setModelVEntry st (← parseNat i) (← parseNat j) (← parseRat val) "wo"
+  | ["model-bv", j, val] =>
+      setModelBvEntry st (← parseNat j) (← parseRat val)
+  | ["model-attn-bias", i, val] =>
+      setModelAttnBiasEntry st (← parseNat i) (← parseRat val)
   | _ =>
       throw s!"unrecognized line: '{String.intercalate " " tokens}'"
 /-- Extract the `seq` header from tokenized lines. -/
@@ -563,6 +653,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   modelSlice? : Option (InductionHeadCert.ModelSlice seq)
   /-- Optional LayerNorm inputs for anchoring residuals. -/
   modelLnSlice? : Option (InductionHeadCert.ModelLnSlice seq)
+  /-- Optional value-path inputs for anchoring per-key values. -/
+  modelValueSlice? : Option InductionHeadCert.ModelValueSlice
   /-- Optional TL exclude_bos flag. -/
   tlExcludeBos? : Option Bool
   /-- Optional TL exclude_current_token flag. -/
@@ -784,6 +876,57 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     | Except.ok checked => pure checked
     | Except.error msg => throw msg
   return some checked.toSlice
+private def finalizeModelValueSlice? {seq : Nat} (st : ParseState seq) :
+    Except String (Option ModelValueSlice) := do
+  let any :=
+    !st.modelWv.isEmpty || !st.modelWo.isEmpty || !st.modelBv.isEmpty ||
+      !st.modelAttnBias.isEmpty
+  if !any then
+    return none
+  let dModel ←
+    match st.modelDModel with
+    | some v => pure v
+    | none => throw "missing model-d-model entry"
+  let headDim ←
+    match st.modelHeadDim with
+    | some v => pure v
+    | none => throw "missing model-head-dim entry"
+  let layer ←
+    match st.modelLayer with
+    | some v => pure v
+    | none => throw "missing model-layer entry"
+  let head ←
+    match st.modelHead with
+    | some v => pure v
+    | none => throw "missing model-head entry"
+  if !st.modelWv.all (fun row => row.all Option.isSome) then
+    throw "missing model-wv entries"
+  if !st.modelWo.all (fun row => row.all Option.isSome) then
+    throw "missing model-wo entries"
+  if !st.modelBv.all Option.isSome then
+    throw "missing model-bv entries"
+  if !st.modelAttnBias.all Option.isSome then
+    throw "missing model-attn-bias entries"
+  let wvArr : Array (Array Rat) :=
+    st.modelWv.map (fun row => row.map (fun v => v.getD 0))
+  let woArr : Array (Array Rat) :=
+    st.modelWo.map (fun row => row.map (fun v => v.getD 0))
+  let bvArr : Array Rat := st.modelBv.map (fun v => v.getD 0)
+  let attnBiasArr : Array Rat := st.modelAttnBias.map (fun v => v.getD 0)
+  let raw : Nfp.IO.Pure.InductionHeadCert.ModelValueSliceRaw :=
+    { dModel := dModel
+      headDim := headDim
+      layer := layer
+      head := head
+      wv := wvArr
+      bv := bvArr
+      wo := woArr
+      attnBias := attnBiasArr }
+  let checked ←
+    match Nfp.IO.Pure.InductionHeadCert.checkModelValueSliceRaw raw with
+    | Except.ok checked => pure checked
+    | Except.error msg => throw msg
+  return some checked.toSlice
 /-- Check that residual entries fall within LayerNorm bounds from pre-LN inputs. -/
 def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
     (resid : Fin seq → Fin slice.dModel → Rat) : Bool :=
@@ -988,11 +1131,13 @@ def parseInductionHeadCert (input : String) :
       let copyLogits? ← InductionHeadCert.finalizeCopyLogits? st
       let modelSlice? ← InductionHeadCert.finalizeModelSlice? st
       let modelLnSlice? ← InductionHeadCert.finalizeModelLnSlice? st
+      let modelValueSlice? ← InductionHeadCert.finalizeModelValueSlice? st
       let payload : InductionHeadCert.InductionHeadCertPayload seq :=
         { kind := kind
           period? := period?
           modelSlice? := modelSlice?
           modelLnSlice? := modelLnSlice?
+          modelValueSlice? := modelValueSlice?
           tlExcludeBos? := tlExcludeBos?
           tlExcludeCurrent? := tlExcludeCurrent?
           tlScoreLB? := tlScoreLB?
