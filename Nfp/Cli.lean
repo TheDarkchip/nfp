@@ -44,6 +44,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let timeLn := p.hasFlag "time-ln"
   let timeScores := p.hasFlag "time-scores"
   let timeParse := p.hasFlag "time-parse"
+  let timeStages := p.hasFlag "time-stages"
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -58,7 +59,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
         minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
-        timeLn timeScores timeParse
+        timeLn timeScores timeParse timeStages
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -93,6 +94,7 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "time-ln"; "Print the time spent in LayerNorm residual checks."
     "time-scores"; "Print the time spent recomputing scores from model slices."
     "time-parse"; "Print the time spent reading and parsing the certificate."
+    "time-stages"; "Print timing for additional verification stages."
 ]
 
 

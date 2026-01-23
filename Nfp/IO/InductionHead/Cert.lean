@@ -1167,7 +1167,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
-    (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) : IO UInt32 := do
+    (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool) :
+    IO UInt32 := do
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
@@ -1319,7 +1320,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   IO.eprintln "error: scores do not match model slice"
                   return 2
               if kind = "onehot-approx" then
-                let ok := Circuit.checkInductionHeadCert cert
+                let ok ← timeIO timeStages "cert-check"
+                  (fun _ => pure (Circuit.checkInductionHeadCert cert))
                 if !ok then
                   IO.eprintln "error: induction-head certificate rejected"
                   return 2
@@ -1342,7 +1344,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     else
                       pure none
                 | some tokensPath =>
-                    let tokensParsed ← loadInductionHeadTokens tokensPath
+                    let tokensParsed ← timeIO timeStages "tokens-parse"
+                      (fun _ => loadInductionHeadTokens tokensPath)
                     match tokensParsed with
                     | Except.error msg =>
                         IO.eprintln s!"error: {msg}"
@@ -1390,9 +1393,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | some tokens' =>
                     let excludeBos := tlExcludeBos?.getD false
                     let excludeCurrent := tlExcludeCurrent?.getD false
-                    let tlScore :=
-                      tlMulScoreMasked (seq := seq) excludeBos excludeCurrent
-                        cert.weights tokens'
+                    let tlScore ← timeIO timeStages "tl-score" (fun _ =>
+                      pure (tlMulScoreMasked (seq := seq) excludeBos excludeCurrent
+                        cert.weights tokens'))
                     if tlScore < tlScoreLB then
                       IO.eprintln
                         s!"error: tl-score {ratToString tlScore} \
@@ -1411,7 +1414,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       stripeMeanLB := 0
                       stripeTop1LB := 0
                       weights := cert.weights }
-                  let stripeMean? := Stripe.stripeMean (seq := seq) stripeCert
+                  let stripeMean? ← timeIO timeStages "stripe-mean"
+                    (fun _ => pure (Stripe.stripeMean (seq := seq) stripeCert))
                   let mean ←
                     match stripeMean? with
                     | some mean =>
@@ -1453,9 +1457,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       margin={ratToString cert.margin}, eps={ratToString cert.eps})"
                     return 0
               | some minLogitDiff =>
-                  let logitDiffLB? :=
-                    Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
-                      cert.values.lo cert.values.hi cert.values.vals
+                  let logitDiffLB? ← timeIO timeStages "logit-diff" (fun _ =>
+                    pure (Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
+                      cert.values.lo cert.values.hi cert.values.vals))
                   match logitDiffLB? with
                   | none =>
                       IO.eprintln "error: empty active set for logit-diff bound"

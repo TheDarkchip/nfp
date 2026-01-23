@@ -28,6 +28,17 @@ def parseRatOpt (label : String) (raw? : Option String) :
 def warnDeprecated (msg : String) : IO Unit := do
   IO.eprintln s!"warning: DEPRECATED: {msg}"
 
+/-- Conditionally time an IO action and log the duration in ms. -/
+def timeIO {α} (enabled : Bool) (label : String) (act : Unit → IO α) : IO α := do
+  if enabled then
+    let t0 ← IO.monoMsNow
+    let out ← act ()
+    let t1 ← IO.monoMsNow
+    IO.eprintln s!"info: {label}-ms {t1 - t0}"
+    return out
+  else
+    act ()
+
 end IO
 
 end Nfp
