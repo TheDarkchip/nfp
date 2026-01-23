@@ -181,7 +181,8 @@ def main() -> int:
     parser.add_argument("--emit-model-slice", action="store_true",
                         help="Embed model slice data in emitted certs.")
     parser.add_argument("--model-decimals", type=int, default=None,
-                        help="Decimal rounding for model slice entries (default: exact).")
+                        help=("Decimal rounding for model slice entries (default: 4 when "
+                              "--emit-model-slice is set, otherwise exact)."))
     parser.add_argument("--model-ln-slack", default=None,
                         help="Slack for LayerNorm bounds when emitting model slice.")
     parser.add_argument(
@@ -199,6 +200,9 @@ def main() -> int:
                         help="Optional explicit prompt indices to certify.")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
+
+    if args.emit_model_slice and args.model_decimals is None:
+        args.model_decimals = 4
 
     if args.seq_len <= 0:
         raise SystemExit("seq-len must be positive")
