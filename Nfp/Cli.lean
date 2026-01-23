@@ -42,6 +42,8 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
   let timeLn := p.hasFlag "time-ln"
+  let timeScores := p.hasFlag "time-scores"
+  let timeParse := p.hasFlag "time-parse"
   let fail (msg : String) : IO UInt32 := do
     IO.eprintln s!"error: {msg}"
     return 2
@@ -55,7 +57,8 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   match certPath?, batchPath?, stripeCertPath?, stripeBatchPath? with
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str? timeLn
+        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
+        timeLn timeScores timeParse
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
   | none, none, some stripeCertPath, none =>
@@ -88,6 +91,8 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
                                  Applies to stripe certs."
     "time-ln"; "Print the time spent in LayerNorm residual checks."
+    "time-scores"; "Print the time spent recomputing scores from model slices."
+    "time-parse"; "Print the time spent reading and parsing the certificate."
 ]
 
 
