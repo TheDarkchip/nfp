@@ -154,6 +154,8 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
         embed = hidden_states.squeeze(0).cpu().numpy()
         w = block.attn.c_attn.weight.detach().cpu().numpy()
         b = block.attn.c_attn.bias.detach().cpu().numpy()
+        w_out = block.attn.c_proj.weight.detach().cpu().numpy()
+        b_out = block.attn.c_proj.bias.detach().cpu().numpy()
         ln_eps = float(block.ln_1.eps)
         ln_gamma = block.ln_1.weight.detach().cpu().numpy()
         ln_beta = block.ln_1.bias.detach().cpu().numpy()
@@ -164,8 +166,12 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
     end = (head + 1) * head_dim
     wq = w[:, start:end]
     wk = w[:, d_model + start: d_model + end]
+    wv = w[:, 2 * d_model + start: 2 * d_model + end]
     bq = b[start:end]
     bk = b[d_model + start: d_model + end]
+    bv = b[2 * d_model + start: 2 * d_model + end]
+    wo = w_out[:, start:end]
+    attn_bias = b_out
     scale = 1.0 / math.sqrt(head_dim)
     score_mask = -10000.0
     mask_causal = True
@@ -184,8 +190,12 @@ def extract_model_slice(model, input_ids, layer: int, head: int):
         "ln_beta": ln_beta,
         "wq": wq,
         "wk": wk,
+        "wv": wv,
+        "wo": wo,
         "bq": bq,
         "bk": bk,
+        "bv": bv,
+        "attn_bias": attn_bias,
     }
 
 
@@ -361,10 +371,24 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             for i in range(d_model):
                 for j in range(head_dim):
                     f.write(f"model-wk {i} {j} {rat_to_str(wk[i][j])}\n")
+            wv = model_slice["wv"]
+            for i in range(d_model):
+                for j in range(head_dim):
+                    f.write(f"model-wv {i} {j} {rat_to_str(wv[i][j])}\n")
+            wo = model_slice["wo"]
+            for i in range(d_model):
+                for j in range(head_dim):
+                    f.write(f"model-wo {i} {j} {rat_to_str(wo[i][j])}\n")
             for j in range(head_dim):
                 f.write(f"model-bq {j} {rat_to_str(bq[j])}\n")
             for j in range(head_dim):
                 f.write(f"model-bk {j} {rat_to_str(bk[j])}\n")
+            bv = model_slice["bv"]
+            for j in range(head_dim):
+                f.write(f"model-bv {j} {rat_to_str(bv[j])}\n")
+            attn_bias = model_slice["attn_bias"]
+            for i in range(d_model):
+                f.write(f"model-attn-bias {i} {rat_to_str(attn_bias[i])}\n")
         if tl_score_lb is not None:
             f.write(f"tl-exclude-bos {str(tl_exclude_bos).lower()}\n")
             f.write(f"tl-exclude-current-token {str(tl_exclude_current_token).lower()}\n")
@@ -728,10 +752,26 @@ def main() -> None:
              for j in range(raw_slice["head_dim"])]
             for i in range(raw_slice["d_model"])
         ]
+        wv = [
+            [rat_from_float_model(float(raw_slice["wv"][i, j]))
+             for j in range(raw_slice["head_dim"])]
+            for i in range(raw_slice["d_model"])
+        ]
+        wo = [
+            [rat_from_float_model(float(raw_slice["wo"][i, j]))
+             for j in range(raw_slice["head_dim"])]
+            for i in range(raw_slice["d_model"])
+        ]
         bq = [rat_from_float_model(float(raw_slice["bq"][j]))
               for j in range(raw_slice["head_dim"])]
         bk = [rat_from_float_model(float(raw_slice["bk"][j]))
               for j in range(raw_slice["head_dim"])]
+        bv = [rat_from_float_model(float(raw_slice["bv"][j]))
+              for j in range(raw_slice["head_dim"])]
+        attn_bias = [
+            rat_from_float_model(float(raw_slice["attn_bias"][i]))
+            for i in range(raw_slice["d_model"])
+        ]
         model_slice = {
             "d_model": raw_slice["d_model"],
             "head_dim": raw_slice["head_dim"],
@@ -751,8 +791,12 @@ def main() -> None:
             "resid": resid,
             "wq": wq,
             "wk": wk,
+            "wv": wv,
+            "wo": wo,
             "bq": bq,
             "bk": bk,
+            "bv": bv,
+            "attn_bias": attn_bias,
         }
         scores_rat = compute_scores_from_model_slice(model_slice)
     else:
