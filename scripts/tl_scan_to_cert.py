@@ -180,6 +180,10 @@ def main() -> int:
     parser.add_argument("--direction-report-dir", type=Path, default=Path("reports/tl_scan/directions"))
     parser.add_argument("--emit-model-slice", action="store_true",
                         help="Embed model slice data in emitted certs.")
+    parser.add_argument("--model-decimals", type=int, default=None,
+                        help="Decimal rounding for model slice entries (default: exact).")
+    parser.add_argument("--model-ln-slack", default=None,
+                        help="Slack for LayerNorm bounds when emitting model slice.")
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -319,6 +323,8 @@ def main() -> int:
         "direction_min_lb": args.direction_min_lb,
         "direction_topk": args.direction_topk,
         "direction_report_dir": str(args.direction_report_dir) if args.direction_search else None,
+        "model_decimals": args.model_decimals,
+        "model_ln_slack": args.model_ln_slack,
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -395,6 +401,10 @@ def main() -> int:
                     cmd.append("--tl-exclude-current-token")
             if args.emit_model_slice:
                 cmd.append("--emit-model-slice")
+                if args.model_decimals is not None:
+                    cmd.extend(["--model-decimals", str(args.model_decimals)])
+                if args.model_ln_slack is not None:
+                    cmd.extend(["--model-ln-slack", str(args.model_ln_slack)])
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:

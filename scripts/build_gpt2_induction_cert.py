@@ -597,6 +597,8 @@ def main() -> None:
                         help="Decimal rounding for TL score LB (defaults to --decimals).")
     parser.add_argument("--emit-model-slice", action="store_true",
                         help="Embed model slice used to compute attention scores.")
+    parser.add_argument("--model-decimals", type=int, default=None,
+                        help="Decimal rounding for model slice entries (default: exact).")
     parser.add_argument("--model-ln-slack", default="1/1000",
                         help="Slack for LayerNorm bounds when emitting model slice.")
     args = parser.parse_args()
@@ -649,53 +651,60 @@ def main() -> None:
 
     model_slice = None
     if args.emit_model_slice:
+        model_decimals = args.model_decimals
+        if model_decimals is not None and model_decimals < 0:
+            raise SystemExit("model-decimals must be nonnegative")
         try:
             ln_slack = Fraction(args.model_ln_slack)
         except (ValueError, ZeroDivisionError) as exc:
             raise SystemExit("model-ln-slack must be a rational literal") from exc
         if ln_slack < 0:
             raise SystemExit("model-ln-slack must be nonnegative")
+        def rat_from_float_model(x: float) -> Fraction:
+            if model_decimals is None:
+                return rat_from_float_exact(x)
+            return rat_from_float(x, model_decimals)
         raw_slice = extract_model_slice(model, input_ids, layer, head)
         resid = [
-            [rat_from_float_exact(float(raw_slice["resid"][q, i]))
+            [rat_from_float_model(float(raw_slice["resid"][q, i]))
              for i in range(raw_slice["d_model"])]
             for q in range(args.seq)
         ]
         embed = [
-            [rat_from_float_exact(float(raw_slice["embed"][q, i]))
+            [rat_from_float_model(float(raw_slice["embed"][q, i]))
              for i in range(raw_slice["d_model"])]
             for q in range(args.seq)
         ]
         ln_gamma = [
-            rat_from_float_exact(float(raw_slice["ln_gamma"][i]))
+            rat_from_float_model(float(raw_slice["ln_gamma"][i]))
             for i in range(raw_slice["d_model"])
         ]
         ln_beta = [
-            rat_from_float_exact(float(raw_slice["ln_beta"][i]))
+            rat_from_float_model(float(raw_slice["ln_beta"][i]))
             for i in range(raw_slice["d_model"])
         ]
-        ln_eps = rat_from_float_exact(raw_slice["ln_eps"])
+        ln_eps = rat_from_float_model(raw_slice["ln_eps"])
         wq = [
-            [rat_from_float_exact(float(raw_slice["wq"][i, j]))
+            [rat_from_float_model(float(raw_slice["wq"][i, j]))
              for j in range(raw_slice["head_dim"])]
             for i in range(raw_slice["d_model"])
         ]
         wk = [
-            [rat_from_float_exact(float(raw_slice["wk"][i, j]))
+            [rat_from_float_model(float(raw_slice["wk"][i, j]))
              for j in range(raw_slice["head_dim"])]
             for i in range(raw_slice["d_model"])
         ]
-        bq = [rat_from_float_exact(float(raw_slice["bq"][j]))
+        bq = [rat_from_float_model(float(raw_slice["bq"][j]))
               for j in range(raw_slice["head_dim"])]
-        bk = [rat_from_float_exact(float(raw_slice["bk"][j]))
+        bk = [rat_from_float_model(float(raw_slice["bk"][j]))
               for j in range(raw_slice["head_dim"])]
         model_slice = {
             "d_model": raw_slice["d_model"],
             "head_dim": raw_slice["head_dim"],
             "layer": raw_slice["layer"],
             "head": raw_slice["head"],
-            "scale": rat_from_float_exact(raw_slice["scale"]),
-            "mask": rat_from_float_exact(raw_slice["mask"]),
+            "scale": rat_from_float_model(raw_slice["scale"]),
+            "mask": rat_from_float_model(raw_slice["mask"]),
             "mask_causal": raw_slice["mask_causal"],
             "embed": embed,
             "ln_eps": ln_eps,
