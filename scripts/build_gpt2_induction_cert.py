@@ -328,6 +328,8 @@ def write_induction_cert(path: Path, seq: int, prev: np.ndarray, scores, weights
             f.write(f"model-ln-eps {rat_to_str(model_slice['ln_eps'])}\n")
             if "ln_slack" in model_slice:
                 f.write(f"model-ln-slack {rat_to_str(model_slice['ln_slack'])}\n")
+            if "ln_scale" in model_slice and model_slice["ln_scale"] is not None:
+                f.write(f"model-ln-scale {model_slice['ln_scale']}\n")
             resid = model_slice["resid"]
             embed = model_slice["embed"]
             ln_gamma = model_slice["ln_gamma"]
@@ -603,6 +605,8 @@ def main() -> None:
                         help=("Slack for LayerNorm bounds when emitting model slice. "
                               "Defaults to 1/1000 for model-decimals >= 4 or exact, "
                               "and 1/100 for model-decimals <= 3."))
+    parser.add_argument("--model-ln-scale", type=int, default=None,
+                        help="Optional LayerNorm sqrt bound scale (positive).")
     args = parser.parse_args()
 
     tokens = None
@@ -656,6 +660,8 @@ def main() -> None:
         model_decimals = args.model_decimals
         if model_decimals is not None and model_decimals < 0:
             raise SystemExit("model-decimals must be nonnegative")
+        if args.model_ln_scale is not None and args.model_ln_scale <= 0:
+            raise SystemExit("model-ln-scale must be positive")
         if args.model_ln_slack is None:
             if model_decimals is not None and model_decimals <= 3:
                 ln_slack = Fraction(1, 100)
@@ -718,6 +724,7 @@ def main() -> None:
             "embed": embed,
             "ln_eps": ln_eps,
             "ln_slack": ln_slack,
+            "ln_scale": args.model_ln_scale,
             "ln_gamma": ln_gamma,
             "ln_beta": ln_beta,
             "resid": resid,

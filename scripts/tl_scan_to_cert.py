@@ -185,6 +185,8 @@ def main() -> int:
                               "--emit-model-slice is set, otherwise exact)."))
     parser.add_argument("--model-ln-slack", default=None,
                         help="Slack for LayerNorm bounds when emitting model slice.")
+    parser.add_argument("--model-ln-scale", type=int, default=None,
+                        help="Optional LayerNorm sqrt bound scale (positive).")
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -329,6 +331,7 @@ def main() -> int:
         "direction_report_dir": str(args.direction_report_dir) if args.direction_search else None,
         "model_decimals": args.model_decimals,
         "model_ln_slack": args.model_ln_slack,
+        "model_ln_scale": args.model_ln_scale,
         "top": report_entries,
     }
     args.report.parent.mkdir(parents=True, exist_ok=True)
@@ -409,6 +412,8 @@ def main() -> int:
                     cmd.extend(["--model-decimals", str(args.model_decimals)])
                 if args.model_ln_slack is not None:
                     cmd.extend(["--model-ln-slack", str(args.model_ln_slack)])
+                if args.model_ln_scale is not None:
+                    cmd.extend(["--model-ln-scale", str(args.model_ln_scale)])
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:

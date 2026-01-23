@@ -103,6 +103,8 @@ structure ParseState (seq : Nat) where
   modelLnEps : Option Rat
   /-- Optional LayerNorm bound slack. -/
   modelLnSlack : Option Rat
+  /-- Optional LayerNorm sqrt bound scale. -/
+  modelLnScale : Option Nat
   /-- Optional LayerNorm gamma. -/
   modelLnGamma : Array (Option Rat)
   /-- Optional LayerNorm beta. -/
@@ -151,6 +153,8 @@ structure ModelLnSlice (seq : Nat) where
   lnEps : Rat
   /-- Nonnegative slack for LayerNorm bounds. -/
   lnSlack : Rat
+  /-- Optional LayerNorm sqrt bound scale (positive when present). -/
+  lnScale? : Option Nat
   /-- LayerNorm gamma. -/
   lnGamma : Fin dModel → Rat
   /-- LayerNorm beta. -/
@@ -195,6 +199,7 @@ def initState (seq : Nat) : ParseState seq :=
     modelEmbed := #[]
     modelLnEps := none
     modelLnSlack := none
+    modelLnScale := none
     modelLnGamma := #[]
     modelLnBeta := #[]
     modelWq := #[]
@@ -575,6 +580,11 @@ def parseLine {seq : Nat} (st : ParseState seq) (tokens : List String) :
         throw "duplicate model-ln-slack entry"
       else
         return { st with modelLnSlack := some (← parseRat val) }
+  | ["model-ln-scale", val] =>
+      if st.modelLnScale.isSome then
+        throw "duplicate model-ln-scale entry"
+      else
+        return { st with modelLnScale := some (← parseNat val) }
   | ["model-ln-gamma", i, val] =>
       setModelLnEntry st (← parseNat i) (← parseRat val) "gamma"
   | ["model-ln-beta", i, val] =>
@@ -816,7 +826,8 @@ private def finalizeModelSlice? {seq : Nat} (st : ParseState seq) :
 private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     Except String (Option (ModelLnSlice seq)) := do
   let any :=
-    st.modelLnEps.isSome || st.modelLnSlack.isSome || !st.modelEmbed.isEmpty ||
+    st.modelLnEps.isSome || st.modelLnSlack.isSome || st.modelLnScale.isSome ||
+      !st.modelEmbed.isEmpty ||
       !st.modelLnGamma.isEmpty || !st.modelLnBeta.isEmpty
   if !any then
     return none
@@ -831,6 +842,10 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
   let lnSlack := st.modelLnSlack.getD 0
   if lnSlack < 0 then
     throw "model-ln-slack must be nonnegative"
+  let lnScale? := st.modelLnScale
+  if let some scale := lnScale? then
+    if scale = 0 then
+      throw "model-ln-scale must be positive"
   if dModel = 0 then
     throw "model-d-model must be positive"
   if st.modelEmbed.size ≠ seq then
@@ -856,6 +871,7 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     { dModel := dModel
       lnEps := lnEps
       lnSlack := lnSlack
+      lnScale? := lnScale?
       lnGamma := gammaFun
       lnBeta := betaFun
       embed := embedFun }
@@ -864,7 +880,13 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
 def residWithinLayerNormBounds {seq : Nat} (slice : ModelLnSlice seq)
     (resid : Fin seq → Fin slice.dModel → Rat) : Bool :=
   (List.finRange seq).all (fun q =>
-    let bounds := Bounds.layerNormBounds slice.lnEps slice.lnGamma slice.lnBeta (slice.embed q)
+    let bounds :=
+      match slice.lnScale? with
+      | some scale =>
+          Bounds.layerNormBoundsWithScale scale
+            slice.lnEps slice.lnGamma slice.lnBeta (slice.embed q)
+      | none =>
+          Bounds.layerNormBounds slice.lnEps slice.lnGamma slice.lnBeta (slice.embed q)
     (List.finRange slice.dModel).all (fun i =>
       let lo := bounds.1 i - slice.lnSlack
       let hi := bounds.2 i + slice.lnSlack
