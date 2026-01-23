@@ -1176,20 +1176,15 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
   let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
   match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
   | Except.error msg, _, _, _, _ =>
-      IO.eprintln s!"error: {msg}"
-      return (← finish 2)
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
   | _, Except.error msg, _, _, _ =>
-      IO.eprintln s!"error: {msg}"
-      return (← finish 2)
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
   | _, _, Except.error msg, _, _ =>
-      IO.eprintln s!"error: {msg}"
-      return (← finish 2)
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
   | _, _, _, Except.error msg, _ =>
-      IO.eprintln s!"error: {msg}"
-      return (← finish 2)
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
   | _, _, _, _, Except.error msg =>
-      IO.eprintln s!"error: {msg}"
-      return (← finish 2)
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
       Except.ok minStripeMean?, Except.ok minStripeTop1? =>
       let minMargin := minMargin?.getD (0 : Rat)
@@ -1205,8 +1200,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
       | Except.ok ⟨seq, payload⟩ =>
           match seq with
           | 0 =>
-              IO.eprintln "error: seq must be positive"
-              return (← finish 2)
+              IO.eprintln "error: seq must be positive"; return (← finish 2)
           | Nat.succ n =>
               let seq := Nat.succ n
               let _ : NeZero seq := ⟨by simp⟩
@@ -1276,8 +1270,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | some modelSlice =>
                     if h : modelLnSlice.dModel = modelSlice.dModel then
                       if modelLnSlice.lnEps ≤ 0 then
-                        IO.eprintln "error: model-ln-eps must be positive"
-                        return (← finish 2)
+                        IO.eprintln "error: model-ln-eps must be positive"; return (← finish 2)
                       let resid' : Fin seq → Fin modelLnSlice.dModel → Rat := by
                         simpa [h] using modelSlice.resid
                       let t0? ←
@@ -1305,11 +1298,21 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 let okScores ←
                   if timeScores then
                     let t0 ← IO.monoMsNow
-                    let okScores :=
-                      InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
-                    let _ ← (if okScores then pure () else pure ())
+                    let scoresRef :=
+                      Sound.Induction.scoresRatOfSlice (seq := seq)
+                        (dModel := modelSlice.dModel) (dHead := modelSlice.headDim)
+                        modelSlice.scoreScale modelSlice.scoreMask modelSlice.maskCausal
+                        modelSlice.resid modelSlice.wq modelSlice.bq modelSlice.wk modelSlice.bk
                     let t1 ← IO.monoMsNow
-                    IO.eprintln s!"info: scores-check-ms {t1 - t0}"
+                    let okScores :=
+                      (List.finRange seq).all (fun q =>
+                        (List.finRange seq).all (fun k =>
+                          decide (cert.scores q k = scoresRef q k)))
+                    if okScores then pure () else IO.eprintln ""
+                    let t2 ← IO.monoMsNow
+                    IO.eprintln s!"info: scores-ref-ms {t1 - t0}"
+                    IO.eprintln s!"info: scores-eq-ms {t2 - t1}"
+                    IO.eprintln s!"info: scores-check-ms {t2 - t0}"
                     pure okScores
                   else
                     pure
@@ -1347,8 +1350,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       (fun _ => loadInductionHeadTokens tokensPath)
                     match tokensParsed with
                     | Except.error msg =>
-                        IO.eprintln s!"error: {msg}"
-                        return (← finish 2)
+                        IO.eprintln s!"error: {msg}"; return (← finish 2)
                     | Except.ok ⟨seqTokens, tokens⟩ =>
                         if hseq : seqTokens = seq then
                           let tokens' : Fin seq → Nat := by
@@ -1391,8 +1393,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               if let some tlScoreLB := tlScoreLB? then
                 match tokensOpt with
                 | none =>
-                    IO.eprintln "error: tl-score-lb requires a tokens file"
-                    return (← finish 2)
+                    IO.eprintln "error: tl-score-lb requires a tokens file"; return (← finish 2)
                 | some tokens' =>
                     let excludeBos := tlExcludeBos?.getD false
                     let excludeCurrent := tlExcludeCurrent?.getD false
@@ -1430,8 +1431,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           return (← finish 2)
                         pure mean
                     | none =>
-                        IO.eprintln "error: empty active set for stripe stats"
-                        return (← finish 2)
+                        IO.eprintln "error: empty active set for stripe stats"; return (← finish 2)
                   pure (some mean)
                 else
                   pure none
