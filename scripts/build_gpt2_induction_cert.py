@@ -238,6 +238,23 @@ def compute_scores_from_model_slice(model_slice: dict) -> list[list[Fraction]]:
     return scores
 
 
+def compute_vals_from_model_slice(model_slice: dict, direction: np.ndarray) -> np.ndarray:
+    embed = np.array(model_slice["embed"], dtype=np.float64)
+    ln_gamma = np.array(model_slice["ln_gamma"], dtype=np.float64)
+    ln_beta = np.array(model_slice["ln_beta"], dtype=np.float64)
+    ln_eps = float(model_slice["ln_eps"])
+    wv = np.array(model_slice["wv"], dtype=np.float64)
+    bv = np.array(model_slice["bv"], dtype=np.float64)
+    wo = np.array(model_slice["wo"], dtype=np.float64)
+    mean = embed.mean(axis=-1, keepdims=True)
+    var = embed.var(axis=-1, keepdims=True)
+    x_hat = (embed - mean) / np.sqrt(var + ln_eps)
+    ln_out = x_hat * ln_gamma + ln_beta
+    values = ln_out @ wv + bv
+    dir_head = wo.T @ direction
+    return values @ dir_head
+
+
 def compute_copy_logits(model, input_ids, layer: int, head: int,
                         weights: np.ndarray, values: np.ndarray, device: str) -> np.ndarray:
     head_dim = model.config.n_embd // model.config.n_head
@@ -940,12 +957,18 @@ def main() -> None:
             rat_from_float_model(float(negative_row[i]))
             for i in range(negative_row.shape[0])
         ]
-        direction = target_row - negative_row
-        head_dim = model.config.n_embd // model.config.n_head
-        start, end = head * head_dim, (head + 1) * head_dim
-        w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
-        dir_head = w_o.T @ direction
-        vals = values @ dir_head
+        if model_slice is not None:
+            direction = np.array([float(v) for v in unembed_target], dtype=np.float64) - np.array(
+                [float(v) for v in unembed_negative], dtype=np.float64
+            )
+            vals = compute_vals_from_model_slice(model_slice, direction)
+        else:
+            direction = target_row - negative_row
+            head_dim = model.config.n_embd // model.config.n_head
+            start, end = head * head_dim, (head + 1) * head_dim
+            w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
+            dir_head = w_o.T @ direction
+            vals = values @ dir_head
     else:
         if args.value_dim < 0 or args.value_dim >= values.shape[1]:
             raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")

@@ -6,6 +6,8 @@ public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.InductionHead.ModelDirectionSlice
 public import Nfp.IO.InductionHead.LnCheck
+public import Nfp.IO.InductionHead.ScoreUtils
+public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
@@ -16,7 +18,6 @@ public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
-public import Nfp.Bounds.LayerNorm
 public import Nfp.Model.InductionPrompt
 public section
 namespace Nfp
@@ -1100,48 +1101,6 @@ def loadInductionHeadTokens (path : System.FilePath) :
     return parseInductionHeadTokens data
   catch e =>
     return Except.error s!"failed to read tokens file: {e.toString}"
-private def ratToString (x : Rat) : String :=
-  toString x
-private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat) : Bool :=
-  (List.finRange seq).all (fun q =>
-    if period ≤ q.val then
-      decide (tokens q = tokens (Model.prevOfPeriod (seq := seq) period q))
-    else
-      true)
-private def sumOver {seq : Nat} (f : Fin seq → Fin seq → Rat) : Rat :=
-  (List.finRange seq).foldl (fun acc q =>
-    acc + (List.finRange seq).foldl (fun acc' k => acc' + f q k) 0) 0
-/-- Boolean TL induction pattern indicator (duplicate head shifted right). -/
-private def tlPatternBool {seq : Nat} (tokens : Fin seq → Nat) (q k : Fin seq) : Bool :=
-  (List.finRange seq).any (fun r =>
-    decide (r < q) && decide (tokens r = tokens q) && decide (k.val = r.val + 1))
-/-- Numeric TL induction pattern indicator (0/1). -/
-private def tlPatternIndicator {seq : Nat} (tokens : Fin seq → Nat) (q k : Fin seq) : Rat :=
-  if tlPatternBool (seq := seq) tokens q k then 1 else 0
-/-- TL mul numerator with TL-style masking. -/
-private def tlMulNumeratorMasked {seq : Nat} (excludeBos excludeCurrent : Bool)
-    (weights : Fin seq → Fin seq → Rat) (tokens : Fin seq → Nat) : Rat :=
-  sumOver (seq := seq) (fun q k =>
-    Model.tlMaskedWeights (seq := seq) excludeBos excludeCurrent weights q k *
-      tlPatternIndicator (seq := seq) tokens q k)
-/-- TL mul score with TL-style masking. -/
-private def tlMulScoreMasked {seq : Nat} (excludeBos excludeCurrent : Bool)
-    (weights : Fin seq → Fin seq → Rat) (tokens : Fin seq → Nat) : Rat :=
-  let masked := Model.tlMaskedWeights (seq := seq) excludeBos excludeCurrent weights
-  let denom := sumOver (seq := seq) masked
-  if denom = 0 then
-    0
-  else
-    tlMulNumeratorMasked (seq := seq) excludeBos excludeCurrent weights tokens / denom
-/-- Copying score utility (ratio scaled to [-1, 1]); not used by the checker. -/
-def copyScore {seq : Nat} (weights copyLogits : Fin seq → Fin seq → Rat) : Option Rat :=
-  let total := sumOver (seq := seq) copyLogits
-  if total = 0 then
-    none
-  else
-    let weighted := sumOver (seq := seq) (fun q k => weights q k * copyLogits q k)
-    let ratio := weighted / total
-    some ((4 : Rat) * ratio - 1)
 /-- Check an explicit induction-head certificate from disk. -/
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
@@ -1201,6 +1160,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let tlScoreLB? := payload.tlScoreLB?
               let modelSlice? := payload.modelSlice?
               let modelLnSlice? := payload.modelLnSlice?
+              let modelValueSlice? := payload.modelValueSlice?
               let modelDirectionSlice? := payload.modelDirectionSlice?
               let tPre? ← if timeStages then some <$> IO.monoMsNow else pure none
               if kind != "onehot-approx" && kind != "induction-aligned" then
@@ -1293,6 +1253,32 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       return (← finish 2)
               if let some t0 := tLnPhase? then
                 let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-ln-ms {t1 - t0}"
+              if let some modelValueSlice := modelValueSlice? then
+                match modelLnSlice?, modelDirectionSlice? with
+                | none, _ =>
+                    IO.eprintln "error: model-value data requires model-ln slice"
+                    return (← finish 2)
+                | _, none =>
+                    IO.eprintln "error: model-value data requires model-unembed slice"
+                    return (← finish 2)
+                | some modelLnSlice, some modelDirectionSlice =>
+                    if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
+                      if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
+                        let okValues ← timeIO timeStages "values-model" (fun _ =>
+                          pure
+                            (InductionHeadCert.valuesWithinModelBounds
+                              modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
+                              cert.values))
+                        if !okValues then
+                          IO.eprintln "error: values not within model bounds"
+                          return (← finish 2)
+                      else
+                        IO.eprintln
+                          "error: model-direction dModel does not match model-value slice"
+                        return (← finish 2)
+                    else
+                      IO.eprintln "error: model-ln dModel does not match model-value slice"
+                      return (← finish 2)
               let tScoresPhase? ← if timeStages then some <$> IO.monoMsNow else pure none
               if let some modelSlice := modelSlice? then
                 let okScores ←
