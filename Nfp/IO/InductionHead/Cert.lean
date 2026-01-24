@@ -1085,31 +1085,6 @@ def loadInductionHeadCert (path : System.FilePath) :
     return parseInductionHeadCert data
   catch e =>
     return Except.error s!"failed to read cert file: {e.toString}"
-/-- Parse a token list payload. -/
-def parseInductionHeadTokens (input : String) :
-    Except String (Sigma fun seq => Fin seq → Nat) := do
-  let lines := input.splitOn "\n"
-  let tokens := lines.filterMap cleanTokens
-  let seq ← InductionHeadTokens.parseSeq tokens
-  match seq with
-  | 0 => throw "seq must be positive"
-  | Nat.succ n =>
-      let seq := Nat.succ n
-      let st0 : InductionHeadTokens.ParseState seq := InductionHeadTokens.initState seq
-      let st ← tokens.foldlM (fun st t =>
-          match t with
-          | ["seq", _] => pure st
-          | _ => InductionHeadTokens.parseLine st t) st0
-      let tokensFun ← InductionHeadTokens.finalizeState st
-      return ⟨seq, tokensFun⟩
-/-- Load a token list from disk. -/
-def loadInductionHeadTokens (path : System.FilePath) :
-    IO (Except String (Sigma fun seq => Fin seq → Nat)) := do
-  try
-    let data ← IO.FS.readFile path
-    return parseInductionHeadTokens data
-  catch e =>
-    return Except.error s!"failed to read tokens file: {e.toString}"
 /-- Check an explicit induction-head certificate from disk. -/
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
@@ -1117,7 +1092,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (tokensPath? : Option String)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
     (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
-    (timeTotal : Bool) :
+    (timeValues : Bool) (timeTotal : Bool) :
     IO UInt32 := do
   let tTotal? ← if timeTotal then some <$> IO.monoMsNow else pure none
   let finish (code : UInt32) : IO UInt32 := do
@@ -1274,10 +1249,15 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
                       if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
                         let okValues ← timeIO timeStages "values-model" (fun _ =>
-                          pure
-                            (InductionHeadCert.valuesWithinModelBounds
+                          if timeValues then
+                            InductionHeadCert.valuesWithinModelBoundsProfile
                               modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
-                              cert.values))
+                              cert.values true
+                          else
+                            pure
+                              (InductionHeadCert.valuesWithinModelBounds
+                                modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
+                                cert.values))
                         if !okValues then
                           IO.eprintln "error: values not within model bounds"
                           return (← finish 2)

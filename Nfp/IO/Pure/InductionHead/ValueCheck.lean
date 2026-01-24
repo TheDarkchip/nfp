@@ -49,26 +49,42 @@ def valuesWithinModelBounds {seq : Nat}
     simpa [hLn] using lnSlice.lnBeta
   let direction : Fin valueSlice.dModel → Rat := by
     simpa [hDir] using dirSlice.direction
-  let dirHead : Fin valueSlice.headDim → Rat := fun d =>
-    Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction
-  let lnBounds : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
-    fun q =>
-      match lnSlice.lnScale? with
-      | some scale =>
-          Bounds.layerNormBoundsWithScale scale lnSlice.lnEps lnGamma lnBeta (embed q)
-      | none =>
-          Bounds.layerNormBounds lnSlice.lnEps lnGamma lnBeta (embed q)
+  let dirHeadArr : Array Rat :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction)
+  let dirHead : Fin valueSlice.headDim → Rat := fun d => dirHeadArr[d.1]!
+  let lnBoundsArr : Array (Array Rat × Array Rat) :=
+    Array.ofFn (fun q : Fin seq =>
+      let bounds :=
+        match lnSlice.lnScale? with
+        | some scale =>
+            Bounds.layerNormBoundsWithScale scale lnSlice.lnEps lnGamma lnBeta (embed q)
+        | none =>
+            Bounds.layerNormBounds lnSlice.lnEps lnGamma lnBeta (embed q)
+      (Array.ofFn (fun i : Fin valueSlice.dModel => bounds.1 i - lnSlice.lnSlack),
+        Array.ofFn (fun i : Fin valueSlice.dModel => bounds.2 i + lnSlice.lnSlack)))
+  -- `!` indexing is safe: all arrays are built by `Array.ofFn` on matching `Fin` domains.
+  let lnLo : Fin seq → Fin valueSlice.dModel → Rat :=
+    fun k i => (lnBoundsArr[k.1]!).1[i.1]!
+  let lnHi : Fin seq → Fin valueSlice.dModel → Rat :=
+    fun k i => (lnBoundsArr[k.1]!).2[i.1]!
+  let vBoundsArr : Array (Array (Rat × Rat)) :=
+    Array.ofFn (fun k : Fin seq =>
+      Array.ofFn (fun d : Fin valueSlice.headDim =>
+        let bounds :=
+          dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLo k) (lnHi k)
+        (bounds.1 + valueSlice.bv d, bounds.2 + valueSlice.bv d)))
+  let vLo : Fin seq → Fin valueSlice.headDim → Rat :=
+    fun k d => (vBoundsArr[k.1]!)[d.1]!.1
+  let vHi : Fin seq → Fin valueSlice.headDim → Rat :=
+    fun k d => (vBoundsArr[k.1]!)[d.1]!.2
+  let valBoundsArr : Array (Rat × Rat) :=
+    Array.ofFn (fun k : Fin seq =>
+      dotIntervalBoundsFast dirHead (vLo k) (vHi k))
+  let valLo : Fin seq → Rat := fun k => (valBoundsArr[k.1]!).1
+  let valHi : Fin seq → Rat := fun k => (valBoundsArr[k.1]!).2
   finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
-    let bounds := lnBounds k
-    let lnLo : Fin valueSlice.dModel → Rat := fun i => bounds.1 i - lnSlice.lnSlack
-    let lnHi : Fin valueSlice.dModel → Rat := fun i => bounds.2 i + lnSlice.lnSlack
-    let vLo : Fin valueSlice.headDim → Rat := fun d =>
-      dotIntervalLower (fun j => valueSlice.wv j d) lnLo lnHi + valueSlice.bv d
-    let vHi : Fin valueSlice.headDim → Rat := fun d =>
-      dotIntervalUpper (fun j => valueSlice.wv j d) lnLo lnHi + valueSlice.bv d
-    let valLo := dotIntervalLower dirHead vLo vHi
-    let valHi := dotIntervalUpper dirHead vLo vHi
-    decide (valLo ≤ values.vals k) && decide (values.vals k ≤ valHi))
+    decide (valLo k ≤ values.vals k) && decide (values.vals k ≤ valHi k))
 
 /-- Soundness of `valuesWithinModelBounds` for per-key value inequalities. -/
 theorem valuesWithinModelBounds_sound {seq : Nat}
@@ -100,15 +116,19 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
         fun k i => (lnBounds k).1 i - lnSlice.lnSlack
       let lnHi : Fin seq → Fin valueSlice.dModel → Rat :=
         fun k i => (lnBounds k).2 i + lnSlice.lnSlack
-      let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
-        dotIntervalLower (fun j => valueSlice.wv j d) (lnLo k) (lnHi k) + valueSlice.bv d
-      let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
-        dotIntervalUpper (fun j => valueSlice.wv j d) (lnLo k) (lnHi k) + valueSlice.bv d
-      let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-      let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+      let vBounds : Fin seq → Fin valueSlice.headDim → Rat × Rat := fun k d =>
+        let bounds := dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLo k) (lnHi k)
+        (bounds.1 + valueSlice.bv d, bounds.2 + valueSlice.bv d)
+      let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d => (vBounds k d).1
+      let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d => (vBounds k d).2
+      let valBounds : Fin seq → Rat × Rat :=
+        fun k => dotIntervalBoundsFast dirHead (vLo k) (vHi k)
+      let valLo : Fin seq → Rat := fun k => (valBounds k).1
+      let valHi : Fin seq → Rat := fun k => (valBounds k).2
       ∀ k, valLo k ≤ values.vals k ∧ values.vals k ≤ valHi k := by
   classical
-  intro hcheck embed lnGamma lnBeta direction dirHead lnBounds lnLo lnHi vLo vHi valLo valHi k
+  intro hcheck embed lnGamma lnBeta direction dirHead lnBounds lnLo lnHi vBounds vLo vHi
+    valBounds valLo valHi k
   have hall :=
     (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hcheck
   have hk := hall k (by simp)

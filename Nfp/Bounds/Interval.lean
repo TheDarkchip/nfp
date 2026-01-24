@@ -27,6 +27,74 @@ def dotIntervalLower {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
 def dotIntervalUpper {n : Nat} (v lo hi : Fin n → Rat) : Rat :=
   Linear.sumFin n (fun i => if 0 ≤ v i then v i * hi i else v i * lo i)
 
+/-- Lower/upper bounds for a dot product, computed in one pass. -/
+def dotIntervalBoundsFast {n : Nat} (v lo hi : Fin n → Rat) : Rat × Rat :=
+  Linear.foldlFin n (fun acc i =>
+    (acc.1 + (if 0 ≤ v i then v i * lo i else v i * hi i),
+      acc.2 + (if 0 ≤ v i then v i * hi i else v i * lo i))) (0, 0)
+
+/-- `dotIntervalBoundsFast` agrees with `dotIntervalLower` on the first component. -/
+theorem dotIntervalBoundsFast_fst {n : Nat} (v lo hi : Fin n → Rat) :
+    (dotIntervalBoundsFast v lo hi).1 = dotIntervalLower v lo hi := by
+  classical
+  let g1 : Rat → Fin n → Rat := fun acc i =>
+    acc + (if 0 ≤ v i then v i * lo i else v i * hi i)
+  let g2 : Rat → Fin n → Rat := fun acc i =>
+    acc + (if 0 ≤ v i then v i * hi i else v i * lo i)
+  let f : Rat × Rat → Fin n → Rat × Rat := fun acc i =>
+    (g1 acc.1 i, g2 acc.2 i)
+  have hfold : ∀ xs : List (Fin n), ∀ acc1 acc2,
+      (List.foldl f (acc1, acc2) xs).1 = List.foldl g1 acc1 xs := by
+    intro xs; induction xs with
+    | nil => intro acc1 acc2; simp [f, g1, g2]
+    | cons x xs ih =>
+        intro acc1 acc2
+        simp [List.foldl, f, g1, g2, ih]
+  have h1 :
+      (dotIntervalBoundsFast v lo hi).1 =
+        (List.foldl f (0, 0) (List.finRange n)).1 := by
+    simp [dotIntervalBoundsFast, f, g1, g2, Linear.foldlFin_eq_foldl,
+      Fin.foldl_eq_foldl_finRange]
+  have h2 : dotIntervalLower v lo hi = List.foldl g1 0 (List.finRange n) := by
+    simp [dotIntervalLower, Linear.sumFin_eq_list_foldl, g1]
+  calc
+    (dotIntervalBoundsFast v lo hi).1
+        = (List.foldl f (0, 0) (List.finRange n)).1 := h1
+    _ = List.foldl g1 0 (List.finRange n) := hfold _ 0 0
+    _ = dotIntervalLower v lo hi := by
+      simp [h2]
+
+/-- `dotIntervalBoundsFast` agrees with `dotIntervalUpper` on the second component. -/
+theorem dotIntervalBoundsFast_snd {n : Nat} (v lo hi : Fin n → Rat) :
+    (dotIntervalBoundsFast v lo hi).2 = dotIntervalUpper v lo hi := by
+  classical
+  let g1 : Rat → Fin n → Rat := fun acc i =>
+    acc + (if 0 ≤ v i then v i * lo i else v i * hi i)
+  let g2 : Rat → Fin n → Rat := fun acc i =>
+    acc + (if 0 ≤ v i then v i * hi i else v i * lo i)
+  let f : Rat × Rat → Fin n → Rat × Rat := fun acc i =>
+    (g1 acc.1 i, g2 acc.2 i)
+  have hfold : ∀ xs : List (Fin n), ∀ acc1 acc2,
+      (List.foldl f (acc1, acc2) xs).2 = List.foldl g2 acc2 xs := by
+    intro xs; induction xs with
+    | nil => intro acc1 acc2; simp [f, g1, g2]
+    | cons x xs ih =>
+        intro acc1 acc2
+        simp [List.foldl, f, g1, g2, ih]
+  have h1 :
+      (dotIntervalBoundsFast v lo hi).2 =
+        (List.foldl f (0, 0) (List.finRange n)).2 := by
+    simp [dotIntervalBoundsFast, f, g1, g2, Linear.foldlFin_eq_foldl,
+      Fin.foldl_eq_foldl_finRange]
+  have h2 : dotIntervalUpper v lo hi = List.foldl g2 0 (List.finRange n) := by
+    simp [dotIntervalUpper, Linear.sumFin_eq_list_foldl, g2]
+  calc
+    (dotIntervalBoundsFast v lo hi).2
+        = (List.foldl f (0, 0) (List.finRange n)).2 := h1
+    _ = List.foldl g2 0 (List.finRange n) := hfold _ 0 0
+    _ = dotIntervalUpper v lo hi := by
+      simp [h2]
+
 /-- Dot products over interval inputs are bounded below by `dotIntervalLower`. -/
 theorem dotIntervalLower_le_dotProduct_real {n : Nat}
     (v lo hi : Fin n → Rat) (x : Fin n → Real)

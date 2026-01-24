@@ -95,13 +95,37 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     dotIntervalUpper (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k) + valueSlice.bv d
   set valLoSlice : Fin seq → Rat := fun k => dotIntervalLower dirHeadSlice (vLoSlice k) (vHiSlice k)
   set valHiSlice : Fin seq → Rat := fun k => dotIntervalUpper dirHeadSlice (vLoSlice k) (vHiSlice k)
+  set vLoFastSlice : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+    (dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k)).1 +
+      valueSlice.bv d
+  set vHiFastSlice : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+    (dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k)).2 +
+      valueSlice.bv d
+  set valLoFastSlice : Fin seq → Rat := fun k =>
+    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).1
+  set valHiFastSlice : Fin seq → Rat := fun k =>
+    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).2
   have hcert :=
     valuesWithinModelBounds_sound lnSlice valueSlice dirSlice hLn hDir values hcheck
   have htrue :=
     valsRealOfInputs_bounds_from_slices lnSlice valueSlice dirSlice hLn hDir
       hModel hEps hSlack hScalePos hSqrt
-  have hcert' : valLoSlice k ≤ values.vals k ∧ values.vals k ≤ valHiSlice k := by
-    simpa [valLoSlice, valHiSlice] using hcert k
+  have hcert' : valLoFastSlice k ≤ values.vals k ∧ values.vals k ≤ valHiFastSlice k := by
+    simpa [valLoFastSlice, valHiFastSlice] using hcert k
+  have hvLoFast_eq : vLoFastSlice = vLoSlice := by
+    funext k d
+    simp [vLoFastSlice, vLoSlice, dotIntervalBoundsFast_fst]
+  have hvHiFast_eq : vHiFastSlice = vHiSlice := by
+    funext k d
+    simp [vHiFastSlice, vHiSlice, dotIntervalBoundsFast_snd]
+  have hvalLoFast_eq : valLoFastSlice = valLoSlice := by
+    funext k
+    simp [valLoFastSlice, valLoSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_fst]
+  have hvalHiFast_eq : valHiFastSlice = valHiSlice := by
+    funext k
+    simp [valHiFastSlice, valHiSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_snd]
+  have hcertSlice : valLoSlice k ≤ values.vals k ∧ values.vals k ≤ valHiSlice k := by
+    simpa [hvalLoFast_eq, hvalHiFast_eq] using hcert'
   have htrue' : (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
       valsRealOfInputs inputs k ≤ (valHi k : Real) := by
     simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead] using htrue k
@@ -152,7 +176,7 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
       simp [valLo, valLoSlice, hdirHead_eq, hvLo_eq, hvHi_eq]
     have hvalHi_eq : valHi = valHiSlice := by
       simp [valHi, valHiSlice, hdirHead_eq, hvLo_eq, hvHi_eq]
-    simpa [hvalLo_eq, hvalHi_eq] using hcert'
+    simpa [hvalLo_eq, hvalHi_eq] using hcertSlice
   exact ⟨hcert''.1, hcert''.2, htrue'.1, htrue'.2⟩
 
 /--

@@ -79,6 +79,33 @@ def finalizeState {seq : Nat} (st : ParseState seq) :
 
 end InductionHeadTokens
 
+/-- Parse a token list payload. -/
+def parseInductionHeadTokens (input : String) :
+    Except String (Sigma fun seq => Fin seq → Nat) := do
+  let lines := input.splitOn "\n"
+  let tokens := lines.filterMap cleanTokens
+  let seq ← InductionHeadTokens.parseSeq tokens
+  match seq with
+  | 0 => throw "seq must be positive"
+  | Nat.succ n =>
+      let seq := Nat.succ n
+      let st0 : InductionHeadTokens.ParseState seq := InductionHeadTokens.initState seq
+      let st ← tokens.foldlM (fun st t =>
+          match t with
+          | ["seq", _] => pure st
+          | _ => InductionHeadTokens.parseLine st t) st0
+      let tokensFun ← InductionHeadTokens.finalizeState st
+      return ⟨seq, tokensFun⟩
+
+/-- Load a token list from disk. -/
+def loadInductionHeadTokens (path : System.FilePath) :
+    IO (Except String (Sigma fun seq => Fin seq → Nat)) := do
+  try
+    let data ← IO.FS.readFile path
+    return parseInductionHeadTokens data
+  catch e =>
+    return Except.error s!"failed to read tokens file: {e.toString}"
+
 end IO
 
 end Nfp
