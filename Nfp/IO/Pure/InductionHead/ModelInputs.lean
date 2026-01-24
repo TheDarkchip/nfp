@@ -84,6 +84,41 @@ theorem inputsOfSlices_wo {seq : Nat}
     (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).wo = valueSlice.wo := by
   rfl
 
+/-! `inputsOfSlices` preserves LayerNorm inputs. -/
+
+/-- `inputsOfSlices` preserves embeddings. -/
+theorem inputsOfSlices_embed {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).embed =
+      (by simpa [hLn] using lnSlice.embed) := by
+  rfl
+
+/-- `inputsOfSlices` preserves LayerNorm gamma. -/
+theorem inputsOfSlices_ln1Gamma {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).ln1Gamma =
+      (by simpa [hLn] using lnSlice.lnGamma) := by
+  rfl
+
+/-- `inputsOfSlices` preserves LayerNorm beta. -/
+theorem inputsOfSlices_ln1Beta {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).ln1Beta =
+      (by simpa [hLn] using lnSlice.lnBeta) := by
+  rfl
+
 /-- `inputsOfSlices` preserves the direction vector. -/
 theorem inputsOfSlices_direction {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
