@@ -65,13 +65,26 @@ structure ModelLnSliceChecked (seq : Nat) where
 def ModelLnSliceChecked.toSlice {seq : Nat} (checked : ModelLnSliceChecked seq) :
     Nfp.IO.InductionHeadCert.ModelLnSlice seq :=
   let raw := checked.raw
+  let hEmbedCols : ∀ i : Nat, ∀ h : i < raw.embed.size, (raw.embed[i]'h).size = raw.dModel := by
+    simpa using
+      (Array.all_eq_true (as := raw.embed) (p := fun row => row.size = raw.dModel)).1
+        checked.embedCols
   let embedFun : Fin seq → Fin raw.dModel → Rat := fun q i =>
-    let row := (raw.embed[q.1]? ).getD #[]
-    (row[i.1]? ).getD 0
+    let hq : q.1 < raw.embed.size :=
+      Nat.lt_of_lt_of_eq q.isLt checked.embedRows.symm
+    let row := raw.embed[q.1]'hq
+    let hrow : row.size = raw.dModel := hEmbedCols q.1 hq
+    let hi : i.1 < row.size :=
+      Nat.lt_of_lt_of_eq i.isLt hrow.symm
+    row[i.1]'hi
   let gammaFun : Fin raw.dModel → Rat := fun i =>
-    (raw.lnGamma[i.1]? ).getD 0
+    let hi : i.1 < raw.lnGamma.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.gammaLen.symm
+    raw.lnGamma[i.1]'hi
   let betaFun : Fin raw.dModel → Rat := fun i =>
-    (raw.lnBeta[i.1]? ).getD 0
+    let hi : i.1 < raw.lnBeta.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.betaLen.symm
+    raw.lnBeta[i.1]'hi
   { dModel := raw.dModel
     lnEps := raw.lnEps
     lnSlack := raw.lnSlack

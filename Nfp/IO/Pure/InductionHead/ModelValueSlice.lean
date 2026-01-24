@@ -65,16 +65,38 @@ structure ModelValueSliceChecked where
 def ModelValueSliceChecked.toSlice (checked : ModelValueSliceChecked) :
     Nfp.IO.InductionHeadCert.ModelValueSlice :=
   let raw := checked.raw
+  let hWvCols : ∀ i : Nat, ∀ h : i < raw.wv.size, (raw.wv[i]'h).size = raw.headDim := by
+    simpa using
+      (Array.all_eq_true (as := raw.wv) (p := fun row => row.size = raw.headDim)).1
+        checked.wvCols
+  let hWoCols : ∀ i : Nat, ∀ h : i < raw.wo.size, (raw.wo[i]'h).size = raw.headDim := by
+    simpa using
+      (Array.all_eq_true (as := raw.wo) (p := fun row => row.size = raw.headDim)).1
+        checked.woCols
   let wvFun : Fin raw.dModel → Fin raw.headDim → Rat := fun i j =>
-    let row := (raw.wv[i.1]? ).getD #[]
-    (row[j.1]? ).getD 0
+    let hi : i.1 < raw.wv.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.wvRows.symm
+    let row := raw.wv[i.1]'hi
+    let hrow : row.size = raw.headDim := hWvCols i.1 hi
+    let hj : j.1 < row.size :=
+      Nat.lt_of_lt_of_eq j.isLt hrow.symm
+    row[j.1]'hj
   let woFun : Fin raw.dModel → Fin raw.headDim → Rat := fun i j =>
-    let row := (raw.wo[i.1]? ).getD #[]
-    (row[j.1]? ).getD 0
+    let hi : i.1 < raw.wo.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.woRows.symm
+    let row := raw.wo[i.1]'hi
+    let hrow : row.size = raw.headDim := hWoCols i.1 hi
+    let hj : j.1 < row.size :=
+      Nat.lt_of_lt_of_eq j.isLt hrow.symm
+    row[j.1]'hj
   let bvFun : Fin raw.headDim → Rat := fun j =>
-    (raw.bv[j.1]? ).getD 0
+    let hj : j.1 < raw.bv.size :=
+      Nat.lt_of_lt_of_eq j.isLt checked.bvLen.symm
+    raw.bv[j.1]'hj
   let attnBiasFun : Fin raw.dModel → Rat := fun i =>
-    (raw.attnBias[i.1]? ).getD 0
+    let hi : i.1 < raw.attnBias.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.attnBiasLen.symm
+    raw.attnBias[i.1]'hi
   { dModel := raw.dModel
     headDim := raw.headDim
     layer := raw.layer
