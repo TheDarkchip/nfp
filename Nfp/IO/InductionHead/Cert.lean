@@ -14,6 +14,7 @@ public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
 public import Nfp.IO.Pure.InductionHead.ModelLnSlice
 public import Nfp.IO.Pure.InductionHead.ModelValueSlice
+public import Nfp.Sound.Induction.ScoreBounds
 public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
@@ -737,10 +738,6 @@ private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq)
     throw "missing score entries"
   if !st.weights.all (fun row => row.all Option.isSome) then
     throw "missing weight entries"
-  if !st.epsAt.all Option.isSome then
-    throw "missing eps-at entries"
-  if !st.weightBoundAt.all (fun row => row.all Option.isSome) then
-    throw "missing weight-bound entries"
   if !st.valsLo.all Option.isSome then
     throw "missing val-lo entries"
   if !st.valsHi.all Option.isSome then
@@ -756,11 +753,19 @@ private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq)
   let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
     let row := st.weights[q.1]!
     (row[k.1]!).getD 0
-  let epsAtFun : Fin seq → Rat := fun q =>
-    (st.epsAt[q.1]!).getD 0
-  let weightBoundAtFun : Fin seq → Fin seq → Rat := fun q k =>
-    let row := st.weightBoundAt[q.1]!
-    (row[k.1]!).getD 0
+  let weightBoundAtFun : Fin seq → Fin seq → Rat :=
+    if st.weightBoundAt.all (fun row => row.all Option.isSome) then
+      fun q k =>
+        let row := st.weightBoundAt[q.1]!
+        (row[k.1]!).getD 0
+    else
+      let scoreGapLo := Sound.scoreGapLoOfBounds prevFun scoresFun scoresFun
+      Sound.weightBoundAtOfScoreGap prevFun scoreGapLo
+  let epsAtFun : Fin seq → Rat :=
+    if st.epsAt.all Option.isSome then
+      fun q => (st.epsAt[q.1]!).getD 0
+    else
+      Sound.epsAtOfWeightBoundAt prevFun weightBoundAtFun
   let valsLoFun : Fin seq → Rat := fun k =>
     (st.valsLo[k.1]!).getD 0
   let valsHiFun : Fin seq → Rat := fun k =>

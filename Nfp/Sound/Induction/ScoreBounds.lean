@@ -25,6 +25,49 @@ def scoreGapLoOfBounds (prev : Fin seq → Fin seq)
   fun q k => scoreLo q (prev q) - scoreHi q k
 
 /--
+Weight-bound formula derived from score gaps.
+-/
+def weightBoundAtOfScoreGap (prev : Fin seq → Fin seq)
+    (scoreGapLo : Fin seq → Fin seq → Rat) : Fin seq → Fin seq → Rat :=
+  fun q k =>
+    if k = prev q then
+      0
+    else
+      if scoreGapLo q k < 0 then
+        (1 : Rat)
+      else
+        ratDivUp 1 (1 + scoreGapLo q k)
+
+/-- Unfold `weightBoundAtOfScoreGap` on non-`prev` keys. -/
+theorem weightBoundAtOfScoreGap_eq {prev : Fin seq → Fin seq}
+    {scoreGapLo : Fin seq → Fin seq → Rat} {q k : Fin seq} (hk : k ≠ prev q) :
+    weightBoundAtOfScoreGap prev scoreGapLo q k =
+      if scoreGapLo q k < 0 then
+        (1 : Rat)
+      else
+        ratDivUp 1 (1 + scoreGapLo q k) := by
+  simp [weightBoundAtOfScoreGap, hk]
+
+/--
+Per-query epsilon from per-key weight bounds.
+-/
+def epsAtOfWeightBoundAt (prev : Fin seq → Fin seq)
+    (weightBoundAt : Fin seq → Fin seq → Rat) : Fin seq → Rat :=
+  fun q =>
+    min (1 : Rat)
+      ((Finset.univ : Finset (Fin seq)).erase (prev q) |>.sum (fun k =>
+        weightBoundAt q k))
+
+/-- Unfolding lemma for `epsAtOfWeightBoundAt`. -/
+theorem epsAtOfWeightBoundAt_def (prev : Fin seq → Fin seq)
+    (weightBoundAt : Fin seq → Fin seq → Rat) (q : Fin seq) :
+    epsAtOfWeightBoundAt prev weightBoundAt q =
+      min (1 : Rat)
+        ((Finset.univ : Finset (Fin seq)).erase (prev q) |>.sum (fun k =>
+          weightBoundAt q k)) := by
+  rfl
+
+/--
 Score-gap lower bounds from score intervals are sound for real scores.
 -/
 theorem scoreGapLoOfBounds_real_at
