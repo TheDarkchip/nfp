@@ -378,11 +378,14 @@ def main() -> int:
                 args.device,
                 "--seed",
                 str(args.seed),
-                "--active-eps-max",
-                str(args.active_eps_max),
-                "--min-margin",
-                str(args.min_margin),
             ]
+            if args.cert_kind == "onehot-approx":
+                cmd.extend([
+                    "--active-eps-max",
+                    str(args.active_eps_max),
+                    "--min-margin",
+                    str(args.min_margin),
+                ])
             direction_report_path = None
             if args.direction_search:
                 direction_report_path = (
@@ -468,21 +471,33 @@ def main() -> int:
 
     args.batch_out.parent.mkdir(parents=True, exist_ok=True)
     with args.batch_out.open("w", encoding="ascii") as f:
+        is_onehot = args.cert_kind == "onehot-approx"
         if args.batch_min_active is not None:
             f.write(f"min-active {args.batch_min_active}\n")
         if args.batch_min_pass is not None:
             f.write(f"min-pass {args.batch_min_pass}\n")
         if args.batch_min_logit_diff is not None:
             f.write(f"min-logit-diff {args.batch_min_logit_diff}\n")
-        if args.batch_min_margin is not None:
-            f.write(f"min-margin {args.batch_min_margin}\n")
-        if args.batch_max_eps is not None:
-            f.write(f"max-eps {args.batch_max_eps}\n")
+        if is_onehot:
+            if args.batch_min_margin is not None:
+                f.write(f"min-margin {args.batch_min_margin}\n")
+            if args.batch_max_eps is not None:
+                f.write(f"max-eps {args.batch_max_eps}\n")
+        else:
+            if args.batch_min_margin is not None or args.batch_max_eps is not None:
+                print(
+                    "warning: ignoring batch min-margin/max-eps for induction-aligned certs"
+                )
         if args.batch_min_stripe_mean is not None:
             f.write(f"min-stripe-mean {args.batch_min_stripe_mean}\n")
         for cert_path, tokens_path in batch_items:
             f.write(f"item {cert_path} {tokens_path}\n")
     print(f"Wrote batch file to {args.batch_out}")
+    check_cmd = [sys.executable, "scripts/check_batch_kind.py", "--batch", str(args.batch_out)]
+    check_result = subprocess.run(check_cmd, capture_output=True, text=True)
+    if check_result.returncode != 0:
+        print(check_result.stderr.strip())
+        return check_result.returncode
     return 0
 
 

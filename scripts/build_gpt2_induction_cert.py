@@ -601,6 +601,59 @@ def write_direction_report(
             f.write(f"{rank}\t{lb:.6f}\t{target}\t{negative}\n")
 
 
+def score_gap_lo(scores: list[list[Fraction]], prev: np.ndarray) -> list[list[Fraction]]:
+    seq = len(scores)
+    gaps: list[list[Fraction]] = []
+    for q in range(seq):
+        prev_q = int(prev[q])
+        row = []
+        s_prev = scores[q][prev_q]
+        for k in range(seq):
+            row.append(s_prev - scores[q][k])
+        gaps.append(row)
+    return gaps
+
+
+def weight_bound_at_of_score_gap(
+    gaps: list[list[Fraction]],
+    prev: np.ndarray,
+    weights: list[list[Fraction]] | None = None,
+) -> list[list[Fraction]]:
+    seq = len(gaps)
+    bounds: list[list[Fraction]] = []
+    for q in range(seq):
+        prev_q = int(prev[q])
+        row = []
+        for k in range(seq):
+            if k == prev_q:
+                bound = Fraction(0)
+            else:
+                gap = gaps[q][k]
+                if gap < 0:
+                    bound = Fraction(1)
+                else:
+                    bound = Fraction(1, 1) / (Fraction(1, 1) + gap)
+                if weights is not None and weights[q][k] > bound:
+                    bound = weights[q][k]
+            row.append(bound)
+        bounds.append(row)
+    return bounds
+
+
+def eps_at_of_weight_bounds(bounds: list[list[Fraction]], prev: np.ndarray) -> list[Fraction]:
+    seq = len(bounds)
+    eps_at: list[Fraction] = []
+    for q in range(seq):
+        prev_q = int(prev[q])
+        total = Fraction(0)
+        for k in range(seq):
+            if k == prev_q:
+                continue
+            total += bounds[q][k]
+        eps_at.append(min(Fraction(1), total))
+    return eps_at
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", required=True, help="Path to write certificate")
@@ -867,7 +920,6 @@ def main() -> None:
                 "Try a different head/layer, random-pattern/seed, or relax the thresholds."
             )
     if active_positions:
-        eps = max(eps_by_q[q] for q in active_positions)
         margin = min((margin_by_q[q] for q in active_positions), default=Fraction(0))
     else:
         margin = Fraction(0)
@@ -875,16 +927,11 @@ def main() -> None:
     if candidate_positions:
         print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 
-    eps_at = []
-    for q in range(args.seq):
-        prev_q = prev[q]
-        if args.seq == 1:
-            max_other = Fraction(0)
-        else:
-            max_other = max(weights_rat[q][k] for k in range(args.seq) if k != prev_q)
-        deficit = Fraction(1) - weights_rat[q][prev_q]
-        eps_at.append(max(max_other, deficit))
-    weight_bound_at = weights_rat
+    gap_lo = score_gap_lo(scores_rat, prev)
+    weight_bound_at = weight_bound_at_of_score_gap(gap_lo, prev, weights_rat)
+    eps_at = eps_at_of_weight_bounds(weight_bound_at, prev)
+    if active_positions:
+        eps = max(eps_at[q] for q in active_positions)
 
     if args.search_direction and (args.direction_target is not None or args.direction_negative is not None):
         raise SystemExit("search-direction is mutually exclusive with explicit direction tokens")

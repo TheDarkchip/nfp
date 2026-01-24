@@ -6,6 +6,7 @@ public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.Tokens
 public import Nfp.IO.InductionHead.ModelDirectionSlice
 public import Nfp.IO.InductionHead.LnCheck
+public import Nfp.IO.InductionHead.ScoreCheck
 public import Nfp.IO.InductionHead.ScoreUtils
 public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
@@ -21,10 +22,8 @@ public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Model.InductionPrompt
 public section
-namespace Nfp
-namespace IO
-open Nfp.Circuit
-open Nfp.IO.Parse
+namespace Nfp.IO
+open Nfp.Circuit Nfp.IO.Parse
 namespace InductionHeadCert
 /-- State for parsing induction-head certificates. -/
 structure ParseState (seq : Nat) where
@@ -1312,6 +1311,14 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       (InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores)
                 if !okScores then
                   IO.eprintln "error: scores do not match model slice"; return (← finish 2)
+              let scoreBoundsRes ← timeIO timeStages "score-bounds" (fun _ =>
+                pure (InductionHeadCert.checkScoreBoundsWithinModel
+                  (seq := seq) modelSlice? cert))
+              match scoreBoundsRes with
+              | Except.error msg =>
+                  IO.eprintln s!"error: {msg}"
+                  return (← finish 2)
+              | Except.ok () => pure ()
               if let some t0 := tScoresPhase? then
                 let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-scores-ms {t1 - t0}"
               if let some t0 := tModel? then

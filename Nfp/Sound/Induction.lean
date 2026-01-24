@@ -7,6 +7,7 @@ public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 public import Nfp.Sound.Induction.OneHot
 public import Nfp.Sound.Induction.ScoreBounds
+public import Nfp.Sound.Induction.ScoreIntervals
 public import Nfp.Sound.Induction.ValueBounds
 
 /-!

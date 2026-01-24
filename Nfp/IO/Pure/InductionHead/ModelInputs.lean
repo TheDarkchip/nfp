@@ -5,6 +5,7 @@ module
 public import Nfp.Bounds.LayerNorm
 public import Nfp.IO.InductionHead.ModelDirectionSlice
 public import Nfp.IO.InductionHead.ModelLnSlice
+public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.Model.InductionHead
 public import Nfp.Sound.Induction.ValueBounds
@@ -129,6 +130,103 @@ theorem inputsOfSlices_direction {seq : Nat}
     (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).direction =
       (by simpa [hDir] using dirSlice.direction) := by
   rfl
+
+/-! Score-focused inputs from LayerNorm and model score slices. -/
+
+/-- Assemble induction-head inputs for score bounds from LayerNorm and model slices. -/
+noncomputable def inputsOfScoreSlices {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    Model.InductionHeadInputs seq modelSlice.dModel modelSlice.headDim :=
+  { scale := modelSlice.scoreScale
+    active := ∅
+    prev := fun q => q
+    embed := by simpa [hLn] using lnSlice.embed
+    lnEps := lnSlice.lnEps
+    ln1Gamma := by simpa [hLn] using lnSlice.lnGamma
+    ln1Beta := by simpa [hLn] using lnSlice.lnBeta
+    wq := modelSlice.wq
+    bq := modelSlice.bq
+    wk := modelSlice.wk
+    bk := modelSlice.bk
+    wv := fun _ _ => 0
+    bv := fun _ => 0
+    wo := fun _ _ => 0
+    attnBias := fun _ => 0
+    maskCausal := modelSlice.maskCausal
+    maskValue := modelSlice.scoreMask
+    directionSpec := { target := 0, negative := 0 }
+    direction := fun _ => 0 }
+
+/-- `inputsOfScoreSlices` preserves embeddings. -/
+theorem inputsOfScoreSlices_embed {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).embed =
+      (by simpa [hLn] using lnSlice.embed) := by
+  rfl
+
+/-- `inputsOfScoreSlices` preserves LayerNorm gamma. -/
+theorem inputsOfScoreSlices_ln1Gamma {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).ln1Gamma =
+      (by simpa [hLn] using lnSlice.lnGamma) := by
+  rfl
+
+/-- `inputsOfScoreSlices` preserves LayerNorm epsilon. -/
+theorem inputsOfScoreSlices_lnEps {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).lnEps = lnSlice.lnEps := by
+  rfl
+
+/-- `inputsOfScoreSlices` preserves LayerNorm beta. -/
+theorem inputsOfScoreSlices_ln1Beta {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).ln1Beta =
+      (by simpa [hLn] using lnSlice.lnBeta) := by
+  rfl
+
+/-- `inputsOfScoreSlices` preserves the score scale. -/
+theorem inputsOfScoreSlices_scale {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).scale = modelSlice.scoreScale := by
+  rfl
+
+/-- `inputsOfScoreSlices` preserves the score mask settings. -/
+theorem inputsOfScoreSlices_mask {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).maskCausal = modelSlice.maskCausal ∧
+      (inputsOfScoreSlices lnSlice modelSlice hLn).maskValue = modelSlice.scoreMask := by
+  constructor <;> rfl
+
+/-- `inputsOfScoreSlices` preserves Q/K projections. -/
+theorem inputsOfScoreSlices_qk {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
+    (hLn : lnSlice.dModel = modelSlice.dModel) :
+    (inputsOfScoreSlices lnSlice modelSlice hLn).wq = modelSlice.wq ∧
+      (inputsOfScoreSlices lnSlice modelSlice hLn).wk = modelSlice.wk ∧
+      (inputsOfScoreSlices lnSlice modelSlice hLn).bq = modelSlice.bq ∧
+      (inputsOfScoreSlices lnSlice modelSlice hLn).bk = modelSlice.bk := by
+  constructor
+  · rfl
+  constructor
+  · rfl
+  constructor
+  · rfl
+  · rfl
 
 /--
 Slice-derived value bounds are sound for `valsRealOfInputs`.

@@ -155,6 +155,200 @@ theorem dotProduct_le_dotIntervalUpper_real_add {n : Nat}
   simpa [add_comm] using
     add_le_add_left (dotProduct_le_dotIntervalUpper_real v lo hi x hlo hhi) b
 
+/-- Lower bound for a product over two intervals. -/
+def intervalMulLower (alo ahi blo bhi : Rat) : Rat :=
+  min (min (alo * blo) (alo * bhi)) (min (ahi * blo) (ahi * bhi))
+
+/-- Upper bound for a product over two intervals. -/
+def intervalMulUpper (alo ahi blo bhi : Rat) : Rat :=
+  max (max (alo * blo) (alo * bhi)) (max (ahi * blo) (ahi * bhi))
+
+private theorem min_mul_left_le_mul_real {a c d : Rat} {y : Real}
+    (hylo : (c : Real) ≤ y) (hyhi : y ≤ (d : Real)) :
+    (min (a * c) (a * d) : Real) ≤ (a : Real) * y := by
+  classical
+  by_cases ha : 0 ≤ a
+  · have ha' : 0 ≤ (a : Real) := by
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg ha
+    have hmul : (a : Real) * (c : Real) ≤ (a : Real) * y :=
+      mul_le_mul_of_nonneg_left hylo ha'
+    have hmin : (min (a * c) (a * d) : Real) ≤ (a : Real) * (c : Real) := by
+      exact min_le_left _ _
+    exact le_trans hmin hmul
+  · have ha_rat : a ≤ 0 := le_of_lt (lt_of_not_ge ha)
+    have ha' : (a : Real) ≤ 0 := by
+      have : ratToReal a ≤ 0 := (ratToReal_nonpos_iff).2 ha_rat
+      simpa [ratToReal_def] using this
+    have hmul : (a : Real) * (d : Real) ≤ (a : Real) * y :=
+      mul_le_mul_of_nonpos_left hyhi ha'
+    have hmin : (min (a * c) (a * d) : Real) ≤ (a : Real) * (d : Real) := by
+      exact min_le_right _ _
+    exact le_trans hmin hmul
+
+private theorem mul_left_le_max_mul_real {a c d : Rat} {y : Real}
+    (hylo : (c : Real) ≤ y) (hyhi : y ≤ (d : Real)) :
+    (a : Real) * y ≤ (max (a * c) (a * d) : Real) := by
+  classical
+  by_cases ha : 0 ≤ a
+  · have ha' : 0 ≤ (a : Real) := by
+      simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg ha
+    have hmul : (a : Real) * y ≤ (a : Real) * (d : Real) :=
+      mul_le_mul_of_nonneg_left hyhi ha'
+    have hmax : (a : Real) * (d : Real) ≤ (max (a * c) (a * d) : Real) := by
+      exact le_max_right _ _
+    exact le_trans hmul hmax
+  · have ha_rat : a ≤ 0 := le_of_lt (lt_of_not_ge ha)
+    have ha' : (a : Real) ≤ 0 := by
+      have : ratToReal a ≤ 0 := (ratToReal_nonpos_iff).2 ha_rat
+      simpa [ratToReal_def] using this
+    have hmul : (a : Real) * y ≤ (a : Real) * (c : Real) :=
+      mul_le_mul_of_nonpos_left hylo ha'
+    have hmax : (a : Real) * (c : Real) ≤ (max (a * c) (a * d) : Real) := by
+      exact le_max_left _ _
+    exact le_trans hmul hmax
+
+/-- Products over intervals are bounded below by `intervalMulLower`. -/
+theorem intervalMulLower_le_mul_real {alo ahi blo bhi : Rat} {x y : Real}
+    (hxlo : (alo : Real) ≤ x) (hxhi : x ≤ (ahi : Real))
+    (hylo : (blo : Real) ≤ y) (hyhi : y ≤ (bhi : Real)) :
+    (intervalMulLower alo ahi blo bhi : Real) ≤ x * y := by
+  classical
+  have hmin_a : (min (alo * blo) (alo * bhi) : Real) ≤ (alo : Real) * y :=
+    min_mul_left_le_mul_real (a := alo) (c := blo) (d := bhi) hylo hyhi
+  have hmin_b : (min (ahi * blo) (ahi * bhi) : Real) ≤ (ahi : Real) * y :=
+    min_mul_left_le_mul_real (a := ahi) (c := blo) (d := bhi) hylo hyhi
+  have hleft : (intervalMulLower alo ahi blo bhi : Real) ≤ (alo : Real) * y := by
+    have hmin : (intervalMulLower alo ahi blo bhi : Real) ≤
+        (min (alo * blo) (alo * bhi) : Real) := by
+      simp [intervalMulLower]
+    exact le_trans hmin hmin_a
+  have hright : (intervalMulLower alo ahi blo bhi : Real) ≤ (ahi : Real) * y := by
+    have hmin : (intervalMulLower alo ahi blo bhi : Real) ≤
+        (min (ahi * blo) (ahi * bhi) : Real) := by
+      simp [intervalMulLower]
+    exact le_trans hmin hmin_b
+  have hmin_xy : min ((alo : Real) * y) ((ahi : Real) * y) ≤ x * y := by
+    by_cases hy : 0 ≤ y
+    · have hmul : (alo : Real) * y ≤ x * y :=
+        mul_le_mul_of_nonneg_right hxlo hy
+      exact le_trans (min_le_left _ _) hmul
+    · have hy' : y ≤ 0 := le_of_not_ge hy
+      have hmul : (ahi : Real) * y ≤ x * y :=
+        mul_le_mul_of_nonpos_right hxhi hy'
+      exact le_trans (min_le_right _ _) hmul
+  have hmin' : (intervalMulLower alo ahi blo bhi : Real) ≤
+      min ((alo : Real) * y) ((ahi : Real) * y) :=
+    le_min hleft hright
+  exact le_trans hmin' hmin_xy
+
+/-- Products over intervals are bounded above by `intervalMulUpper`. -/
+theorem mul_le_intervalMulUpper_real {alo ahi blo bhi : Rat} {x y : Real}
+    (hxlo : (alo : Real) ≤ x) (hxhi : x ≤ (ahi : Real))
+    (hylo : (blo : Real) ≤ y) (hyhi : y ≤ (bhi : Real)) :
+    x * y ≤ (intervalMulUpper alo ahi blo bhi : Real) := by
+  classical
+  have hmax_a : (alo : Real) * y ≤ (max (alo * blo) (alo * bhi) : Real) :=
+    mul_left_le_max_mul_real (a := alo) (c := blo) (d := bhi) hylo hyhi
+  have hmax_b : (ahi : Real) * y ≤ (max (ahi * blo) (ahi * bhi) : Real) :=
+    mul_left_le_max_mul_real (a := ahi) (c := blo) (d := bhi) hylo hyhi
+  have hleft : (alo : Real) * y ≤ (intervalMulUpper alo ahi blo bhi : Real) := by
+    have hmax : (max (alo * blo) (alo * bhi) : Real) ≤
+        (intervalMulUpper alo ahi blo bhi : Real) := by
+      simp [intervalMulUpper]
+    exact le_trans hmax_a hmax
+  have hright : (ahi : Real) * y ≤ (intervalMulUpper alo ahi blo bhi : Real) := by
+    have hmax : (max (ahi * blo) (ahi * bhi) : Real) ≤
+        (intervalMulUpper alo ahi blo bhi : Real) := by
+      simp [intervalMulUpper]
+    exact le_trans hmax_b hmax
+  have hmax_xy : x * y ≤ max ((alo : Real) * y) ((ahi : Real) * y) := by
+    by_cases hy : 0 ≤ y
+    · have hmul : x * y ≤ (ahi : Real) * y :=
+        mul_le_mul_of_nonneg_right hxhi hy
+      exact le_trans hmul (le_max_right _ _)
+    · have hy' : y ≤ 0 := le_of_not_ge hy
+      have hmul : x * y ≤ (alo : Real) * y :=
+        mul_le_mul_of_nonpos_right hxlo hy'
+      exact le_trans hmul (le_max_left _ _)
+  have hmax' : max ((alo : Real) * y) ((ahi : Real) * y) ≤
+      (intervalMulUpper alo ahi blo bhi : Real) :=
+    max_le hleft hright
+  exact le_trans hmax_xy hmax'
+
+/-- Lower bound for dot products of two interval vectors. -/
+def dotIntervalMulLower {n : Nat} (lo₁ hi₁ lo₂ hi₂ : Fin n → Rat) : Rat :=
+  Linear.sumFin n (fun i => intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i))
+
+/-- Upper bound for dot products of two interval vectors. -/
+def dotIntervalMulUpper {n : Nat} (lo₁ hi₁ lo₂ hi₂ : Fin n → Rat) : Rat :=
+  Linear.sumFin n (fun i => intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i))
+
+/-- Dot products over interval inputs are bounded below by `dotIntervalMulLower`. -/
+theorem dotIntervalMulLower_le_dotProduct_real {n : Nat}
+    (lo₁ hi₁ lo₂ hi₂ : Fin n → Rat) (x y : Fin n → Real)
+    (hlo₁ : ∀ i, (lo₁ i : Real) ≤ x i) (hhi₁ : ∀ i, x i ≤ (hi₁ i : Real))
+    (hlo₂ : ∀ i, (lo₂ i : Real) ≤ y i) (hhi₂ : ∀ i, y i ≤ (hi₂ i : Real)) :
+    (dotIntervalMulLower lo₁ hi₁ lo₂ hi₂ : Real) ≤ dotProduct x y := by
+  classical
+  have hterm : ∀ i,
+      (intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) ≤ x i * y i := by
+    intro i
+    exact intervalMulLower_le_mul_real (hxlo := hlo₁ i) (hxhi := hhi₁ i)
+      (hylo := hlo₂ i) (hyhi := hhi₂ i)
+  have hsum :
+      ∑ i, (intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) ≤
+        ∑ i, x i * y i := by
+    refine Finset.sum_le_sum ?_
+    intro i _
+    exact hterm i
+  have hcast : (dotIntervalMulLower lo₁ hi₁ lo₂ hi₂ : Real) =
+      ∑ i, (intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) := by
+    classical
+    have hcast' :
+        ratToReal (Linear.sumFin n
+          (fun i => intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i))) =
+          ∑ i, ratToReal (intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i)) := by
+      simpa using
+        (Linear.ratToReal_sumFin (n := n)
+          (f := fun i => intervalMulLower (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i)))
+    simpa [dotIntervalMulLower, ratToReal_def] using hcast'
+  have hdot : dotProduct x y = ∑ i, x i * y i := by
+    simp [dotProduct]
+  simpa [hcast, hdot] using hsum
+
+/-- Dot products over interval inputs are bounded above by `dotIntervalMulUpper`. -/
+theorem dotProduct_le_dotIntervalMulUpper_real {n : Nat}
+    (lo₁ hi₁ lo₂ hi₂ : Fin n → Rat) (x y : Fin n → Real)
+    (hlo₁ : ∀ i, (lo₁ i : Real) ≤ x i) (hhi₁ : ∀ i, x i ≤ (hi₁ i : Real))
+    (hlo₂ : ∀ i, (lo₂ i : Real) ≤ y i) (hhi₂ : ∀ i, y i ≤ (hi₂ i : Real)) :
+    dotProduct x y ≤ (dotIntervalMulUpper lo₁ hi₁ lo₂ hi₂ : Real) := by
+  classical
+  have hterm : ∀ i,
+      x i * y i ≤ (intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) := by
+    intro i
+    exact mul_le_intervalMulUpper_real (hxlo := hlo₁ i) (hxhi := hhi₁ i)
+      (hylo := hlo₂ i) (hyhi := hhi₂ i)
+  have hsum :
+      ∑ i, x i * y i ≤
+        ∑ i, (intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) := by
+    refine Finset.sum_le_sum ?_
+    intro i _
+    exact hterm i
+  have hcast : (dotIntervalMulUpper lo₁ hi₁ lo₂ hi₂ : Real) =
+      ∑ i, (intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i) : Real) := by
+    classical
+    have hcast' :
+        ratToReal (Linear.sumFin n
+          (fun i => intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i))) =
+          ∑ i, ratToReal (intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i)) := by
+      simpa using
+        (Linear.ratToReal_sumFin (n := n)
+          (f := fun i => intervalMulUpper (lo₁ i) (hi₁ i) (lo₂ i) (hi₂ i)))
+    simpa [dotIntervalMulUpper, ratToReal_def] using hcast'
+  have hdot : dotProduct x y = ∑ i, x i * y i := by
+    simp [dotProduct]
+  simpa [hcast, hdot] using hsum
+
 /-- Absolute bound for interval-valued inputs (sum of per-coordinate maxima). -/
 def intervalAbsBound {n : Nat} (lo hi : Fin n → Rat) : Rat :=
   ∑ i, max |lo i| |hi i|

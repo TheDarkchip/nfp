@@ -272,6 +272,10 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
               InductionHeadCert.scoresMatchModelSlice (seq := seq) modelSlice cert.scores
             if !okScores then
               return Except.error "scores do not match model slice"
+          match InductionHeadCert.checkScoreBoundsWithinModel
+              (seq := seq) modelSlice? cert with
+          | Except.error msg => return Except.error msg
+          | Except.ok () => pure ()
           if kind = "onehot-approx" then
             if !Circuit.checkInductionHeadCert cert then
               return Except.error "induction-head certificate rejected"
