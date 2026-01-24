@@ -736,8 +736,6 @@ private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq)
     throw "missing prev entries"
   if !st.scores.all (fun row => row.all Option.isSome) then
     throw "missing score entries"
-  if !st.weights.all (fun row => row.all Option.isSome) then
-    throw "missing weight entries"
   if !st.valsLo.all Option.isSome then
     throw "missing val-lo entries"
   if !st.valsHi.all Option.isSome then
@@ -750,9 +748,13 @@ private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq)
   let scoresFun : Fin seq → Fin seq → Rat := fun q k =>
     let row := st.scores[q.1]!
     (row[k.1]!).getD 0
-  let weightsFun : Fin seq → Fin seq → Rat := fun q k =>
-    let row := st.weights[q.1]!
-    (row[k.1]!).getD 0
+  let weightsFun : Fin seq → Fin seq → Rat :=
+    if st.weights.all (fun row => row.all Option.isSome) then
+      fun q k =>
+        let row := st.weights[q.1]!
+        (row[k.1]!).getD 0
+    else
+      fun _ _ => 0
   let weightBoundAtFun : Fin seq → Fin seq → Rat :=
     if st.weightBoundAt.all (fun row => row.all Option.isSome) then
       fun q k =>
@@ -1043,6 +1045,9 @@ def parseInductionHeadCert (input : String) :
         throw "unexpected period entry for kind onehot-approx"
       if kind = "induction-aligned" && period?.isNone then
         throw "missing period entry for kind induction-aligned"
+      let weightsPresent := st.weights.all (fun row => row.all Option.isSome)
+      if kind = "onehot-approx" && !weightsPresent then
+        throw "missing weight entries"
       let tlExcludeBos? := st.tlExcludeBos
       let tlExcludeCurrent? := st.tlExcludeCurrent
       let tlScoreLB? := st.tlScoreLB
