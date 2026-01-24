@@ -10,6 +10,7 @@ public import Nfp.Circuit.Layers.Softmax
 public import Nfp.Core.Basic
 public import Nfp.Model.Gpt2
 public import Nfp.Bounds.Cache
+public import Nfp.Bounds.Interval
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Bounds.Mlp
 

@@ -5,6 +5,7 @@ module
 public import Nfp.Bounds.Attention
 public import Nfp.Bounds.Cache
 public import Nfp.Bounds.Gelu
+public import Nfp.Bounds.Interval
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Bounds.LayerNorm.InvStd
 public import Nfp.Bounds.Mlp

@@ -4,6 +4,7 @@ module
 
 public import Mathlib.Algebra.BigOperators.Group.Finset.Basic
 public import Nfp.Core.Basic
+public import Nfp.Bounds.Interval
 public import Nfp.Bounds.Gelu
 public import Nfp.Bounds.LayerNorm
 

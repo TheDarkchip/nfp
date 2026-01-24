@@ -6,6 +6,7 @@ public import Nfp.Sound.Induction.Core
 public import Nfp.Sound.Induction.HeadOutput
 public import Nfp.Sound.Induction.LogitDiff
 public import Nfp.Sound.Induction.OneHot
+public import Nfp.Sound.Induction.ValueBounds
 
 /-!
 Soundness lemmas for induction certificates.
