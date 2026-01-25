@@ -8,9 +8,9 @@ public import Nfp.Circuit.Cert.ValueRange
 /-!
 Exact GPT-2 slices for induction certification.
 
-This module holds token embeddings, head projection weights, and per-layer
-MLP/LayerNorm parameters used to define `InductionHeadInputs` and bound
-computations.
+This module holds token embeddings, unembedding rows, head projection weights,
+and per-layer MLP/LayerNorm parameters used to define `InductionHeadInputs`
+and bound computations.
 -/
 
 public section
@@ -40,6 +40,8 @@ structure Gpt2HeadSlice (seq dModel dHead vocab : Nat) where
   tokens : Fin seq → Fin vocab
   /-- Token embedding matrix. -/
   wte : Fin vocab → Fin dModel → Rat
+  /-- Unembedding matrix (token logits). -/
+  wunembed : Fin vocab → Fin dModel → Rat
   /-- Positional embedding matrix. -/
   wpe : Fin seq → Fin dModel → Rat
   /-- Query projection weights. -/
@@ -121,7 +123,7 @@ def Gpt2HeadSlice.embed {seq dModel dHead vocab : Nat}
 /-- Direction vector in model space for a GPT-2 head slice. -/
 def Gpt2HeadSlice.directionVec {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) : Fin dModel → Rat :=
-  fun d => slice.wte slice.direction.target d - slice.wte slice.direction.negative d
+  fun d => slice.wunembed slice.direction.target d - slice.wunembed slice.direction.negative d
 
 end Model
 
