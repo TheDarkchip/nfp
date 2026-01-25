@@ -27,7 +27,8 @@ namespace InductionHeadCert
 open Nfp.Bounds
 open Nfp.Sound
 
-/-- Assemble induction-head inputs from model slices and direction metadata. -/
+/-- Assemble induction-head inputs from model slices and direction metadata.
+    Uses the pre-LN residual stream from the LayerNorm slice. -/
 noncomputable def inputsOfSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
@@ -35,25 +36,26 @@ noncomputable def inputsOfSlices {seq : Nat}
     (hLn : lnSlice.dModel = valueSlice.dModel)
     (hDir : dirSlice.dModel = valueSlice.dModel) :
     Model.InductionHeadInputs seq valueSlice.dModel valueSlice.headDim :=
-  { scale := 0
-    active := ∅
-    prev := fun q => q
-    embed := by simpa [hLn] using lnSlice.embed
-    lnEps := lnSlice.lnEps
-    ln1Gamma := by simpa [hLn] using lnSlice.lnGamma
-    ln1Beta := by simpa [hLn] using lnSlice.lnBeta
-    wq := fun _ _ => 0
-    bq := fun _ => 0
-    wk := fun _ _ => 0
-    bk := fun _ => 0
-    wv := valueSlice.wv
-    bv := valueSlice.bv
-    wo := valueSlice.wo
-    attnBias := valueSlice.attnBias
-    maskCausal := false
-    maskValue := 0
-    directionSpec := { target := dirSlice.target, negative := dirSlice.negative }
-    direction := by simpa [hDir] using dirSlice.direction }
+  Model.InductionHeadInputs.ofPreLnResidual
+    (scale := 0)
+    (active := ∅)
+    (prev := fun q => q)
+    (preLn := by simpa [hLn] using lnSlice.embed)
+    (lnEps := lnSlice.lnEps)
+    (ln1Gamma := by simpa [hLn] using lnSlice.lnGamma)
+    (ln1Beta := by simpa [hLn] using lnSlice.lnBeta)
+    (wq := fun _ _ => 0)
+    (bq := fun _ => 0)
+    (wk := fun _ _ => 0)
+    (bk := fun _ => 0)
+    (wv := valueSlice.wv)
+    (bv := valueSlice.bv)
+    (wo := valueSlice.wo)
+    (attnBias := valueSlice.attnBias)
+    (maskCausal := false)
+    (maskValue := 0)
+    (directionSpec := { target := dirSlice.target, negative := dirSlice.negative })
+    (direction := by simpa [hDir] using dirSlice.direction)
 
 /-- `inputsOfSlices` preserves the value-projection weights. -/
 theorem inputsOfSlices_wv {seq : Nat}
@@ -139,25 +141,26 @@ noncomputable def inputsOfScoreSlices {seq : Nat}
     (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
     (hLn : lnSlice.dModel = modelSlice.dModel) :
     Model.InductionHeadInputs seq modelSlice.dModel modelSlice.headDim :=
-  { scale := modelSlice.scoreScale
-    active := ∅
-    prev := fun q => q
-    embed := by simpa [hLn] using lnSlice.embed
-    lnEps := lnSlice.lnEps
-    ln1Gamma := by simpa [hLn] using lnSlice.lnGamma
-    ln1Beta := by simpa [hLn] using lnSlice.lnBeta
-    wq := modelSlice.wq
-    bq := modelSlice.bq
-    wk := modelSlice.wk
-    bk := modelSlice.bk
-    wv := fun _ _ => 0
-    bv := fun _ => 0
-    wo := fun _ _ => 0
-    attnBias := fun _ => 0
-    maskCausal := modelSlice.maskCausal
-    maskValue := modelSlice.scoreMask
-    directionSpec := { target := 0, negative := 0 }
-    direction := fun _ => 0 }
+  Model.InductionHeadInputs.ofPreLnResidual
+    (scale := modelSlice.scoreScale)
+    (active := ∅)
+    (prev := fun q => q)
+    (preLn := by simpa [hLn] using lnSlice.embed)
+    (lnEps := lnSlice.lnEps)
+    (ln1Gamma := by simpa [hLn] using lnSlice.lnGamma)
+    (ln1Beta := by simpa [hLn] using lnSlice.lnBeta)
+    (wq := modelSlice.wq)
+    (bq := modelSlice.bq)
+    (wk := modelSlice.wk)
+    (bk := modelSlice.bk)
+    (wv := fun _ _ => 0)
+    (bv := fun _ => 0)
+    (wo := fun _ _ => 0)
+    (attnBias := fun _ => 0)
+    (maskCausal := modelSlice.maskCausal)
+    (maskValue := modelSlice.scoreMask)
+    (directionSpec := { target := 0, negative := 0 })
+    (direction := fun _ => 0)
 
 /-- `inputsOfScoreSlices` preserves embeddings. -/
 theorem inputsOfScoreSlices_embed {seq : Nat}

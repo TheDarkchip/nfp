@@ -9,8 +9,8 @@ public import Nfp.Circuit.Cert.ValueRange
 /-!
 Exact inputs for induction-head scoring and value-direction computations.
 
-These structures store exact rational inputs (embeddings and weights) for a
-single attention head. They are intended to be consumed by sound builders.
+These structures store exact rational inputs (pre-LN residual stream and weights)
+for a single attention head. They are intended to be consumed by sound builders.
 -/
 
 public section
@@ -29,7 +29,7 @@ structure InductionHeadInputs (seq dModel dHead : Nat) where
   active : Finset (Fin seq)
   /-- `prev` selector for induction-style attention. -/
   prev : Fin seq → Fin seq
-  /-- Token embeddings for the sequence. -/
+  /-- Pre-LN residual stream for the sequence. -/
   embed : Fin seq → Fin dModel → Rat
   /-- LayerNorm epsilon used before attention. -/
   lnEps : Rat
@@ -61,6 +61,43 @@ structure InductionHeadInputs (seq dModel dHead : Nat) where
   directionSpec : DirectionSpec
   /-- Logit-diff direction vector in model space. -/
   direction : Fin dModel → Rat
+
+/--
+Construct induction-head inputs from a pre-LN residual stream.
+
+This makes the canonical use explicit: `embed` stores the pre-LN residual stream
+that LayerNorm and value bounds act on, not necessarily raw token embeddings.
+-/
+abbrev InductionHeadInputs.ofPreLnResidual
+    (scale : Rat) (active : Finset (Fin seq)) (prev : Fin seq → Fin seq)
+    (preLn : Fin seq → Fin dModel → Rat)
+    (lnEps : Rat) (ln1Gamma : Fin dModel → Rat) (ln1Beta : Fin dModel → Rat)
+    (wq : Fin dModel → Fin dHead → Rat) (bq : Fin dHead → Rat)
+    (wk : Fin dModel → Fin dHead → Rat) (bk : Fin dHead → Rat)
+    (wv : Fin dModel → Fin dHead → Rat) (bv : Fin dHead → Rat)
+    (wo : Fin dModel → Fin dHead → Rat) (attnBias : Fin dModel → Rat)
+    (maskCausal : Bool) (maskValue : Rat)
+    (directionSpec : DirectionSpec) (direction : Fin dModel → Rat) :
+    InductionHeadInputs seq dModel dHead :=
+  { scale := scale
+    active := active
+    prev := prev
+    embed := preLn
+    lnEps := lnEps
+    ln1Gamma := ln1Gamma
+    ln1Beta := ln1Beta
+    wq := wq
+    bq := bq
+    wk := wk
+    bk := bk
+    wv := wv
+    bv := bv
+    wo := wo
+    attnBias := attnBias
+    maskCausal := maskCausal
+    maskValue := maskValue
+    directionSpec := directionSpec
+    direction := direction }
 
 end Model
 
