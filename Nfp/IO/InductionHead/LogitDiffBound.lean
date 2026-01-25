@@ -20,10 +20,11 @@ namespace InductionHeadCert
 
 variable {seq : Nat}
 
-/-- Tight logit-diff lower bound: max of global-interval and per-key lower bound variants. -/
-def logitDiffLowerBoundTight? (cert : Circuit.InductionHeadCert seq) : Option Rat :=
+/-- Tight logit-diff lower bound over a chosen active set. -/
+def logitDiffLowerBoundTightWithActive? (active : Finset (Fin seq))
+    (cert : Circuit.InductionHeadCert seq) : Option Rat :=
   let base? :=
-    Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
+    Circuit.logitDiffLowerBoundAt active cert.prev cert.epsAt
       cert.values.lo cert.values.hi cert.values.vals
   let epsAtTight := Sound.epsAtOfWeightBoundAt cert.prev cert.weightBoundAt
   let valsLo := cert.values.valsLo
@@ -35,12 +36,16 @@ def logitDiffLowerBoundTight? (cert : Circuit.InductionHeadCert seq) : Option Ra
     else
       cert.values.lo
   let tight? :=
-    Circuit.logitDiffLowerBoundAtLoAt cert.active cert.prev epsAtTight loAt valsLo
+    Circuit.logitDiffLowerBoundAtLoAt active cert.prev epsAtTight loAt valsLo
   match base?, tight? with
   | some a, some b => some (max a b)
   | some a, none => some a
   | none, some b => some b
   | none, none => none
+
+/-- Tight logit-diff lower bound: max of global-interval and per-key lower bound variants. -/
+def logitDiffLowerBoundTight? (cert : Circuit.InductionHeadCert seq) : Option Rat :=
+  logitDiffLowerBoundTightWithActive? cert.active cert
 
 end InductionHeadCert
 

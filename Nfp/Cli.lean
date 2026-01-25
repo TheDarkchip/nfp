@@ -88,15 +88,18 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
                                 (rational literal; default: none)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0). \
-                             Applies to onehot-approx only."
+                             Applies to onehot-approx; for induction-aligned only with \
+                             min-coverage."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2). \
-                          Applies to onehot-approx only."
+                          Applies to onehot-approx; for induction-aligned only with \
+                          min-coverage."
     "min-stripe-mean" : String; "Optional minimum stripe-mean (rational literal). \
                                  Applies to induction-aligned or stripe certs."
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
                                  Applies to stripe certs."
-    "min-coverage" : String; "Optional minimum active coverage (rational literal in [0,1]). \
-                               Applies to induction-aligned certs."
+    "min-coverage" : String; "Optional minimum derived active coverage \
+                               (rational literal in [0,1]). Applies to induction-aligned \
+                               certs and uses min-margin/max-eps thresholds."
     "time-ln"; "Print the time spent in LayerNorm residual checks."
     "time-scores"; "Print the time spent recomputing scores from model slices."
     "time-parse"; "Print the time spent reading and parsing the certificate."

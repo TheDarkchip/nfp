@@ -11,6 +11,7 @@ public import Nfp.IO.InductionHead.ScoreUtils
 public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
 public import Nfp.IO.InductionHead.LogitDiffBound
+public import Nfp.IO.InductionHead.ActiveSelection
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
@@ -197,8 +198,7 @@ private def setActive {seq : Nat} (st : ParseState seq) (q : Nat) :
     return { st with active := insert qFin st.active, activeSeen := true }
 private def setPrev {seq : Nat} (st : ParseState seq) (q k : Nat) :
     Except String (ParseState seq) := do
-  let qFin ← toIndex0 (seq := seq) "q" q
-  let kFin ← toIndex0 (seq := seq) "k" k
+  let qFin ← toIndex0 (seq := seq) "q" q; let kFin ← toIndex0 (seq := seq) "k" k
   match st.prev[qFin.1]! with
   | some _ =>
       throw s!"duplicate prev entry for q={q}"
@@ -215,8 +215,7 @@ private def setVecEntry {seq : Nat} (arr : Array (Option Rat)) (idx : Nat) (v : 
       return arr.set! kFin.1 (some v)
 private def setMatrixEntry {seq : Nat} (mat : Array (Array (Option Rat)))
     (q k : Nat) (v : Rat) : Except String (Array (Array (Option Rat))) := do
-  let qFin ← toIndex0 (seq := seq) "q" q
-  let kFin ← toIndex0 (seq := seq) "k" k
+  let qFin ← toIndex0 (seq := seq) "q" q; let kFin ← toIndex0 (seq := seq) "k" k
   let row := mat[qFin.1]!
   match row[kFin.1]! with
   | some _ =>
@@ -344,8 +343,7 @@ private def ensureModelUnembed {seq : Nat} (st : ParseState seq) :
   return (st, dModel)
 private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
-  let (st, dModel) ← ensureModelResid st
-  let qFin ← toIndex0 (seq := seq) "q" q
+  let (st, dModel) ← ensureModelResid st; let qFin ← toIndex0 (seq := seq) "q" q
   let iFin ← toIndex0Sized "i" dModel i
   let row := st.modelResid[qFin.1]!
   match row[iFin.1]! with
@@ -356,8 +354,7 @@ private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v 
       return { st with modelResid := st.modelResid.set! qFin.1 row' }
 private def setModelEmbedEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
-  let (st, dModel) ← ensureModelEmbed st
-  let qFin ← toIndex0 (seq := seq) "q" q
+  let (st, dModel) ← ensureModelEmbed st; let qFin ← toIndex0 (seq := seq) "q" q
   let iFin ← toIndex0Sized "i" dModel i
   let row := st.modelEmbed[qFin.1]!
   match row[iFin.1]! with
@@ -902,8 +899,7 @@ private def finalizeModelLnSlice? {seq : Nat} (st : ParseState seq) :
     match st.modelLnEps with
     | some v => pure v
     | none => throw "missing model-ln-eps entry"
-  let lnSlack := st.modelLnSlack.getD 0
-  let lnScale? := st.modelLnScale
+  let lnSlack := st.modelLnSlack.getD 0; let lnScale? := st.modelLnScale
   let lnFast? := st.modelLnFast
   let lnDecimals? := st.modelDecimals
   if !st.modelEmbed.all (fun row => row.all Option.isSome) then
@@ -1137,16 +1133,12 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
           | 0 =>
               IO.eprintln "error: seq must be positive"; return (← finish 2)
           | Nat.succ n =>
-              let seq := Nat.succ n
-              let _ : NeZero seq := ⟨by simp⟩
-              let cert := payload.cert
-              let kind := payload.kind
-              let period? := payload.period?
-              let copyLogits? := payload.copyLogits?
+              let seq := Nat.succ n; let _ : NeZero seq := ⟨by simp⟩
+              let cert := payload.cert; let kind := payload.kind
+              let period? := payload.period?; let copyLogits? := payload.copyLogits?
               let tlExcludeBos? := payload.tlExcludeBos?
               let tlExcludeCurrent? := payload.tlExcludeCurrent?
-              let tlScoreLB? := payload.tlScoreLB?
-              let modelSlice? := payload.modelSlice?
+              let tlScoreLB? := payload.tlScoreLB?; let modelSlice? := payload.modelSlice?
               let modelLnSlice? := payload.modelLnSlice?
               let modelValueSlice? := payload.modelValueSlice?
               let modelDirectionSlice? := payload.modelDirectionSlice?
@@ -1171,59 +1163,64 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if minCoverageStr?.isSome then
                   IO.eprintln "error: min-coverage is not used for onehot-approx"
                   return (← finish 2)
-              if kind = "induction-aligned" then
-                let period ←
-                  match period? with
-                  | some v => pure v
-                  | none =>
-                      IO.eprintln "error: missing period entry for induction-aligned"
-                      return (← finish 2)
-                if period = 0 then
-                  IO.eprintln "error: period must be positive for induction-aligned"
-                  return (← finish 2)
-                if seq ≤ period then
-                  IO.eprintln "error: period must be less than seq for induction-aligned"
-                  return (← finish 2)
-                let expectedActive ← timeIO timeStages "period-active"
-                  (fun _ => pure (Model.activeOfPeriod (seq := seq) period))
-                if let some minCoverage := minCoverage? then
-                  if minCoverage < 0 || (1 : Rat) < minCoverage then
-                    IO.eprintln "error: min-coverage must be between 0 and 1"; return (← finish 2)
-                  if !decide (cert.active ⊆ expectedActive) then
-                    IO.eprintln "error: active set not contained in induction-aligned period"
+              let activeOverride? ←
+                if kind = "induction-aligned" then
+                  let period ←
+                    match period? with
+                    | some v => pure v
+                    | none =>
+                        IO.eprintln "error: missing period entry for induction-aligned"
+                        return (← finish 2)
+                  if period = 0 then
+                    IO.eprintln "error: period must be positive for induction-aligned"
                     return (← finish 2)
-                  let expectedCount := expectedActive.card
-                  if expectedCount = 0 then
-                    IO.eprintln "error: empty induction-aligned active set"
+                  if seq ≤ period then
+                    IO.eprintln "error: period must be less than seq for induction-aligned"
                     return (← finish 2)
-                  let coverage : Rat :=
-                    Rat.divInt (Int.ofNat cert.active.card) (Int.ofNat expectedCount)
-                  if coverage < minCoverage then
-                    IO.eprintln
-                      s!"error: active coverage {ratToString coverage} \
-                      below minimum {ratToString minCoverage}"
-                    return (← finish 2)
-                else
+                  let expectedActive ← timeIO timeStages "period-active"
+                    (fun _ => pure (Model.activeOfPeriod (seq := seq) period))
                   if !decide (cert.active = expectedActive) then
                     IO.eprintln "error: active set does not match induction-aligned period"
                     return (← finish 2)
-                let prevOk ← timeIO timeStages "period-prev"
-                  (fun _ => pure ((List.finRange seq).all (fun q =>
-                    decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))))
-                if !prevOk then
-                  IO.eprintln "error: prev map does not match induction-aligned period"
-                  return (← finish 2)
-                if minMarginStr?.isSome || maxEpsStr?.isSome then
-                  IO.eprintln
-                    "error: min-margin/max-eps are not used for induction-aligned"
-                  return (← finish 2)
-                if minLogitDiffStr?.isSome && cert.values.direction.isNone then
-                  IO.eprintln "error: min-logit-diff requires direction metadata"
-                  return (← finish 2)
-                if minStripeTop1Str?.isSome then
-                  IO.eprintln "error: stripe-top1 is not used for induction-aligned"
-                  return (← finish 2)
-              let activeCount := cert.active.card; let defaultMinActive := max 1 (seq / 8)
+                  let prevOk ← timeIO timeStages "period-prev"
+                    (fun _ => pure ((List.finRange seq).all (fun q =>
+                      decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))))
+                  if !prevOk then
+                    IO.eprintln "error: prev map does not match induction-aligned period"
+                    return (← finish 2)
+                  if minLogitDiffStr?.isSome && cert.values.direction.isNone then
+                    IO.eprintln "error: min-logit-diff requires direction metadata"
+                    return (← finish 2)
+                  if minStripeTop1Str?.isSome then
+                    IO.eprintln "error: stripe-top1 is not used for induction-aligned"
+                    return (← finish 2)
+                  if let some minCoverage := minCoverage? then
+                    if minCoverage < 0 || (1 : Rat) < minCoverage then
+                      IO.eprintln "error: min-coverage must be between 0 and 1"
+                      return (← finish 2)
+                    let activeGood :=
+                      InductionHeadCert.derivedActive cert expectedActive minMargin maxEps
+                    let coverage? := InductionHeadCert.activeCoverage activeGood expectedActive
+                    match coverage? with
+                    | none =>
+                        IO.eprintln "error: empty induction-aligned active set"
+                        return (← finish 2)
+                    | some coverage =>
+                        if coverage < minCoverage then
+                          IO.eprintln
+                            s!"error: active coverage {ratToString coverage} \
+                            below minimum {ratToString minCoverage}"
+                          return (← finish 2)
+                    pure (some activeGood)
+                  else
+                    if minMarginStr?.isSome || maxEpsStr?.isSome then
+                      IO.eprintln "error: min-margin/max-eps are not used for induction-aligned"
+                      return (← finish 2)
+                    pure none
+                else
+                  pure none
+              let activeForChecks := activeOverride?.getD cert.active
+              let activeCount := activeForChecks.card; let defaultMinActive := max 1 (seq / 8)
               let minActive := minActive?.getD defaultMinActive; if activeCount < minActive then
                 IO.eprintln s!"error: active queries {activeCount} below minimum {minActive}"
                 return (← finish 2)
@@ -1440,7 +1437,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   pure (some mean)
                 else
                   pure none
-              let logitDiffLB? := InductionHeadCert.logitDiffLowerBoundTight? cert
+              let activeForBounds := activeOverride?.getD cert.active
+              let logitDiffLB? :=
+                InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
               match minLogitDiff? with
               | none =>
                   if kind = "induction-aligned" then

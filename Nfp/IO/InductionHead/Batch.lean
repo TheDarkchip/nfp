@@ -5,6 +5,8 @@ module
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.Circuit.Cert.ValueRange
 public import Nfp.IO.InductionHead.Cert
+public import Nfp.IO.InductionHead.ActiveSelection
+public import Nfp.IO.InductionHead.LogitDiffBound
 public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
@@ -225,47 +227,54 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
             if opts.minCoverage?.isSome then
               return Except.error
                 "min-coverage is only supported for induction-aligned"
-          if kind = "induction-aligned" then
-            let period ←
-              match period? with
-              | some v => pure v
-              | none =>
-                  return Except.error "missing period entry for induction-aligned"
-            if period = 0 then
-              return Except.error "period must be positive for induction-aligned"
-            if seq ≤ period then
-              return Except.error "period must be less than seq for induction-aligned"
-            let expectedActive := Model.activeOfPeriod (seq := seq) period
-            if let some minCoverage := opts.minCoverage? then
-              if minCoverage < 0 || (1 : Rat) < minCoverage then
-                return Except.error "min-coverage must be between 0 and 1"
-              if !decide (cert.active ⊆ expectedActive) then
-                return Except.error "active set not contained in induction-aligned period"
-              let expectedCount := expectedActive.card
-              if expectedCount = 0 then
-                return Except.error "empty induction-aligned active set"
-              let coverage : Rat :=
-                Rat.divInt (Int.ofNat cert.active.card) (Int.ofNat expectedCount)
-              if coverage < minCoverage then
-                return Except.error
-                  s!"active coverage {ratToString coverage} \
-                  below minimum {ratToString minCoverage}"
-            else
+          let activeOverride? ←
+            if kind = "induction-aligned" then
+              let period ←
+                match period? with
+                | some v => pure v
+                | none =>
+                    return Except.error "missing period entry for induction-aligned"
+              if period = 0 then
+                return Except.error "period must be positive for induction-aligned"
+              if seq ≤ period then
+                return Except.error "period must be less than seq for induction-aligned"
+              let expectedActive := Model.activeOfPeriod (seq := seq) period
               if !decide (cert.active = expectedActive) then
                 return Except.error "active set does not match induction-aligned period"
-            let prevOk :=
-              (List.finRange seq).all (fun q =>
-                decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
-            if !prevOk then
-              return Except.error "prev map does not match induction-aligned period"
-            if opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
-              return Except.error "min-margin/max-eps are not used for induction-aligned"
-            if (opts.minLogitDiff?.isSome || opts.minAvgLogitDiff?.isSome) &&
-                cert.values.direction.isNone then
-              return Except.error "min-logit-diff requires direction metadata"
-            if copyLogits?.isNone then
-              return Except.error "missing copy-logit entries for induction-aligned"
-          let activeCount := cert.active.card
+              let prevOk :=
+                (List.finRange seq).all (fun q =>
+                  decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
+              if !prevOk then
+                return Except.error "prev map does not match induction-aligned period"
+              if (opts.minLogitDiff?.isSome || opts.minAvgLogitDiff?.isSome) &&
+                  cert.values.direction.isNone then
+                return Except.error "min-logit-diff requires direction metadata"
+              if copyLogits?.isNone then
+                return Except.error "missing copy-logit entries for induction-aligned"
+              if let some minCoverage := opts.minCoverage? then
+                if minCoverage < 0 || (1 : Rat) < minCoverage then
+                  return Except.error "min-coverage must be between 0 and 1"
+                let activeGood :=
+                  InductionHeadCert.derivedActive cert expectedActive opts.minMargin opts.maxEps
+                let coverage? :=
+                  InductionHeadCert.activeCoverage activeGood expectedActive
+                match coverage? with
+                | none =>
+                    return Except.error "empty induction-aligned active set"
+                | some coverage =>
+                    if coverage < minCoverage then
+                      return Except.error
+                        s!"active coverage {ratToString coverage} \
+                        below minimum {ratToString minCoverage}"
+                pure (some activeGood)
+              else
+                if opts.minMargin != 0 || opts.maxEps != ratRoundDown (Rat.divInt 1 2) then
+                  return Except.error "min-margin/max-eps are not used for induction-aligned"
+                pure none
+            else
+              pure none
+          let activeForChecks := activeOverride?.getD cert.active
+          let activeCount := activeForChecks.card
           let defaultMinActive := max 1 (seq / 8)
           let minActive := opts.minActive?.getD defaultMinActive
           if activeCount < minActive then
@@ -359,26 +368,9 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
             | none =>
                 return Except.error "empty active set for stripe stats"
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff?
-          let logitDiffLB_base? :=
-            Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
-              cert.values.lo cert.values.hi cert.values.vals
-          let epsAtTight := Sound.epsAtOfWeightBoundAt cert.prev cert.weightBoundAt
-          let valsLo := cert.values.valsLo
-          let loAt : Fin seq → Rat := fun q =>
-            let others : Finset (Fin seq) :=
-              (Finset.univ : Finset (Fin seq)).erase (cert.prev q)
-            if h : others.Nonempty then
-              others.inf' h valsLo
-            else
-              cert.values.lo
-          let logitDiffLB_tight? :=
-            Circuit.logitDiffLowerBoundAtLoAt cert.active cert.prev epsAtTight loAt valsLo
+          let activeForBounds := activeOverride?.getD cert.active
           let logitDiffLB? :=
-            match logitDiffLB_base?, logitDiffLB_tight? with
-            | some a, some b => some (max a b)
-            | some a, none => some a
-            | none, some b => some b
-            | none, none => none
+            InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
           match logitDiffLB? with
           | none =>
               if requireLogitDiff || minLogitDiff?.isSome then
