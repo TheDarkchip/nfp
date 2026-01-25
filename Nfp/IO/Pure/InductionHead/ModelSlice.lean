@@ -79,19 +79,50 @@ structure ModelSliceChecked (seq : Nat) where
 def ModelSliceChecked.toSlice {seq : Nat} (checked : ModelSliceChecked seq) :
     Nfp.IO.InductionHeadCert.ModelSlice seq :=
   let raw := checked.raw
+  let hResidCols : ∀ i : Nat, ∀ h : i < raw.resid.size, (raw.resid[i]'h).size = raw.dModel := by
+    simpa using
+      (Array.all_eq_true (as := raw.resid) (p := fun row => row.size = raw.dModel)).1
+        checked.residCols
+  let hWqCols : ∀ i : Nat, ∀ h : i < raw.wq.size, (raw.wq[i]'h).size = raw.headDim := by
+    simpa using
+      (Array.all_eq_true (as := raw.wq) (p := fun row => row.size = raw.headDim)).1
+        checked.wqCols
+  let hWkCols : ∀ i : Nat, ∀ h : i < raw.wk.size, (raw.wk[i]'h).size = raw.headDim := by
+    simpa using
+      (Array.all_eq_true (as := raw.wk) (p := fun row => row.size = raw.headDim)).1
+        checked.wkCols
   let residFun : Fin seq → Fin raw.dModel → Rat := fun q i =>
-    let row := (raw.resid[q.1]? ).getD #[]
-    (row[i.1]? ).getD 0
+    let hq : q.1 < raw.resid.size :=
+      Nat.lt_of_lt_of_eq q.isLt checked.residRows.symm
+    let row := raw.resid[q.1]'hq
+    let hrow : row.size = raw.dModel := hResidCols q.1 hq
+    let hi : i.1 < row.size :=
+      Nat.lt_of_lt_of_eq i.isLt hrow.symm
+    row[i.1]'hi
   let wqFun : Fin raw.dModel → Fin raw.headDim → Rat := fun i j =>
-    let row := (raw.wq[i.1]? ).getD #[]
-    (row[j.1]? ).getD 0
+    let hi : i.1 < raw.wq.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.wqRows.symm
+    let row := raw.wq[i.1]'hi
+    let hrow : row.size = raw.headDim := hWqCols i.1 hi
+    let hj : j.1 < row.size :=
+      Nat.lt_of_lt_of_eq j.isLt hrow.symm
+    row[j.1]'hj
   let wkFun : Fin raw.dModel → Fin raw.headDim → Rat := fun i j =>
-    let row := (raw.wk[i.1]? ).getD #[]
-    (row[j.1]? ).getD 0
+    let hi : i.1 < raw.wk.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.wkRows.symm
+    let row := raw.wk[i.1]'hi
+    let hrow : row.size = raw.headDim := hWkCols i.1 hi
+    let hj : j.1 < row.size :=
+      Nat.lt_of_lt_of_eq j.isLt hrow.symm
+    row[j.1]'hj
   let bqFun : Fin raw.headDim → Rat := fun j =>
-    (raw.bq[j.1]? ).getD 0
+    let hj : j.1 < raw.bq.size :=
+      Nat.lt_of_lt_of_eq j.isLt checked.bqLen.symm
+    raw.bq[j.1]'hj
   let bkFun : Fin raw.headDim → Rat := fun j =>
-    (raw.bk[j.1]? ).getD 0
+    let hj : j.1 < raw.bk.size :=
+      Nat.lt_of_lt_of_eq j.isLt checked.bkLen.symm
+    raw.bk[j.1]'hj
   { dModel := raw.dModel
     headDim := raw.headDim
     layer := raw.layer

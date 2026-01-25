@@ -50,9 +50,13 @@ def ModelDirectionSliceChecked.toSlice (checked : ModelDirectionSliceChecked) :
     Nfp.IO.InductionHeadCert.ModelDirectionSlice :=
   let raw := checked.raw
   let targetFun : Fin raw.dModel → Rat := fun i =>
-    (raw.unembedTarget[i.1]? ).getD 0
+    let hi : i.1 < raw.unembedTarget.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.targetLen.symm
+    raw.unembedTarget[i.1]'hi
   let negativeFun : Fin raw.dModel → Rat := fun i =>
-    (raw.unembedNegative[i.1]? ).getD 0
+    let hi : i.1 < raw.unembedNegative.size :=
+      Nat.lt_of_lt_of_eq i.isLt checked.negativeLen.symm
+    raw.unembedNegative[i.1]'hi
   let directionFun : Fin raw.dModel → Rat := fun i =>
     targetFun i - negativeFun i
   { dModel := raw.dModel
