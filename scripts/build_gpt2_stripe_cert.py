@@ -5,7 +5,7 @@
 Build a stripe-attention certificate for a GPT-2 small head.
 
 This script is untrusted and uses floating-point arithmetic to produce a
-rational stripe-attention certificate compatible with `nfp induction stripeCertify`.
+rational stripe-attention certificate compatible with `nfp induction verify --stripe-cert`.
 Sequence indices in the payload are 0-based.
 """
 

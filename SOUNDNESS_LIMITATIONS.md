@@ -12,6 +12,9 @@ It is intentionally brief and focused on the soundness boundary.
   `kind induction-aligned`, the checker instead evaluates prefix-matching (stripe-mean)
   and copying on the full period using the supplied `copy-logit` data.
   These do **not** yet imply full model behavior.
+- Value/LN bounds are tied to the pre-LN inputs in the certificate (`embed`). If `model-resid`
+  and `model-ln` data are provided, the checker verifies post-LN residuals against those inputs;
+  if only embeddings are supplied, the certificate is a proxy for true residual-stream inputs.
 - Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
   unembedding columns represent token logits.
 - Any direction search performed by Python helpers is untrusted witness generation; only the

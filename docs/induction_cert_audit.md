@@ -61,6 +61,11 @@ Key assumptions and limitations:
   from token-level semantics; for `kind induction-aligned`, it checks that
   `prev`/`active` match the declared periodic prompt and applies prefix-matching
   metrics derived from the certificate payload.
+- LayerNorm/value bounds use the certificate’s pre-LN inputs (`embed`). When
+  `model-resid` and `model-ln` slices are supplied, the checker additionally
+  validates that post-LN residuals are consistent with those pre-LN inputs; if
+  only embeddings are supplied, the head-level bounds are a proxy for true
+  residual-stream inputs.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
 - The direction metadata assumes the unembedding columns encode the model’s logit map.
 
