@@ -692,6 +692,9 @@ def main() -> None:
                         help="Maximum eps to include an active position (default: 1/2).")
     parser.add_argument("--min-margin", default="0",
                         help="Minimum score gap required for an active position (default: 0).")
+    parser.add_argument("--weight-bounds-from-weights", action="store_true",
+                        help=("Set weight-bound and eps-at directly from exact weights "
+                              "(requires omitting --emit-model-slice)."))
     parser.add_argument("--direction-target", type=int,
                         help="Target token id for logit-diff direction (optional)")
     parser.add_argument("--direction-negative", type=int,
@@ -710,6 +713,8 @@ def main() -> None:
                         help="Optional path to write a ranked direction report.")
     parser.add_argument("--direction-topk", type=int, default=10,
                         help="How many top directions to report (default: 10).")
+    parser.add_argument("--omit-unembed-rows", action="store_true",
+                        help="Omit model-unembed rows even when direction metadata is present.")
     parser.add_argument("--tl-score", action="store_true",
                         help="Include TL mul score lower bound in the certificate.")
     parser.add_argument("--tl-exclude-bos", action="store_true",
@@ -755,6 +760,10 @@ def main() -> None:
             raise SystemExit("pattern-length must be positive for induction-aligned")
         if args.pattern_length >= args.seq:
             raise SystemExit("pattern-length must be less than seq for induction-aligned")
+    if args.weight_bounds_from_weights and args.emit_model_slice:
+        raise SystemExit("weight-bounds-from-weights is incompatible with --emit-model-slice")
+    if args.omit_unembed_rows and args.emit_model_slice:
+        raise SystemExit("omit-unembed-rows is incompatible with --emit-model-slice")
     prev, active_mask = build_prev(tokens)
     if args.prev_shift:
         prev = shift_prev(prev, active_mask)
@@ -955,8 +964,12 @@ def main() -> None:
         print(f"Active positions: {len(active_positions)}/{len(candidate_positions)}")
 
     gap_lo = score_gap_lo(scores_rat, prev)
-    weight_bound_at = weight_bound_at_of_score_gap(gap_lo, prev, weights_rat)
-    eps_at = eps_at_of_weight_bounds(weight_bound_at, prev)
+    if args.weight_bounds_from_weights:
+        weight_bound_at = weights_rat
+        eps_at = [eps_by_q[q] for q in range(args.seq)]
+    else:
+        weight_bound_at = weight_bound_at_of_score_gap(gap_lo, prev, weights_rat)
+        eps_at = eps_at_of_weight_bounds(weight_bound_at, prev)
     if active_positions:
         eps = max(eps_at[q] for q in active_positions)
 
@@ -1031,6 +1044,9 @@ def main() -> None:
             rat_from_float_model(float(negative_row[i]))
             for i in range(negative_row.shape[0])
         ]
+        if args.omit_unembed_rows:
+            unembed_target = None
+            unembed_negative = None
         if model_slice is not None:
             direction = np.array([float(v) for v in unembed_target], dtype=np.float64) - np.array(
                 [float(v) for v in unembed_negative], dtype=np.float64
