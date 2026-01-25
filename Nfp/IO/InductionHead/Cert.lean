@@ -12,6 +12,7 @@ public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
 public import Nfp.IO.InductionHead.LogitDiffBound
 public import Nfp.IO.InductionHead.ActiveSelection
+public import Nfp.IO.InductionHead.TokenChecks
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
@@ -1362,64 +1363,14 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                           IO.eprintln
                             s!"error: tokens seq {seqTokens} does not match cert seq {seq}"
                           return (← finish 2)
-              if let some tokens' := tokensOpt then
-                if kind = "induction-aligned" then
-                  let period ←
-                    match period? with
-                    | some v => pure v
-                    | none =>
-                        IO.eprintln "error: missing period entry for induction-aligned"
-                        return (← finish 2)
-                  let periodicOk ← timeIO timeStages "tokens-periodic" (fun _ =>
-                    pure (tokensPeriodic (seq := seq) period tokens'))
-                  if !periodicOk then
-                    IO.eprintln "error: tokens are not periodic for induction-aligned period"
-                    return (← finish 2)
-                else
-                  let activeTokens ← timeIO timeStages "tokens-active" (fun _ =>
-                    pure (Model.activeOfTokens (seq := seq) tokens'))
-                  if !decide (cert.active ⊆ activeTokens) then
-                    IO.eprintln "error: active set not contained in token repeats"
-                    return (← finish 2)
-                  let prevTokens ← timeIO timeStages "tokens-prev-map" (fun _ =>
-                    pure (Model.prevOfTokens (seq := seq) tokens'))
-                  let prevOk ← timeIO timeStages "tokens-prev-ok" (fun _ =>
-                    pure ((List.finRange seq).all (fun q =>
-                      if decide (q ∈ cert.active) then
-                        decide (prevTokens q = cert.prev q)
-                      else
-                        true)))
-                  if !prevOk then
-                    IO.eprintln "error: prev map does not match tokens on active queries"
-                    return (← finish 2)
-              if let some qNat := directionQ? then
-                match tokensOpt with
-                | none =>
-                    IO.eprintln "error: direction-q requires a tokens file"
-                    return (← finish 2)
-                | some tokens' =>
-                    if hq : qNat < seq then
-                      let q : Fin seq := ⟨qNat, hq⟩
-                      let activeTokens :=
-                        Model.activeOfTokensShift (seq := seq) tokens'
-                      if !decide (q ∈ activeTokens) then
-                        IO.eprintln "error: direction-q is not active under shifted-token rules"
-                        return (← finish 2)
-                      match cert.values.direction with
-                      | none =>
-                          IO.eprintln "error: direction-q requires direction metadata"
-                          return (← finish 2)
-                      | some dir =>
-                          let expected :=
-                            Model.directionSpecOfTokensShift (seq := seq) tokens' q
-                          if dir.target != expected.target ||
-                              dir.negative != expected.negative then
-                            IO.eprintln
-                              "error: direction metadata does not match shifted-token direction"
-                            return (← finish 2)
-                    else
-                      IO.eprintln "error: direction-q out of range for tokens"
-                      return (← finish 2)
+              let tokensOk ← timeIO timeStages "tokens-check" (fun _ =>
+                pure (InductionHeadCert.checkTokensAndDirection?
+                  (seq := seq) kind period? directionQ? cert tokensOpt))
+              match tokensOk with
+              | Except.ok () => pure ()
+              | Except.error msg =>
+                  IO.eprintln s!"error: {msg}"
+                  return (← finish 2)
               if let some tlScoreLB := tlScoreLB? then
                 match tokensOpt with
                 | none =>

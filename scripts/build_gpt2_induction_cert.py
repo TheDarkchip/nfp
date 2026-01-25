@@ -22,6 +22,9 @@ Usage:
 Optionally, provide a logit-diff direction:
   --direction-target <tok_id> --direction-negative <tok_id>
 
+Or derive direction metadata from a query index (untrusted):
+  --direction-q <idx> --tokens-in <path>
+
 Or ask the script to search for a direction (untrusted):
   --search-direction --direction-vocab-min 1000 --direction-vocab-max 2000
   --direction-report-out reports/direction_report.txt --direction-topk 10
@@ -699,6 +702,8 @@ def main() -> None:
                         help="Target token id for logit-diff direction (optional)")
     parser.add_argument("--direction-negative", type=int,
                         help="Negative token id for logit-diff direction (optional)")
+    parser.add_argument("--direction-q", type=int, default=None,
+                        help="Query index for canonical shifted-token direction metadata.")
     parser.add_argument("--search-direction", action="store_true",
                         help="Search for a direction within the vocab range (untrusted).")
     parser.add_argument("--direction-vocab-min", type=int, default=1000,
@@ -973,13 +978,26 @@ def main() -> None:
     if active_positions:
         eps = max(eps_at[q] for q in active_positions)
 
-    if args.search_direction and (args.direction_target is not None or args.direction_negative is not None):
+    if args.search_direction and (
+        args.direction_target is not None or args.direction_negative is not None or args.direction_q is not None
+    ):
         raise SystemExit("search-direction is mutually exclusive with explicit direction tokens")
     if args.direction_report_out is not None and not args.search_direction:
         raise SystemExit("direction-report-out requires --search-direction")
 
     direction_target = None
     direction_negative = None
+    if args.direction_q is not None:
+        if args.direction_target is not None or args.direction_negative is not None:
+            raise SystemExit("direction-q is mutually exclusive with explicit direction tokens")
+        q = args.direction_q
+        if q < 0 or q >= args.seq:
+            raise SystemExit("direction-q out of range for seq")
+        if q not in active_positions:
+            raise SystemExit("direction-q must be active under the derived prev map")
+        prev_q = int(prev[q])
+        direction_target = int(tokens[prev_q])
+        direction_negative = int(tokens[q])
     if args.search_direction:
         eps_at_float = [float(eps_at[q]) for q in range(args.seq)]
         max_candidates = args.direction_max_candidates

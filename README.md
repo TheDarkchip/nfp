@@ -135,7 +135,8 @@ If `--tokens` is provided, the CLI verifies:
 - `kind onehot-approx`: `prev`/`active` match previous-occurrence semantics.
 - `kind induction-aligned`: the token sequence is periodic with the declared `period`.
 If `--direction-q` is provided, the CLI additionally checks that direction metadata matches
-the shifted-token continuation at that query index.
+the shifted-token continuation at that query index, and uses shifted-prev semantics when
+checking the `prev` map.
 
 For `kind induction-aligned`, the checker uses the **prefix-matching (stripe-mean)**
 metric (not softmax-margin/onehot). The `min-margin`, `max-eps`, and `min-logit-diff`
