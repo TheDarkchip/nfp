@@ -124,6 +124,7 @@ Optional gates:
 
 ```
 --min-active <n>   --min-margin <rat>   --max-eps <rat>   --min-logit-diff <rat>   --tokens <path>
+--direction-q <n>
 --min-stripe-mean <rat>   --min-stripe-top1 <rat>
 ```
 
@@ -133,6 +134,8 @@ or `induction-aligned`).
 If `--tokens` is provided, the CLI verifies:
 - `kind onehot-approx`: `prev`/`active` match previous-occurrence semantics.
 - `kind induction-aligned`: the token sequence is periodic with the declared `period`.
+If `--direction-q` is provided, the CLI additionally checks that direction metadata matches
+the shifted-token continuation at that query index.
 
 For `kind induction-aligned`, the checker uses the **prefix-matching (stripe-mean)**
 metric (not softmax-margin/onehot). The `min-margin`, `max-eps`, and `min-logit-diff`

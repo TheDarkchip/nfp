@@ -160,6 +160,24 @@ theorem mem_activeOfTokensShift {seq : Nat} {tokens : Fin seq → Nat} {q : Fin 
     q ∈ activeOfTokensShift tokens ↔ ∃ k, k.val < q.val ∧ tokens k = tokens q := by
   simp [activeOfTokensShift, activeOfTokens]
 
+/--
+Canonical logit-diff direction metadata for a shifted-token induction query.
+
+The target token is the shifted previous match (`prevOfTokensShift`), while the
+negative token is the current token at `q`.
+-/
+def directionSpecOfTokensShift {seq : Nat} (tokens : Fin seq → Nat) (q : Fin seq) :
+    Nfp.Circuit.DirectionSpec :=
+  { target := tokens (prevOfTokensShift (seq := seq) tokens q)
+    negative := tokens q }
+
+/-- `directionSpecOfTokensShift` exposes the shifted-prev target and current token. -/
+theorem directionSpecOfTokensShift_spec {seq : Nat} (tokens : Fin seq → Nat) (q : Fin seq) :
+    let dir := directionSpecOfTokensShift (seq := seq) tokens q
+    dir.target = tokens (prevOfTokensShift (seq := seq) tokens q) ∧
+      dir.negative = tokens q := by
+  simp [directionSpecOfTokensShift]
+
 /-- Shifted `prev` agrees with the maximal previous match, advanced by one. -/
 theorem prevOfTokensShift_spec {seq : Nat} {tokens : Fin seq → Nat} {q : Fin seq}
     (h : ∃ k, k < q ∧ tokens k = tokens q) :

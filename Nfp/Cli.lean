@@ -39,6 +39,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let minMarginStr? := (p.flag? "min-margin").map (·.as! String)
   let maxEpsStr? := (p.flag? "max-eps").map (·.as! String)
   let tokensPath? := (p.flag? "tokens").map (·.as! String)
+  let directionQ? := (p.flag? "direction-q").map (·.as! Nat)
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
   let minCoverageStr? := (p.flag? "min-coverage").map (·.as! String)
@@ -61,7 +62,8 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   match certPath?, batchPath?, stripeCertPath?, stripeBatchPath? with
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
-        minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
+        minMarginStr? maxEpsStr? tokensPath? directionQ?
+        minStripeMeanStr? minStripeTop1Str?
         minCoverageStr?
         timeLn timeScores timeParse timeStages timeValues timeTotal
   | none, some batchPath, none, none =>
@@ -83,6 +85,8 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "stripe-cert" : String; "Path to the stripe certificate file."
     "stripe-batch" : String; "Path to the stripe batch file."
     tokens : String; "Optional path to a token list to verify prev/active."
+    "direction-q" : Nat; "Optional query index for checking direction metadata \
+                           against shifted-token semantics (requires --tokens)."
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \

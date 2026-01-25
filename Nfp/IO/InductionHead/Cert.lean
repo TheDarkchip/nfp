@@ -1086,7 +1086,7 @@ def loadInductionHeadCert (path : System.FilePath) :
 def runInductionHeadCertCheck (certPath : System.FilePath)
     (minActive? : Option Nat) (minLogitDiffStr? : Option String)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
-    (tokensPath? : Option String)
+    (tokensPath? : Option String) (directionQ? : Option Nat)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
     (minCoverageStr? : Option String)
     (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
@@ -1392,6 +1392,34 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   if !prevOk then
                     IO.eprintln "error: prev map does not match tokens on active queries"
                     return (← finish 2)
+              if let some qNat := directionQ? then
+                match tokensOpt with
+                | none =>
+                    IO.eprintln "error: direction-q requires a tokens file"
+                    return (← finish 2)
+                | some tokens' =>
+                    if hq : qNat < seq then
+                      let q : Fin seq := ⟨qNat, hq⟩
+                      let activeTokens :=
+                        Model.activeOfTokensShift (seq := seq) tokens'
+                      if !decide (q ∈ activeTokens) then
+                        IO.eprintln "error: direction-q is not active under shifted-token rules"
+                        return (← finish 2)
+                      match cert.values.direction with
+                      | none =>
+                          IO.eprintln "error: direction-q requires direction metadata"
+                          return (← finish 2)
+                      | some dir =>
+                          let expected :=
+                            Model.directionSpecOfTokensShift (seq := seq) tokens' q
+                          if dir.target != expected.target ||
+                              dir.negative != expected.negative then
+                            IO.eprintln
+                              "error: direction metadata does not match shifted-token direction"
+                            return (← finish 2)
+                    else
+                      IO.eprintln "error: direction-q out of range for tokens"
+                      return (← finish 2)
               if let some tlScoreLB := tlScoreLB? then
                 match tokensOpt with
                 | none =>
