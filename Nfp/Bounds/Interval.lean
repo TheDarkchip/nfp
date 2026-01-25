@@ -37,10 +37,10 @@ def dotIntervalBoundsFast {n : Nat} (v lo hi : Fin n → Rat) : Rat × Rat :=
 /-- Array-based bounds for a dot product, computed in one pass. -/
 def dotIntervalBoundsFastArr (n : Nat) (v lo hi : Array Rat)
     (hv : v.size = n) (hlo : lo.size = n) (hhi : hi.size = n) : Rat × Rat :=
-  (Array.finRange n).foldl (fun acc i =>
-    let vi := v[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-    let loi := lo[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-    let hii := hi[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
+  Nat.fold n (fun i h acc =>
+    let vi := v[i]'(by simpa [hv] using h)
+    let loi := lo[i]'(by simpa [hlo] using h)
+    let hii := hi[i]'(by simpa [hhi] using h)
     (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
       acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0)
 
@@ -51,100 +51,21 @@ theorem dotIntervalBoundsFastArr_ofFn {n : Nat}
         (by simp) (by simp) (by simp) =
       dotIntervalBoundsFast v lo hi := by
   classical
-  have hv : (Array.ofFn v).size = n := by simp
-  have hlo : (Array.ofFn lo).size = n := by simp
-  have hhi : (Array.ofFn hi).size = n := by simp
-  -- Convert the array fold to a list fold, then use the `Fin` fold lemma.
-  have hfold :
-      (Array.finRange n).foldl (fun acc i =>
-        let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-        let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-        let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-        (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-          acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0)
-        =
-      (Array.finRange n).toList.foldl (fun acc i =>
-        let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-        let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-        let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-        (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-          acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0) := by
-    simp
-  -- Simplify the list and array indices to the original `Fin` functions.
-  have hlist :
-      (Array.finRange n).toList =
-        List.finRange n := by
-    apply List.ext_getElem
-    · simp [Array.size_finRange, List.length_finRange]
-    · intro i hi₁ hi₂
-      have hi : i < (Array.finRange n).size := by
-        simpa [Array.size_finRange] using hi₁
-      have hi' : i < (List.finRange n).length := by
-        simpa [List.length_finRange] using hi₂
-      simp [Array.getElem_toList, Array.getElem_finRange, List.getElem_finRange]
-  have hget_v : ∀ i : Fin n,
-      (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm) = v i := by
-    intro i
-    simp
-  have hget_lo : ∀ i : Fin n,
-      (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm) = lo i := by
-    intro i
-    simp
-  have hget_hi : ∀ i : Fin n,
-      (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm) = hi i := by
-    intro i
-    simp
-  have hpair : ∀ acc : Rat × Rat, ∀ i : Fin n,
-      (if 0 ≤ v i then (acc.1 + v i * lo i, acc.2 + v i * hi i)
-        else (acc.1 + v i * hi i, acc.2 + v i * lo i)) =
-        (acc.1 + (if 0 ≤ v i then v i * lo i else v i * hi i),
-          acc.2 + (if 0 ≤ v i then v i * hi i else v i * lo i)) := by
-    intro acc i
-    by_cases h : 0 ≤ v i <;> simp [h]
-  have hfold' :
-      (Array.finRange n).toList.foldl (fun acc i =>
-        let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-        let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-        let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-        (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-          acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0)
-      =
-      (List.finRange n).foldl (fun acc i =>
-        if 0 ≤ v i then (acc.1 + v i * lo i, acc.2 + v i * hi i)
-        else (acc.1 + v i * hi i, acc.2 + v i * lo i)) (0, 0) := by
-    simp [hlist, hget_v, hget_lo, hget_hi, hpair]
-  have hdef :
-      dotIntervalBoundsFastArr n (Array.ofFn v) (Array.ofFn lo) (Array.ofFn hi)
-          (by simp) (by simp) (by simp)
-        =
-        (Array.finRange n).foldl (fun acc i =>
-          let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-          let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-          let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-          (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-            acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0) := by
-    dsimp [dotIntervalBoundsFastArr]
-  calc
-    dotIntervalBoundsFastArr n (Array.ofFn v) (Array.ofFn lo) (Array.ofFn hi)
-        (by simp) (by simp) (by simp)
-        = (Array.finRange n).foldl (fun acc i =>
-            let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-            let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-            let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-            (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-              acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0) := hdef
-    _ = (Array.finRange n).toList.foldl (fun acc i =>
-          let vi := (Array.ofFn v)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hv.symm)
-          let loi := (Array.ofFn lo)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hlo.symm)
-          let hii := (Array.ofFn hi)[i.1]'(Nat.lt_of_lt_of_eq i.isLt hhi.symm)
-          (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
-            acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))) (0, 0) := hfold
-    _ = (List.finRange n).foldl (fun acc i =>
-          if 0 ≤ v i then (acc.1 + v i * lo i, acc.2 + v i * hi i)
-          else (acc.1 + v i * hi i, acc.2 + v i * lo i)) (0, 0) := hfold'
-    _ = dotIntervalBoundsFast v lo hi := by
-          simp [dotIntervalBoundsFast, Linear.foldlFin_eq_foldl,
-            Fin.foldl_eq_foldl_finRange, hpair]
+  have natFold_eq_foldlFin {α : Type} (n : Nat)
+      (f : (i : Nat) → i < n → α → α) (init : α) :
+      Nat.fold n f init = Fin.foldl n (fun acc i => f i.1 i.2 acc) init := by
+    induction n with
+    | zero => simp [Nat.fold_zero, Fin.foldl_zero]
+    | succ n ih => simp [Nat.fold_succ, Fin.foldl_succ_last, ih]
+  let f : (i : Nat) → i < n → Rat × Rat → Rat × Rat := fun i h acc =>
+    let vi := (Array.ofFn v)[i]'(by simpa using h)
+    let loi := (Array.ofFn lo)[i]'(by simpa using h)
+    let hii := (Array.ofFn hi)[i]'(by simpa using h)
+    (acc.1 + (if 0 ≤ vi then vi * loi else vi * hii),
+      acc.2 + (if 0 ≤ vi then vi * hii else vi * loi))
+  have hfold := natFold_eq_foldlFin (n := n) (f := f) (init := (0, 0))
+  -- Simplify the array indices to the original `Fin` functions.
+  simpa [dotIntervalBoundsFastArr, dotIntervalBoundsFast, Linear.foldlFin_eq_foldl, f] using hfold
 
 /-- `dotIntervalBoundsFast` agrees with `dotIntervalLower` on the first component. -/
 theorem dotIntervalBoundsFast_fst {n : Nat} (v lo hi : Fin n → Rat) :
