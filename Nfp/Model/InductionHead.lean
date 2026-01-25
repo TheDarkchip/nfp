@@ -68,7 +68,7 @@ Construct induction-head inputs from a pre-LN residual stream.
 This makes the canonical use explicit: `embed` stores the pre-LN residual stream
 that LayerNorm and value bounds act on, not necessarily raw token embeddings.
 -/
-abbrev InductionHeadInputs.ofPreLnResidual
+abbrev InductionHeadInputs.ofPreLnResidual {seq dModel dHead : Nat}
     (scale : Rat) (active : Finset (Fin seq)) (prev : Fin seq → Fin seq)
     (preLn : Fin seq → Fin dModel → Rat)
     (lnEps : Rat) (ln1Gamma : Fin dModel → Rat) (ln1Beta : Fin dModel → Rat)
