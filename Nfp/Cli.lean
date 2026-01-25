@@ -41,6 +41,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let tokensPath? := (p.flag? "tokens").map (·.as! String)
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
+  let minCoverageStr? := (p.flag? "min-coverage").map (·.as! String)
   let timeLn := p.hasFlag "time-ln"
   let timeScores := p.hasFlag "time-scores"
   let timeParse := p.hasFlag "time-parse"
@@ -61,6 +62,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   | some certPath, none, none, none =>
       IO.runInductionHeadCertCheck certPath minActive? minLogitDiffStr?
         minMarginStr? maxEpsStr? tokensPath? minStripeMeanStr? minStripeTop1Str?
+        minCoverageStr?
         timeLn timeScores timeParse timeStages timeValues timeTotal
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
@@ -84,7 +86,7 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "min-active" : Nat; "Optional minimum number of active queries required \
                           (default: max 1 (seq/8))."
     "min-logit-diff" : String; "Optional minimum logit-diff lower bound \
-                                (rational literal; default: 0)."
+                                (rational literal; default: none)."
     "min-margin" : String; "Optional minimum score margin (rational literal; default: 0). \
                              Applies to onehot-approx only."
     "max-eps" : String; "Optional maximum eps tolerance (rational literal; default: 1/2). \
@@ -93,6 +95,8 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
                                  Applies to induction-aligned or stripe certs."
     "min-stripe-top1" : String; "Optional minimum stripe-top1 (rational literal). \
                                  Applies to stripe certs."
+    "min-coverage" : String; "Optional minimum active coverage (rational literal in [0,1]). \
+                               Applies to induction-aligned certs."
     "time-ln"; "Print the time spent in LayerNorm residual checks."
     "time-scores"; "Print the time spent recomputing scores from model slices."
     "time-parse"; "Print the time spent reading and parsing the certificate."

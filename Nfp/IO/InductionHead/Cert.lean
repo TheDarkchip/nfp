@@ -10,6 +10,7 @@ public import Nfp.IO.InductionHead.ScoreCheck
 public import Nfp.IO.InductionHead.ScoreUtils
 public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
+public import Nfp.IO.InductionHead.LogitDiffBound
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
 public import Nfp.IO.Pure.InductionHead.ModelSlice
@@ -1091,6 +1092,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (minMarginStr? : Option String) (maxEpsStr? : Option String)
     (tokensPath? : Option String)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
+    (minCoverageStr? : Option String)
     (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
     (timeValues : Bool) (timeTotal : Bool) :
     IO UInt32 := do
@@ -1105,19 +1107,22 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
   let maxEps?E := parseRatOpt "max-eps" maxEpsStr?
   let minStripeMean?E := parseRatOpt "min-stripe-mean" minStripeMeanStr?
   let minStripeTop1?E := parseRatOpt "min-stripe-top1" minStripeTop1Str?
-  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E with
-  | Except.error msg, _, _, _, _ =>
+  let minCoverage?E := parseRatOpt "min-coverage" minCoverageStr?
+  match minLogitDiff?E, minMargin?E, maxEps?E, minStripeMean?E, minStripeTop1?E, minCoverage?E with
+  | Except.error msg, _, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"; return (← finish 2)
-  | _, Except.error msg, _, _, _ =>
+  | _, Except.error msg, _, _, _, _ =>
       IO.eprintln s!"error: {msg}"; return (← finish 2)
-  | _, _, Except.error msg, _, _ =>
+  | _, _, Except.error msg, _, _, _ =>
       IO.eprintln s!"error: {msg}"; return (← finish 2)
-  | _, _, _, Except.error msg, _ =>
+  | _, _, _, Except.error msg, _, _ =>
       IO.eprintln s!"error: {msg}"; return (← finish 2)
-  | _, _, _, _, Except.error msg =>
+  | _, _, _, _, Except.error msg, _ =>
+      IO.eprintln s!"error: {msg}"; return (← finish 2)
+  | _, _, _, _, _, Except.error msg =>
       IO.eprintln s!"error: {msg}"; return (← finish 2)
   | Except.ok minLogitDiff?, Except.ok minMargin?, Except.ok maxEps?,
-      Except.ok minStripeMean?, Except.ok minStripeTop1? =>
+      Except.ok minStripeMean?, Except.ok minStripeTop1?, Except.ok minCoverage? =>
       let minMargin := minMargin?.getD (0 : Rat)
       let maxEps := maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
       let tParse? ← if timeParse then some <$> IO.monoMsNow else pure none
@@ -1126,8 +1131,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
         let t1 ← IO.monoMsNow; IO.eprintln s!"info: parse-ms {t1 - t0}"
       match parsed with
       | Except.error msg =>
-          IO.eprintln s!"error: {msg}"
-          return (← finish 1)
+          IO.eprintln s!"error: {msg}"; return (← finish 1)
       | Except.ok ⟨seq, payload⟩ =>
           match seq with
           | 0 =>
@@ -1164,6 +1168,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 if minStripeMeanStr?.isSome || minStripeTop1Str?.isSome then
                   IO.eprintln "error: stripe thresholds are not used for onehot-approx"
                   return (← finish 2)
+                if minCoverageStr?.isSome then
+                  IO.eprintln "error: min-coverage is not used for onehot-approx"
+                  return (← finish 2)
               if kind = "induction-aligned" then
                 let period ←
                   match period? with
@@ -1179,9 +1186,27 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   return (← finish 2)
                 let expectedActive ← timeIO timeStages "period-active"
                   (fun _ => pure (Model.activeOfPeriod (seq := seq) period))
-                if !decide (cert.active = expectedActive) then
-                  IO.eprintln "error: active set does not match induction-aligned period"
-                  return (← finish 2)
+                if let some minCoverage := minCoverage? then
+                  if minCoverage < 0 || (1 : Rat) < minCoverage then
+                    IO.eprintln "error: min-coverage must be between 0 and 1"; return (← finish 2)
+                  if !decide (cert.active ⊆ expectedActive) then
+                    IO.eprintln "error: active set not contained in induction-aligned period"
+                    return (← finish 2)
+                  let expectedCount := expectedActive.card
+                  if expectedCount = 0 then
+                    IO.eprintln "error: empty induction-aligned active set"
+                    return (← finish 2)
+                  let coverage : Rat :=
+                    Rat.divInt (Int.ofNat cert.active.card) (Int.ofNat expectedCount)
+                  if coverage < minCoverage then
+                    IO.eprintln
+                      s!"error: active coverage {ratToString coverage} \
+                      below minimum {ratToString minCoverage}"
+                    return (← finish 2)
+                else
+                  if !decide (cert.active = expectedActive) then
+                    IO.eprintln "error: active set does not match induction-aligned period"
+                    return (← finish 2)
                 let prevOk ← timeIO timeStages "period-prev"
                   (fun _ => pure ((List.finRange seq).all (fun q =>
                     decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))))
@@ -1415,12 +1440,8 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   pure (some mean)
                 else
                   pure none
-              let effectiveMinLogitDiff :=
-                match minLogitDiff?, cert.values.direction with
-                | some v, _ => some v
-                | none, some _ => some (0 : Rat)
-                | none, none => none
-              match effectiveMinLogitDiff with
+              let logitDiffLB? := InductionHeadCert.logitDiffLowerBoundTight? cert
+              match minLogitDiff? with
               | none =>
                   if kind = "induction-aligned" then
                     match stripeMeanOpt with
@@ -1441,8 +1462,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     return (← finish 0)
               | some minLogitDiff =>
                   let logitDiffLB? ← timeIO timeStages "logit-diff" (fun _ =>
-                    pure (Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
-                      cert.values.lo cert.values.hi cert.values.vals))
+                    pure logitDiffLB?)
                   match logitDiffLB? with
                   | none =>
                       IO.eprintln "error: empty active set for logit-diff bound"
