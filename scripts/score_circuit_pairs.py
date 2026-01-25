@@ -8,6 +8,9 @@ TransformerLens head detection patterns.
 This computes mean TL scores for previous-token heads and induction heads
 across multiple random repeated-pattern prompts, then ranks candidate pairs
 with prev_layer < induction_layer. Optionally writes summary JSON.
+
+If requested, emits a shell script that builds certs for top pairs and runs
+`nfp induction verify-circuit` using provided token files.
 """
 
 from __future__ import annotations
@@ -28,6 +31,14 @@ except ImportError as exc:
     raise SystemExit(
         "Requires transformer-lens + torch + transformers (use `uv add transformer-lens torch transformers`)."
     ) from exc
+
+
+def write_tokens(path: Path, tokens: list[int]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="ascii") as f:
+        f.write(f"seq {len(tokens)}\n")
+        for idx, tok in enumerate(tokens):
+            f.write(f"token {idx} {tok}\n")
 
 
 def select_vocab_candidates(
@@ -115,6 +126,24 @@ def main() -> int:
     parser.add_argument("--top-heads", type=int, default=20)
     parser.add_argument("--top-pairs", type=int, default=20)
     parser.add_argument("--output", type=Path, default=Path("reports/tl_scan/circuit_pairs.json"))
+    parser.add_argument("--emit-verify-script", action="store_true",
+                        help="Emit a shell script that builds certs and runs verify-circuit.")
+    parser.add_argument("--verify-script-out", type=Path,
+                        default=Path("reports/tl_scan/circuit_pairs_verify.sh"))
+    parser.add_argument("--cert-dir", type=Path, default=Path("reports/tl_scan/circuit_certs"))
+    parser.add_argument("--top-verify", type=int, default=None,
+                        help="How many top pairs to include in the verify script (default: top-pairs).")
+    parser.add_argument("--period", type=int, default=None,
+                        help="Period to use for circuit verification (default: pattern-len).")
+    parser.add_argument("--prev-tokens", type=Path, default=Path("reports/prev.tokens"))
+    parser.add_argument("--induction-tokens", type=Path,
+                        default=Path("reports/induction32.tokens"))
+    parser.add_argument("--prev-const-token", type=int, default=1,
+                        help="Token id to use for constant prev-token prompts.")
+    parser.add_argument("--write-tokens", action="store_true",
+                        help="Write default prev/induction token files if missing.")
+    parser.add_argument("--cert-active-eps-max", default="1")
+    parser.add_argument("--cert-min-margin", default="-10000")
     args = parser.parse_args()
 
     require_leading_space = args.require_leading_space and not args.allow_no_leading_space
@@ -237,6 +266,63 @@ def main() -> int:
             f"ind L{ind['layer']}H{ind['head']} ({ind['score']:.4f}) -> "
             f"score={entry['pair_score']:.4f}"
         )
+
+    if args.emit_verify_script:
+        period = args.pattern_len if args.period is None else args.period
+        top_verify = args.top_pairs if args.top_verify is None else args.top_verify
+        if args.seq_len != 2 * period:
+            raise SystemExit("seq-len must equal 2 * period for circuit verification")
+        if args.write_tokens:
+            if args.vocab_min + period > args.vocab_max:
+                raise SystemExit("vocab range too small to write default induction tokens")
+            induction_tokens = list(range(args.vocab_min, args.vocab_min + period)) * 2
+            prev_tokens = [args.prev_const_token] * args.seq_len
+            write_tokens(args.induction_tokens, induction_tokens)
+            write_tokens(args.prev_tokens, prev_tokens)
+        else:
+            if not args.induction_tokens.exists():
+                raise SystemExit(f"missing induction tokens file: {args.induction_tokens}")
+            if not args.prev_tokens.exists():
+                raise SystemExit(f"missing prev tokens file: {args.prev_tokens}")
+        verify_lines = ["#!/usr/bin/env bash", "set -euo pipefail", ""]
+        prev_cert_dir = args.cert_dir / "prev"
+        ind_cert_dir = args.cert_dir / "ind"
+        prev_cert_dir.mkdir(parents=True, exist_ok=True)
+        ind_cert_dir.mkdir(parents=True, exist_ok=True)
+        verify_lines.append("# Build prev-token certs once")
+        seen_prev = set()
+        for entry in pairs[:top_verify]:
+            prev = entry["prev"]
+            key = (prev["layer"], prev["head"])
+            if key in seen_prev:
+                continue
+            seen_prev.add(key)
+            verify_lines.append(
+                f"python scripts/build_gpt2_induction_cert.py --output {prev_cert_dir}/L{key[0]}H{key[1]}.cert "
+                f"--layer {key[0]} --head {key[1]} --seq {args.seq_len} "
+                f"--pattern-length {period} --tokens-in {args.prev_tokens} "
+                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin}"
+            )
+        verify_lines.append("")
+        verify_lines.append("# Build induction certs and verify circuit pairs")
+        for entry in pairs[:top_verify]:
+            prev = entry["prev"]
+            ind = entry["induction"]
+            ind_cert = f"{ind_cert_dir}/L{ind['layer']}H{ind['head']}.cert"
+            prev_cert = f"{prev_cert_dir}/L{prev['layer']}H{prev['head']}.cert"
+            verify_lines.append(
+                f"python scripts/build_gpt2_induction_cert.py --output {ind_cert} "
+                f"--layer {ind['layer']} --head {ind['head']} --seq {args.seq_len} "
+                f"--pattern-length {period} --tokens-in {args.induction_tokens} --prev-shift "
+                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin}"
+            )
+            verify_lines.append(
+                f"lake exe nfp induction verify-circuit --prev-cert {prev_cert} "
+                f"--ind-cert {ind_cert} --period {period} --tokens {args.induction_tokens}"
+            )
+        args.verify_script_out.parent.mkdir(parents=True, exist_ok=True)
+        args.verify_script_out.write_text("\n".join(verify_lines) + "\n", encoding="ascii")
+        print(f"Wrote {args.verify_script_out}")
 
     return 0
 
