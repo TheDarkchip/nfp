@@ -43,6 +43,9 @@ which adds a `period` entry (set to `--pattern-length`).
 
 Induction-aligned certificates also include `copy-logit` entries derived from
 the head's direct logit contribution (mean-subtracted, ReLU).
+
+Use --induction-active-filter to apply the active-eps/max and min-margin filters
+to the induction-aligned active positions.
 """
 
 import argparse
@@ -719,6 +722,8 @@ def main() -> None:
                         help="Optional LayerNorm sqrt bound scale (positive).")
     parser.add_argument("--model-ln-fast", action="store_true",
                         help="Use the fixed-denominator fast path in the verifier.")
+    parser.add_argument("--induction-active-filter", action="store_true",
+                        help="Filter induction-aligned active positions by active-eps/max and min-margin.")
     args = parser.parse_args()
 
     tokens = None
@@ -908,7 +913,19 @@ def main() -> None:
     eps_threshold = Fraction(args.active_eps_max)
     min_margin = Fraction(args.min_margin)
     if args.kind == "induction-aligned":
-        active_positions = [q for q in range(args.seq) if q >= args.pattern_length]
+        base_positions = [q for q in candidate_positions if q >= args.pattern_length]
+        if args.induction_active_filter:
+            active_positions = [
+                q for q in base_positions
+                if eps_by_q[q] <= eps_threshold and margin_by_q[q] >= min_margin
+            ]
+            if not active_positions:
+                raise SystemExit(
+                    "No active positions satisfy active-eps-max/min-margin. "
+                    "Try a different head/layer, random-pattern/seed, or relax the thresholds."
+                )
+        else:
+            active_positions = base_positions
     else:
         active_positions = [
             q for q in candidate_positions

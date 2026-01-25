@@ -22,10 +22,16 @@ import json
 import os
 import subprocess
 import sys
+import warnings
 from pathlib import Path
 from statistics import median
 
 import numpy as np
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+warnings.filterwarnings("ignore", message=".*torch_dtype.*deprecated.*")
 
 try:
     import torch
@@ -189,6 +195,8 @@ def main() -> int:
                         help="Optional LayerNorm sqrt bound scale (positive).")
     parser.add_argument("--model-ln-fast", action="store_true",
                         help="Use the fixed-denominator fast path in the verifier.")
+    parser.add_argument("--induction-active-filter", action="store_true",
+                        help="Filter induction-aligned active positions by active-eps/max and min-margin.")
     parser.add_argument(
         "--cert-kind",
         choices=["onehot-approx", "induction-aligned"],
@@ -422,6 +430,8 @@ def main() -> int:
                     cmd.extend(["--model-ln-scale", str(args.model_ln_scale)])
                 if args.model_ln_fast:
                     cmd.append("--model-ln-fast")
+            if args.induction_active_filter and args.cert_kind == "induction-aligned":
+                cmd.append("--induction-active-filter")
             print(f"Building cert for L{layer}H{head} (prompt {idx})...")
             result = subprocess.run(cmd, capture_output=True, text=True, env=env)
             if result.returncode != 0:
