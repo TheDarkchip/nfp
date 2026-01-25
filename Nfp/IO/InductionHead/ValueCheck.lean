@@ -79,6 +79,10 @@ def valuesWithinModelBoundsProfile {seq : Nat}
           Bounds.layerNormBoundsWithScale scale lnSlice.lnEps lnGamma lnBeta (embed q)
       | none =>
           Bounds.layerNormBounds lnSlice.lnEps lnGamma lnBeta (embed q)
+  let wvDenArr : Array Nat :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      (Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d)).foldl
+        (fun acc v => Nat.lcm acc v.den) 1)
   let lnBoundsAll ← Nfp.IO.timeIO timeValues "values-ln" (fun _ =>
     pure <|
       Array.ofFn (fun (k : Fin seq) =>
@@ -88,6 +92,12 @@ def valuesWithinModelBoundsProfile {seq : Nat}
         let hi := Array.ofFn (fun (i : Fin valueSlice.dModel) =>
           bounds.2 i + lnSlice.lnSlack)
         (lo, hi)))
+  let lnDenArr : Array Nat :=
+    Array.ofFn (fun (k : Fin seq) =>
+      let bounds := lnBoundsAll[k]!
+      let denLo := bounds.1.foldl (fun acc v => Nat.lcm acc v.den) 1
+      let denHi := bounds.2.foldl (fun acc v => Nat.lcm acc v.den) 1
+      Nat.lcm denLo denHi)
   let vBoundsAll ← Nfp.IO.timeIO timeValues "values-v" (fun _ =>
     pure <|
       Array.ofFn (fun (k : Fin seq) =>
@@ -95,18 +105,23 @@ def valuesWithinModelBoundsProfile {seq : Nat}
         let lnLo : Fin valueSlice.dModel → Rat := fun i => bounds.1[i]!
         let lnHi : Fin valueSlice.dModel → Rat := fun i => bounds.2[i]!
         Array.ofFn (fun (d : Fin valueSlice.headDim) =>
-          let vb := dotIntervalBoundsFastArr valueSlice.dModel
+          let den := Nat.lcm (wvDenArr[d.1]!) (lnDenArr[k.1]!)
+          let vb := dotIntervalBoundsFastArrFast valueSlice.dModel (some den)
             (Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d))
             (Array.ofFn lnLo) (Array.ofFn lnHi)
             (by simp) (by simp) (by simp)
           (vb.1 + valueSlice.bv d, vb.2 + valueSlice.bv d))))
+  let dirHeadDen := dirHeadVec.foldl (fun acc v => Nat.lcm acc v.den) 1
   let valBounds ← Nfp.IO.timeIO timeValues "values-val" (fun _ =>
     pure <|
       Array.ofFn (fun (k : Fin seq) =>
         let bounds := vBoundsAll[k]!
         let vLoArr := Array.ofFn (fun d : Fin valueSlice.headDim => bounds[d]!.1)
         let vHiArr := Array.ofFn (fun d : Fin valueSlice.headDim => bounds[d]!.2)
-        dotIntervalBoundsFastArr valueSlice.headDim dirHeadVec vLoArr vHiArr
+        let denLo := vLoArr.foldl (fun acc v => Nat.lcm acc v.den) 1
+        let denHi := vHiArr.foldl (fun acc v => Nat.lcm acc v.den) 1
+        let den := Nat.lcm dirHeadDen (Nat.lcm denLo denHi)
+        dotIntervalBoundsFastArrFast valueSlice.headDim (some den) dirHeadVec vLoArr vHiArr
           hDirHeadVec (by simp [vLoArr]) (by simp [vHiArr])))
   let checkOk ← Nfp.IO.timeIO timeValues "values-check" (fun _ =>
     pure <|
