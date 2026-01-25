@@ -171,14 +171,8 @@ private def finalizeOpts (st : ParseState) : BatchOpts :=
     minStripeMean? := st.minStripeMean?
     minAvgLogitDiff? := st.minAvgLogitDiff? }
 
-private def effectiveMinLogitDiff (minLogitDiff? : Option Rat)
-    (direction? : Option Circuit.DirectionSpec) : Option Rat :=
-  match minLogitDiff? with
-  | some v => some v
-  | none =>
-      match direction? with
-      | some _ => some (0 : Rat)
-      | none => none
+private def effectiveMinLogitDiff (minLogitDiff? : Option Rat) : Option Rat :=
+  minLogitDiff?
 
 private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat) : Bool :=
   (List.finRange seq).all (fun q =>
@@ -338,7 +332,7 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                     s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
             | none =>
                 return Except.error "empty active set for stripe stats"
-          let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
+          let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff?
           let logitDiffLB_base? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
               cert.values.lo cert.values.hi cert.values.vals
@@ -359,23 +353,26 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
             | some a, none => some a
             | none, some b => some b
             | none, none => none
-          match minLogitDiff? with
+          match logitDiffLB? with
           | none =>
-              if requireLogitDiff then
-                return Except.error "missing direction metadata for avg logit-diff"
+              if requireLogitDiff || minLogitDiff?.isSome then
+                return Except.error "empty active set for logit-diff bound"
               else
                 return Except.ok none
-          | some minLogitDiff =>
-              match logitDiffLB? with
-              | none =>
-                  return Except.error "empty active set for logit-diff bound"
-              | some logitDiffLB =>
+          | some logitDiffLB =>
+              match minLogitDiff? with
+              | some minLogitDiff =>
                   if logitDiffLB < minLogitDiff then
                     return Except.error
                       s!"logitDiffLB {ratToString logitDiffLB} \
                       below minimum {ratToString minLogitDiff}"
                   else
                     return Except.ok (some logitDiffLB)
+              | none =>
+                  if requireLogitDiff then
+                    return Except.ok (some logitDiffLB)
+                  else
+                    return Except.ok none
 
 end InductionHeadBatch
 
