@@ -338,7 +338,6 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                     s!"stripe-mean {ratToString mean} below minimum {ratToString minMean}"
             | none =>
                 return Except.error "empty active set for stripe stats"
-            return Except.ok none
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
           let logitDiffLB_base? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
