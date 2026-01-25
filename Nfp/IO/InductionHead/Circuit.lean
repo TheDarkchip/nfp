@@ -34,7 +34,16 @@ private def tokensPeriodic {seq : Nat} (period : Nat) (tokens : Fin seq → Nat)
     else
       true)
 
-/-- Check a composed prev-token + induction-head circuit from two cert files. -/
+/--
+Check a composed prev-token + induction-head circuit from two cert files.
+
+Alignment notes:
+- prev-token head: `activeOfPeriod 1` + `prevOfPeriod 1` (canonical previous-token map).
+- induction head: `activeOfPeriodShift period` + `prevOfPeriodShift period`
+  (the shifted-prev map used by `InductionCircuitSpecPeriodShift`).
+- if tokens are provided, the additional periodicity check enforces the
+  `InductionDiagnosticTokens` setting used to relate the period and token specs.
+-/
 def runInductionCircuitCertCheck
     (prevCertPath indCertPath : System.FilePath)
     (period : Nat)
