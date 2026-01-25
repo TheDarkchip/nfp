@@ -67,7 +67,8 @@ Key assumptions and limitations:
   only embeddings are supplied, the head-level bounds are a proxy for true
   residual-stream inputs.
 - The active set can be strict; bounds only hold for `q ∈ active`, not all positions.
-- The direction metadata assumes the unembedding columns encode the model’s logit map.
+- The direction metadata assumes the unembedding rows (`W_U`) encode the model’s logit map
+  (GPT-2 ties `W_U` to embeddings in practice, but the slice uses explicit unembedding rows).
 
 Optional safeguard:
 - If a token list is supplied to the CLI (`--tokens`), the checker verifies

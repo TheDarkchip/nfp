@@ -16,7 +16,7 @@ It is intentionally brief and focused on the soundness boundary.
   and `model-ln` data are provided, the checker verifies post-LN residuals against those inputs;
   if only embeddings are supplied, the certificate is a proxy for true residual-stream inputs.
 - Direction metadata (`direction-target`, `direction-negative`) is untrusted and assumes that the
-  unembedding columns represent token logits.
+  unembedding rows (`W_U`) represent token logits (GPT-2 ties `W_U` to embeddings in practice).
 - Any direction search performed by Python helpers is untrusted witness generation; only the
   resulting explicit certificate is checked by the Lean CLI.
 - The active set is user-supplied (or defaulted by the parser); bounds only hold for
