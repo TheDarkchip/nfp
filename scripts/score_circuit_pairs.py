@@ -9,8 +9,9 @@ This computes mean TL scores for previous-token heads and induction heads
 across multiple random repeated-pattern prompts, then ranks candidate pairs
 with prev_layer < induction_layer. Optionally writes summary JSON.
 
-If requested, emits a shell script that builds certs for top pairs and runs
-`nfp induction verify-circuit` using provided token files.
+If requested, emits a shell script that builds certs, optionally verifies them
+via `nfp induction verify`, and runs `nfp induction verify-circuit` using
+provided token files.
 """
 
 from __future__ import annotations
@@ -144,6 +145,32 @@ def main() -> int:
                         help="Write default prev/induction token files if missing.")
     parser.add_argument("--cert-active-eps-max", default="1")
     parser.add_argument("--cert-min-margin", default="-10000")
+    parser.add_argument("--emit-model-slice", action="store_true",
+                        help="Include model slice data in emitted certs.")
+    parser.add_argument("--model-decimals", type=int, default=None,
+                        help="Decimal rounding for model slice entries.")
+    parser.add_argument("--model-ln-slack", default=None,
+                        help="Slack for LayerNorm bounds when emitting model slice.")
+    parser.add_argument("--model-ln-scale", type=int, default=None,
+                        help="Optional LayerNorm sqrt bound scale (positive).")
+    parser.add_argument("--model-ln-fast", action="store_true",
+                        help="Use the fixed-denominator fast path in the verifier.")
+    parser.add_argument("--verify-head-certs", action="store_true",
+                        help="Run `nfp induction verify` on each head cert before circuit checks.")
+    parser.add_argument("--direction-target", type=int, default=None,
+                        help="Token id for logit-diff direction target (optional).")
+    parser.add_argument("--direction-negative", type=int, default=None,
+                        help="Token id for logit-diff direction negative (optional).")
+    parser.add_argument("--search-direction", action="store_true",
+                        help="Search for a logit-diff direction within a vocab range.")
+    parser.add_argument("--direction-vocab-min", type=int, default=1000,
+                        help="Minimum vocab id for direction search (inclusive).")
+    parser.add_argument("--direction-vocab-max", type=int, default=2000,
+                        help="Maximum vocab id for direction search (exclusive).")
+    parser.add_argument("--direction-max-candidates", type=int, default=0,
+                        help="Limit number of direction candidates (0 = all in range).")
+    parser.add_argument("--direction-min-lb", default="0",
+                        help="Minimum logit-diff lower bound to accept (default: 0).")
     args = parser.parse_args()
 
     require_leading_space = args.require_leading_space and not args.allow_no_leading_space
@@ -268,6 +295,14 @@ def main() -> int:
         )
 
     if args.emit_verify_script:
+        if (args.direction_target is None) != (args.direction_negative is None):
+            raise SystemExit("direction-target and direction-negative must be provided together")
+        if args.search_direction and args.direction_target is not None:
+            raise SystemExit("choose either search-direction or explicit direction-target/negative")
+        if args.emit_model_slice and not (args.search_direction or args.direction_target is not None):
+            raise SystemExit(
+                "emit-model-slice verify script requires --search-direction or --direction-target/negative"
+            )
         period = args.pattern_len if args.period is None else args.period
         top_verify = args.top_pairs if args.top_verify is None else args.top_verify
         if args.seq_len != 2 * period:
@@ -290,6 +325,27 @@ def main() -> int:
         prev_cert_dir.mkdir(parents=True, exist_ok=True)
         ind_cert_dir.mkdir(parents=True, exist_ok=True)
         verify_lines.append("# Build prev-token certs once")
+        model_args = []
+        direction_args = []
+        if args.emit_model_slice:
+            model_args.append("--emit-model-slice")
+            if args.model_decimals is not None:
+                model_args.extend(["--model-decimals", str(args.model_decimals)])
+            if args.model_ln_slack is not None:
+                model_args.extend(["--model-ln-slack", str(args.model_ln_slack)])
+            if args.model_ln_scale is not None:
+                model_args.extend(["--model-ln-scale", str(args.model_ln_scale)])
+            if args.model_ln_fast:
+                model_args.append("--model-ln-fast")
+        if args.search_direction:
+            direction_args.append("--search-direction")
+            direction_args.extend(["--direction-vocab-min", str(args.direction_vocab_min)])
+            direction_args.extend(["--direction-vocab-max", str(args.direction_vocab_max)])
+            direction_args.extend(["--direction-max-candidates", str(args.direction_max_candidates)])
+            direction_args.extend(["--direction-min-lb", str(args.direction_min_lb)])
+        elif args.direction_target is not None:
+            direction_args.extend(["--direction-target", str(args.direction_target)])
+            direction_args.extend(["--direction-negative", str(args.direction_negative)])
         seen_prev = set()
         for entry in pairs[:top_verify]:
             prev = entry["prev"]
@@ -301,10 +357,15 @@ def main() -> int:
                 f"python scripts/build_gpt2_induction_cert.py --output {prev_cert_dir}/L{key[0]}H{key[1]}.cert "
                 f"--layer {key[0]} --head {key[1]} --seq {args.seq_len} "
                 f"--pattern-length {period} --tokens-in {args.prev_tokens} "
-                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin}"
+                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin} "
+                + " ".join(model_args + direction_args)
             )
         verify_lines.append("")
         verify_lines.append("# Build induction certs and verify circuit pairs")
+        verify_args = [
+            "--min-margin", str(args.cert_min_margin),
+            "--max-eps", str(args.cert_active_eps_max),
+        ]
         for entry in pairs[:top_verify]:
             prev = entry["prev"]
             ind = entry["induction"]
@@ -314,8 +375,18 @@ def main() -> int:
                 f"python scripts/build_gpt2_induction_cert.py --output {ind_cert} "
                 f"--layer {ind['layer']} --head {ind['head']} --seq {args.seq_len} "
                 f"--pattern-length {period} --tokens-in {args.induction_tokens} --prev-shift "
-                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin}"
+                f"--active-eps-max {args.cert_active_eps_max} --min-margin {args.cert_min_margin} "
+                + " ".join(model_args + direction_args)
             )
+            if args.verify_head_certs:
+                verify_lines.append(
+                    f"lake exe nfp induction verify --cert {prev_cert} "
+                    + " ".join(verify_args)
+                )
+                verify_lines.append(
+                    f"lake exe nfp induction verify --cert {ind_cert} "
+                    + " ".join(verify_args)
+                )
             verify_lines.append(
                 f"lake exe nfp induction verify-circuit --prev-cert {prev_cert} "
                 f"--ind-cert {ind_cert} --period {period} --tokens {args.induction_tokens}"
