@@ -9,6 +9,7 @@ public import Nfp.IO.Parse.Basic
 public import Nfp.IO.Stripe
 public import Nfp.IO.Util
 public import Nfp.Model.InductionPrompt
+public import Nfp.Sound.Induction.ScoreBounds
 
 /-!
 Batch checking for induction-head certificates.
@@ -339,9 +340,26 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
                 return Except.error "empty active set for stripe stats"
             return Except.ok none
           let minLogitDiff? := effectiveMinLogitDiff opts.minLogitDiff? cert.values.direction
-          let logitDiffLB? :=
+          let logitDiffLB_base? :=
             Circuit.logitDiffLowerBoundAt cert.active cert.prev cert.epsAt
               cert.values.lo cert.values.hi cert.values.vals
+          let epsAtTight := Sound.epsAtOfWeightBoundAt cert.prev cert.weightBoundAt
+          let valsLo := cert.values.valsLo
+          let loAt : Fin seq → Rat := fun q =>
+            let others : Finset (Fin seq) :=
+              (Finset.univ : Finset (Fin seq)).erase (cert.prev q)
+            if h : others.Nonempty then
+              others.inf' h valsLo
+            else
+              cert.values.lo
+          let logitDiffLB_tight? :=
+            Circuit.logitDiffLowerBoundAtLoAt cert.active cert.prev epsAtTight loAt valsLo
+          let logitDiffLB? :=
+            match logitDiffLB_base?, logitDiffLB_tight? with
+            | some a, some b => some (max a b)
+            | some a, none => some a
+            | none, some b => some b
+            | none, none => none
           match minLogitDiff? with
           | none =>
               if requireLogitDiff then
