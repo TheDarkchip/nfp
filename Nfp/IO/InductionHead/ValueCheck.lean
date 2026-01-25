@@ -64,10 +64,13 @@ def valuesWithinModelBoundsProfile {seq : Nat}
     simpa [hLn] using lnSlice.lnBeta
   let direction : Fin valueSlice.dModel → Rat := by
     simpa [hDir] using dirSlice.direction
-  let dirHeadVec ← Nfp.IO.timeIO timeValues "values-dirhead" (fun _ =>
+  let dirHeadVecWithProof ← Nfp.IO.timeIO timeValues "values-dirhead" (fun _ =>
     pure <|
-      Array.ofFn (fun (d : Fin valueSlice.headDim) =>
-        Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction))
+      (⟨Array.ofFn (fun (d : Fin valueSlice.headDim) =>
+          Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction),
+        by simp⟩ : { arr : Array Rat // arr.size = valueSlice.headDim }))
+  let dirHeadVec : Array Rat := dirHeadVecWithProof.1
+  have hDirHeadVec : dirHeadVec.size = valueSlice.headDim := dirHeadVecWithProof.2
   let dirHead : Fin valueSlice.headDim → Rat := fun d => dirHeadVec[d]!
   let lnBounds : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
     fun q =>
@@ -92,15 +95,19 @@ def valuesWithinModelBoundsProfile {seq : Nat}
         let lnLo : Fin valueSlice.dModel → Rat := fun i => bounds.1[i]!
         let lnHi : Fin valueSlice.dModel → Rat := fun i => bounds.2[i]!
         Array.ofFn (fun (d : Fin valueSlice.headDim) =>
-          let vb := dotIntervalBoundsFast (fun j => valueSlice.wv j d) lnLo lnHi
+          let vb := dotIntervalBoundsFastArr valueSlice.dModel
+            (Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d))
+            (Array.ofFn lnLo) (Array.ofFn lnHi)
+            (by simp) (by simp) (by simp)
           (vb.1 + valueSlice.bv d, vb.2 + valueSlice.bv d))))
   let valBounds ← Nfp.IO.timeIO timeValues "values-val" (fun _ =>
     pure <|
       Array.ofFn (fun (k : Fin seq) =>
         let bounds := vBoundsAll[k]!
-        let vLo : Fin valueSlice.headDim → Rat := fun d => bounds[d]!.1
-        let vHi : Fin valueSlice.headDim → Rat := fun d => bounds[d]!.2
-        dotIntervalBoundsFast dirHead vLo vHi))
+        let vLoArr := Array.ofFn (fun d : Fin valueSlice.headDim => bounds[d]!.1)
+        let vHiArr := Array.ofFn (fun d : Fin valueSlice.headDim => bounds[d]!.2)
+        dotIntervalBoundsFastArr valueSlice.headDim dirHeadVec vLoArr vHiArr
+          hDirHeadVec (by simp [vLoArr]) (by simp [vHiArr])))
   let checkOk ← Nfp.IO.timeIO timeValues "values-check" (fun _ =>
     pure <|
       finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>

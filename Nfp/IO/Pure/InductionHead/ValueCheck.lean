@@ -53,6 +53,9 @@ def valuesWithinModelBounds {seq : Nat}
     Array.ofFn (fun d : Fin valueSlice.headDim =>
       Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction)
   let dirHead : Fin valueSlice.headDim → Rat := fun d => dirHeadArr[d.1]!
+  let wvColsArr : Array (Array Rat) :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d))
   let lnBoundsArr : Array (Array Rat × Array Rat) :=
     Array.ofFn (fun q : Fin seq =>
       let bounds :=
@@ -71,18 +74,48 @@ def valuesWithinModelBounds {seq : Nat}
   let vBoundsArr : Array (Array (Rat × Rat)) :=
     Array.ofFn (fun k : Fin seq =>
       Array.ofFn (fun d : Fin valueSlice.headDim =>
+        let wvCol :=
+          wvColsArr[d.1]'(by
+            simp [wvColsArr])
+        let lnBounds :=
+          lnBoundsArr[k.1]'(by
+            simp [lnBoundsArr])
+        let lnLoArr := lnBounds.1
+        let lnHiArr := lnBounds.2
         let bounds :=
-          dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLo k) (lnHi k)
+          dotIntervalBoundsFastArr valueSlice.dModel wvCol lnLoArr lnHiArr
+            (by simp [wvCol, wvColsArr])
+            (by simp [lnLoArr, lnBounds, lnBoundsArr])
+            (by simp [lnHiArr, lnBounds, lnBoundsArr])
         (bounds.1 + valueSlice.bv d, bounds.2 + valueSlice.bv d)))
   let vLo : Fin seq → Fin valueSlice.headDim → Rat :=
-    fun k d => (vBoundsArr[k.1]!)[d.1]!.1
+    fun k d =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      (vBounds[d.1]'(by
+        simp [vBounds, vBoundsArr])).1
   let vHi : Fin seq → Fin valueSlice.headDim → Rat :=
-    fun k d => (vBoundsArr[k.1]!)[d.1]!.2
+    fun k d =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      (vBounds[d.1]'(by
+        simp [vBounds, vBoundsArr])).2
   let valBoundsArr : Array (Rat × Rat) :=
     Array.ofFn (fun k : Fin seq =>
-      dotIntervalBoundsFast dirHead (vLo k) (vHi k))
-  let valLo : Fin seq → Rat := fun k => (valBoundsArr[k.1]!).1
-  let valHi : Fin seq → Rat := fun k => (valBoundsArr[k.1]!).2
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      let vLoArr := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).1)
+      let vHiArr := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).2)
+      dotIntervalBoundsFastArr valueSlice.headDim dirHeadArr vLoArr vHiArr
+        (by simp [dirHeadArr]) (by simp [vLoArr]) (by simp [vHiArr]))
+  let valLo : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).1
+  let valHi : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).2
   finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
     decide (valLo k ≤ values.vals k) && decide (values.vals k ≤ valHi k))
 
@@ -129,12 +162,81 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
   classical
   intro hcheck embed lnGamma lnBeta direction dirHead lnBounds lnLo lnHi vBounds vLo vHi
     valBounds valLo valHi k
+  -- Array-based definitions mirroring `valuesWithinModelBounds`.
+  let dirHeadArr : Array Rat := Array.ofFn dirHead
+  let wvColsArr : Array (Array Rat) :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d))
+  let lnBoundsArr : Array (Array Rat × Array Rat) :=
+    Array.ofFn (fun q : Fin seq =>
+      let bounds := lnBounds q
+      (Array.ofFn (fun i : Fin valueSlice.dModel => bounds.1 i - lnSlice.lnSlack),
+        Array.ofFn (fun i : Fin valueSlice.dModel => bounds.2 i + lnSlice.lnSlack)))
+  let vBoundsArr : Array (Array (Rat × Rat)) :=
+    Array.ofFn (fun k : Fin seq =>
+      Array.ofFn (fun d : Fin valueSlice.headDim =>
+        let wvCol :=
+          wvColsArr[d.1]'(by
+            simp [wvColsArr])
+        let lnBounds :=
+          lnBoundsArr[k.1]'(by
+            simp [lnBoundsArr])
+        let lnLoArr := lnBounds.1
+        let lnHiArr := lnBounds.2
+        let bounds :=
+          dotIntervalBoundsFastArr valueSlice.dModel wvCol lnLoArr lnHiArr
+            (by simp [wvCol, wvColsArr])
+            (by simp [lnLoArr, lnBounds, lnBoundsArr])
+            (by simp [lnHiArr, lnBounds, lnBoundsArr])
+        (bounds.1 + valueSlice.bv d, bounds.2 + valueSlice.bv d)))
+  let vLoArr : Fin seq → Fin valueSlice.headDim → Rat :=
+    fun k d =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      (vBounds[d.1]'(by
+        simp [vBounds, vBoundsArr])).1
+  let vHiArr : Fin seq → Fin valueSlice.headDim → Rat :=
+    fun k d =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      (vBounds[d.1]'(by
+        simp [vBounds, vBoundsArr])).2
+  let valBoundsArr : Array (Rat × Rat) :=
+    Array.ofFn (fun k : Fin seq =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      let vLoArr' := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).1)
+      let vHiArr' := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).2)
+      dotIntervalBoundsFastArr valueSlice.headDim dirHeadArr vLoArr' vHiArr'
+        (by simp [dirHeadArr]) (by simp [vLoArr']) (by simp [vHiArr']))
+  let valLoArr : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).1
+  let valHiArr : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).2
   have hall :=
     (finsetAll_eq_true_iff (s := (Finset.univ : Finset (Fin seq)))).1 hcheck
   have hk := hall k (by simp)
+  have hkArr : decide (valLoArr k ≤ values.vals k) = true ∧
+      decide (values.vals k ≤ valHiArr k) = true := by
+    simpa [Bool.and_eq_true, valLoArr, valHiArr, valBoundsArr, vBoundsArr, dirHeadArr,
+      wvColsArr, lnBoundsArr, vLoArr, vHiArr] using hk
+  have hvalBounds : ∀ k, valBoundsArr[k.1]'(by simp [valBoundsArr]) = valBounds k := by
+    intro k
+    simp [valBoundsArr, vBoundsArr, dirHeadArr, wvColsArr, lnBoundsArr, lnLo, lnHi, vBounds,
+      vLo, vHi, valBounds, dotIntervalBoundsFastArr_ofFn]
+  have hvalLo : valLoArr = valLo := by
+    funext k
+    simp [valLoArr, valLo, hvalBounds]
+  have hvalHi : valHiArr = valHi := by
+    funext k
+    simp [valHiArr, valHi, hvalBounds]
   have hk' : decide (valLo k ≤ values.vals k) = true ∧
       decide (values.vals k ≤ valHi k) = true := by
-    simpa [Bool.and_eq_true] using hk
+    simpa [hvalLo, hvalHi] using hkArr
   exact
     ⟨by simpa [decide_eq_true_iff] using hk'.1,
       by simpa [decide_eq_true_iff] using hk'.2⟩
