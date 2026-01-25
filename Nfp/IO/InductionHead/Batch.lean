@@ -44,6 +44,8 @@ structure BatchOpts where
   minActive? : Option Nat
   /-- Optional minimum pass count for batch items. -/
   minPass? : Option Nat
+  /-- Optional minimum active coverage for induction-aligned items. -/
+  minCoverage? : Option Rat
   /-- Optional per-item logit-diff lower bound. -/
   minLogitDiff? : Option Rat
   /-- Minimum margin threshold. -/
@@ -63,6 +65,8 @@ structure ParseState where
   minActive? : Option Nat
   /-- Optional minimum pass count. -/
   minPass? : Option Nat
+  /-- Optional minimum active coverage for induction-aligned items. -/
+  minCoverage? : Option Rat
   /-- Optional per-item logit-diff lower bound. -/
   minLogitDiff? : Option Rat
   /-- Optional minimum margin threshold. -/
@@ -79,6 +83,7 @@ def initState : ParseState :=
   { items := #[]
     minActive? := none
     minPass? := none
+    minCoverage? := none
     minLogitDiff? := none
     minMargin? := none
     maxEps? := none
@@ -149,6 +154,8 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
       setOptNat "min-active" st (← parseNat n)
   | ["min-pass", n] =>
       setOptNat "min-pass" st (← parseNat n)
+  | ["min-coverage", v] =>
+      setOptRat "min-coverage" st (← parseRat v)
   | ["min-logit-diff", v] =>
       setOptRat "min-logit-diff" st (← parseRat v)
   | ["min-margin", v] =>
@@ -165,6 +172,7 @@ def parseLine (st : ParseState) (tokens : List String) : Except String ParseStat
 private def finalizeOpts (st : ParseState) : BatchOpts :=
   { minActive? := st.minActive?
     minPass? := st.minPass?
+    minCoverage? := st.minCoverage?
     minLogitDiff? := st.minLogitDiff?
     minMargin := st.minMargin?.getD (0 : Rat)
     maxEps := st.maxEps?.getD (ratRoundDown (Rat.divInt 1 2))
@@ -214,6 +222,9 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
             if opts.minStripeMean?.isSome then
               return Except.error
                 "stripe thresholds are not used for onehot-approx"
+            if opts.minCoverage?.isSome then
+              return Except.error
+                "min-coverage is only supported for induction-aligned"
           if kind = "induction-aligned" then
             let period ←
               match period? with
@@ -225,8 +236,23 @@ private def checkOne (item : BatchItem) (opts : BatchOpts)
             if seq ≤ period then
               return Except.error "period must be less than seq for induction-aligned"
             let expectedActive := Model.activeOfPeriod (seq := seq) period
-            if !decide (cert.active = expectedActive) then
-              return Except.error "active set does not match induction-aligned period"
+            if let some minCoverage := opts.minCoverage? then
+              if minCoverage < 0 || (1 : Rat) < minCoverage then
+                return Except.error "min-coverage must be between 0 and 1"
+              if !decide (cert.active ⊆ expectedActive) then
+                return Except.error "active set not contained in induction-aligned period"
+              let expectedCount := expectedActive.card
+              if expectedCount = 0 then
+                return Except.error "empty induction-aligned active set"
+              let coverage : Rat :=
+                Rat.divInt (Int.ofNat cert.active.card) (Int.ofNat expectedCount)
+              if coverage < minCoverage then
+                return Except.error
+                  s!"active coverage {ratToString coverage} \
+                  below minimum {ratToString minCoverage}"
+            else
+              if !decide (cert.active = expectedActive) then
+                return Except.error "active set does not match induction-aligned period"
             let prevOk :=
               (List.finRange seq).all (fun q =>
                 decide (cert.prev q = Model.prevOfPeriod (seq := seq) period q))
