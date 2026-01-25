@@ -113,6 +113,12 @@ def build_prev(tokens: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     return prev, active
 
 
+def shift_prev(prev: np.ndarray, active: np.ndarray) -> np.ndarray:
+    shifted = prev.copy()
+    shifted[active] = shifted[active] + 1
+    return shifted
+
+
 def compute_scores_weights(model, input_ids, layer: int, head: int, device: str):
     model.eval()
     with torch.no_grad():
@@ -680,6 +686,8 @@ def main() -> None:
                         help="Value dimension index for the value-range certificate")
     parser.add_argument("--tokens-in", type=Path, help="Optional path to load the token list")
     parser.add_argument("--tokens-out", help="Optional path to write the token list")
+    parser.add_argument("--prev-shift", action="store_true",
+                        help="Shift prev by +1 on active positions (canonical induction circuit).")
     parser.add_argument("--active-eps-max", default="1/2",
                         help="Maximum eps to include an active position (default: 1/2).")
     parser.add_argument("--min-margin", default="0",
@@ -748,6 +756,8 @@ def main() -> None:
         if args.pattern_length >= args.seq:
             raise SystemExit("pattern-length must be less than seq for induction-aligned")
     prev, active_mask = build_prev(tokens)
+    if args.prev_shift:
+        prev = shift_prev(prev, active_mask)
     candidate_positions = [int(i) for i, flag in enumerate(active_mask) if flag]
 
     if args.layer < 0:
