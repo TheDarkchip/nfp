@@ -22,6 +22,8 @@ what is untrusted/heuristic, and what is not yet proven in the tabula rasa rewri
 - `nfp induction verify` verifies explicit induction-head certificates from a single cert
   file, optionally enforcing minimum `active`, `margin`, `eps`, and logit-diff gates, and
   optionally checking `prev`/`active` against a supplied token list.
+- `nfp induction verify-circuit` verifies a composed prev-token + induction-head circuit by
+  checking two head certificates and enforcing the shifted-period wiring constraints.
 
 ## Untrusted / heuristic
 

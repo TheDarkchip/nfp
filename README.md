@@ -111,6 +111,15 @@ Optional direction metadata:
 lake exe nfp induction verify --cert reports/gpt2_induction.cert
 ```
 
+Circuit-level check (prev-token head + induction head):
+
+```bash
+lake exe nfp induction verify-circuit \
+  --prev-cert reports/prev_head.cert \
+  --ind-cert reports/ind_head.cert \
+  --period 16
+```
+
 Optional gates:
 
 ```

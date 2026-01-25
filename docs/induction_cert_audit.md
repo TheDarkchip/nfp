@@ -48,6 +48,20 @@ induction-aligned`, Lean additionally checks that `active`/`prev` match the
 declared `period` and evaluates stripe-mean (prefix matching score) on the full
 second repeat.
 
+## Circuit-level verification (canonical)
+
+The canonical mechanism is a **prev-token head** feeding an **induction head**
+with a shifted `prev` map. The CLI now supports verifying this composition via
+
+```
+nfp induction verify-circuit --prev-cert <file> --ind-cert <file> --period <p> [--tokens <file>]
+```
+
+This check composes two head-level certificates and enforces the shifted-period
+`prev`/`active` wiring. Single-head certificates remain a proxy; the circuit
+path is the canonical interpretation when both head certificates pass and the
+structural checks match the shifted circuit definition.
+
 ## Preconditions and scope limits
 
 These proofs are sufficient for a **conditional** certification claim:

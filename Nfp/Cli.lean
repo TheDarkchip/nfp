@@ -108,13 +108,39 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "time-total"; "Print total verify time (inside runInductionHeadCertCheck)."
 ]
 
+private def runInductionVerifyCircuit (p : Parsed) : IO UInt32 := do
+  let prevPath? := (p.flag? "prev-cert").map (·.as! String)
+  let indPath? := (p.flag? "ind-cert").map (·.as! String)
+  let period? := (p.flag? "period").map (·.as! Nat)
+  let tokensPath? := (p.flag? "tokens").map (·.as! String)
+  let fail (msg : String) : IO UInt32 := do
+    IO.eprintln s!"error: {msg}"
+    return 2
+  match prevPath?, indPath?, period? with
+  | some prevPath, some indPath, some period =>
+      IO.InductionHeadCircuit.runInductionCircuitCertCheck
+        prevPath indPath period tokensPath?
+  | _, _, _ =>
+      fail "provide --prev-cert, --ind-cert, and --period"
+
+/-- `nfp induction verify-circuit` subcommand. -/
+def inductionVerifyCircuitCmd : Cmd := `[Cli|
+  "verify-circuit" VIA runInductionVerifyCircuit;
+  "Verify a composed prev-token + induction-head circuit from two certs."
+  FLAGS:
+    "prev-cert" : String; "Path to the prev-token head certificate file."
+    "ind-cert" : String; "Path to the induction head certificate file."
+    period : Nat; "Prompt period for the shifted induction map (seq must equal 2 * period)."
+    tokens : String; "Optional path to a token list to check periodicity."
+]
 
 /-- Induction-head subcommands. -/
 def inductionCmd : Cmd := `[Cli|
   induction NOOP;
   "Induction-head utilities (streamlined)."
   SUBCOMMANDS:
-    inductionVerifySimpleCmd
+    inductionVerifySimpleCmd;
+    inductionVerifyCircuitCmd
 ]
 
 /-- The root CLI command. -/
