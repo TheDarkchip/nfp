@@ -60,7 +60,7 @@ import numpy as np
 
 try:
     import torch
-    from transformers import GPT2Model
+    from transformers import GPT2LMHeadModel
 except ImportError:
     raise SystemExit(
         "Missing dependencies. Install with: uv add transformers torch"
@@ -267,7 +267,7 @@ def compute_vals_from_model_slice(model_slice: dict, direction: np.ndarray) -> n
     return values @ dir_head
 
 
-def compute_copy_logits(model, input_ids, layer: int, head: int,
+def compute_copy_logits(model, unembed_weight, input_ids, layer: int, head: int,
                         weights: np.ndarray, values: np.ndarray, device: str) -> np.ndarray:
     head_dim = model.config.n_embd // model.config.n_head
     start, end = head * head_dim, (head + 1) * head_dim
@@ -277,8 +277,8 @@ def compute_copy_logits(model, input_ids, layer: int, head: int,
     w_o = model.h[layer].attn.c_proj.weight.to(device)
     w_o_head = w_o[:, start:end]
     head_resid = torch.matmul(head_out, w_o_head.T)
-    wte = model.wte.weight.to(device)
-    logits = torch.matmul(head_resid, wte.T)
+    unembed = unembed_weight.to(device)
+    logits = torch.matmul(head_resid, unembed.T)
     logits = logits - logits.mean(dim=-1, keepdim=True)
     logits = torch.relu(logits)
     token_ids = input_ids.squeeze(0)
@@ -529,6 +529,7 @@ def read_tokens(path: Path) -> np.ndarray:
 
 def search_direction(
     model,
+    unembed_rows: np.ndarray,
     values: np.ndarray,
     layer: int,
     head: int,
@@ -550,14 +551,13 @@ def search_direction(
         rng = np.random.default_rng(seed)
         cand_ids = rng.choice(cand_ids, size=max_candidates, replace=False).tolist()
 
-    wte = model.wte.weight.detach().cpu().numpy()
-    if max(cand_ids) >= wte.shape[0]:
+    if max(cand_ids) >= unembed_rows.shape[0]:
         raise SystemExit("direction vocab range exceeds model vocab size")
     head_dim = model.config.n_embd // model.config.n_head
     start, end = head * head_dim, (head + 1) * head_dim
     w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
 
-    proj = wte[cand_ids] @ w_o  # (m, head_dim)
+    proj = unembed_rows[cand_ids] @ w_o  # (m, head_dim)
     vals_mat = values @ proj.T  # (seq, m)
     active_prev = [(q, int(prev[q])) for q in active_positions]
     best_lb = None
@@ -801,7 +801,9 @@ def main() -> None:
     if args.head < 0:
         raise SystemExit("head must be >= 0")
 
-    model = GPT2Model.from_pretrained(args.model)
+    lm_model = GPT2LMHeadModel.from_pretrained(args.model)
+    model = lm_model.transformer
+    unembed_weight = lm_model.lm_head.weight
     layer = args.layer
     head = args.head
     if layer >= model.config.n_layer:
@@ -809,13 +811,14 @@ def main() -> None:
     if head >= model.config.n_head:
         raise SystemExit(f"head must be in [0, {model.config.n_head - 1}]")
     model.to(args.device)
+    lm_model.lm_head.to(args.device)
     input_ids = torch.tensor(tokens, dtype=torch.long, device=args.device).unsqueeze(0)
 
     scores, weights, values = compute_scores_weights(model, input_ids, layer, head, args.device)
     copy_logits = None
     if args.kind == "induction-aligned":
         copy_logits = compute_copy_logits(
-            model, input_ids, layer, head, weights, values, args.device
+            model, unembed_weight, input_ids, layer, head, weights, values, args.device
         )
 
     model_slice = None
@@ -1038,8 +1041,10 @@ def main() -> None:
         max_candidates = args.direction_max_candidates
         if max_candidates == 0:
             max_candidates = None
+        unembed_rows = unembed_weight.detach().cpu().numpy()
         direction_target, direction_negative, best_lb, topk_entries = search_direction(
             model=model,
+            unembed_rows=unembed_rows,
             values=values,
             layer=layer,
             head=head,
@@ -1089,13 +1094,13 @@ def main() -> None:
     unembed_target = None
     unembed_negative = None
     if direction_target is not None:
-        wte = model.wte.weight.detach().cpu().numpy()
-        if direction_target < 0 or direction_target >= wte.shape[0]:
+        unembed_rows = unembed_weight.detach().cpu().numpy()
+        if direction_target < 0 or direction_target >= unembed_rows.shape[0]:
             raise SystemExit("direction-target out of vocab range")
-        if direction_negative < 0 or direction_negative >= wte.shape[0]:
+        if direction_negative < 0 or direction_negative >= unembed_rows.shape[0]:
             raise SystemExit("direction-negative out of vocab range")
-        target_row = wte[direction_target]
-        negative_row = wte[direction_negative]
+        target_row = unembed_rows[direction_target]
+        negative_row = unembed_rows[direction_negative]
         unembed_target = [
             rat_from_float_model(float(target_row[i]))
             for i in range(target_row.shape[0])
