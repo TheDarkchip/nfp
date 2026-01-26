@@ -41,7 +41,7 @@ def reportWeightedResidualDir {seq : Nat}
         else if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
           if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
             let bounds :=
-              Nfp.IO.Pure.InductionHeadCert.residualDirectionBoundsWeightedFromSlices
+              Nfp.IO.Pure.InductionHeadCert.residualDirectionBoundsWeightedFastFromSlices
                 modelLnSlice modelValueSlice modelDirectionSlice weights hLn hDir
             if hActive : active.Nonempty then
               let lbSet := active.image (fun q => bounds.1 q)
