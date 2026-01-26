@@ -32,8 +32,9 @@ def checkScoreBoundsWithinModel {seq : Nat}
     (modelSlice? : Option (ModelSlice seq))
     (cert : Circuit.InductionHeadCert seq) : Except String Unit :=
   match modelSlice? with
-  | some _ =>
-      if scoreBoundsWithinScores cert then
+  | some modelSlice =>
+      if Pure.InductionHeadCert.scoreBoundsWithinScoresWithMask
+          (maskCausal := modelSlice.maskCausal) cert then
         pure ()
       else
         Except.error "score bounds not justified by certificate scores"

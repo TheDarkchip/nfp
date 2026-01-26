@@ -102,15 +102,13 @@ variable {seq dModel dHead : Nat}
 /-- Real-valued logit-diff contribution for a query. -/
 noncomputable def headLogitDiff (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) : Real :=
-  let weights : Fin seq → Fin seq → Real := fun q k =>
-    Circuit.softmax (scoresRealOfInputs inputs q) k
+  let weights : Fin seq → Fin seq → Real := weightsRealOfInputs inputs
   dotProduct (weights q) (valsRealOfInputs inputs)
 
 /-- Unfolding lemma for `headLogitDiff`. -/
 theorem headLogitDiff_def (inputs : Model.InductionHeadInputs seq dModel dHead) (q : Fin seq) :
     headLogitDiff inputs q =
-      let weights : Fin seq → Fin seq → Real := fun q k =>
-        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let weights : Fin seq → Fin seq → Real := weightsRealOfInputs inputs
       dotProduct (weights q) (valsRealOfInputs inputs) := by
   rfl
 
@@ -474,8 +472,7 @@ theorem logitDiffLowerBoundFromCert_le
   | zero =>
       cases (NeZero.ne (n := (0 : Nat)) rfl)
   | succ n =>
-      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
-        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := weightsRealOfInputs inputs
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
       let epsAt := Bounds.cacheBoundTask c.epsAt
       let valsLo := Bounds.cacheBoundTask c.values.valsLo
@@ -677,8 +674,7 @@ theorem logitDiffLowerBoundFromCertWeighted_le
   | zero =>
       cases (NeZero.ne (n := (0 : Nat)) rfl)
   | succ n =>
-      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
-        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := weightsRealOfInputs inputs
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
       let valsLoCached := Bounds.cacheBoundTask c.values.valsLo
       let others : Finset (Fin (Nat.succ n)) :=
@@ -956,15 +952,15 @@ theorem headLogitDiff_eq_direction_dot_headOutput
         (fun i => headOutput inputs q i) := by
   classical
   let dir : Fin dModel → Real := fun i => (inputs.direction i : Real)
-  let weights : Fin seq → Fin seq → Real := fun q k =>
-    Circuit.softmax (scoresRealOfInputs inputs q) k
+  let weights : Fin seq → Fin seq → Real := weightsRealOfInputs inputs
   have hswap :
       dotProduct dir (fun i => headOutput inputs q i) =
         ∑ k, weights q k * dotProduct dir (fun i => headValueRealOfInputs inputs k i) := by
     calc
       dotProduct dir (fun i => headOutput inputs q i)
           = ∑ i, dir i * ∑ k, weights q k * headValueRealOfInputs inputs k i := by
-            simp [dir, headOutput_def, headOutputWithScores_def, weights, dotProduct]
+            simp [dir, headOutput_def, headOutputWithScores_def, weights, weightsRealOfInputs_def,
+              weightsRealOfInputsWithScores_def, dotProduct]
       _ = ∑ i, ∑ k, dir i * (weights q k * headValueRealOfInputs inputs k i) := by
             simp [Finset.mul_sum]
       _ = ∑ k, ∑ i, dir i * (weights q k * headValueRealOfInputs inputs k i) := by

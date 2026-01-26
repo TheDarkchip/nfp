@@ -29,6 +29,19 @@ variable {seq : Nat}
 def softmax (scores : Fin seq → Real) (k : Fin seq) : Real :=
   Real.exp (scores k) / ∑ j, Real.exp (scores j)
 
+/--
+Real softmax over a finite score vector, restricted to an allowed key set.
+
+Keys outside `allow` receive weight `0`.
+-/
+def softmaxMasked (scores : Fin seq → Real) (allow : Fin seq → Prop) (k : Fin seq) : Real := by
+  classical
+  exact if h : allow k then
+    Real.exp (scores k) /
+      (Finset.univ.filter allow).sum (fun j => Real.exp (scores j))
+  else
+    0
+
 private lemma softmax_denom_pos [NeZero seq] (scores : Fin seq → Real) :
     0 < ∑ j, Real.exp (scores j) := by
   classical
@@ -37,10 +50,42 @@ private lemma softmax_denom_pos [NeZero seq] (scores : Fin seq → Real) :
     exact Nat.pos_of_ne_zero (NeZero.ne seq)
   exact Finset.sum_pos (fun _ _ => Real.exp_pos _) hnonempty
 
+private lemma softmaxMasked_denom_pos [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) [DecidablePred allow] (hallow : ∃ k, allow k) :
+    0 < (Finset.univ.filter allow).sum (fun j => Real.exp (scores j)) := by
+  classical
+  rcases hallow with ⟨k, hk⟩
+  have hnonempty : (Finset.univ.filter allow : Finset (Fin seq)).Nonempty := by
+    refine ⟨k, ?_⟩
+    simp [hk]
+  exact Finset.sum_pos (fun _ _ => Real.exp_pos _) hnonempty
+
 lemma softmax_nonneg [NeZero seq] (scores : Fin seq → Real) (k : Fin seq) :
     0 ≤ softmax scores k := by
   have hdenom : 0 < ∑ j, Real.exp (scores j) := softmax_denom_pos scores
   exact (div_nonneg (Real.exp_pos _).le (le_of_lt hdenom))
+
+lemma softmaxMasked_nonneg [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) (k : Fin seq) :
+    0 ≤ softmaxMasked scores allow k := by
+  classical
+  by_cases h : allow k
+  · have hdenom :
+        0 < (Finset.univ.filter allow).sum (fun j => Real.exp (scores j)) :=
+      softmaxMasked_denom_pos (scores := scores) (allow := allow) ⟨k, h⟩
+    have hdiv :
+        0 ≤
+          Real.exp (scores k) /
+            (Finset.univ.filter allow).sum (fun j => Real.exp (scores j)) :=
+      div_nonneg (Real.exp_pos _).le (le_of_lt hdenom)
+    simpa [softmaxMasked, h] using hdiv
+  · simp [softmaxMasked, h]
+
+lemma softmaxMasked_eq_zero_of_not_allow (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) (k : Fin seq) (h : ¬ allow k) :
+    softmaxMasked scores allow k = 0 := by
+  classical
+  simp [softmaxMasked, h]
 
 lemma softmax_sum_one [NeZero seq] (scores : Fin seq → Real) :
     (∑ k, softmax scores k) = 1 := by
@@ -60,6 +105,36 @@ lemma softmax_sum_one [NeZero seq] (scores : Fin seq → Real) :
     _ = (∑ k, Real.exp (scores k)) / ∑ j, Real.exp (scores j) := hsum
     _ = 1 := by
         simp [hdenom]
+
+lemma softmaxMasked_sum_one [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) (hallow : ∃ k, allow k) :
+    (∑ k, softmaxMasked scores allow k) = 1 := by
+  classical
+  let denom : Real :=
+    (Finset.univ.filter allow).sum (fun j => Real.exp (scores j))
+  have hdenom : denom ≠ 0 :=
+    ne_of_gt (softmaxMasked_denom_pos (scores := scores) (allow := allow) hallow)
+  have hsum :
+      ∑ k, softmaxMasked scores allow k =
+        (Finset.univ : Finset (Fin seq)).sum
+          (fun k => if allow k then Real.exp (scores k) / denom else 0) := by
+    simp [softmaxMasked, denom]
+  calc
+    ∑ k, softmaxMasked scores allow k
+        =
+        (Finset.univ : Finset (Fin seq)).sum
+          (fun k => if allow k then Real.exp (scores k) / denom else 0) := hsum
+    _ =
+        (Finset.univ.filter allow).sum (fun k => Real.exp (scores k) / denom) := by
+          simpa using
+            (Finset.sum_filter (s := (Finset.univ : Finset (Fin seq))) (p := allow)
+              (f := fun k => Real.exp (scores k) / denom)).symm
+    _ =
+        (Finset.univ.filter allow).sum (fun k => Real.exp (scores k)) / denom := by
+          simpa using
+            (Finset.sum_div (Finset.univ.filter allow) (fun k => Real.exp (scores k)) denom).symm
+    _ = 1 := by
+          simp [denom, hdenom]
 
 /-- Real-valued row-stochastic weights with explicit nonnegativity and row-sum proofs.
     Kept separate from `ProbVec` because softmax outputs `Real` rather than `NNReal`. -/
@@ -97,6 +172,27 @@ lemma softmax_le_one [NeZero seq] (scores : Fin seq → Real) (k : Fin seq) :
     simpa using (Finset.single_le_sum hnonneg (by simp))
   have hdiv := (div_le_one hdenom_pos).2 hnum_le
   simpa [softmax] using hdiv
+
+lemma softmaxMasked_le_one [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) (k : Fin seq) :
+    softmaxMasked scores allow k ≤ 1 := by
+  classical
+  by_cases h : allow k
+  · have hdenom_pos :
+        0 < (Finset.univ.filter allow).sum (fun j => Real.exp (scores j)) :=
+      softmaxMasked_denom_pos (scores := scores) (allow := allow) ⟨k, h⟩
+    have hnum_le :
+        Real.exp (scores k) ≤
+          (Finset.univ.filter allow).sum (fun j => Real.exp (scores j)) := by
+      have hnonneg :
+          ∀ j ∈ (Finset.univ.filter allow : Finset (Fin seq)), 0 ≤ Real.exp (scores j) :=
+        fun _ _ => (Real.exp_pos _).le
+      have hk : k ∈ (Finset.univ.filter allow : Finset (Fin seq)) := by
+        simp [h]
+      simpa using (Finset.single_le_sum hnonneg hk)
+    have hdiv := (div_le_one hdenom_pos).2 hnum_le
+    simpa [softmaxMasked, h] using hdiv
+  · simp [softmaxMasked, h]
 
 lemma exp_neg_le_inv_one_add {m : Real} (hm : 0 ≤ m) :
     Real.exp (-m) ≤ 1 / (1 + m) := by
@@ -144,10 +240,64 @@ lemma softmax_other_le_exp_neg [NeZero seq] (scores : Fin seq → Real)
     _ = Real.exp (scores k - scores prev) := hratio
     _ ≤ Real.exp (-m) := hle
 
+lemma softmaxMasked_other_le_exp_neg [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) {prev k : Fin seq} {m : Real}
+    (hprev : allow prev) (hmargin : scores k + m ≤ scores prev) :
+    softmaxMasked scores allow k ≤ Real.exp (-m) := by
+  classical
+  by_cases hk : allow k
+  · let denom : Real :=
+      (Finset.univ.filter allow).sum (fun j => Real.exp (scores j))
+    have hdenom_pos : 0 < denom :=
+      softmaxMasked_denom_pos (scores := scores) (allow := allow) ⟨prev, hprev⟩
+    have hdenom_ge : Real.exp (scores prev) ≤ denom := by
+      have hnonneg :
+          ∀ j ∈ (Finset.univ.filter allow : Finset (Fin seq)), 0 ≤ Real.exp (scores j) :=
+        fun _ _ => (Real.exp_pos _).le
+      have hprev' : prev ∈ (Finset.univ.filter allow : Finset (Fin seq)) := by
+        simp [hprev]
+      simpa [denom] using (Finset.single_le_sum hnonneg hprev')
+    have hinv : 1 / denom ≤ 1 / Real.exp (scores prev) :=
+      one_div_le_one_div_of_le (Real.exp_pos _) hdenom_ge
+    have hmul :=
+      mul_le_mul_of_nonneg_left hinv (Real.exp_pos (scores k)).le
+    have hratio :
+        Real.exp (scores k) / Real.exp (scores prev) =
+          Real.exp (scores k - scores prev) := by
+      symm
+      exact Real.exp_sub (scores k) (scores prev)
+    have hk' : scores k ≤ scores prev - m := (le_sub_iff_add_le).2 hmargin
+    have hdiff : scores k - scores prev ≤ -m := by
+      have hsub := sub_le_sub_right hk' (scores prev)
+      simpa [sub_eq_add_neg, add_assoc, add_left_comm, add_comm] using hsub
+    have hle : Real.exp (scores k - scores prev) ≤ Real.exp (-m) :=
+      Real.exp_le_exp.mpr hdiff
+    have hsoft :
+        Real.exp (scores k) / denom ≤ Real.exp (scores k) / Real.exp (scores prev) := by
+      simpa [denom, div_eq_mul_inv] using hmul
+    calc
+      softmaxMasked scores allow k
+          = Real.exp (scores k) / denom := by
+              simp [softmaxMasked, hk, denom]
+      _ ≤ Real.exp (scores k) / Real.exp (scores prev) := hsoft
+      _ = Real.exp (scores k - scores prev) := hratio
+      _ ≤ Real.exp (-m) := hle
+  · have hpos : 0 ≤ Real.exp (-m) := (Real.exp_pos _).le
+    have hzero : softmaxMasked scores allow k = 0 := by
+      simp [softmaxMasked, hk]
+    simpa [hzero] using hpos
+
 lemma softmax_other_le_inv_one_add [NeZero seq] (scores : Fin seq → Real)
     {prev k : Fin seq} {m : Real} (hm : 0 ≤ m) (hmargin : scores k + m ≤ scores prev) :
     softmax scores k ≤ 1 / (1 + m) :=
   (softmax_other_le_exp_neg (scores := scores) hmargin).trans (exp_neg_le_inv_one_add hm)
+
+lemma softmaxMasked_other_le_inv_one_add [NeZero seq] (scores : Fin seq → Real)
+    (allow : Fin seq → Prop) {prev k : Fin seq} {m : Real}
+    (hm : 0 ≤ m) (hprev : allow prev) (hmargin : scores k + m ≤ scores prev) :
+    softmaxMasked scores allow k ≤ 1 / (1 + m) :=
+  (softmaxMasked_other_le_exp_neg (scores := scores) (allow := allow) hprev hmargin).trans
+    (exp_neg_le_inv_one_add hm)
 
 end
 

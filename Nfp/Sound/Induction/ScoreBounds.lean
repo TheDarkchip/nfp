@@ -38,6 +38,28 @@ def weightBoundAtOfScoreGap (prev : Fin seq → Fin seq)
       else
         ratDivUp 1 (1 + scoreGapLo q k)
 
+/--
+Weight-bound formula derived from score gaps, with optional masking.
+
+Masked keys receive weight bound `0`.
+-/
+noncomputable def weightBoundAtOfScoreGapMasked (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop)
+    (scoreGapLo : Fin seq → Fin seq → Rat) : Fin seq → Fin seq → Rat :=
+  by
+    classical
+    exact fun q k =>
+      if allow q k then
+        if k = prev q then
+          0
+        else
+          if scoreGapLo q k < 0 then
+            (1 : Rat)
+          else
+            ratDivUp 1 (1 + scoreGapLo q k)
+      else
+        0
+
 /-- Unfold `weightBoundAtOfScoreGap` on non-`prev` keys. -/
 theorem weightBoundAtOfScoreGap_eq {prev : Fin seq → Fin seq}
     {scoreGapLo : Fin seq → Fin seq → Rat} {q k : Fin seq} (hk : k ≠ prev q) :
@@ -48,6 +70,19 @@ theorem weightBoundAtOfScoreGap_eq {prev : Fin seq → Fin seq}
         ratDivUp 1 (1 + scoreGapLo q k) := by
   simp [weightBoundAtOfScoreGap, hk]
 
+/-- Unfold `weightBoundAtOfScoreGapMasked` on allowed non-`prev` keys. -/
+theorem weightBoundAtOfScoreGapMasked_eq {prev : Fin seq → Fin seq}
+    {allow : Fin seq → Fin seq → Prop}
+    {scoreGapLo : Fin seq → Fin seq → Rat} {q k : Fin seq}
+    (hallow : allow q k) (hk : k ≠ prev q) :
+    weightBoundAtOfScoreGapMasked prev allow scoreGapLo q k =
+      if scoreGapLo q k < 0 then
+        (1 : Rat)
+      else
+        ratDivUp 1 (1 + scoreGapLo q k) := by
+  classical
+  simp [weightBoundAtOfScoreGapMasked, hallow, hk]
+
 /--
 Per-query epsilon from per-key weight bounds.
 -/
@@ -57,6 +92,19 @@ def epsAtOfWeightBoundAt (prev : Fin seq → Fin seq)
     min (1 : Rat)
       ((Finset.univ : Finset (Fin seq)).erase (prev q) |>.sum (fun k =>
         weightBoundAt q k))
+
+/--
+Per-query epsilon from per-key weight bounds, restricted to allowed keys.
+-/
+noncomputable def epsAtOfWeightBoundAtMasked (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop)
+    (weightBoundAt : Fin seq → Fin seq → Rat) : Fin seq → Rat :=
+  by
+    classical
+    exact fun q =>
+      min (1 : Rat)
+        ((Finset.univ : Finset (Fin seq)).filter (allow q) |>.erase (prev q) |>.sum (fun k =>
+          weightBoundAt q k))
 
 /-- Unfolding lemma for `epsAtOfWeightBoundAt`. -/
 theorem epsAtOfWeightBoundAt_def (prev : Fin seq → Fin seq)
@@ -143,6 +191,68 @@ theorem weight_bound_at_of_scoreBounds [NeZero seq]
       (scoreGapLo := scoreGapLo)
       (weightBoundAt := weightBoundAt)
       hweightBoundAt'
+      hscore_gap_real_at
+  exact hbound q hq k hk
+
+theorem weight_bound_at_of_scoreBounds_masked [NeZero seq]
+    (active : Finset (Fin seq))
+    (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop)
+    (scoresReal : Fin seq → Fin seq → Real)
+    (scoreLo scoreHi : Fin seq → Fin seq → Rat)
+    (weightBoundAt : Fin seq → Fin seq → Rat)
+    (hweightBoundAt :
+      ∀ q k,
+        weightBoundAt q k =
+          weightBoundAtOfScoreGapMasked prev allow
+            (scoreGapLoOfBounds prev scoreLo scoreHi) q k)
+    (hprev : ∀ q, q ∈ active → allow q (prev q))
+    (hscore_bounds :
+      ∀ q k, (scoreLo q k : Real) ≤ scoresReal q k ∧
+        scoresReal q k ≤ (scoreHi q k : Real)) :
+    ∀ q, q ∈ active → ∀ k, k ≠ prev q →
+      Circuit.softmaxMasked (scoresReal q) (allow q) k ≤ (weightBoundAt q k : Real) := by
+  classical
+  intro q hq k hk
+  let scoreGapLo := scoreGapLoOfBounds prev scoreLo scoreHi
+  have hscore_gap_real_at :
+      ∀ q, q ∈ active → ∀ k, k ≠ prev q →
+        scoresReal q k + (scoreGapLo q k : Real) ≤ scoresReal q (prev q) := by
+    intro q' hq' k' hk'
+    have hgap :=
+      scoreGapLoOfBounds_real_at
+        (prev := prev)
+        (scoresReal := scoresReal)
+        (scoreLo := scoreLo)
+        (scoreHi := scoreHi)
+        (hlo := fun a b => (hscore_bounds a b).1)
+        (hhi := fun a b => (hscore_bounds a b).2)
+    exact hgap q' k'
+  have hweightBoundAt' :
+      ∀ q k,
+        weightBoundAt q k =
+          if allow q k then
+            if k = prev q then
+              0
+            else
+              if scoreGapLo q k < 0 then
+                (1 : Rat)
+              else
+                ratDivUp 1 (1 + scoreGapLo q k)
+          else
+            0 := by
+    intro q' k'
+    simpa [scoreGapLo, weightBoundAtOfScoreGapMasked] using hweightBoundAt q' k'
+  have hbound :=
+    weight_bound_at_of_scoreGapLo_masked
+      (active := active)
+      (prev := prev)
+      (allow := allow)
+      (scoresReal := scoresReal)
+      (scoreGapLo := scoreGapLo)
+      (weightBoundAt := weightBoundAt)
+      hweightBoundAt'
+      hprev
       hscore_gap_real_at
   exact hbound q hq k hk
 

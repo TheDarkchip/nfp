@@ -480,6 +480,79 @@ theorem weight_bound_at_of_scoreGapLo
       hsoft.trans hrat
     simpa [hweightBoundAt q k hk, hneg, ratToReal_def] using hbound'
 
+/-- Per-key weight bounds on a single active query, derived from per-key score gaps with masking. -/
+theorem weight_bound_at_of_scoreGapLo_masked
+    (active : Finset (Fin seq))
+    (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop)
+    (scoresReal : Fin seq → Fin seq → Real)
+    (scoreGapLo : Fin seq → Fin seq → Rat)
+    (weightBoundAt : Fin seq → Fin seq → Rat)
+    (hweightBoundAt :
+      ∀ q k, by
+        classical
+        exact
+          weightBoundAt q k =
+            if allow q k then
+              if k = prev q then
+                0
+              else
+                if scoreGapLo q k < 0 then
+                  (1 : Rat)
+                else
+                  ratDivUp 1 (1 + scoreGapLo q k)
+            else
+              0)
+    (hprev : ∀ q, q ∈ active → allow q (prev q))
+    (hscore_gap_real_at :
+      ∀ q, q ∈ active → ∀ k, k ≠ prev q →
+        scoresReal q k + (scoreGapLo q k : Real) ≤ scoresReal q (prev q)) :
+    ∀ q, q ∈ active → ∀ k, k ≠ prev q →
+      Circuit.softmaxMasked (scoresReal q) (allow q) k ≤ (weightBoundAt q k : Real) := by
+  classical
+  intro q hq k hk
+  by_cases hallow : allow q k
+  · by_cases hneg : scoreGapLo q k < 0
+    · have hle : Circuit.softmaxMasked (scoresReal q) (allow q) k ≤ 1 := by
+        simpa [hallow] using
+          (Circuit.softmaxMasked_le_one (scores := scoresReal q) (allow := allow q) k)
+      simpa [hweightBoundAt q k, hallow, hk, hneg, ratToReal_def] using hle
+    · have hnonneg : 0 ≤ scoreGapLo q k := le_of_not_gt hneg
+      have hnonneg_real : 0 ≤ (scoreGapLo q k : Real) := by
+        simpa [ratToReal_def] using ratToReal_nonneg_of_nonneg hnonneg
+      have hscore := hscore_gap_real_at q hq k hk
+      have hsoft :
+          Circuit.softmaxMasked (scoresReal q) (allow q) k ≤
+            1 / (1 + (scoreGapLo q k : Real)) := by
+        simpa [hallow] using
+          (Circuit.softmaxMasked_other_le_inv_one_add (scores := scoresReal q) (allow := allow q)
+            (prev := prev q) (k := k) (m := (scoreGapLo q k : Real))
+            hnonneg_real (hprev q hq) hscore)
+      have hpos : (0 : Rat) < 1 + scoreGapLo q k := by
+        have hle : (1 : Rat) ≤ 1 + scoreGapLo q k := by
+          exact le_add_of_nonneg_right hnonneg
+        exact lt_of_lt_of_le zero_lt_one hle
+      have hden : (1 + scoreGapLo q k) ≠ 0 := by
+        exact ne_of_gt hpos
+      have hrat :
+          1 / (1 + (scoreGapLo q k : Real)) ≤
+            ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) := by
+        simpa [ratToReal_def] using
+          (ratDivUp_ge_real 1 (1 + scoreGapLo q k) hden)
+      have hbound' :
+          Circuit.softmaxMasked (scoresReal q) (allow q) k ≤
+            ratToReal (ratDivUp 1 (1 + scoreGapLo q k)) :=
+        hsoft.trans hrat
+      simpa [hweightBoundAt q k, hallow, hk, hneg, ratToReal_def] using hbound'
+  · have hzero : (weightBoundAt q k : Real) = 0 := by
+      simp [hweightBoundAt q k, hallow]
+    have hweight_zero :
+        Circuit.softmaxMasked (scoresReal q) (allow q) k = 0 := by
+      simpa using
+        (Circuit.softmaxMasked_eq_zero_of_not_allow
+          (scores := scoresReal q) (allow := allow q) (k := k) hallow)
+    simp [hzero, hweight_zero]
+
 end Sound
 
 end Nfp

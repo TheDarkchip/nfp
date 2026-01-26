@@ -39,38 +39,52 @@ This enforces:
 - `margin` is no larger than the score-gap bound;
 - `weightBoundAt` and `epsAt` are at least the derived bounds.
 -/
-def scoreBoundsWithinScores {seq : Nat}
+def scoreBoundsWithinScoresWithMask {seq : Nat}
+    (maskCausal : Bool)
     (cert : Circuit.InductionHeadCert seq) : Bool :=
   let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev cert.scores cert.scores
-  let weightBoundAt := Sound.weightBoundAtOfScoreGap cert.prev scoreGapLo
-  let epsAt := Sound.epsAtOfWeightBoundAt cert.prev weightBoundAt
+  let allow : Fin seq → Fin seq → Prop := fun q k =>
+    if maskCausal then k ≤ q else True
+  let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
+  let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
   finsetAll cert.active (fun q =>
     decide (epsAt q ≤ cert.epsAt q) &&
       finsetAll ((Finset.univ : Finset (Fin seq)).erase (cert.prev q)) (fun k =>
         decide (cert.margin ≤ scoreGapLo q k) &&
           decide (weightBoundAt q k ≤ cert.weightBoundAt q k)))
 
+/--
+Check that certificate margins/weight tolerances are justified by score gaps in the certificate,
+without applying a causal mask.
+-/
+def scoreBoundsWithinScores {seq : Nat}
+    (cert : Circuit.InductionHeadCert seq) : Bool :=
+  scoreBoundsWithinScoresWithMask (maskCausal := false) cert
+
 /-- Soundness of `scoreBoundsWithinScores` for the derived inequalities. -/
-theorem scoreBoundsWithinScores_sound {seq : Nat}
+theorem scoreBoundsWithinScoresWithMask_sound {seq : Nat}
+    (maskCausal : Bool)
     (cert : Circuit.InductionHeadCert seq) :
-    scoreBoundsWithinScores cert = true →
+    scoreBoundsWithinScoresWithMask maskCausal cert = true →
       let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev cert.scores cert.scores
-      let weightBoundAt := Sound.weightBoundAtOfScoreGap cert.prev scoreGapLo
-      let epsAt := Sound.epsAtOfWeightBoundAt cert.prev weightBoundAt
+      let allow : Fin seq → Fin seq → Prop := fun q k =>
+        if maskCausal then k ≤ q else True
+      let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
+      let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
       ∀ q, q ∈ cert.active →
         epsAt q ≤ cert.epsAt q ∧
           ∀ k, k ≠ cert.prev q →
             cert.margin ≤ scoreGapLo q k ∧
               weightBoundAt q k ≤ cert.weightBoundAt q k := by
   classical
-  intro hcheck scoreGapLo weightBoundAt epsAt
+  intro hcheck scoreGapLo allow weightBoundAt epsAt
   have hcheck' :
       finsetAll cert.active (fun q =>
         decide (epsAt q ≤ cert.epsAt q) &&
           finsetAll ((Finset.univ : Finset (Fin seq)).erase (cert.prev q)) (fun k =>
             decide (cert.margin ≤ scoreGapLo q k) &&
               decide (weightBoundAt q k ≤ cert.weightBoundAt q k))) = true := by
-    simpa [scoreBoundsWithinScores, scoreGapLo, weightBoundAt, epsAt] using hcheck
+    simpa [scoreBoundsWithinScoresWithMask, scoreGapLo, allow, weightBoundAt, epsAt] using hcheck
   have hall :=
     (finsetAll_eq_true_iff (s := cert.active)).1 hcheck'
   intro q hq
@@ -94,6 +108,21 @@ theorem scoreBoundsWithinScores_sound {seq : Nat}
   refine ⟨?_, ?_⟩
   · simpa [decide_eq_true_iff] using hk''.1
   · simpa [decide_eq_true_iff] using hk''.2
+
+theorem scoreBoundsWithinScores_sound {seq : Nat}
+    (cert : Circuit.InductionHeadCert seq) :
+    scoreBoundsWithinScores cert = true →
+      let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev cert.scores cert.scores
+      let allow : Fin seq → Fin seq → Prop := fun q k => True
+      let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
+      let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
+      ∀ q, q ∈ cert.active →
+        epsAt q ≤ cert.epsAt q ∧
+          ∀ k, k ≠ cert.prev q →
+            cert.margin ≤ scoreGapLo q k ∧
+              weightBoundAt q k ≤ cert.weightBoundAt q k := by
+  simpa [scoreBoundsWithinScores] using
+    (scoreBoundsWithinScoresWithMask_sound (maskCausal := false) cert)
 
 /--
 Check that certificate margins/weight tolerances are justified by LN-derived score bounds.
@@ -179,8 +208,10 @@ def scoreBoundsWithinModel {seq : Nat}
     let scoreLo : Fin seq → Fin seq → Rat := fun q k => (scoreLoArr[q.1]!)[k.1]!
     let scoreHi : Fin seq → Fin seq → Rat := fun q k => (scoreHiArr[q.1]!)[k.1]!
     let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev scoreLo scoreHi
-    let weightBoundAt := Sound.weightBoundAtOfScoreGap cert.prev scoreGapLo
-    let epsAt := Sound.epsAtOfWeightBoundAt cert.prev weightBoundAt
+    let allow : Fin seq → Fin seq → Prop := fun q k =>
+      if modelSlice.maskCausal then k ≤ q else True
+    let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
+    let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
     finsetAll cert.active (fun q =>
       decide (epsAt q ≤ cert.epsAt q) &&
         finsetAll ((Finset.univ : Finset (Fin seq)).erase (cert.prev q)) (fun k =>
@@ -265,8 +296,10 @@ theorem scoreBoundsWithinModel_sound {seq : Nat}
       let scoreLo : Fin seq → Fin seq → Rat := fun q k => (scoreLoArr[q.1]!)[k.1]!
       let scoreHi : Fin seq → Fin seq → Rat := fun q k => (scoreHiArr[q.1]!)[k.1]!
       let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev scoreLo scoreHi
-      let weightBoundAt := Sound.weightBoundAtOfScoreGap cert.prev scoreGapLo
-      let epsAt := Sound.epsAtOfWeightBoundAt cert.prev weightBoundAt
+      let allow : Fin seq → Fin seq → Prop := fun q k =>
+        if modelSlice.maskCausal then k ≤ q else True
+      let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
+      let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
       0 ≤ modelSlice.scoreScale ∧
         ∀ q, q ∈ cert.active →
           epsAt q ≤ cert.epsAt q ∧
@@ -276,7 +309,7 @@ theorem scoreBoundsWithinModel_sound {seq : Nat}
   classical
   intro hcheck embed lnGamma lnBeta lnBoundsArr lnLo lnHi qLoArr qHiArr kLoArr kHiArr
     qLo qHi kLo kHi baseLoArr baseHiArr scoreLoArr scoreHiArr scoreLo scoreHi scoreGapLo
-    weightBoundAt epsAt
+    allow weightBoundAt epsAt
   by_cases hscale : 0 ≤ modelSlice.scoreScale
   · have hcheck' : scoreBoundsWithinModel lnSlice modelSlice hLn cert = true := hcheck
     have hcheck'' : finsetAll cert.active (fun q =>
@@ -286,7 +319,7 @@ theorem scoreBoundsWithinModel_sound {seq : Nat}
               decide (weightBoundAt q k ≤ cert.weightBoundAt q k))) = true := by
       simpa [scoreBoundsWithinModel, hscale, embed, lnGamma, lnBeta, lnBoundsArr, lnLo, lnHi,
         qLoArr, qHiArr, kLoArr, kHiArr, qLo, qHi, kLo, kHi, baseLoArr, baseHiArr, scoreLoArr,
-        scoreHiArr, scoreLo, scoreHi, scoreGapLo, weightBoundAt, epsAt]
+        scoreHiArr, scoreLo, scoreHi, scoreGapLo, allow, weightBoundAt, epsAt]
         using hcheck'
     have hall :=
       (finsetAll_eq_true_iff (s := cert.active)).1 hcheck''

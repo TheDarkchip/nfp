@@ -24,8 +24,8 @@ noncomputable section
 def headOutputWithScores (scores : Fin seq → Fin seq → Real)
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) (i : Fin dModel) : Real :=
-  let weights : Fin seq → Fin seq → Real := fun q k =>
-    Circuit.softmax (scores q) k
+  let weights : Fin seq → Fin seq → Real :=
+    weightsRealOfInputsWithScores scores inputs
   let vals : Fin seq → Real := fun k => headValueRealOfInputs inputs k i
   dotProduct (weights q) vals
 
@@ -34,8 +34,8 @@ theorem headOutputWithScores_def (scores : Fin seq → Fin seq → Real)
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) (i : Fin dModel) :
     headOutputWithScores scores inputs q i =
-      let weights : Fin seq → Fin seq → Real := fun q k =>
-        Circuit.softmax (scores q) k
+      let weights : Fin seq → Fin seq → Real :=
+        weightsRealOfInputsWithScores scores inputs
       let vals : Fin seq → Real := fun k => headValueRealOfInputs inputs k i
       dotProduct (weights q) vals := by
   simp [headOutputWithScores]

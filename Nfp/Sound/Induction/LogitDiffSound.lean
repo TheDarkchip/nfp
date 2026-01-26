@@ -31,7 +31,7 @@ theorem logitDiffLowerBoundFromCacheWithEps_le
       ∀ q, q ∈ c.active →
         Layers.OneHotApproxBoundsOnActive (Val := Real) (epsAtCustom q : Real)
           (fun q' => q' = q) c.prev
-          (fun q' k => Circuit.softmax (scoresRealOfInputs inputs q') k))
+          (weightsRealOfInputs inputs))
     {lb : Rat}
     (hbound :
       logitDiffLowerBoundFromCacheWithEps c (logitDiffCache c) epsAtCustom = some lb)
@@ -42,8 +42,7 @@ theorem logitDiffLowerBoundFromCacheWithEps_le
   | zero =>
       cases (NeZero.ne (n := (0 : Nat)) rfl)
   | succ n =>
-      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
-        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := weightsRealOfInputs inputs
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
       let epsArr : Array Rat := Array.ofFn epsAtCustom
       let valsLoArr : Array Rat := Array.ofFn (logitDiffCache c).valsLo
@@ -246,7 +245,7 @@ theorem logitDiffLowerBoundFromCacheWithEpsVals_le
       ∀ q, q ∈ c.active →
         Layers.OneHotApproxBoundsOnActive (Val := Real) (epsAtCustom q : Real)
           (fun q' => q' = q) c.prev
-          (fun q' k => Circuit.softmax (scoresRealOfInputs inputs q') k))
+          (weightsRealOfInputs inputs))
     (hvalsLo :
       ∀ k, (valsLoCustom k : Real) ≤ valsRealOfInputs inputs k)
     {lb : Rat}
@@ -259,8 +258,7 @@ theorem logitDiffLowerBoundFromCacheWithEpsVals_le
   | zero =>
       cases (NeZero.ne (n := (0 : Nat)) rfl)
   | succ n =>
-      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := fun q k =>
-        Circuit.softmax (scoresRealOfInputs inputs q) k
+      let weights : Fin (Nat.succ n) → Fin (Nat.succ n) → Real := weightsRealOfInputs inputs
       let vals : Fin (Nat.succ n) → Real := valsRealOfInputs inputs
       let epsArr : Array Rat := Array.ofFn epsAtCustom
       let valsLoArr : Array Rat := Array.ofFn valsLoCustom

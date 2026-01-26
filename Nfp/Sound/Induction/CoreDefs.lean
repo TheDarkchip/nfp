@@ -129,6 +129,42 @@ theorem scoresRealOfInputs_def {seq dModel dHead : Nat}
         base := by
   simp [scoresRealOfInputs]
 
+/-- Real-valued attention weights for explicit scores, respecting causal masking. -/
+noncomputable def weightsRealOfInputsWithScores {seq dModel dHead : Nat}
+    (scores : Fin seq → Fin seq → Real)
+    (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin seq → Real :=
+  fun q k =>
+    if inputs.maskCausal then
+      Circuit.softmaxMasked (scores q) (fun j => j ≤ q) k
+    else
+      Circuit.softmax (scores q) k
+
+/-- Unfolding lemma for `weightsRealOfInputsWithScores`. -/
+theorem weightsRealOfInputsWithScores_def {seq dModel dHead : Nat}
+    (scores : Fin seq → Fin seq → Real)
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (q k : Fin seq) :
+    weightsRealOfInputsWithScores scores inputs q k =
+      if inputs.maskCausal then
+        Circuit.softmaxMasked (scores q) (fun j => j ≤ q) k
+      else
+        Circuit.softmax (scores q) k := by
+  simp [weightsRealOfInputsWithScores]
+
+/-- Real-valued attention weights for head inputs. -/
+noncomputable def weightsRealOfInputs {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin seq → Real :=
+  weightsRealOfInputsWithScores (scoresRealOfInputs inputs) inputs
+
+/-- Unfolding lemma for `weightsRealOfInputs`. -/
+theorem weightsRealOfInputs_def {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) (q k : Fin seq) :
+    weightsRealOfInputs inputs q k =
+      if inputs.maskCausal then
+        Circuit.softmaxMasked (scoresRealOfInputs inputs q) (fun j => j ≤ q) k
+      else
+        Circuit.softmax (scoresRealOfInputs inputs q) k := by
+  simp [weightsRealOfInputs, weightsRealOfInputsWithScores]
+
 /-- Real-valued per-key head outputs in model space. -/
 noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin dModel → Real :=
@@ -254,17 +290,17 @@ structure InductionHeadCertSound [NeZero seq] {dModel dHead : Nat}
     Layers.SoftmaxMarginBoundsOn (Val := Real) (c.eps : Real) (c.margin : Real)
       (fun q => q ∈ c.active) c.prev
       (scoresRealOfInputs inputs)
-      (fun q k => Circuit.softmax (scoresRealOfInputs inputs q) k)
+      (weightsRealOfInputs inputs)
   /-- Per-query one-hot bounds derived from local margins. -/
   oneHot_bounds_at :
     ∀ q, q ∈ c.active →
       Layers.OneHotApproxBoundsOnActive (Val := Real) (c.epsAt q : Real)
         (fun q' => q' = q) c.prev
-        (fun q' k => Circuit.softmax (scoresRealOfInputs inputs q') k)
+        (weightsRealOfInputs inputs)
   /-- Per-key weight bounds derived from local score gaps. -/
   weight_bounds_at :
     ∀ q, q ∈ c.active → ∀ k, k ≠ c.prev q →
-      Circuit.softmax (scoresRealOfInputs inputs q) k ≤ (c.weightBoundAt q k : Real)
+      weightsRealOfInputs inputs q k ≤ (c.weightBoundAt q k : Real)
   /-- Interval bounds hold for the direction values. -/
   value_bounds :
     ValueIntervalBounds (vals := valsRealOfInputs inputs) c.values
