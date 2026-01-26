@@ -721,8 +721,9 @@ def main() -> None:
                         help="Maximum vocab id for direction search (exclusive).")
     parser.add_argument("--direction-max-candidates", type=int, default=0,
                         help="Limit number of direction candidates (0 = all in range).")
-    parser.add_argument("--direction-min-lb", default="0",
-                        help="Minimum logit-diff lower bound to accept (default: 0).")
+    parser.add_argument("--direction-min-lb", default=None,
+                        help=("Minimum logit-diff lower bound to accept "
+                              "(omit to accept any LB)."))
     parser.add_argument("--direction-report-out", type=Path,
                         help="Optional path to write a ranked direction report.")
     parser.add_argument("--direction-topk", type=int, default=10,
@@ -1047,13 +1048,20 @@ def main() -> None:
                 args.direction_vocab_max,
                 args.seed,
             )
-        try:
-            min_lb = float(Fraction(args.direction_min_lb))
-        except (ValueError, ZeroDivisionError) as exc:
-            raise SystemExit("direction-min-lb must be a rational literal") from exc
-        if best_lb < min_lb:
-            raise SystemExit(
-                f"Best direction lower bound {best_lb:.6f} below minimum {min_lb:.6f}."
+        min_lb = None
+        if args.direction_min_lb is not None:
+            try:
+                min_lb = float(Fraction(args.direction_min_lb))
+            except (ValueError, ZeroDivisionError) as exc:
+                raise SystemExit("direction-min-lb must be a rational literal") from exc
+            if best_lb < min_lb:
+                raise SystemExit(
+                    f"Best direction lower bound {best_lb:.6f} below minimum {min_lb:.6f}."
+                )
+        elif best_lb < 0:
+            print(
+                f"warning: best direction lower bound {best_lb:.6f} is negative",
+                file=sys.stderr,
             )
         print(
             f"Selected direction: target={direction_target} negative={direction_negative} "

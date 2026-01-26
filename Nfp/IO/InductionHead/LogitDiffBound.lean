@@ -28,6 +28,8 @@ def logitDiffLowerBoundTightWithActive? (active : Finset (Fin seq))
       cert.values.lo cert.values.hi cert.values.vals
   let epsAtTight := Sound.epsAtOfWeightBoundAt cert.prev cert.weightBoundAt
   let valsLo := cert.values.valsLo
+  let weighted? :=
+    Circuit.logitDiffLowerBoundWeightedAt active cert.prev cert.weightBoundAt valsLo
   let loAt : Fin seq → Rat := fun q =>
     let others : Finset (Fin seq) :=
       (Finset.univ : Finset (Fin seq)).erase (cert.prev q)
@@ -37,11 +39,15 @@ def logitDiffLowerBoundTightWithActive? (active : Finset (Fin seq))
       cert.values.lo
   let tight? :=
     Circuit.logitDiffLowerBoundAtLoAt active cert.prev epsAtTight loAt valsLo
-  match base?, tight? with
-  | some a, some b => some (max a b)
-  | some a, none => some a
-  | none, some b => some b
-  | none, none => none
+  match base?, tight?, weighted? with
+  | some a, some b, some c => some (max a (max b c))
+  | some a, some b, none => some (max a b)
+  | some a, none, some c => some (max a c)
+  | none, some b, some c => some (max b c)
+  | some a, none, none => some a
+  | none, some b, none => some b
+  | none, none, some c => some c
+  | none, none, none => none
 
 /-- Tight logit-diff lower bound: max of global-interval and per-key lower bound variants. -/
 def logitDiffLowerBoundTight? (cert : Circuit.InductionHeadCert seq) : Option Rat :=
