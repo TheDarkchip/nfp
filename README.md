@@ -120,6 +120,14 @@ lake exe nfp induction verify-circuit \
   --period 16
 ```
 
+Reproducible top circuit-pair verification (GPT-2 small, fixed tokens + direction search):
+
+```bash
+bash scripts/verify_top_circuit_pairs.sh
+```
+
+This script writes regenerated tokens and certs under `reports/` (gitignored).
+
 Optional gates:
 
 ```
