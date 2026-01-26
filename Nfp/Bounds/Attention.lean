@@ -408,6 +408,50 @@ theorem attentionOutputBoundsWeighted_spec {seq dModel dHead numHeads : Nat} [Ne
   · simpa [bounds, attentionOutputBoundsWeighted, headOutLo, headOutHi, headLo, headHi,
       sumLo, sumHi, hreal] using hhigh
 
+/-- Interval bounds for the attention residual path from explicit weight/value bounds. -/
+def attentionResidualBoundsWeighted {seq dModel dHead numHeads : Nat}
+    (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
+    (attnBias : Fin dModel → Rat)
+    (weights : Fin numHeads → Fin seq → Fin seq → Rat)
+    (vLo vHi : Fin numHeads → Fin seq → Fin dHead → Rat)
+    (lo hi : Fin dModel → Rat) :
+    (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
+  let attn := attentionOutputBoundsWeighted heads attnBias weights vLo vHi
+  (fun q i => lo i + attn.1 q i, fun q i => hi i + attn.2 q i)
+
+/-- `attentionResidualBoundsWeighted` soundness for real attention residual outputs. -/
+theorem attentionResidualBoundsWeighted_spec {seq dModel dHead numHeads : Nat} [NeZero seq]
+    (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
+    (attnBias : Fin dModel → Rat)
+    (weights : Fin numHeads → Fin seq → Fin seq → Rat)
+    (vLo vHi : Fin numHeads → Fin seq → Fin dHead → Rat)
+    (headValue : Fin numHeads → Fin seq → Fin dHead → Real)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
+    (hvals : ∀ h k d,
+      (vLo h k d : Real) ≤ headValue h k d ∧ headValue h k d ≤ (vHi h k d : Real))
+    (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
+    let bounds := attentionResidualBoundsWeighted heads attnBias weights vLo vHi lo hi
+    let attnTerm : Fin seq → Fin dModel → Real := fun q i =>
+      (∑ h,
+        dotProduct (fun d => ((heads h).wo i d : Real))
+          (fun d => dotProduct (fun k => (weights h q k : Real))
+            (fun k => headValue h k d))) + (attnBias i : Real)
+    ∀ q i,
+      (bounds.1 q i : Real) ≤ x q i + attnTerm q i ∧
+        x q i + attnTerm q i ≤ (bounds.2 q i : Real) := by
+  classical
+  intro bounds attnTerm q i
+  have hattn :=
+    attentionOutputBoundsWeighted_spec (heads := heads) (attnBias := attnBias)
+      (weights := weights) (vLo := vLo) (vHi := vHi) (headValue := headValue) hvals q i
+  have hlow := add_le_add (hlo q i) hattn.1
+  have hhigh := add_le_add (hhi q i) hattn.2
+  constructor
+  · simpa [bounds, attnTerm, attentionResidualBoundsWeighted, attentionOutputBoundsWeighted,
+      add_assoc] using hlow
+  · simpa [bounds, attnTerm, attentionResidualBoundsWeighted, attentionOutputBoundsWeighted,
+      add_assoc] using hhigh
+
 /-- Interval bounds for the attention residual path. -/
 def attentionResidualBounds {dModel dHead numHeads : Nat}
     (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
