@@ -113,7 +113,7 @@ theorem scoreBoundsWithinScores_sound {seq : Nat}
     (cert : Circuit.InductionHeadCert seq) :
     scoreBoundsWithinScores cert = true →
       let scoreGapLo := Sound.scoreGapLoOfBounds cert.prev cert.scores cert.scores
-      let allow : Fin seq → Fin seq → Prop := fun q k => True
+      let allow : Fin seq → Fin seq → Prop := fun _ _ => True
       let weightBoundAt := Sound.weightBoundAtOfScoreGapMasked cert.prev allow scoreGapLo
       let epsAt := Sound.epsAtOfWeightBoundAtMasked cert.prev allow weightBoundAt
       ∀ q, q ∈ cert.active →
