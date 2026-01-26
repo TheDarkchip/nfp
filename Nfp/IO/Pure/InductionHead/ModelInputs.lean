@@ -519,6 +519,84 @@ theorem residualBoundsWeightedFromSlices_spec {seq : Nat}
       hout' (lo := inputs.embed) (hi := inputs.embed) hlo hhi q i
   simpa [bounds, residualBoundsWeightedFromSlices, outBounds, inputs] using hres
 
+/--
+Compute weighted residual direction bounds from model slices and explicit weights.
+-/
+noncomputable def residualDirectionBoundsWeightedFromSlices {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (Fin seq → Rat) × (Fin seq → Rat) :=
+  let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+  let resBounds := residualBoundsWeightedFromSlices lnSlice valueSlice dirSlice weights hLn hDir
+  let dir : Fin valueSlice.dModel → Rat := inputs.direction
+  (fun q => dotIntervalLower dir (resBounds.1 q) (resBounds.2 q),
+    fun q => dotIntervalUpper dir (resBounds.1 q) (resBounds.2 q))
+
+/--
+Slice-derived weighted residual direction bounds are sound for `embed + headOutputWithWeights`.
+-/
+theorem residualDirectionBoundsWeightedFromSlices_spec {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (hModel : valueSlice.dModel ≠ 0)
+    (hEps : 0 < lnSlice.lnEps)
+    (hSlack : 0 ≤ lnSlice.lnSlack)
+    (hScalePos : ∀ scale, lnSlice.lnScale? = some scale → 0 < scale)
+    (hSqrt :
+      match lnSlice.lnScale? with
+      | some scale => 0 < sqrtLowerWithScale scale lnSlice.lnEps
+      | none => 0 < sqrtLower lnSlice.lnEps) :
+    let bounds :=
+      residualDirectionBoundsWeightedFromSlices lnSlice valueSlice dirSlice weights hLn hDir
+    let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+    ∀ q,
+      (bounds.1 q : Real) ≤
+          dotProduct (fun i => (inputs.direction i : Real))
+            (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) ∧
+        dotProduct (fun i => (inputs.direction i : Real))
+            (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) ≤
+          (bounds.2 q : Real) := by
+  classical
+  intro bounds inputs q
+  let resBounds :=
+    residualBoundsWeightedFromSlices lnSlice valueSlice dirSlice weights hLn hDir
+  have hres :=
+    residualBoundsWeightedFromSlices_spec lnSlice valueSlice dirSlice weights
+      hLn hDir hModel hEps hSlack hScalePos hSqrt
+  have hlo : ∀ i,
+      (resBounds.1 q i : Real) ≤
+        inputs.embed q i + Sound.headOutputWithWeights weights inputs q i := by
+    intro i
+    have h := (hres q i).1
+    simpa [resBounds] using h
+  have hhi : ∀ i,
+      inputs.embed q i + Sound.headOutputWithWeights weights inputs q i ≤
+        (resBounds.2 q i : Real) := by
+    intro i
+    have h := (hres q i).2
+    simpa [resBounds] using h
+  have hlow :=
+    dotIntervalLower_le_dotProduct_real (v := inputs.direction)
+      (lo := resBounds.1 q) (hi := resBounds.2 q)
+      (x := fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i)
+      hlo hhi
+  have hhigh :=
+    dotProduct_le_dotIntervalUpper_real (v := inputs.direction)
+      (lo := resBounds.1 q) (hi := resBounds.2 q)
+      (x := fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i)
+      hlo hhi
+  constructor
+  · simpa [bounds, residualDirectionBoundsWeightedFromSlices, resBounds] using hlow
+  · simpa [bounds, residualDirectionBoundsWeightedFromSlices, resBounds] using hhigh
+
 end InductionHeadCert
 
 end Pure
