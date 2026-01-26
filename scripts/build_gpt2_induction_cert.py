@@ -630,6 +630,7 @@ def weight_bound_at_of_score_gap(
     gaps: list[list[Fraction]],
     prev: np.ndarray,
     weights: list[list[Fraction]] | None = None,
+    mask_causal: bool = False,
 ) -> list[list[Fraction]]:
     seq = len(gaps)
     bounds: list[list[Fraction]] = []
@@ -637,7 +638,9 @@ def weight_bound_at_of_score_gap(
         prev_q = int(prev[q])
         row = []
         for k in range(seq):
-            if k == prev_q:
+            if mask_causal and k > q:
+                bound = Fraction(0)
+            elif k == prev_q:
                 bound = Fraction(0)
             else:
                 gap = gaps[q][k]
@@ -652,7 +655,11 @@ def weight_bound_at_of_score_gap(
     return bounds
 
 
-def eps_at_of_weight_bounds(bounds: list[list[Fraction]], prev: np.ndarray) -> list[Fraction]:
+def eps_at_of_weight_bounds(
+    bounds: list[list[Fraction]],
+    prev: np.ndarray,
+    mask_causal: bool = False,
+) -> list[Fraction]:
     seq = len(bounds)
     eps_at: list[Fraction] = []
     for q in range(seq):
@@ -660,6 +667,8 @@ def eps_at_of_weight_bounds(bounds: list[list[Fraction]], prev: np.ndarray) -> l
         total = Fraction(0)
         for k in range(seq):
             if k == prev_q:
+                continue
+            if mask_causal and k > q:
                 continue
             total += bounds[q][k]
         eps_at.append(min(Fraction(1), total))
@@ -798,6 +807,7 @@ def main() -> None:
 
     model_slice = None
     rat_from_float_model = rat_from_float_exact
+    mask_causal = True
     if args.emit_model_slice:
         model_decimals = args.model_decimals
         if model_decimals is not None and model_decimals < 0:
@@ -897,6 +907,7 @@ def main() -> None:
             "bv": bv,
             "attn_bias": attn_bias,
         }
+        mask_causal = bool(model_slice.get("mask_causal", True))
         scores_rat = compute_scores_from_model_slice(model_slice)
     else:
         scores_rat = [[rat_from_float(float(scores[q, k]), args.decimals) for k in range(args.seq)]
@@ -970,11 +981,22 @@ def main() -> None:
 
     gap_lo = score_gap_lo(scores_rat, prev)
     if args.weight_bounds_from_weights:
-        weight_bound_at = weights_rat
-        eps_at = [eps_by_q[q] for q in range(args.seq)]
+        weight_bound_at = [row[:] for row in weights_rat]
+        if mask_causal:
+            for q in range(args.seq):
+                for k in range(args.seq):
+                    if k > q:
+                        weight_bound_at[q][k] = Fraction(0)
+        eps_at = eps_at_of_weight_bounds(
+            weight_bound_at, prev, mask_causal=mask_causal
+        )
     else:
-        weight_bound_at = weight_bound_at_of_score_gap(gap_lo, prev, weights_rat)
-        eps_at = eps_at_of_weight_bounds(weight_bound_at, prev)
+        weight_bound_at = weight_bound_at_of_score_gap(
+            gap_lo, prev, weights_rat, mask_causal=mask_causal
+        )
+        eps_at = eps_at_of_weight_bounds(
+            weight_bound_at, prev, mask_causal=mask_causal
+        )
     if active_positions:
         eps = max(eps_at[q] for q in active_positions)
 
