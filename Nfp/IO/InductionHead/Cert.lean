@@ -1266,6 +1266,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                       return (← finish 2)
               if let some t0 := tLnPhase? then
                 let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-ln-ms {t1 - t0}"
+              let mut valBoundsArr? : Option (Array (Rat × Rat)) := none
               if let some modelValueSlice := modelValueSlice? then
                 match modelLnSlice?, modelDirectionSlice? with
                 | none, _ =>
@@ -1275,21 +1276,17 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     IO.eprintln "error: model-value data requires model-unembed slice"
                     return (← finish 2)
                 | some modelLnSlice, some modelDirectionSlice =>
-                    if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
+                  if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
                       if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
-                        let okValues ← timeIO timeStages "values-model" (fun _ =>
-                          if timeValues then
-                            InductionHeadCert.valuesWithinModelBoundsProfile
-                              modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
-                              cert.values true
-                          else
-                            pure
-                              (InductionHeadCert.valuesWithinModelBounds
-                                modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
-                                cert.values))
+                        let needValBounds := reportWeightedResidual || minLogitDiff?.isSome
+                        let (okValues, valBounds?) ←
+                          InductionHeadCert.valuesWithinModelBoundsWithBoundsIO
+                            modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
+                            cert.values needValBounds timeValues timeStages
                         if !okValues then
                           IO.eprintln "error: values not within model bounds"
                           return (← finish 2)
+                        valBoundsArr? := valBounds?
                       else
                         IO.eprintln
                           "error: model-direction dModel does not match model-value slice"
@@ -1425,10 +1422,23 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               let activeForBounds := activeOverride?.getD cert.active
               if reportWeightedResidual then
                 InductionHeadCert.reportWeightedResidualDir
-                  modelLnSlice? modelValueSlice? modelDirectionSlice?
+                  modelLnSlice? modelValueSlice? modelDirectionSlice? valBoundsArr?
                   weightsPresent cert.weights activeForBounds timeStages
               let logitDiffLB? :=
-                InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
+                let base? :=
+                  InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
+                match valBoundsArr? with
+                | none => base?
+                | some valBoundsArr =>
+                    let valBounds : Fin seq → Rat × Rat := fun k => valBoundsArr[k.1]!
+                    let tight? :=
+                      InductionHeadCert.logitDiffLowerBoundTightWithActiveValBounds?
+                        activeForBounds cert valBounds
+                    match base?, tight? with
+                    | some a, some b => some (max a b)
+                    | some a, none => some a
+                    | none, some b => some b
+                    | none, none => none
               match minLogitDiff? with
               | none =>
                   if kind = "induction-aligned" then

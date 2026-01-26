@@ -135,6 +135,51 @@ def valuesWithinModelBoundsProfile {seq : Nat}
   IO.eprintln s!"info: values-check-ok {checkOk}"
   return ok
 
+/--
+Check model-derived value bounds and optionally return the bounds used.
+
+When `needValBounds` is true, this also returns the per-key value bounds
+computed by the trusted pure checker so downstream checks can reuse them
+without recomputation.
+-/
+def valuesWithinModelBoundsWithBoundsIO {seq : Nat}
+    (lnSlice : ModelLnSlice seq) (valueSlice : ModelValueSlice)
+    (dirSlice : ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (values : Circuit.ValueIntervalCert seq)
+    (needValBounds : Bool)
+    (timeValues : Bool)
+    (timeStages : Bool) : IO (Bool × Option (Array (Rat × Rat))) := do
+  timeIO timeStages "values-model" (fun _ => do
+    if needValBounds then
+      if timeValues then
+        let okValues ←
+          valuesWithinModelBoundsProfile
+            lnSlice valueSlice dirSlice hLn hDir values true
+        if okValues then
+          let (okValues', valBoundsArr) :=
+            Pure.InductionHeadCert.valuesWithinModelBoundsWithBounds
+              lnSlice valueSlice dirSlice hLn hDir values
+          pure (okValues', some valBoundsArr)
+        else
+          pure (false, none)
+      else
+        let (okValues, valBoundsArr) :=
+          Pure.InductionHeadCert.valuesWithinModelBoundsWithBounds
+            lnSlice valueSlice dirSlice hLn hDir values
+        pure (okValues, some valBoundsArr)
+    else
+      if timeValues then
+        let okValues ←
+          valuesWithinModelBoundsProfile
+            lnSlice valueSlice dirSlice hLn hDir values true
+        pure (okValues, none)
+      else
+        pure
+          (valuesWithinModelBounds
+            lnSlice valueSlice dirSlice hLn hDir values, none))
+
 end InductionHeadCert
 
 end IO

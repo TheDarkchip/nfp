@@ -137,6 +137,110 @@ def valuesWithinModelBounds {seq : Nat}
   finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
     decide (valLo k ≤ values.vals k) && decide (values.vals k ≤ valHi k))
 
+/--
+Compute value bounds from model slices alongside the check result.
+
+This mirrors `valuesWithinModelBounds` but also returns the per-key bounds
+used for the check.
+-/
+def valuesWithinModelBoundsWithBounds {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (values : Circuit.ValueIntervalCert seq) : Bool × Array (Rat × Rat) :=
+  let embed : Fin seq → Fin valueSlice.dModel → Rat := by
+    simpa [hLn] using lnSlice.embed
+  let lnGamma : Fin valueSlice.dModel → Rat := by
+    simpa [hLn] using lnSlice.lnGamma
+  let lnBeta : Fin valueSlice.dModel → Rat := by
+    simpa [hLn] using lnSlice.lnBeta
+  let direction : Fin valueSlice.dModel → Rat := by
+    simpa [hDir] using dirSlice.direction
+  let bias : Rat :=
+    Linear.dotFin valueSlice.dModel (fun j => valueSlice.attnBias j) direction
+  let dirHeadArr : Array Rat :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction)
+  let wvColsArr : Array (Array Rat) :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      Array.ofFn (fun j : Fin valueSlice.dModel => valueSlice.wv j d))
+  let lnBoundsArr : Array (Array Rat × Array Rat) :=
+    Array.ofFn (fun q : Fin seq =>
+      let bounds :=
+        match lnSlice.lnScale? with
+        | some scale =>
+            Bounds.layerNormBoundsWithScale scale lnSlice.lnEps lnGamma lnBeta (embed q)
+        | none =>
+            Bounds.layerNormBounds lnSlice.lnEps lnGamma lnBeta (embed q)
+      (Array.ofFn (fun i : Fin valueSlice.dModel => bounds.1 i - lnSlice.lnSlack),
+        Array.ofFn (fun i : Fin valueSlice.dModel => bounds.2 i + lnSlice.lnSlack)))
+  let wvDenArr : Array Nat :=
+    Array.ofFn (fun d : Fin valueSlice.headDim =>
+      (wvColsArr[d.1]!).foldl (fun acc v => Nat.lcm acc v.den) 1)
+  let lnDenArr : Array Nat :=
+    Array.ofFn (fun k : Fin seq =>
+      let bounds := lnBoundsArr[k.1]!
+      let denLo := bounds.1.foldl (fun acc v => Nat.lcm acc v.den) 1
+      let denHi := bounds.2.foldl (fun acc v => Nat.lcm acc v.den) 1
+      Nat.lcm denLo denHi)
+  let vBoundsArr : Array (Array (Rat × Rat)) :=
+    Array.ofFn (fun k : Fin seq =>
+      Array.ofFn (fun d : Fin valueSlice.headDim =>
+        let wvCol :=
+          wvColsArr[d.1]'(by
+            simp [wvColsArr])
+        let lnBounds :=
+          lnBoundsArr[k.1]'(by
+            simp [lnBoundsArr])
+        let lnLoArr := lnBounds.1
+        let lnHiArr := lnBounds.2
+        let den := Nat.lcm (wvDenArr[d.1]!) (lnDenArr[k.1]!)
+        let bounds :=
+          dotIntervalBoundsFastArrScaled valueSlice.dModel den wvCol lnLoArr lnHiArr
+            (by simp [wvCol, wvColsArr])
+            (by simp [lnLoArr, lnBounds, lnBoundsArr])
+            (by simp [lnHiArr, lnBounds, lnBoundsArr])
+        (bounds.1 + valueSlice.bv d, bounds.2 + valueSlice.bv d)))
+  let valBoundsArr : Array (Rat × Rat) :=
+    let dirHeadDen := dirHeadArr.foldl (fun acc v => Nat.lcm acc v.den) 1
+    Array.ofFn (fun k : Fin seq =>
+      let vBounds := vBoundsArr[k.1]'(by
+        simp [vBoundsArr])
+      let vLoArr := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).1)
+      let vHiArr := Array.ofFn (fun d : Fin valueSlice.headDim =>
+        (vBounds[d.1]'(by simp [vBounds, vBoundsArr])).2)
+      let denLo := vLoArr.foldl (fun acc v => Nat.lcm acc v.den) 1
+      let denHi := vHiArr.foldl (fun acc v => Nat.lcm acc v.den) 1
+      let den := Nat.lcm dirHeadDen (Nat.lcm denLo denHi)
+      let bounds :=
+        dotIntervalBoundsFastArrScaled valueSlice.headDim den dirHeadArr vLoArr vHiArr
+          (by simp [dirHeadArr]) (by simp [vLoArr]) (by simp [vHiArr])
+      (bounds.1 + bias, bounds.2 + bias))
+  let valLo : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).1
+  let valHi : Fin seq → Rat := fun k =>
+    (valBoundsArr[k.1]'(by
+      simp [valBoundsArr])).2
+  let ok :=
+    finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>
+      decide (valLo k ≤ values.vals k) && decide (values.vals k ≤ valHi k))
+  (ok, valBoundsArr)
+
+theorem valuesWithinModelBoundsWithBounds_fst {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (values : Circuit.ValueIntervalCert seq) :
+    (valuesWithinModelBoundsWithBounds lnSlice valueSlice dirSlice hLn hDir values).1 =
+      valuesWithinModelBounds lnSlice valueSlice dirSlice hLn hDir values := by
+  rfl
+
 /-- Soundness of `valuesWithinModelBounds` for per-key value inequalities. -/
 theorem valuesWithinModelBounds_sound {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)

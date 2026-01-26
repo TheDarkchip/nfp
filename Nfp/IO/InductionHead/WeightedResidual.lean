@@ -24,11 +24,13 @@ namespace InductionHeadCert
 
 /--
 Report direction·(embed+headOutput) bounds derived from model slices and weights.
+Optionally reuse precomputed value bounds to avoid recomputation.
 -/
 def reportWeightedResidualDir {seq : Nat}
     (modelLnSlice? : Option (ModelLnSlice seq))
     (modelValueSlice? : Option ModelValueSlice)
     (modelDirectionSlice? : Option ModelDirectionSlice)
+    (valBoundsArr? : Option (Array (Rat × Rat)))
     (weightsPresent : Bool)
     (weights : Fin seq → Fin seq → Rat)
     (active : Finset (Fin seq))
@@ -41,8 +43,14 @@ def reportWeightedResidualDir {seq : Nat}
         else if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
           if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
             let bounds :=
-              Nfp.IO.Pure.InductionHeadCert.residualDirectionBoundsWeightedFastFromSlices
-                modelLnSlice modelValueSlice modelDirectionSlice weights hLn hDir
+              match valBoundsArr? with
+              | some valBoundsArr =>
+                  let valBounds : Fin seq → Rat × Rat := fun k => valBoundsArr[k.1]!
+                  Nfp.IO.Pure.InductionHeadCert.residualDirectionBoundsWeightedFastFromValBounds
+                    modelLnSlice modelValueSlice modelDirectionSlice weights valBounds hLn hDir
+              | none =>
+                  Nfp.IO.Pure.InductionHeadCert.residualDirectionBoundsWeightedFastFromSlices
+                    modelLnSlice modelValueSlice modelDirectionSlice weights hLn hDir
             if hActive : active.Nonempty then
               let lbSet := active.image (fun q => bounds.1 q)
               let ubSet := active.image (fun q => bounds.2 q)

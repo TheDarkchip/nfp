@@ -603,6 +603,160 @@ theorem residualDirectionBoundsWeightedFromSlices_spec {seq : Nat}
 Compute weighted residual direction bounds from model slices and explicit weights
 using direction-space value bounds.
 -/
+def residualDirectionBoundsWeightedFastFromValBounds {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (valBounds : Fin seq → Rat × Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (Fin seq → Rat) × (Fin seq → Rat) :=
+  let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+  let valLo : Fin seq → Rat := fun k => (valBounds k).1
+  let valHi : Fin seq → Rat := fun k => (valBounds k).2
+  let embedDot : Fin seq → Rat := fun q => dotProduct inputs.direction (inputs.embed q)
+  let outLo : Fin seq → Rat := fun q =>
+    embedDot q + dotIntervalLower (weights q) valLo valHi
+  let outHi : Fin seq → Rat := fun q =>
+    embedDot q + dotIntervalUpper (weights q) valLo valHi
+  (outLo, outHi)
+
+/--
+Fast weighted residual direction bounds are sound when given sound per-key value bounds.
+-/
+theorem residualDirectionBoundsWeightedFastFromValBounds_spec {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (valBounds : Fin seq → Rat × Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (hvals :
+      let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+      ∀ k, (valBounds k).1 ≤ valsRealOfInputs inputs k ∧
+        valsRealOfInputs inputs k ≤ (valBounds k).2) :
+    let bounds :=
+      residualDirectionBoundsWeightedFastFromValBounds
+        lnSlice valueSlice dirSlice weights valBounds hLn hDir
+    let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+    ∀ q,
+      (bounds.1 q : Real) ≤
+          dotProduct (fun i => (inputs.direction i : Real))
+            (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) ∧
+        dotProduct (fun i => (inputs.direction i : Real))
+            (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) ≤
+          (bounds.2 q : Real) := by
+  classical
+  intro bounds inputs q
+  let valLo : Fin seq → Rat := fun k => (valBounds k).1
+  let valHi : Fin seq → Rat := fun k => (valBounds k).2
+  let embedDot : Fin seq → Rat := fun q => dotProduct inputs.direction (inputs.embed q)
+  have hvals' : ∀ k, (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
+      valsRealOfInputs inputs k ≤ (valHi k : Real) := by
+    simpa [valLo, valHi, inputs] using hvals
+  have hlow :=
+    dotIntervalLower_le_dotProduct_real (v := weights q)
+      (lo := valLo) (hi := valHi) (x := fun k => valsRealOfInputs inputs k)
+      (fun k => (hvals' k).1) (fun k => (hvals' k).2)
+  have hhigh :=
+    dotProduct_le_dotIntervalUpper_real (v := weights q)
+      (lo := valLo) (hi := valHi) (x := fun k => valsRealOfInputs inputs k)
+      (fun k => (hvals' k).1) (fun k => (hvals' k).2)
+  let dir : Fin valueSlice.dModel → Real := fun i => (inputs.direction i : Real)
+  have hswap :
+      dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i) =
+        dotProduct (fun k => (weights q k : Real)) (fun k => valsRealOfInputs inputs k) := by
+    have hswap' :
+        dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i) =
+          ∑ k, (weights q k : Real) * dotProduct dir (fun i =>
+            headValueRealOfInputs inputs k i) := by
+      calc
+        dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i)
+            = ∑ i, dir i * ∑ k, (weights q k : Real) * headValueRealOfInputs inputs k i := by
+                simp [dotProduct, Sound.headOutputWithWeights_def, dir]
+        _ = ∑ i, ∑ k, dir i * ((weights q k : Real) * headValueRealOfInputs inputs k i) := by
+                simp [Finset.mul_sum]
+        _ = ∑ k, ∑ i, dir i * ((weights q k : Real) * headValueRealOfInputs inputs k i) := by
+                simpa using
+                  (Finset.sum_comm (s := (Finset.univ : Finset (Fin valueSlice.dModel)))
+                    (t := (Finset.univ : Finset (Fin seq)))
+                    (f := fun i k =>
+                      dir i * ((weights q k : Real) * headValueRealOfInputs inputs k i)))
+        _ = ∑ k, (weights q k : Real) * ∑ i, dir i * headValueRealOfInputs inputs k i := by
+                refine Finset.sum_congr rfl ?_
+                intro k _
+                calc
+                  ∑ i, dir i * ((weights q k : Real) * headValueRealOfInputs inputs k i)
+                      = ∑ i, (weights q k : Real) *
+                          (dir i * headValueRealOfInputs inputs k i) := by
+                          refine Finset.sum_congr rfl ?_
+                          intro i _
+                          simp [mul_assoc, mul_comm]
+                  _ = (weights q k : Real) *
+                      ∑ i, dir i * headValueRealOfInputs inputs k i := by
+                          simp [Finset.mul_sum]
+    have hvalsReal :
+        ∀ k, dotProduct dir (fun i => headValueRealOfInputs inputs k i) =
+          valsRealOfInputs inputs k := by
+      intro k
+      simpa [dir] using
+        (Sound.direction_dot_headValue_eq_valsReal (inputs := inputs) (k := k))
+    have hsum :
+        dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i) =
+          ∑ k, (weights q k : Real) * valsRealOfInputs inputs k := by
+      calc
+        dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i)
+            = ∑ k, (weights q k : Real) *
+                dotProduct dir (fun i => headValueRealOfInputs inputs k i) := hswap'
+        _ = ∑ k, (weights q k : Real) * valsRealOfInputs inputs k := by
+            refine Finset.sum_congr rfl ?_
+            intro k _
+            exact congrArg (fun x => (weights q k : Real) * x) (hvalsReal k)
+    simpa [dotProduct] using hsum
+  have hEmbed :
+      (embedDot q : Real) =
+        dotProduct dir (fun i => (inputs.embed q i : Real)) := by
+    classical
+    simp [embedDot, dir, dotProduct]
+  have hsplit :
+      dotProduct dir (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) =
+        dotProduct dir (fun i => (inputs.embed q i : Real)) +
+          dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i) := by
+    simpa [dir] using
+      (Nfp.Linear.dotProduct_add_right (x := dir)
+        (y := fun i => (inputs.embed q i : Real))
+        (z := fun i => Sound.headOutputWithWeights weights inputs q i))
+  have hsum :
+      dotProduct dir (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) =
+        (embedDot q : Real) +
+          dotProduct (fun k => (weights q k : Real)) (fun k => valsRealOfInputs inputs k) := by
+    calc
+      dotProduct dir (fun i =>
+          inputs.embed q i + Sound.headOutputWithWeights weights inputs q i)
+          = dotProduct dir (fun i => (inputs.embed q i : Real)) +
+              dotProduct dir (fun i => Sound.headOutputWithWeights weights inputs q i) := hsplit
+      _ = (embedDot q : Real) +
+            dotProduct (fun k => (weights q k : Real)) (fun k => valsRealOfInputs inputs k) := by
+            simp [hEmbed, hswap]
+  have hsum' :
+      dotProduct (fun i => (inputs.direction i : Real))
+          (fun i => inputs.embed q i + Sound.headOutputWithWeights weights inputs q i) =
+        (embedDot q : Real) +
+          dotProduct (fun k => (weights q k : Real)) (fun k => valsRealOfInputs inputs k) := by
+    simpa [dir] using hsum
+  constructor
+  · have hlow' := add_le_add_left hlow (embedDot q : Real)
+    simpa [bounds, residualDirectionBoundsWeightedFastFromValBounds,
+      valLo, valHi, embedDot, hsum', inputs] using hlow'
+  · have hhigh' := add_le_add_left hhigh (embedDot q : Real)
+    simpa [bounds, residualDirectionBoundsWeightedFastFromValBounds,
+      valLo, valHi, embedDot, hsum', inputs] using hhigh'
+
+/--
+Compute weighted residual direction bounds directly from model slices.
+-/
 def residualDirectionBoundsWeightedFastFromSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
