@@ -169,8 +169,9 @@ def main() -> int:
                         help="Maximum vocab id for direction search (exclusive).")
     parser.add_argument("--direction-max-candidates", type=int, default=0,
                         help="Limit number of direction candidates (0 = all in range).")
-    parser.add_argument("--direction-min-lb", default="0",
-                        help="Minimum logit-diff lower bound to accept (default: 0).")
+    parser.add_argument("--direction-min-lb", default=None,
+                        help=("Minimum logit-diff lower bound to accept "
+                              "(omit to accept any LB)."))
     args = parser.parse_args()
 
     require_leading_space = args.require_leading_space and not args.allow_no_leading_space
@@ -342,10 +343,13 @@ def main() -> int:
             direction_args.extend(["--direction-vocab-min", str(args.direction_vocab_min)])
             direction_args.extend(["--direction-vocab-max", str(args.direction_vocab_max)])
             direction_args.extend(["--direction-max-candidates", str(args.direction_max_candidates)])
-            direction_args.extend(["--direction-min-lb", str(args.direction_min_lb)])
+            if args.direction_min_lb is not None:
+                direction_args.extend(["--direction-min-lb", str(args.direction_min_lb)])
         elif args.direction_target is not None:
             direction_args.extend(["--direction-target", str(args.direction_target)])
             direction_args.extend(["--direction-negative", str(args.direction_negative)])
+        if (args.search_direction or args.direction_target is not None) and not args.emit_model_slice:
+            direction_args.append("--omit-unembed-rows")
         seen_prev = set()
         for entry in pairs[:top_verify]:
             prev = entry["prev"]
