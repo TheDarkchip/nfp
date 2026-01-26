@@ -1094,7 +1094,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (tokensPath? : Option String) (directionQ? : Option Nat)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
     (minCoverageStr? : Option String)
-    (reportWeightedResidual : Bool)
+    (reportWeightedResidual : Bool) (reportLogitDiff : Bool)
     (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
     (timeValues : Bool) (timeTotal : Bool) :
     IO UInt32 := do
@@ -1278,14 +1278,14 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 | some modelLnSlice, some modelDirectionSlice =>
                   if hLn : modelLnSlice.dModel = modelValueSlice.dModel then
                       if hDir : modelDirectionSlice.dModel = modelValueSlice.dModel then
-                        let needValBounds := reportWeightedResidual || minLogitDiff?.isSome
+                        let needValBounds :=
+                          reportWeightedResidual || reportLogitDiff || minLogitDiff?.isSome
                         let (okValues, valBounds?) ←
                           InductionHeadCert.valuesWithinModelBoundsWithBoundsIO
                             modelLnSlice modelValueSlice modelDirectionSlice hLn hDir
                             cert.values needValBounds timeValues timeStages
                         if !okValues then
-                          IO.eprintln "error: values not within model bounds"
-                          return (← finish 2)
+                          IO.eprintln "error: values not within model bounds"; return (← finish 2)
                         valBoundsArr? := valBounds?
                       else
                         IO.eprintln
@@ -1322,8 +1322,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   (seq := seq) modelSlice? cert))
               match scoreBoundsRes with
               | Except.error msg =>
-                  IO.eprintln s!"error: {msg}"
-                  return (← finish 2)
+                  IO.eprintln s!"error: {msg}"; return (← finish 2)
               | Except.ok () => pure ()
               if let some t0 := tScoresPhase? then
                 let t1 ← IO.monoMsNow; IO.eprintln s!"info: phase-scores-ms {t1 - t0}"
@@ -1424,6 +1423,9 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 InductionHeadCert.reportWeightedResidualDir
                   modelLnSlice? modelValueSlice? modelDirectionSlice? valBoundsArr?
                   weightsPresent cert.weights activeForBounds timeStages
+              if reportLogitDiff then
+                InductionHeadCert.reportLogitDiffComponents
+                  activeForBounds cert valBoundsArr?
               let logitDiffLB? :=
                 let base? :=
                   InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
