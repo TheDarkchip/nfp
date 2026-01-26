@@ -573,9 +573,21 @@ def search_direction(
             lo = float(vals.min())
             hi = float(vals.max())
             gap = hi - lo
+            min_idx = int(vals.argmin())
+            if vals.shape[0] > 1:
+                two_smallest = np.partition(vals, 1)[:2]
+                second_min = float(two_smallest[1])
+            else:
+                second_min = lo
             lb = None
             for q, pq in active_prev:
-                cand = float(vals[pq]) - eps_at[q] * gap
+                val_prev = float(vals[pq])
+                eps = eps_at[q]
+                base = val_prev - eps * gap
+                lo_at = second_min if pq == min_idx else lo
+                delta = val_prev - lo_at
+                tight = val_prev - eps * (delta if delta > 0 else 0.0)
+                cand = tight if tight > base else base
                 if lb is None or cand < lb:
                     lb = cand
             if lb is None:
