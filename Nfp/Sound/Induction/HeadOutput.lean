@@ -146,6 +146,50 @@ theorem headOutputWithWeights_bounds_of_lnBounds
     headOutputWithWeights_bounds weights inputs headLo headHi hhead' q i
   simpa [outLo, outHi] using h
 
+/-!
+Residual bounds combining input intervals with weighted head outputs.
+-/
+
+/-- Residual bounds from LayerNorm-derived head bounds and explicit weights. -/
+theorem residualWithHeadOutputWithWeights_bounds
+    (weights : Fin seq → Fin seq → Rat)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (lnLo lnHi : Fin seq → Fin dModel → Rat)
+    (hln : ∀ q i,
+      (lnLo q i : Real) ≤ lnRealOfInputs inputs q i ∧
+        lnRealOfInputs inputs q i ≤ (lnHi q i : Real))
+    (lo hi : Fin dModel → Rat)
+    (hlo : ∀ q i, (lo i : Real) ≤ inputs.embed q i)
+    (hhi : ∀ q i, inputs.embed q i ≤ (hi i : Real)) :
+    let vLo : Fin seq → Fin dHead → Rat := fun k d =>
+      dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let vHi : Fin seq → Fin dHead → Rat := fun k d =>
+      dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let headLo : Fin seq → Fin dModel → Rat := fun k i =>
+      dotIntervalLower (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    let headHi : Fin seq → Fin dModel → Rat := fun k i =>
+      dotIntervalUpper (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    let outLo : Fin seq → Fin dModel → Rat := fun q i =>
+      dotIntervalLower (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+    let outHi : Fin seq → Fin dModel → Rat := fun q i =>
+      dotIntervalUpper (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+    let resLo : Fin seq → Fin dModel → Rat := fun q i => lo i + outLo q i
+    let resHi : Fin seq → Fin dModel → Rat := fun q i => hi i + outHi q i
+    ∀ q i,
+      (resLo q i : Real) ≤
+          inputs.embed q i + headOutputWithWeights weights inputs q i ∧
+        inputs.embed q i + headOutputWithWeights weights inputs q i ≤
+          (resHi q i : Real) := by
+  classical
+  intro vLo vHi headLo headHi outLo outHi resLo resHi q i
+  have hhead :=
+    headOutputWithWeights_bounds_of_lnBounds weights inputs lnLo lnHi hln q i
+  have hlow := add_le_add (hlo q i) hhead.1
+  have hhigh := add_le_add (hhi q i) hhead.2
+  constructor
+  · simpa [resLo] using hlow
+  · simpa [resHi] using hhigh
+
 end
 
 end Sound
