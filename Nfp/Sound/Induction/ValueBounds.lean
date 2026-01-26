@@ -123,13 +123,14 @@ theorem valsRealOfInputs_bounds_of_lnBounds
     let vHi : Fin seq → Fin dHead → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let bias : Rat := attnBiasDot inputs
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k,
       (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
         valsRealOfInputs inputs k ≤ (valHi k : Real) := by
   classical
-  intro vLo vHi dirHead valLo valHi k
+  intro vLo vHi dirHead bias valLo valHi k
   have hv_bounds : ∀ d,
       (vLo k d : Real) ≤ vRealOfInputs inputs k d ∧
         vRealOfInputs inputs k d ≤ (vHi k d : Real) := by
@@ -161,9 +162,19 @@ theorem valsRealOfInputs_bounds_of_lnBounds
       (x := fun d => vRealOfInputs inputs k d)
       (hlo := fun d => (hv_bounds d).1)
       (hhi := fun d => (hv_bounds d).2)
+  have hlow' :
+      (dotIntervalLower dirHead (vLo k) (vHi k) : Real) +
+          (bias : Real) ≤ valsRealOfInputs inputs k := by
+    have hlow' := add_le_add_right hlow (bias : Real)
+    simpa [valsRealOfInputs_def, dirHead, bias] using hlow'
+  have hhigh' :
+      valsRealOfInputs inputs k ≤
+        (dotIntervalUpper dirHead (vLo k) (vHi k) : Real) + (bias : Real) := by
+    have hhigh' := add_le_add_right hhigh (bias : Real)
+    simpa [valsRealOfInputs_def, dirHead, bias] using hhigh'
   constructor
-  · simpa [valLo, valsRealOfInputs_def, dirHead] using hlow
-  · simpa [valHi, valsRealOfInputs_def, dirHead] using hhigh
+  · simpa [valLo] using hlow'
+  · simpa [valHi] using hhigh'
 
 /-- Value outputs are bounded by LayerNorm bounds expanded by `lnSlack`. -/
 theorem valsRealOfInputs_bounds_with_lnSlack
@@ -179,12 +190,13 @@ theorem valsRealOfInputs_bounds_with_lnSlack
     let vHi : Fin seq → Fin dHead → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let bias : Rat := attnBiasDot inputs
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k,
       (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
         valsRealOfInputs inputs k ≤ (valHi k : Real) := by
-  intro lnBounds lnLo lnHi vLo vHi dirHead valLo valHi k
+  intro lnBounds lnLo lnHi vLo vHi dirHead bias valLo valHi k
   have hln :=
     lnRealOfInputs_bounds_with_slack inputs lnSlack hSlack hModel hEps hSqrt
   have hln' : ∀ q i,
@@ -193,7 +205,7 @@ theorem valsRealOfInputs_bounds_with_lnSlack
     simpa [lnBounds, lnLo, lnHi] using hln
   have hvals := valsRealOfInputs_bounds_of_lnBounds inputs lnLo lnHi hln'
   have hvals' := hvals k
-  simpa [vLo, vHi, dirHead, valLo, valHi] using hvals'
+  simpa [vLo, vHi, dirHead, bias, valLo, valHi] using hvals'
 
 /-- Value outputs are bounded by scaled LayerNorm bounds expanded by `lnSlack`. -/
 theorem valsRealOfInputs_bounds_with_scale_lnSlack
@@ -212,12 +224,13 @@ theorem valsRealOfInputs_bounds_with_scale_lnSlack
     let vHi : Fin seq → Fin dHead → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let dirHead : Fin dHead → Rat := fun d => (dirHeadVecOfInputs inputs).get d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let bias : Rat := attnBiasDot inputs
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k,
       (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
         valsRealOfInputs inputs k ≤ (valHi k : Real) := by
-  intro lnBounds lnLo lnHi vLo vHi dirHead valLo valHi k
+  intro lnBounds lnLo lnHi vLo vHi dirHead bias valLo valHi k
   have hln :=
     lnRealOfInputs_bounds_with_scale_slack inputs scale hScale lnSlack hSlack hModel hEps hSqrt
   have hln' : ∀ q i,
@@ -226,7 +239,7 @@ theorem valsRealOfInputs_bounds_with_scale_lnSlack
     simpa [lnBounds, lnLo, lnHi] using hln
   have hvals := valsRealOfInputs_bounds_of_lnBounds inputs lnLo lnHi hln'
   have hvals' := hvals k
-  simpa [vLo, vHi, dirHead, valLo, valHi] using hvals'
+  simpa [vLo, vHi, dirHead, bias, valLo, valHi] using hvals'
 
 end
 

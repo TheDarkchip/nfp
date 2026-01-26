@@ -64,6 +64,8 @@ def valuesWithinModelBoundsProfile {seq : Nat}
     simpa [hLn] using lnSlice.lnBeta
   let direction : Fin valueSlice.dModel → Rat := by
     simpa [hDir] using dirSlice.direction
+  let bias : Rat :=
+    Linear.dotFin valueSlice.dModel (fun j => valueSlice.attnBias j) direction
   let dirHeadVecWithProof ← Nfp.IO.timeIO timeValues "values-dirhead" (fun _ =>
     pure <|
       (⟨Array.ofFn (fun (d : Fin valueSlice.headDim) =>
@@ -121,8 +123,10 @@ def valuesWithinModelBoundsProfile {seq : Nat}
         let denLo := vLoArr.foldl (fun acc v => Nat.lcm acc v.den) 1
         let denHi := vHiArr.foldl (fun acc v => Nat.lcm acc v.den) 1
         let den := Nat.lcm dirHeadDen (Nat.lcm denLo denHi)
-        dotIntervalBoundsFastArrFast valueSlice.headDim (some den) dirHeadVec vLoArr vHiArr
-          hDirHeadVec (by simp [vLoArr]) (by simp [vHiArr])))
+        let vb :=
+          dotIntervalBoundsFastArrFast valueSlice.headDim (some den) dirHeadVec vLoArr vHiArr
+            hDirHeadVec (by simp [vLoArr]) (by simp [vHiArr])
+        (vb.1 + bias, vb.2 + bias)))
   let checkOk ← Nfp.IO.timeIO timeValues "values-check" (fun _ =>
     pure <|
       finsetAll (Finset.univ : Finset (Fin seq)) (fun k =>

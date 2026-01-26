@@ -258,13 +258,15 @@ def compute_vals_from_model_slice(model_slice: dict, direction: np.ndarray) -> n
     wv = np.array(model_slice["wv"], dtype=np.float64)
     bv = np.array(model_slice["bv"], dtype=np.float64)
     wo = np.array(model_slice["wo"], dtype=np.float64)
+    attn_bias = np.array(model_slice["attn_bias"], dtype=np.float64)
     mean = embed.mean(axis=-1, keepdims=True)
     var = embed.var(axis=-1, keepdims=True)
     x_hat = (embed - mean) / np.sqrt(var + ln_eps)
     ln_out = x_hat * ln_gamma + ln_beta
     values = ln_out @ wv + bv
     dir_head = wo.T @ direction
-    return values @ dir_head
+    bias = float(direction @ attn_bias)
+    return values @ dir_head + bias
 
 
 def compute_copy_logits(model, unembed_weight, input_ids, layer: int, head: int,
@@ -530,6 +532,7 @@ def read_tokens(path: Path) -> np.ndarray:
 def search_direction(
     model,
     unembed_rows: np.ndarray,
+    attn_bias: np.ndarray,
     values: np.ndarray,
     layer: int,
     head: int,
@@ -558,6 +561,7 @@ def search_direction(
     w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
 
     proj = unembed_rows[cand_ids] @ w_o  # (m, head_dim)
+    bias_vals = unembed_rows[cand_ids] @ attn_bias  # (m,)
     vals_mat = values @ proj.T  # (seq, m)
     active_prev = [(q, int(prev[q])) for q in active_positions]
     best_lb = None
@@ -569,7 +573,7 @@ def search_direction(
         for j in range(vals_mat.shape[1]):
             if i == j:
                 continue
-            vals = vals_i - vals_mat[:, j]
+            vals = vals_i - vals_mat[:, j] + (bias_vals[i] - bias_vals[j])
             lo = float(vals.min())
             hi = float(vals.max())
             gap = hi - lo
@@ -1042,9 +1046,11 @@ def main() -> None:
         if max_candidates == 0:
             max_candidates = None
         unembed_rows = unembed_weight.detach().cpu().numpy()
+        attn_bias = model.h[layer].attn.c_proj.bias.detach().cpu().numpy()
         direction_target, direction_negative, best_lb, topk_entries = search_direction(
             model=model,
             unembed_rows=unembed_rows,
+            attn_bias=attn_bias,
             values=values,
             layer=layer,
             head=head,
@@ -1123,7 +1129,9 @@ def main() -> None:
             start, end = head * head_dim, (head + 1) * head_dim
             w_o = model.h[layer].attn.c_proj.weight.detach().cpu().numpy()[:, start:end]
             dir_head = w_o.T @ direction
-            vals = values @ dir_head
+            attn_bias = model.h[layer].attn.c_proj.bias.detach().cpu().numpy()
+            bias = float(direction @ attn_bias)
+            vals = values @ dir_head + bias
     else:
         if args.value_dim < 0 or args.value_dim >= values.shape[1]:
             raise SystemExit(f"value-dim must be in [0, {values.shape[1] - 1}]")

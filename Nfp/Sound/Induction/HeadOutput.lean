@@ -20,7 +20,7 @@ variable {seq dModel dHead : Nat}
 
 noncomputable section
 
-/-- Real-valued head output using explicit score inputs. -/
+/-- Real-valued head output using explicit score inputs (includes attention output bias). -/
 def headOutputWithScores (scores : Fin seq → Fin seq → Real)
     (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) (i : Fin dModel) : Real :=
@@ -40,7 +40,7 @@ theorem headOutputWithScores_def (scores : Fin seq → Fin seq → Real)
       dotProduct (weights q) vals := by
   simp [headOutputWithScores]
 
-/-- Real-valued head output for a query and model dimension. -/
+/-- Real-valued head output for a query and model dimension (includes attention output bias). -/
 def headOutput (inputs : Model.InductionHeadInputs seq dModel dHead)
     (q : Fin seq) (i : Fin dModel) : Real :=
   headOutputWithScores (scoresRealOfInputs inputs) inputs q i

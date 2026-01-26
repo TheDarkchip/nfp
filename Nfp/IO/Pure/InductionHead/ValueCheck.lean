@@ -49,6 +49,8 @@ def valuesWithinModelBounds {seq : Nat}
     simpa [hLn] using lnSlice.lnBeta
   let direction : Fin valueSlice.dModel → Rat := by
     simpa [hDir] using dirSlice.direction
+  let bias : Rat :=
+    Linear.dotFin valueSlice.dModel (fun j => valueSlice.attnBias j) direction
   let dirHeadArr : Array Rat :=
     Array.ofFn (fun d : Fin valueSlice.headDim =>
       Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction)
@@ -122,8 +124,10 @@ def valuesWithinModelBounds {seq : Nat}
       let denLo := vLoArr.foldl (fun acc v => Nat.lcm acc v.den) 1
       let denHi := vHiArr.foldl (fun acc v => Nat.lcm acc v.den) 1
       let den := Nat.lcm dirHeadDen (Nat.lcm denLo denHi)
-      dotIntervalBoundsFastArrScaled valueSlice.headDim den dirHeadArr vLoArr vHiArr
-        (by simp [dirHeadArr]) (by simp [vLoArr]) (by simp [vHiArr]))
+      let bounds :=
+        dotIntervalBoundsFastArrScaled valueSlice.headDim den dirHeadArr vLoArr vHiArr
+          (by simp [dirHeadArr]) (by simp [vLoArr]) (by simp [vHiArr])
+      (bounds.1 + bias, bounds.2 + bias))
   let valLo : Fin seq → Rat := fun k =>
     (valBoundsArr[k.1]'(by
       simp [valBoundsArr])).1
@@ -150,6 +154,8 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
         simpa [hLn] using lnSlice.lnBeta
       let direction : Fin valueSlice.dModel → Rat := by
         simpa [hDir] using dirSlice.direction
+      let bias : Rat :=
+        Linear.dotFin valueSlice.dModel (fun j => valueSlice.attnBias j) direction
       let dirHead : Fin valueSlice.headDim → Rat := fun d =>
         Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction
       let lnBounds : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
@@ -169,12 +175,14 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
       let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d => (vBounds k d).1
       let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d => (vBounds k d).2
       let valBounds : Fin seq → Rat × Rat :=
-        fun k => dotIntervalBoundsFast dirHead (vLo k) (vHi k)
+        fun k =>
+          let bounds := dotIntervalBoundsFast dirHead (vLo k) (vHi k)
+          (bounds.1 + bias, bounds.2 + bias)
       let valLo : Fin seq → Rat := fun k => (valBounds k).1
       let valHi : Fin seq → Rat := fun k => (valBounds k).2
       ∀ k, valLo k ≤ values.vals k ∧ values.vals k ≤ valHi k := by
   classical
-  intro hcheck embed lnGamma lnBeta direction dirHead lnBounds lnLo lnHi vBounds vLo vHi
+  intro hcheck embed lnGamma lnBeta direction bias dirHead lnBounds lnLo lnHi vBounds vLo vHi
     valBounds valLo valHi k
   -- Array-based definitions mirroring `valuesWithinModelBounds`.
   let dirHeadArr : Array Rat := Array.ofFn dirHead
@@ -237,8 +245,10 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
       let denLo := vLoArr'.foldl (fun acc v => Nat.lcm acc v.den) 1
       let denHi := vHiArr'.foldl (fun acc v => Nat.lcm acc v.den) 1
       let den := Nat.lcm dirHeadDen (Nat.lcm denLo denHi)
-      dotIntervalBoundsFastArrScaled valueSlice.headDim den dirHeadArr vLoArr' vHiArr'
-        (by simp [dirHeadArr]) (by simp [vLoArr']) (by simp [vHiArr']))
+      let bounds :=
+        dotIntervalBoundsFastArrScaled valueSlice.headDim den dirHeadArr vLoArr' vHiArr'
+          (by simp [dirHeadArr]) (by simp [vLoArr']) (by simp [vHiArr'])
+      (bounds.1 + bias, bounds.2 + bias))
   let valLoArr : Fin seq → Rat := fun k =>
     (valBoundsArr[k.1]'(by
       simp [valBoundsArr])).1
@@ -251,7 +261,7 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
   have hkArr : decide (valLoArr k ≤ values.vals k) = true ∧
       decide (values.vals k ≤ valHiArr k) = true := by
     simpa [Bool.and_eq_true, valLoArr, valHiArr, valBoundsArr, vBoundsArr, dirHeadArr,
-      dirHeadDen, wvColsArr, lnBoundsArr, vLoArr, vHiArr, wvDenArr, lnDenArr] using hk
+      dirHeadDen, wvColsArr, lnBoundsArr, vLoArr, vHiArr, wvDenArr, lnDenArr, bias] using hk
   have hdiv_wv :
       ∀ (d : Fin valueSlice.headDim) (j : Fin valueSlice.dModel),
         (valueSlice.wv j d).den ∣ wvDenArr[d.1]! := by
@@ -460,7 +470,7 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
         (dotIntervalBoundsFastArr_ofFn (n := valueSlice.headDim)
           (v := dirHead) (lo := vLoFun) (hi := vHiFun))
     simpa [valBoundsArr, vBoundsArr, dirHeadArr, wvColsArr, lnBoundsArr, vBounds,
-      vLo, vHi, valBounds, hinner, den, denLo, denHi, vLoArr', vHiArr', vLoFun, vHiFun] using
+      vLo, vHi, valBounds, hinner, den, denLo, denHi, vLoArr', vHiArr', vLoFun, vHiFun, bias] using
       hscaled.trans harr
   have hvalLo : valLoArr = valLo := by
     funext k

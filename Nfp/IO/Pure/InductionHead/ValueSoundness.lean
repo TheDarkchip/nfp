@@ -58,18 +58,19 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
       fun q i => (lnBounds q).2 i + lnSlice.lnSlack
     let dirHead : Fin valueSlice.headDim → Rat :=
       fun d => (dirHeadVecOfInputs inputs).get d
+    let bias : Rat := attnBiasDot inputs
     let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k,
       valLo k ≤ values.vals k ∧ values.vals k ≤ valHi k ∧
         (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
           valsRealOfInputs inputs k ≤ (valHi k : Real) := by
   classical
-  intro inputs lnBounds lnLo lnHi dirHead vLo vHi valLo valHi k
+  intro inputs lnBounds lnLo lnHi dirHead bias vLo vHi valLo valHi k
   set embed : Fin seq → Fin valueSlice.dModel → Rat := by
     simpa [hLn] using lnSlice.embed
   set lnGamma : Fin valueSlice.dModel → Rat := by
@@ -78,6 +79,8 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     simpa [hLn] using lnSlice.lnBeta
   set direction : Fin valueSlice.dModel → Rat := by
     simpa [hDir] using dirSlice.direction
+  set biasSlice : Rat :=
+    Linear.dotFin valueSlice.dModel (fun j => valueSlice.attnBias j) direction
   set dirHeadSlice : Fin valueSlice.headDim → Rat :=
     fun d => Linear.dotFin valueSlice.dModel (fun j => valueSlice.wo j d) direction
   set lnBoundsSlice : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
@@ -93,8 +96,10 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     dotIntervalLower (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k) + valueSlice.bv d
   set vHiSlice : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
     dotIntervalUpper (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k) + valueSlice.bv d
-  set valLoSlice : Fin seq → Rat := fun k => dotIntervalLower dirHeadSlice (vLoSlice k) (vHiSlice k)
-  set valHiSlice : Fin seq → Rat := fun k => dotIntervalUpper dirHeadSlice (vLoSlice k) (vHiSlice k)
+  set valLoSlice : Fin seq → Rat := fun k =>
+    dotIntervalLower dirHeadSlice (vLoSlice k) (vHiSlice k) + biasSlice
+  set valHiSlice : Fin seq → Rat := fun k =>
+    dotIntervalUpper dirHeadSlice (vLoSlice k) (vHiSlice k) + biasSlice
   set vLoFastSlice : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
     (dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k)).1 +
       valueSlice.bv d
@@ -102,9 +107,9 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     (dotIntervalBoundsFast (fun j => valueSlice.wv j d) (lnLoSlice k) (lnHiSlice k)).2 +
       valueSlice.bv d
   set valLoFastSlice : Fin seq → Rat := fun k =>
-    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).1
+    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).1 + biasSlice
   set valHiFastSlice : Fin seq → Rat := fun k =>
-    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).2
+    (dotIntervalBoundsFast dirHeadSlice (vLoFastSlice k) (vHiFastSlice k)).2 + biasSlice
   have hcert :=
     valuesWithinModelBounds_sound lnSlice valueSlice dirSlice hLn hDir values hcheck
   have htrue :=
@@ -120,15 +125,17 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     simp [vHiFastSlice, vHiSlice, dotIntervalBoundsFast_snd]
   have hvalLoFast_eq : valLoFastSlice = valLoSlice := by
     funext k
-    simp [valLoFastSlice, valLoSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_fst]
+    simp [valLoFastSlice, valLoSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_fst,
+      biasSlice]
   have hvalHiFast_eq : valHiFastSlice = valHiSlice := by
     funext k
-    simp [valHiFastSlice, valHiSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_snd]
+    simp [valHiFastSlice, valHiSlice, hvLoFast_eq, hvHiFast_eq, dotIntervalBoundsFast_snd,
+      biasSlice]
   have hcertSlice : valLoSlice k ≤ values.vals k ∧ values.vals k ≤ valHiSlice k := by
     simpa [hvalLoFast_eq, hvalHiFast_eq] using hcert'
   have htrue' : (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
       valsRealOfInputs inputs k ≤ (valHi k : Real) := by
-    simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead] using htrue k
+    simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, bias] using htrue k
   have hcert'' : valLo k ≤ values.vals k ∧ values.vals k ≤ valHi k := by
     have hinputs : inputs = inputsOfSlices lnSlice valueSlice dirSlice hLn hDir := by
       rfl
@@ -166,6 +173,8 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
     have hdirHead_eq : dirHead = dirHeadSlice := by
       funext d
       simp [dirHead, dirHeadSlice, dirHeadVecOfInputs_get, hwo, hdir]
+    have hbias_eq : bias = biasSlice := by
+      simp [bias, biasSlice, hdir, inputsOfSlices_attnBias, attnBiasDot_def]
     have hvLo_eq : vLo = vLoSlice := by
       funext k d
       simp [vLo, vLoSlice, hwv, hbv, hlnLo_eq, hlnHi_eq]
@@ -173,9 +182,9 @@ theorem valuesWithinModelBounds_interval_sound {seq : Nat}
       funext k d
       simp [vHi, vHiSlice, hwv, hbv, hlnLo_eq, hlnHi_eq]
     have hvalLo_eq : valLo = valLoSlice := by
-      simp [valLo, valLoSlice, hdirHead_eq, hvLo_eq, hvHi_eq]
+      simp [valLo, valLoSlice, hdirHead_eq, hvLo_eq, hvHi_eq, hbias_eq]
     have hvalHi_eq : valHi = valHiSlice := by
-      simp [valHi, valHiSlice, hdirHead_eq, hvLo_eq, hvHi_eq]
+      simp [valHi, valHiSlice, hdirHead_eq, hvLo_eq, hvHi_eq, hbias_eq]
     simpa [hvalLo_eq, hvalHi_eq] using hcertSlice
   exact ⟨hcert''.1, hcert''.2, htrue'.1, htrue'.2⟩
 
@@ -215,17 +224,18 @@ theorem valuesWithinModelBounds_diff_bound {seq : Nat}
       fun q i => (lnBounds q).2 i + lnSlice.lnSlack
     let dirHead : Fin valueSlice.headDim → Rat :=
       fun d => (dirHeadVecOfInputs inputs).get d
+    let bias : Rat := attnBiasDot inputs
     let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k,
       |valsRealOfInputs inputs k - (values.vals k : Real)| ≤
         (valHi k - valLo k : Rat) := by
   classical
-  intro inputs lnBounds lnLo lnHi dirHead vLo vHi valLo valHi k
+  intro inputs lnBounds lnLo lnHi dirHead bias vLo vHi valLo valHi k
   have hbounds :=
     valuesWithinModelBounds_interval_sound lnSlice valueSlice dirSlice hLn hDir values hcheck
       hModel hEps hSlack hScalePos hSqrt

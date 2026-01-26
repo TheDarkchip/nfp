@@ -87,6 +87,16 @@ theorem inputsOfSlices_wo {seq : Nat}
     (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).wo = valueSlice.wo := by
   rfl
 
+/-- `inputsOfSlices` preserves the attention output bias. -/
+theorem inputsOfSlices_attnBias {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (inputsOfSlices lnSlice valueSlice dirSlice hLn hDir).attnBias = valueSlice.attnBias := by
+  rfl
+
 /-! `inputsOfSlices` preserves LayerNorm inputs. -/
 
 /-- `inputsOfSlices` preserves embeddings. -/
@@ -267,16 +277,17 @@ theorem valsRealOfInputs_bounds_from_slices {seq : Nat}
       fun q i => (lnBounds q).2 i + lnSlice.lnSlack
     let dirHead : Fin valueSlice.headDim → Rat :=
       fun d => (dirHeadVecOfInputs inputs).get d
+    let bias : Rat := attnBiasDot inputs
     let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
     let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
       dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
-    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k)
-    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k)
+    let valLo : Fin seq → Rat := fun k => dotIntervalLower dirHead (vLo k) (vHi k) + bias
+    let valHi : Fin seq → Rat := fun k => dotIntervalUpper dirHead (vLo k) (vHi k) + bias
     ∀ k, (valLo k : Real) ≤ valsRealOfInputs inputs k ∧
       valsRealOfInputs inputs k ≤ (valHi k : Real) := by
   classical
-  intro inputs lnBounds lnLo lnHi dirHead vLo vHi valLo valHi k
+  intro inputs lnBounds lnLo lnHi dirHead bias vLo vHi valLo valHi k
   cases hscale : lnSlice.lnScale? with
   | none =>
       have hSqrt' : 0 < sqrtLower lnSlice.lnEps := by
@@ -285,7 +296,7 @@ theorem valsRealOfInputs_bounds_from_slices {seq : Nat}
         valsRealOfInputs_bounds_with_lnSlack inputs lnSlice.lnSlack hSlack
           hModel hEps hSqrt'
       have hvals' := hvals k
-      simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, hscale] using hvals'
+      simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, bias, hscale] using hvals'
   | some scale =>
       have hSqrt' : 0 < sqrtLowerWithScale scale lnSlice.lnEps := by
         simpa [hscale] using hSqrt
@@ -294,7 +305,7 @@ theorem valsRealOfInputs_bounds_from_slices {seq : Nat}
         valsRealOfInputs_bounds_with_scale_lnSlack inputs scale hScalePos' lnSlice.lnSlack hSlack
           hModel hEps hSqrt'
       have hvals' := hvals k
-      simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, hscale] using hvals'
+      simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, bias, hscale] using hvals'
 
 end InductionHeadCert
 

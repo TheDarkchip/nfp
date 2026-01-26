@@ -36,12 +36,24 @@ def dirHeadVecOfInputs {seq dModel dHead : Nat}
   Vector.ofFn (fun d : Fin dHead =>
     Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j))
 
+/-- Direction dot product with the attention output bias. -/
+def attnBiasDot {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) : Rat :=
+  Linear.dotFin dModel (fun j => inputs.attnBias j) (fun j => inputs.direction j)
+
 /-- Unfolding lemma for `dirHeadVecOfInputs`. -/
 theorem dirHeadVecOfInputs_get {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (d : Fin dHead) :
     (dirHeadVecOfInputs inputs).get d =
       Linear.dotFin dModel (fun j => inputs.wo j d) (fun j => inputs.direction j) := by
   simp [dirHeadVecOfInputs]
+
+/-- Unfolding lemma for `attnBiasDot`. -/
+theorem attnBiasDot_def {seq dModel dHead : Nat}
+    (inputs : Model.InductionHeadInputs seq dModel dHead) :
+    attnBiasDot inputs =
+      Linear.dotFin dModel (fun j => inputs.attnBias j) (fun j => inputs.direction j) := by
+  simp [attnBiasDot]
 
 /-- Real-valued LayerNorm outputs for head inputs. -/
 noncomputable def lnRealOfInputs {seq dModel dHead : Nat}
@@ -169,27 +181,31 @@ theorem weightsRealOfInputs_def {seq dModel dHead : Nat}
 noncomputable def headValueRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Fin dModel → Real :=
   fun k i =>
-    dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d)
+    dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) +
+      (inputs.attnBias i : Real)
 
 /-- Unfolding lemma for `headValueRealOfInputs`. -/
 theorem headValueRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) (i : Fin dModel) :
     headValueRealOfInputs inputs k i =
-      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) := by
+      dotProduct (fun d => (inputs.wo i d : Real)) (fun d => vRealOfInputs inputs k d) +
+        (inputs.attnBias i : Real) := by
   simp [headValueRealOfInputs]
 
 /-- Real-valued direction scores for head inputs. -/
 noncomputable def valsRealOfInputs {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) : Fin seq → Real :=
   let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
-  fun k => dotProduct dirHead (fun d => vRealOfInputs inputs k d)
+  let bias : Real := (attnBiasDot inputs : Real)
+  fun k => dotProduct dirHead (fun d => vRealOfInputs inputs k d) + bias
 
 /-- Unfolding lemma for `valsRealOfInputs`. -/
 theorem valsRealOfInputs_def {seq dModel dHead : Nat}
     (inputs : Model.InductionHeadInputs seq dModel dHead) (k : Fin seq) :
     valsRealOfInputs inputs k =
       let dirHead : Fin dHead → Real := fun d => (dirHeadVecOfInputs inputs).get d
-      dotProduct dirHead (fun d => vRealOfInputs inputs k d) := by
+      let bias : Real := (attnBiasDot inputs : Real)
+      dotProduct dirHead (fun d => vRealOfInputs inputs k d) + bias := by
   simp [valsRealOfInputs]
 
 /-- Interval data for direction values. -/

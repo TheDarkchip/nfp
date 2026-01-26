@@ -36,6 +36,11 @@ theorem direction_dot_headValue_eq_valsReal
   classical
   let dir : Fin dModel → Real := fun i => (inputs.direction i : Real)
   let v : Fin dHead → Real := fun d => vRealOfInputs inputs k d
+  have hsplit :
+      dotProduct dir (fun i => headValueRealOfInputs inputs k i) =
+        dotProduct dir (fun i => dotProduct (fun d => (inputs.wo i d : Real)) v) +
+          dotProduct dir (fun i => (inputs.attnBias i : Real)) := by
+    simp [dotProduct, headValueRealOfInputs_def, dir, v, mul_add, Finset.sum_add_distrib]
   have hswap :
       ∑ i, dir i * ∑ d, (inputs.wo i d : Real) * v d =
         ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
@@ -70,26 +75,42 @@ theorem direction_dot_headValue_eq_valsReal
       _ =
           ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
           simp [ratToReal_def]
+  have hmain :
+      dotProduct dir (fun i => dotProduct (fun d => (inputs.wo i d : Real)) v) =
+        ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d := by
+    calc
+      dotProduct dir (fun i => dotProduct (fun d => (inputs.wo i d : Real)) v)
+          = ∑ i, dir i * ∑ d, (inputs.wo i d : Real) * v d := by
+            simp [dir, v, dotProduct]
+      _ = ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
+            simp [hswap]
+      _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d := by
+            refine Finset.sum_congr rfl ?_
+            intro d _
+            have hdir :
+                ∑ i, dir i * (inputs.wo i d : Real) =
+                  ((dirHeadVecOfInputs inputs).get d : Real) := by
+              calc
+                ∑ i, dir i * (inputs.wo i d : Real)
+                    = ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
+                      simp [dir, mul_comm]
+                _ = ((dirHeadVecOfInputs inputs).get d : Real) := by
+                      simpa using (hdirHead d).symm
+            simp [hdir]
+  have hbias :
+      dotProduct dir (fun i => (inputs.attnBias i : Real)) =
+        (attnBiasDot inputs : Real) := by
+    simp [attnBiasDot_def, dir, dotProduct, Linear.dotFin_eq_dotProduct, mul_comm]
   calc
     dotProduct dir (fun i => headValueRealOfInputs inputs k i)
-        = ∑ i, dir i *
-            ∑ d, (inputs.wo i d : Real) * v d := by
-          simp [dir, v, headValueRealOfInputs_def, dotProduct]
-    _ = ∑ d, (∑ i, dir i * (inputs.wo i d : Real)) * v d := by
-          simp [hswap]
-    _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d := by
-          refine Finset.sum_congr rfl ?_
-          intro d _
-          have hdir :
-              ∑ i, dir i * (inputs.wo i d : Real) =
-                ((dirHeadVecOfInputs inputs).get d : Real) := by
-            calc
-              ∑ i, dir i * (inputs.wo i d : Real)
-                  = ∑ i, (inputs.wo i d : Real) * (inputs.direction i : Real) := by
-                    simp [dir, mul_comm]
-              _ = ((dirHeadVecOfInputs inputs).get d : Real) := by
-                    simpa using (hdirHead d).symm
-          simp [hdir]
+        = dotProduct dir (fun i => dotProduct (fun d => (inputs.wo i d : Real)) v) +
+            dotProduct dir (fun i => (inputs.attnBias i : Real)) := hsplit
+    _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d +
+          dotProduct dir (fun i => (inputs.attnBias i : Real)) := by
+          simp [hmain]
+    _ = ∑ d, ((dirHeadVecOfInputs inputs).get d : Real) * v d +
+          (attnBiasDot inputs : Real) := by
+          simp [hbias]
     _ = valsRealOfInputs inputs k := by
           simp [valsRealOfInputs_def, v, dotProduct]
 
