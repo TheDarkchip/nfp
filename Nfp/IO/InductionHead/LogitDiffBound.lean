@@ -2,6 +2,7 @@
 
 module
 
+public import Nfp.Bounds.Interval
 public import Nfp.Circuit.Cert.InductionHead
 public import Nfp.Circuit.Cert.LogitDiff
 public import Nfp.IO.InductionHead.ScoreUtils
@@ -18,6 +19,8 @@ namespace Nfp
 namespace IO
 
 namespace InductionHeadCert
+
+open Nfp.Bounds
 
 variable {seq : Nat}
 
@@ -93,32 +96,67 @@ def logitDiffLowerBoundComponentsWithActiveValBounds (active : Finset (Fin seq))
     | none, none => none
   { base? := none, tight? := tight?, weighted? := weighted?, best? := best? }
 
+/--
+Lower bound from exact weights and per-key value intervals.
+
+Uses `dotIntervalLower` and returns `none` if weights are missing or the
+active set is empty.
+-/
+def logitDiffLowerBoundExactWithActiveValBounds? (active : Finset (Fin seq))
+    (weightsPresent : Bool)
+    (weights : Fin seq → Fin seq → Rat)
+    (valBounds : Fin seq → Rat × Rat) : Option Rat := by
+  classical
+  if !weightsPresent then
+    exact none
+  else
+    if h : active.Nonempty then
+      let valLo : Fin seq → Rat := fun k => (valBounds k).1
+      let valHi : Fin seq → Rat := fun k => (valBounds k).2
+      let f : Fin seq → Rat := fun q => dotIntervalLower (weights q) valLo valHi
+      exact some (active.inf' h f)
+    else
+      exact none
+
 /-- Report logit-diff lower-bound components, with optional model-derived bounds. -/
 def reportLogitDiffComponents (active : Finset (Fin seq))
     (cert : Circuit.InductionHeadCert seq)
+    (weightsPresent : Bool)
     (valBoundsArr? : Option (Array (Rat × Rat))) : IO Unit := do
   let showOpt : Option Rat → String := fun o =>
     match o with
     | some v => ratToString v
     | none => "none"
   let baseComponents := logitDiffLowerBoundComponentsWithActive active cert
+  let exactBase? : Option Rat := none
   IO.eprintln
     s!"info: logit-diff base={showOpt baseComponents.base?} \
     tight={showOpt baseComponents.tight?} \
     weighted={showOpt baseComponents.weighted?} \
+    exact={showOpt exactBase?} \
     best={showOpt baseComponents.best?}"
   match valBoundsArr? with
   | some valBoundsArr =>
       let valBounds : Fin seq → Rat × Rat := fun k => valBoundsArr[k.1]!
       let modelComponents :=
         logitDiffLowerBoundComponentsWithActiveValBounds active cert valBounds
+      let exact? :=
+        logitDiffLowerBoundExactWithActiveValBounds?
+          active weightsPresent cert.weights valBounds
+      let bestModel? :=
+        match modelComponents.best?, exact? with
+        | some a, some b => some (max a b)
+        | some a, none => some a
+        | none, some b => some b
+        | none, none => none
       IO.eprintln
         s!"info: logit-diff-model \
         tight={showOpt modelComponents.tight?} \
         weighted={showOpt modelComponents.weighted?} \
-        best={showOpt modelComponents.best?}"
+        exact={showOpt exact?} \
+        best={showOpt bestModel?}"
   | none =>
-      IO.eprintln "info: logit-diff-model skipped (missing model value bounds)"
+    IO.eprintln "info: logit-diff-model skipped (missing model value bounds)"
 
 /--
 Tight logit-diff lower bound using external per-key value lower bounds.

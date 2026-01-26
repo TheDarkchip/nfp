@@ -346,8 +346,7 @@ private def ensureModelUnembed {seq : Nat} (st : ParseState seq) :
 private def setModelResidEntry {seq : Nat} (st : ParseState seq) (q i : Nat) (v : Rat) :
     Except String (ParseState seq) := do
   let (st, dModel) ← ensureModelResid st; let qFin ← toIndex0 (seq := seq) "q" q
-  let iFin ← toIndex0Sized "i" dModel i
-  let row := st.modelResid[qFin.1]!
+  let iFin ← toIndex0Sized "i" dModel i; let row := st.modelResid[qFin.1]!
   match row[iFin.1]! with
   | some _ =>
       throw s!"duplicate model-resid entry at ({q}, {i})"
@@ -1101,8 +1100,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
   let tTotal? ← if timeTotal then some <$> IO.monoMsNow else pure none
   let finish (code : UInt32) : IO UInt32 := do
     if let some t0 := tTotal? then
-      let t1 ← IO.monoMsNow
-      IO.eprintln s!"info: total-ms {t1 - t0}"
+      let t1 ← IO.monoMsNow; IO.eprintln s!"info: total-ms {t1 - t0}"
     return code
   let minLogitDiff?E := parseRatOpt "min-logit-diff" minLogitDiffStr?
   let minMargin?E := parseRatOpt "min-margin" minMarginStr?
@@ -1196,22 +1194,18 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     IO.eprintln "error: prev map does not match induction-aligned period"
                     return (← finish 2)
                   if minLogitDiffStr?.isSome && cert.values.direction.isNone then
-                    IO.eprintln "error: min-logit-diff requires direction metadata"
-                    return (← finish 2)
+                    IO.eprintln "error: min-logit-diff requires direction"; return (← finish 2)
                   if minStripeTop1Str?.isSome then
-                    IO.eprintln "error: stripe-top1 is not used for induction-aligned"
-                    return (← finish 2)
+                    IO.eprintln "error: stripe-top1 unused"; return (← finish 2)
                   if let some minCoverage := minCoverage? then
                     if minCoverage < 0 || (1 : Rat) < minCoverage then
-                      IO.eprintln "error: min-coverage must be between 0 and 1"
-                      return (← finish 2)
+                      IO.eprintln "error: min-coverage must be between 0 and 1"; return (← finish 2)
                     let activeGood :=
                       InductionHeadCert.derivedActive cert expectedActive minMargin maxEps
                     let coverage? := InductionHeadCert.activeCoverage activeGood expectedActive
                     match coverage? with
                     | none =>
-                        IO.eprintln "error: empty induction-aligned active set"
-                        return (← finish 2)
+                        IO.eprintln "error: empty induction-aligned active set"; return (← finish 2)
                     | some coverage =>
                         if coverage < minCoverage then
                           IO.eprintln
@@ -1371,8 +1365,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
               match tokensOk with
               | Except.ok () => pure ()
               | Except.error msg =>
-                  IO.eprintln s!"error: {msg}"
-                  return (← finish 2)
+                  IO.eprintln s!"error: {msg}"; return (← finish 2)
               if let some tlScoreLB := tlScoreLB? then
                 match tokensOpt with
                 | none =>
@@ -1425,7 +1418,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                   weightsPresent cert.weights activeForBounds timeStages
               if reportLogitDiff then
                 InductionHeadCert.reportLogitDiffComponents
-                  activeForBounds cert valBoundsArr?
+                  activeForBounds cert weightsPresent valBoundsArr?
               let logitDiffLB? :=
                 let base? :=
                   InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
@@ -1436,11 +1429,18 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                     let tight? :=
                       InductionHeadCert.logitDiffLowerBoundTightWithActiveValBounds?
                         activeForBounds cert valBounds
-                    match base?, tight? with
-                    | some a, some b => some (max a b)
-                    | some a, none => some a
-                    | none, some b => some b
-                    | none, none => none
+                    let exact? :=
+                      InductionHeadCert.logitDiffLowerBoundExactWithActiveValBounds?
+                        activeForBounds weightsPresent cert.weights valBounds
+                    match base?, tight?, exact? with
+                    | some a, some b, some c => some (max a (max b c))
+                    | some a, some b, none => some (max a b)
+                    | some a, none, some c => some (max a c)
+                    | none, some b, some c => some (max b c)
+                    | some a, none, none => some a
+                    | none, some b, none => some b
+                    | none, none, some c => some c
+                    | none, none, none => none
               match minLogitDiff? with
               | none =>
                   if kind = "induction-aligned" then
