@@ -128,6 +128,13 @@ bash scripts/verify_top_circuit_pairs.sh
 
 This script writes regenerated tokens and certs under `reports/` (gitignored).
 
+Canonical (model-slice anchored) variant:
+
+```bash
+bash scripts/verify_top_circuit_pairs_model_slice.sh
+```
+
+
 Optional gates:
 
 ```
