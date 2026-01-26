@@ -5,6 +5,7 @@ module
 public import Nfp.Bounds.Interval
 public import Nfp.Bounds.LayerNorm
 public import Nfp.Bounds.Transformer
+public import Nfp.Model.Gpt2
 
 /-!
 End-to-end bounds for transformer stacks using interval propagation.
@@ -104,6 +105,78 @@ theorem transformerStackLogitBounds_spec {seq dModel dHead numHeads hidden : Nat
           (fun j => Bounds.transformerStackReal eps layers x q j) i)
       (fun i => (hln i).1) (fun i => (hln i).2)
   exact ⟨hloDot, hhiDot⟩
+
+/--
+Logit-diff bounds for a transformer stack using unembedding rows and direction tokens.
+-/
+theorem transformerStackLogitDiffBounds_spec {seq dModel dHead numHeads hidden vocab : Nat}
+    [NeZero seq]
+    (eps : Rat)
+    (layers : List (Bounds.TransformerLayerData seq dModel dHead numHeads hidden))
+    (finalGamma finalBeta : Fin dModel → Rat)
+    (wunembed : Fin vocab → Fin dModel → Rat)
+    (dir : Model.DirectionTokens vocab)
+    (lo hi : Fin dModel → Rat) (x : Fin seq → Fin dModel → Real)
+    (hne : dModel ≠ 0) (heps : 0 < eps) (hsqrt : 0 < sqrtLower eps)
+    (hlo : ∀ q i, (lo i : Real) ≤ x q i) (hhi : ∀ q i, x q i ≤ (hi i : Real)) :
+    let direction := dir.directionVec wunembed
+    let stackBounds :=
+      Bounds.transformerStackBounds eps (layers.map (fun layer => layer.params)) lo hi
+    let absBound := Bounds.intervalAbsBound stackBounds.1 stackBounds.2
+    let lnBounds := Bounds.layerNormAbsBounds eps finalGamma finalBeta absBound
+    ∀ q,
+      (Bounds.dotIntervalLower direction lnBounds.1 lnBounds.2 : Real) ≤
+        Model.unembedLogitReal wunembed
+          (fun i =>
+            layerNormRealOfReal eps finalGamma finalBeta
+              (fun j => Bounds.transformerStackReal eps layers x q j) i)
+          dir.target -
+          Model.unembedLogitReal wunembed
+            (fun i =>
+              layerNormRealOfReal eps finalGamma finalBeta
+                (fun j => Bounds.transformerStackReal eps layers x q j) i)
+            dir.negative ∧
+      Model.unembedLogitReal wunembed
+          (fun i =>
+            layerNormRealOfReal eps finalGamma finalBeta
+              (fun j => Bounds.transformerStackReal eps layers x q j) i)
+          dir.target -
+          Model.unembedLogitReal wunembed
+            (fun i =>
+              layerNormRealOfReal eps finalGamma finalBeta
+                (fun j => Bounds.transformerStackReal eps layers x q j) i)
+            dir.negative ≤
+        (Bounds.dotIntervalUpper direction lnBounds.1 lnBounds.2 : Real) := by
+  classical
+  intro direction stackBounds absBound lnBounds q
+  have hstack :=
+    transformerStackLogitBounds_spec (seq := seq) (dModel := dModel) (dHead := dHead)
+      (numHeads := numHeads) (hidden := hidden) eps layers finalGamma finalBeta direction lo hi x
+      hne heps hsqrt hlo hhi
+  have hlogit := hstack q
+  have hdir :
+      dotProduct (fun d => (direction d : Real))
+          (fun i =>
+            layerNormRealOfReal eps finalGamma finalBeta
+              (fun j => Bounds.transformerStackReal eps layers x q j) i) =
+        Model.unembedLogitReal wunembed
+            (fun i =>
+              layerNormRealOfReal eps finalGamma finalBeta
+                (fun j => Bounds.transformerStackReal eps layers x q j) i)
+            dir.target -
+          Model.unembedLogitReal wunembed
+            (fun i =>
+              layerNormRealOfReal eps finalGamma finalBeta
+                (fun j => Bounds.transformerStackReal eps layers x q j) i)
+            dir.negative := by
+    simpa [direction] using
+      (Model.logitDiffReal_eq_direction_dot (wunembed := wunembed) (dir := dir)
+        (h := fun i =>
+          layerNormRealOfReal eps finalGamma finalBeta
+            (fun j => Bounds.transformerStackReal eps layers x q j) i))
+  constructor
+  · simpa [hdir] using hlogit.1
+  · simpa [hdir] using hlogit.2
 
 end Sound
 
