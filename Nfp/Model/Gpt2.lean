@@ -4,6 +4,7 @@ module
 
 public import Nfp.Core.Basic
 public import Nfp.Circuit.Cert.ValueRange
+public import Nfp.Linear.FinFold
 
 /-!
 Exact GPT-2 slices for induction certification.
@@ -31,6 +32,31 @@ structure DirectionTokens (vocab : Nat) where
 /-- Convert `DirectionTokens` to a `DirectionSpec`. -/
 def DirectionTokens.spec {vocab : Nat} (dir : DirectionTokens vocab) : DirectionSpec :=
   { target := dir.target.val, negative := dir.negative.val }
+
+/-- Direction vector in model space from unembedding rows. -/
+def DirectionTokens.directionVec {vocab dModel : Nat} (dir : DirectionTokens vocab)
+    (wunembed : Fin vocab → Fin dModel → Rat) : Fin dModel → Rat :=
+  fun d => wunembed dir.target d - wunembed dir.negative d
+
+/-- Unembedding logit for a token (Rat-valued). -/
+def unembedLogit {vocab dModel : Nat}
+    (wunembed : Fin vocab → Fin dModel → Rat) (h : Fin dModel → Rat) (tok : Fin vocab) : Rat :=
+  Linear.dotFin dModel (fun d => wunembed tok d) h
+
+/-- Unembedding logit for a token (Real-valued). -/
+def unembedLogitReal {vocab dModel : Nat}
+    (wunembed : Fin vocab → Fin dModel → Rat) (h : Fin dModel → Real) (tok : Fin vocab) : Real :=
+  dotProduct (fun d => (wunembed tok d : Real)) h
+
+/-- Logit-diff equals the direction dot product of the hidden state. -/
+theorem logitDiffReal_eq_direction_dot {vocab dModel : Nat}
+    (wunembed : Fin vocab → Fin dModel → Rat) (dir : DirectionTokens vocab)
+    (h : Fin dModel → Real) :
+    dotProduct (fun d => (dir.directionVec wunembed d : Real)) h =
+      unembedLogitReal wunembed h dir.target - unembedLogitReal wunembed h dir.negative := by
+  classical
+  simp [DirectionTokens.directionVec, unembedLogitReal, dotProduct, sub_mul,
+    Finset.sum_sub_distrib]
 
 /-- Exact GPT-2 head slice needed to build induction-head inputs. -/
 structure Gpt2HeadSlice (seq dModel dHead vocab : Nat) where
@@ -123,7 +149,7 @@ def Gpt2HeadSlice.embed {seq dModel dHead vocab : Nat}
 /-- Direction vector in model space for a GPT-2 head slice. -/
 def Gpt2HeadSlice.directionVec {seq dModel dHead vocab : Nat}
     (slice : Gpt2HeadSlice seq dModel dHead vocab) : Fin dModel → Rat :=
-  fun d => slice.wunembed slice.direction.target d - slice.wunembed slice.direction.negative d
+  slice.direction.directionVec slice.wunembed
 
 end Model
 
