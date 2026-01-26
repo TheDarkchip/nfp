@@ -10,6 +10,10 @@ public import Nfp.Circuit.Layers.Tensor
 
 /-!
 QKV and output projection wiring for attention layers, plus attention score/mixing core.
+
+By default the projection combinators use bias-free linear layers; bias-aware
+variants are provided via `qProjAffine`, `kProjAffine`, `vProjAffine`, and
+`outProjAffine`.
 -/
 
 public section
@@ -46,6 +50,15 @@ def qProj (heads dim : Nat) (Wq : Matrix (Hidden heads dim) (Hidden heads dim) V
     (batchedLinearTyped (Batch := Batch)
       (Row := Hidden heads dim) (Col := Hidden heads dim) Wq)
 
+/-- Bias-aware Q projection with head-split output. -/
+def qProjAffine (heads dim : Nat) (Wq : Matrix (Hidden heads dim) (Hidden heads dim) Val)
+    (bq : Hidden heads dim → Val) :
+    TypedCircuit (QkvNode Batch heads dim) Val (Batch × Hidden heads dim)
+      (Batch × Fin heads × Fin dim) :=
+  splitHeadsOutput (Batch := Batch) heads dim
+    (batchedAffineTyped (Batch := Batch)
+      (Row := Hidden heads dim) (Col := Hidden heads dim) Wq bq)
+
 /-- K projection with head-split output. -/
 def kProj (heads dim : Nat) (Wk : Matrix (Hidden heads dim) (Hidden heads dim) Val) :
     TypedCircuit (QkvNode Batch heads dim) Val (Batch × Hidden heads dim)
@@ -53,6 +66,15 @@ def kProj (heads dim : Nat) (Wk : Matrix (Hidden heads dim) (Hidden heads dim) V
   splitHeadsOutput (Batch := Batch) heads dim
     (batchedLinearTyped (Batch := Batch)
       (Row := Hidden heads dim) (Col := Hidden heads dim) Wk)
+
+/-- Bias-aware K projection with head-split output. -/
+def kProjAffine (heads dim : Nat) (Wk : Matrix (Hidden heads dim) (Hidden heads dim) Val)
+    (bk : Hidden heads dim → Val) :
+    TypedCircuit (QkvNode Batch heads dim) Val (Batch × Hidden heads dim)
+      (Batch × Fin heads × Fin dim) :=
+  splitHeadsOutput (Batch := Batch) heads dim
+    (batchedAffineTyped (Batch := Batch)
+      (Row := Hidden heads dim) (Col := Hidden heads dim) Wk bk)
 
 /-- V projection with head-split output. -/
 def vProj (heads dim : Nat) (Wv : Matrix (Hidden heads dim) (Hidden heads dim) Val) :
@@ -62,6 +84,15 @@ def vProj (heads dim : Nat) (Wv : Matrix (Hidden heads dim) (Hidden heads dim) V
     (batchedLinearTyped (Batch := Batch)
       (Row := Hidden heads dim) (Col := Hidden heads dim) Wv)
 
+/-- Bias-aware V projection with head-split output. -/
+def vProjAffine (heads dim : Nat) (Wv : Matrix (Hidden heads dim) (Hidden heads dim) Val)
+    (bv : Hidden heads dim → Val) :
+    TypedCircuit (QkvNode Batch heads dim) Val (Batch × Hidden heads dim)
+      (Batch × Fin heads × Fin dim) :=
+  splitHeadsOutput (Batch := Batch) heads dim
+    (batchedAffineTyped (Batch := Batch)
+      (Row := Hidden heads dim) (Col := Hidden heads dim) Wv bv)
+
 /-- Output projection with head-merged input. -/
 def outProj (heads dim : Nat) (Wo : Matrix (Hidden heads dim) (Hidden heads dim) Val) :
     TypedCircuit (QkvNode Batch heads dim) Val (Batch × Fin heads × Fin dim)
@@ -69,6 +100,15 @@ def outProj (heads dim : Nat) (Wo : Matrix (Hidden heads dim) (Hidden heads dim)
   splitHeadsInput (Batch := Batch) heads dim
     (batchedLinearTyped (Batch := Batch)
       (Row := Hidden heads dim) (Col := Hidden heads dim) Wo)
+
+/-- Bias-aware output projection with head-merged input. -/
+def outProjAffine (heads dim : Nat) (Wo : Matrix (Hidden heads dim) (Hidden heads dim) Val)
+    (bo : Hidden heads dim → Val) :
+    TypedCircuit (QkvNode Batch heads dim) Val (Batch × Fin heads × Fin dim)
+      (Batch × Hidden heads dim) :=
+  splitHeadsInput (Batch := Batch) heads dim
+    (batchedAffineTyped (Batch := Batch)
+      (Row := Hidden heads dim) (Col := Hidden heads dim) Wo bo)
 
 end Projections
 
