@@ -49,7 +49,7 @@ structure TransformerLayerData (seq dModel dHead numHeads hidden : Nat) where
   scores : Fin numHeads → Fin seq → Fin seq → Real
 
 /-- Real-valued transformer-layer output (attention + MLP residual). -/
-noncomputable def transformerLayerReal (eps : Rat)
+noncomputable def transformerLayerReal (eps : Rat) [NeZero seq]
     (params : TransformerLayerParams dModel dHead numHeads hidden)
     (scores : Fin numHeads → Fin seq → Fin seq → Real)
     (x : Fin seq → Fin dModel → Real) (q : Fin seq) (i : Fin dModel) : Real :=
@@ -64,7 +64,7 @@ noncomputable def transformerLayerReal (eps : Rat)
               scores x q j)) i
 
 /-- Real-valued transformer stack defined by iterating layers. -/
-noncomputable def transformerStackReal (eps : Rat)
+noncomputable def transformerStackReal (eps : Rat) [NeZero seq]
     (layers : List (TransformerLayerData seq dModel dHead numHeads hidden))
     (x : Fin seq → Fin dModel → Real) : Fin seq → Fin dModel → Real :=
   match layers with
@@ -101,7 +101,8 @@ theorem transformerStackBounds_spec {seq dModel dHead numHeads hidden : Nat} [Ne
   induction layers generalizing lo hi x with
   | nil =>
       intro bounds q i
-      simp [transformerStackBounds, transformerStackReal, hlo q i, hhi q i]
+      simpa [transformerStackBounds, transformerStackReal] using
+        And.intro (hlo q i) (hhi q i)
   | cons layer rest ih =>
       intro bounds q i
       let layerBounds :=
@@ -124,8 +125,8 @@ theorem transformerStackBounds_spec {seq dModel dHead numHeads hidden : Nat} [Ne
         intro q i
         have h := (hlayer q i).2
         simpa [x', transformerLayerReal, layerBounds] using h
-      have hrest :=
-        ih (lo := layerBounds.1) (hi := layerBounds.2) (x := x') hne heps hsqrt hlo' hhi'
+      have hrest' := ih (lo := layerBounds.1) (hi := layerBounds.2) (x := x')
+      have hrest := hrest' hlo' hhi'
       simpa [transformerStackBounds, transformerStackReal, layerBounds, x'] using hrest q i
 
 end Bounds
