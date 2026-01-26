@@ -176,6 +176,61 @@ theorem valsRealOfInputs_bounds_of_lnBounds
   · simpa [valLo] using hlow'
   · simpa [valHi] using hhigh'
 
+/-- Per-key head outputs are bounded by any LayerNorm interval bounds. -/
+theorem headValueRealOfInputs_bounds_of_lnBounds
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (lnLo lnHi : Fin seq → Fin dModel → Rat)
+    (hln : ∀ q i,
+      (lnLo q i : Real) ≤ lnRealOfInputs inputs q i ∧
+        lnRealOfInputs inputs q i ≤ (lnHi q i : Real)) :
+    let vLo : Fin seq → Fin dHead → Rat := fun k d =>
+      dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let vHi : Fin seq → Fin dHead → Rat := fun k d =>
+      dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let headLo : Fin seq → Fin dModel → Rat := fun k i =>
+      dotIntervalLower (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    let headHi : Fin seq → Fin dModel → Rat := fun k i =>
+      dotIntervalUpper (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    ∀ k i,
+      (headLo k i : Real) ≤ headValueRealOfInputs inputs k i ∧
+        headValueRealOfInputs inputs k i ≤ (headHi k i : Real) := by
+  classical
+  intro vLo vHi headLo headHi k i
+  have hv_bounds : ∀ d,
+      (vLo k d : Real) ≤ vRealOfInputs inputs k d ∧
+        vRealOfInputs inputs k d ≤ (vHi k d : Real) := by
+    intro d
+    have hlow :=
+      dotIntervalLower_le_dotProduct_real_add
+        (v := fun j => inputs.wv j d) (lo := lnLo k) (hi := lnHi k)
+        (x := fun j => lnRealOfInputs inputs k j) (b := (inputs.bv d : Real))
+        (hlo := fun j => (hln k j).1)
+        (hhi := fun j => (hln k j).2)
+    have hhigh :=
+      dotProduct_le_dotIntervalUpper_real_add
+        (v := fun j => inputs.wv j d) (lo := lnLo k) (hi := lnHi k)
+        (x := fun j => lnRealOfInputs inputs k j) (b := (inputs.bv d : Real))
+        (hlo := fun j => (hln k j).1)
+        (hhi := fun j => (hln k j).2)
+    constructor
+    · simpa [vLo, vRealOfInputs_def] using hlow
+    · simpa [vHi, vRealOfInputs_def] using hhigh
+  have hlow :=
+    dotIntervalLower_le_dotProduct_real_add
+      (v := fun d => inputs.wo i d) (lo := vLo k) (hi := vHi k)
+      (x := fun d => vRealOfInputs inputs k d) (b := (inputs.attnBias i : Real))
+      (hlo := fun d => (hv_bounds d).1)
+      (hhi := fun d => (hv_bounds d).2)
+  have hhigh :=
+    dotProduct_le_dotIntervalUpper_real_add
+      (v := fun d => inputs.wo i d) (lo := vLo k) (hi := vHi k)
+      (x := fun d => vRealOfInputs inputs k d) (b := (inputs.attnBias i : Real))
+      (hlo := fun d => (hv_bounds d).1)
+      (hhi := fun d => (hv_bounds d).2)
+  constructor
+  · simpa [headLo, headValueRealOfInputs_def] using hlow
+  · simpa [headHi, headValueRealOfInputs_def] using hhigh
+
 /-- Value outputs are bounded by LayerNorm bounds expanded by `lnSlack`. -/
 theorem valsRealOfInputs_bounds_with_lnSlack
     (inputs : Model.InductionHeadInputs seq dModel dHead)
