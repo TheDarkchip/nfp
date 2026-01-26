@@ -387,6 +387,74 @@ theorem headOutputWithWeights_bounds_from_slices {seq : Nat}
       have hhead' := hhead q i
       simpa [outLo, outHi, vLo, vHi, headLo, headHi, hscale] using hhead'
 
+/--
+Compute weighted head-output bounds from model slices.
+-/
+noncomputable def headOutputBoundsWeightedFromSlices {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel) :
+    (Fin seq → Fin valueSlice.dModel → Rat) × (Fin seq → Fin valueSlice.dModel → Rat) :=
+  let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+  let lnBounds : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
+    fun q =>
+      match lnSlice.lnScale? with
+      | some scale =>
+          layerNormBoundsWithScale scale lnSlice.lnEps inputs.ln1Gamma inputs.ln1Beta
+            (inputs.embed q)
+      | none =>
+          layerNormBounds lnSlice.lnEps inputs.ln1Gamma inputs.ln1Beta (inputs.embed q)
+  let lnLo : Fin seq → Fin valueSlice.dModel → Rat :=
+    fun q i => (lnBounds q).1 i - lnSlice.lnSlack
+  let lnHi : Fin seq → Fin valueSlice.dModel → Rat :=
+    fun q i => (lnBounds q).2 i + lnSlice.lnSlack
+  let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+    dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+  let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+    dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+  let headLo : Fin seq → Fin valueSlice.dModel → Rat := fun k i =>
+    dotIntervalLower (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+  let headHi : Fin seq → Fin valueSlice.dModel → Rat := fun k i =>
+    dotIntervalUpper (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+  let outLo : Fin seq → Fin valueSlice.dModel → Rat := fun q i =>
+    dotIntervalLower (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+  let outHi : Fin seq → Fin valueSlice.dModel → Rat := fun q i =>
+    dotIntervalUpper (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+  (outLo, outHi)
+
+/--
+Slice-derived weighted head-output bounds are sound for `headOutputWithWeights`.
+-/
+theorem headOutputBoundsWeightedFromSlices_spec {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (hModel : valueSlice.dModel ≠ 0)
+    (hEps : 0 < lnSlice.lnEps)
+    (hSlack : 0 ≤ lnSlice.lnSlack)
+    (hScalePos : ∀ scale, lnSlice.lnScale? = some scale → 0 < scale)
+    (hSqrt :
+      match lnSlice.lnScale? with
+      | some scale => 0 < sqrtLowerWithScale scale lnSlice.lnEps
+      | none => 0 < sqrtLower lnSlice.lnEps) :
+    let bounds := headOutputBoundsWeightedFromSlices lnSlice valueSlice dirSlice weights hLn hDir
+    let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+    ∀ q i,
+      (bounds.1 q i : Real) ≤ Sound.headOutputWithWeights weights inputs q i ∧
+        Sound.headOutputWithWeights weights inputs q i ≤ (bounds.2 q i : Real) := by
+  classical
+  intro bounds inputs q i
+  have h :=
+    headOutputWithWeights_bounds_from_slices lnSlice valueSlice dirSlice weights
+      hLn hDir hModel hEps hSlack hScalePos hSqrt q i
+  simpa [headOutputBoundsWeightedFromSlices, bounds, inputs] using h
+
 end InductionHeadCert
 
 end Pure
