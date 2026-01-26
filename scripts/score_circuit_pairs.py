@@ -157,6 +157,9 @@ def main() -> int:
                         help="Use the fixed-denominator fast path in the verifier.")
     parser.add_argument("--verify-head-certs", action="store_true",
                         help="Run `nfp induction verify` on each head cert before circuit checks.")
+    parser.add_argument("--verify-min-logit-diff", default=None,
+                        help=("Minimum logit-diff lower bound to require when verifying "
+                              "induction head certs (optional)."))
     parser.add_argument("--direction-target", type=int, default=None,
                         help="Token id for logit-diff direction target (optional).")
     parser.add_argument("--direction-negative", type=int, default=None,
@@ -304,6 +307,10 @@ def main() -> int:
             raise SystemExit(
                 "emit-model-slice verify script requires --search-direction or --direction-target/negative"
             )
+        if args.verify_min_logit_diff is not None and not (
+            args.search_direction or args.direction_target is not None
+        ):
+            raise SystemExit("verify-min-logit-diff requires direction metadata")
         period = args.pattern_len if args.period is None else args.period
         top_verify = args.top_pairs if args.top_verify is None else args.top_verify
         if args.seq_len != 2 * period:
@@ -370,6 +377,9 @@ def main() -> int:
             "--min-margin", str(args.cert_min_margin),
             "--max-eps", str(args.cert_active_eps_max),
         ]
+        verify_args_ind = verify_args[:]
+        if args.verify_min_logit_diff is not None:
+            verify_args_ind.extend(["--min-logit-diff", str(args.verify_min_logit_diff)])
         for entry in pairs[:top_verify]:
             prev = entry["prev"]
             ind = entry["induction"]
@@ -389,7 +399,7 @@ def main() -> int:
                 )
                 verify_lines.append(
                     f"lake exe nfp induction verify --cert {ind_cert} "
-                    + " ".join(verify_args)
+                    + " ".join(verify_args_ind)
                 )
             verify_lines.append(
                 f"lake exe nfp induction verify-circuit --prev-cert {prev_cert} "
