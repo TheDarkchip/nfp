@@ -43,22 +43,20 @@ Weight-bound formula derived from score gaps, with optional masking.
 
 Masked keys receive weight bound `0`.
 -/
-noncomputable def weightBoundAtOfScoreGapMasked (prev : Fin seq → Fin seq)
-    (allow : Fin seq → Fin seq → Prop)
+def weightBoundAtOfScoreGapMasked (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop) [DecidableRel allow]
     (scoreGapLo : Fin seq → Fin seq → Rat) : Fin seq → Fin seq → Rat :=
-  by
-    classical
-    exact fun q k =>
-      if allow q k then
-        if k = prev q then
-          0
-        else
-          if scoreGapLo q k < 0 then
-            (1 : Rat)
-          else
-            ratDivUp 1 (1 + scoreGapLo q k)
-      else
+  fun q k =>
+    if allow q k then
+      if k = prev q then
         0
+      else
+        if scoreGapLo q k < 0 then
+          (1 : Rat)
+        else
+          ratDivUp 1 (1 + scoreGapLo q k)
+    else
+      0
 
 /-- Unfold `weightBoundAtOfScoreGap` on non-`prev` keys. -/
 theorem weightBoundAtOfScoreGap_eq {prev : Fin seq → Fin seq}
@@ -72,7 +70,7 @@ theorem weightBoundAtOfScoreGap_eq {prev : Fin seq → Fin seq}
 
 /-- Unfold `weightBoundAtOfScoreGapMasked` on allowed non-`prev` keys. -/
 theorem weightBoundAtOfScoreGapMasked_eq {prev : Fin seq → Fin seq}
-    {allow : Fin seq → Fin seq → Prop}
+    {allow : Fin seq → Fin seq → Prop} [DecidableRel allow]
     {scoreGapLo : Fin seq → Fin seq → Rat} {q k : Fin seq}
     (hallow : allow q k) (hk : k ≠ prev q) :
     weightBoundAtOfScoreGapMasked prev allow scoreGapLo q k =
@@ -96,15 +94,13 @@ def epsAtOfWeightBoundAt (prev : Fin seq → Fin seq)
 /--
 Per-query epsilon from per-key weight bounds, restricted to allowed keys.
 -/
-noncomputable def epsAtOfWeightBoundAtMasked (prev : Fin seq → Fin seq)
-    (allow : Fin seq → Fin seq → Prop)
+def epsAtOfWeightBoundAtMasked (prev : Fin seq → Fin seq)
+    (allow : Fin seq → Fin seq → Prop) [DecidableRel allow]
     (weightBoundAt : Fin seq → Fin seq → Rat) : Fin seq → Rat :=
-  by
-    classical
-    exact fun q =>
-      min (1 : Rat)
-        ((Finset.univ : Finset (Fin seq)).filter (allow q) |>.erase (prev q) |>.sum (fun k =>
-          weightBoundAt q k))
+  fun q =>
+    min (1 : Rat)
+      ((Finset.univ : Finset (Fin seq)).filter (allow q) |>.erase (prev q) |>.sum (fun k =>
+        weightBoundAt q k))
 
 /-- Unfolding lemma for `epsAtOfWeightBoundAt`. -/
 theorem epsAtOfWeightBoundAt_def (prev : Fin seq → Fin seq)
@@ -197,7 +193,7 @@ theorem weight_bound_at_of_scoreBounds [NeZero seq]
 theorem weight_bound_at_of_scoreBounds_masked [NeZero seq]
     (active : Finset (Fin seq))
     (prev : Fin seq → Fin seq)
-    (allow : Fin seq → Fin seq → Prop)
+    (allow : Fin seq → Fin seq → Prop) [DecidableRel allow]
     (scoresReal : Fin seq → Fin seq → Real)
     (scoreLo scoreHi : Fin seq → Fin seq → Rat)
     (weightBoundAt : Fin seq → Fin seq → Rat)

@@ -484,25 +484,23 @@ theorem weight_bound_at_of_scoreGapLo
 theorem weight_bound_at_of_scoreGapLo_masked
     (active : Finset (Fin seq))
     (prev : Fin seq → Fin seq)
-    (allow : Fin seq → Fin seq → Prop)
+    (allow : Fin seq → Fin seq → Prop) [DecidableRel allow]
     (scoresReal : Fin seq → Fin seq → Real)
     (scoreGapLo : Fin seq → Fin seq → Rat)
     (weightBoundAt : Fin seq → Fin seq → Rat)
     (hweightBoundAt :
-      ∀ q k, by
-        classical
-        exact
-          weightBoundAt q k =
-            if allow q k then
-              if k = prev q then
-                0
-              else
-                if scoreGapLo q k < 0 then
-                  (1 : Rat)
-                else
-                  ratDivUp 1 (1 + scoreGapLo q k)
+      ∀ q k,
+        weightBoundAt q k =
+          if allow q k then
+            if k = prev q then
+              0
             else
-              0)
+              if scoreGapLo q k < 0 then
+                (1 : Rat)
+              else
+                ratDivUp 1 (1 + scoreGapLo q k)
+          else
+            0)
     (hprev : ∀ q, q ∈ active → allow q (prev q))
     (hscore_gap_real_at :
       ∀ q, q ∈ active → ∀ k, k ≠ prev q →
