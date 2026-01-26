@@ -738,8 +738,10 @@ section Circuits
 
 variable [DecidableEq Batch]
 
-/-- Gate semantics for attention score/mixing circuits. -/
-def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+/-- Gate semantics for attention score/mixing circuits, with optional causal masking.
+If `maskCausal` is true, scores with `k > q` use `maskValue` before softmax. -/
+def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool := false) (maskValue : Val := 0) :
     ∀ i,
       (∀ j,
           (attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)).rel j i →
@@ -776,9 +778,17 @@ def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val
                 attnScore (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
                   (b, h, q, k')
               let scores : Fin seq → Val := fun k' =>
-                rec (scoreNode k')
-                  (attentionDag_rel_score_weight (Batch := Batch) (seq := seq) (heads := heads)
-                    (dim := dim) b h q k k')
+                if maskCausal then
+                  if k' ≤ q then
+                    rec (scoreNode k')
+                      (attentionDag_rel_score_weight (Batch := Batch) (seq := seq)
+                        (heads := heads) (dim := dim) b h q k k')
+                  else
+                    maskValue
+                else
+                  rec (scoreNode k')
+                    (attentionDag_rel_score_weight (Batch := Batch) (seq := seq) (heads := heads)
+                      (dim := dim) b h q k k')
               exact softmax scores k
           | inr o =>
               rcases o with ⟨b, q, h, d⟩
@@ -800,6 +810,7 @@ def attentionGate (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val
 
 /-- Definitional characterization of `attentionGate` on output nodes. -/
 theorem attentionGate_out_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool) (maskValue : Val)
     (b : Batch) (q : Fin seq) (h : Fin heads) (d : Fin dim)
     (rec :
       ∀ j,
@@ -807,6 +818,7 @@ theorem attentionGate_out_def (scale : Val) (softmax : (Fin seq → Val) → Fin
             (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) →
           Val) :
     attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue
         (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) rec =
       let weightNode : Fin seq → AttentionNode Batch seq heads dim := fun k =>
         attnWeight (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, h, q, k)
@@ -823,29 +835,35 @@ theorem attentionGate_out_def (scale : Val) (softmax : (Fin seq → Val) → Fin
       dotProduct weights vals := by
   simp [attentionGate]
 
-/-- Circuit for attention score/mixing. -/
-def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+/-- Circuit for attention score/mixing, with optional causal masking. -/
+def attentionCircuit (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool := false) (maskValue : Val := 0) :
     Circuit (AttentionNode Batch seq heads dim) Val :=
   { dag := attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     inputs := attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     outputs := attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     gate :=
-      attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax }
+      attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue }
 
 /-- Definitional characterization of `attentionCircuit`. -/
-theorem attentionCircuit_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
-    attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax =
+theorem attentionCircuit_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool) (maskValue : Val) :
+    attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue =
       { dag := attentionDag (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
         inputs := attentionInputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
         outputs := attentionOutputs (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
         gate := attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale
-          softmax } := by
+          softmax maskCausal maskValue } := by
   rfl
 
 /-- Typed interface for attention score/mixing circuits. -/
-def attentionInterface (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+def attentionInterface (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool := false) (maskValue : Val := 0) :
     Interface
-      (attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax)
+      (attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue)
       (AttentionInput Batch seq heads dim) (AttentionOutput Batch seq heads dim) :=
   { inputs := attentionInputEquiv (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
     outputs := attentionOutputEquiv (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) }
@@ -856,22 +874,25 @@ section Typed
 
 variable [DecidableEq Batch]
 
-/-- Typed attention score/mixing circuit. -/
-def attentionTyped (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
+/-- Typed attention score/mixing circuit, with optional causal masking. -/
+def attentionTyped (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool := false) (maskValue : Val := 0) :
     TypedCircuit (AttentionNode Batch seq heads dim) Val
       (AttentionInput Batch seq heads dim) (AttentionOutput Batch seq heads dim) :=
   { circuit := attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-      scale softmax
+      scale softmax maskCausal maskValue
     interface := attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-      scale softmax }
+      scale softmax maskCausal maskValue }
 
 /-- Definitional characterization of `attentionTyped`. -/
-theorem attentionTyped_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val) :
-    attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax =
+theorem attentionTyped_def (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+    (maskCausal : Bool) (maskValue : Val) :
+    attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue =
       { circuit := attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-          scale softmax
+          scale softmax maskCausal maskValue
         interface := attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-          scale softmax } := by
+          scale softmax maskCausal maskValue } := by
   rfl
 
 end Typed

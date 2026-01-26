@@ -663,7 +663,8 @@ def attentionOutValues (b : Batch) (h : Fin heads) (q : Fin seq) (d : Fin dim)
 
 /-- One-hot attention weights force the output to copy the selected value. -/
 theorem attentionGate_out_eq_of_oneHot (scale : Val)
-    (softmax : (Fin seq → Val) → Fin seq → Val) (prev : Fin seq → Fin seq)
+    (softmax : (Fin seq → Val) → Fin seq → Val) (maskCausal : Bool) (maskValue : Val)
+    (prev : Fin seq → Fin seq)
     (b : Batch) (h : Fin heads) (q : Fin seq) (d : Fin dim)
     (rec :
       ∀ j,
@@ -675,6 +676,7 @@ theorem attentionGate_out_eq_of_oneHot (scale : Val)
           b h q d rec =
         Pi.single (prev q) 1) :
     attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue
         (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) rec =
       attentionOutValues (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
         b h q d rec (prev q) := by
@@ -695,6 +697,7 @@ theorem attentionGate_out_eq_of_oneHot (scale : Val)
 section Typed
 
 variable (scale : Val) (softmax : (Fin seq → Val) → Fin seq → Val)
+variable (maskCausal : Bool) (maskValue : Val)
 
 /-- Attention output equals the selected V input when weights are one-hot. -/
 theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
@@ -706,19 +709,22 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
           (fun j _ =>
             Circuit.evalInput
               (attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-                scale softmax)
+                scale softmax maskCausal maskValue)
               ((attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-                scale softmax).toInputAssignment input) j) =
+                scale softmax maskCausal maskValue).toInputAssignment input) j) =
         Pi.single (prev q) 1) :
-    (attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax).eval
+    (attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue).eval
         input (b, q, h, d) =
       input
         (attnInputV (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
           (b, prev q, h, d)) := by
   let C :=
     attentionCircuit (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+      maskCausal maskValue
   let I :=
     attentionInterface (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+      maskCausal maskValue
   let inputAssign := I.toInputAssignment input
   have hnot :
       attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d) ∉
@@ -730,6 +736,7 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
       Circuit.evalInput C inputAssign
           (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d)) =
         attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+          maskCausal maskValue
           (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d))
           (fun j _ => Circuit.evalInput C inputAssign j) := by
     exact Circuit.evalInput_eq_gate (C := C) (input := inputAssign)
@@ -742,12 +749,14 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
           b h q d (fun j _ => Circuit.evalInput C inputAssign j) (prev q) := by
     have hgate' :
         attentionGate (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+            maskCausal maskValue
             (attnOut (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) (b, q, h, d))
             (fun j _ => Circuit.evalInput C inputAssign j) =
           attentionOutValues (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
             b h q d (fun j _ => Circuit.evalInput C inputAssign j) (prev q) :=
       attentionGate_out_eq_of_oneHot (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
-        (scale := scale) (softmax := softmax) (prev := prev) (b := b) (h := h) (q := q) (d := d)
+        (scale := scale) (softmax := softmax) (maskCausal := maskCausal) (maskValue := maskValue)
+        (prev := prev) (b := b) (h := h) (q := q) (d := d)
         (rec := fun j _ => Circuit.evalInput C inputAssign j) hweights
     exact hgate.trans hgate'
   have hmem :
@@ -775,7 +784,8 @@ theorem attentionTyped_eval_out_eq_of_oneHot (prev : Fin seq → Fin seq)
           (attnV (Batch := Batch) (seq := seq) (heads := heads) (dim := dim)
             (b, prev q, h, d)) := rfl
   calc
-    (attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax).eval
+    (attentionTyped (Batch := Batch) (seq := seq) (heads := heads) (dim := dim) scale softmax
+        maskCausal maskValue).eval
         input (b, q, h, d) =
       Circuit.evalInput C inputAssign (I.outputs (b, q, h, d)).1 := by
         simp [TypedCircuit.eval_def, Interface.eval_def, attentionTyped_def, C, I, inputAssign]
@@ -802,6 +812,7 @@ variable {Val : Type v} [NonAssocSemiring Val]
 
 variable (scale : Val)
 variable (softmax : (Fin (Nat.succ n) → Val) → Fin (Nat.succ n) → Val)
+variable (maskCausal : Bool) (maskValue : Val)
 
 /-- One-hot weights on non-initial queries (0-based indices ≥ 1) imply the induction spec
     for typed evaluation. -/
@@ -824,13 +835,13 @@ theorem attentionTyped_eval_inductionSpec_of_oneHot
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax)
+                  scale softmax maskCausal maskValue)
                 ((attentionInterface
                   (Batch := Batch)
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax).toInputAssignment input) j) =
+                  scale softmax maskCausal maskValue).toInputAssignment input) j) =
           Pi.single (prev q) 1) :
     InductionSpec (n := n) prev
       (fun q =>
@@ -839,7 +850,7 @@ theorem attentionTyped_eval_inductionSpec_of_oneHot
           (seq := Nat.succ n)
           (heads := heads)
           (dim := dim)
-          scale softmax).eval input (b, q, h, d))
+          scale softmax maskCausal maskValue).eval input (b, q, h, d))
       (fun k =>
         input (attnInputV
           (Batch := Batch)
@@ -856,6 +867,8 @@ theorem attentionTyped_eval_inductionSpec_of_oneHot
     (dim := dim)
     (scale := scale)
     (softmax := softmax)
+    (maskCausal := maskCausal)
+    (maskValue := maskValue)
     (prev := prev)
     (input := input)
     (b := b)
@@ -883,13 +896,13 @@ theorem attentionTyped_eval_inductionSpec_prevIndex
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax)
+                  scale softmax maskCausal maskValue)
                 ((attentionInterface
                   (Batch := Batch)
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax).toInputAssignment input) j) =
+                  scale softmax maskCausal maskValue).toInputAssignment input) j) =
           Pi.single (prevIndex (n := n) q) 1) :
     InductionSpec (n := n) (prevIndex (n := n))
       (fun q =>
@@ -898,7 +911,7 @@ theorem attentionTyped_eval_inductionSpec_prevIndex
           (seq := Nat.succ n)
           (heads := heads)
           (dim := dim)
-          scale softmax).eval input (b, q, h, d))
+          scale softmax maskCausal maskValue).eval input (b, q, h, d))
       (fun k =>
         input (attnInputV
           (Batch := Batch)
@@ -913,6 +926,8 @@ theorem attentionTyped_eval_inductionSpec_prevIndex
     (n := n)
     (scale := scale)
     (softmax := softmax)
+    (maskCausal := maskCausal)
+    (maskValue := maskValue)
     (prev := prevIndex (n := n))
     (input := input)
     (b := b)
@@ -930,6 +945,7 @@ variable {Val : Type v} [NonAssocSemiring Val] [PartialOrder Val] [IsOrderedAddM
 
 variable (scale : Val)
 variable (softmax : (Fin (Nat.succ n) → Val) → Fin (Nat.succ n) → Val)
+variable (maskCausal : Bool) (maskValue : Val)
 
 /-- One-hot weights imply the approximate induction spec for any nonnegative tolerance. -/
 theorem attentionTyped_eval_inductionSpecApprox_of_oneHot (ε : Val) (hε : 0 ≤ ε)
@@ -951,13 +967,13 @@ theorem attentionTyped_eval_inductionSpecApprox_of_oneHot (ε : Val) (hε : 0 �
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax)
+                  scale softmax maskCausal maskValue)
                 ((attentionInterface
                   (Batch := Batch)
                   (seq := Nat.succ n)
                   (heads := heads)
                   (dim := dim)
-                  scale softmax).toInputAssignment input) j) =
+                  scale softmax maskCausal maskValue).toInputAssignment input) j) =
           Pi.single (prev q) 1) :
     InductionSpecApprox (Val := Val) (n := n) ε prev
       (fun q =>
@@ -966,7 +982,7 @@ theorem attentionTyped_eval_inductionSpecApprox_of_oneHot (ε : Val) (hε : 0 �
           (seq := Nat.succ n)
           (heads := heads)
           (dim := dim)
-          scale softmax).eval input (b, q, h, d))
+          scale softmax maskCausal maskValue).eval input (b, q, h, d))
       (fun k =>
         input (attnInputV
           (Batch := Batch)
@@ -982,6 +998,8 @@ theorem attentionTyped_eval_inductionSpecApprox_of_oneHot (ε : Val) (hε : 0 �
     (n := n)
     (scale := scale)
     (softmax := softmax)
+    (maskCausal := maskCausal)
+    (maskValue := maskValue)
     (prev := prev)
     (input := input)
     (b := b)
