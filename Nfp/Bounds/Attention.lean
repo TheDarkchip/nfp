@@ -285,6 +285,129 @@ theorem attentionOutputBounds_spec {seq dModel dHead numHeads : Nat} [NeZero seq
       sumLo, sumHi, hreal] using hhigh
   exact And.intro hlo hhi
 
+/-- Interval bounds for multi-head attention outputs from explicit weight/value bounds. -/
+def attentionOutputBoundsWeighted {seq dModel dHead numHeads : Nat}
+    (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
+    (attnBias : Fin dModel → Rat)
+    (weights : Fin numHeads → Fin seq → Fin seq → Rat)
+    (vLo vHi : Fin numHeads → Fin seq → Fin dHead → Rat) :
+    (Fin seq → Fin dModel → Rat) × (Fin seq → Fin dModel → Rat) :=
+  let headOutLo : Fin numHeads → Fin seq → Fin dHead → Rat := fun h q d =>
+    dotIntervalLower (fun k => weights h q k) (fun k => vLo h k d) (fun k => vHi h k d)
+  let headOutHi : Fin numHeads → Fin seq → Fin dHead → Rat := fun h q d =>
+    dotIntervalUpper (fun k => weights h q k) (fun k => vLo h k d) (fun k => vHi h k d)
+  let headLo : Fin numHeads → Fin seq → Fin dModel → Rat := fun h q i =>
+    dotIntervalLower (fun d => (heads h).wo i d) (headOutLo h q) (headOutHi h q)
+  let headHi : Fin numHeads → Fin seq → Fin dModel → Rat := fun h q i =>
+    dotIntervalUpper (fun d => (heads h).wo i d) (headOutLo h q) (headOutHi h q)
+  let sumLo : Fin seq → Fin dModel → Rat := fun q i => ∑ h, headLo h q i
+  let sumHi : Fin seq → Fin dModel → Rat := fun q i => ∑ h, headHi h q i
+  (fun q i => sumLo q i + attnBias i, fun q i => sumHi q i + attnBias i)
+
+/-- `attentionOutputBoundsWeighted` soundness for real attention outputs. -/
+theorem attentionOutputBoundsWeighted_spec {seq dModel dHead numHeads : Nat} [NeZero seq]
+    (heads : Fin numHeads → Model.Gpt2HeadWeights dModel dHead)
+    (attnBias : Fin dModel → Rat)
+    (weights : Fin numHeads → Fin seq → Fin seq → Rat)
+    (vLo vHi : Fin numHeads → Fin seq → Fin dHead → Rat)
+    (headValue : Fin numHeads → Fin seq → Fin dHead → Real)
+    (hvals : ∀ h k d,
+      (vLo h k d : Real) ≤ headValue h k d ∧ headValue h k d ≤ (vHi h k d : Real)) :
+    let bounds := attentionOutputBoundsWeighted heads attnBias weights vLo vHi
+    ∀ q i,
+      (bounds.1 q i : Real) ≤
+          (∑ h,
+            dotProduct (fun d => ((heads h).wo i d : Real))
+              (fun d => dotProduct (fun k => (weights h q k : Real))
+                (fun k => headValue h k d))) + (attnBias i : Real) ∧
+        (∑ h,
+            dotProduct (fun d => ((heads h).wo i d : Real))
+              (fun d => dotProduct (fun k => (weights h q k : Real))
+                (fun k => headValue h k d))) + (attnBias i : Real) ≤
+          (bounds.2 q i : Real) := by
+  classical
+  intro bounds q i
+  let headOutLo : Fin numHeads → Fin seq → Fin dHead → Rat := fun h q d =>
+    dotIntervalLower (fun k => weights h q k) (fun k => vLo h k d) (fun k => vHi h k d)
+  let headOutHi : Fin numHeads → Fin seq → Fin dHead → Rat := fun h q d =>
+    dotIntervalUpper (fun k => weights h q k) (fun k => vLo h k d) (fun k => vHi h k d)
+  let headOut : Fin numHeads → Fin seq → Fin dHead → Real := fun h q d =>
+    dotProduct (fun k => (weights h q k : Real)) (fun k => headValue h k d)
+  let headLo : Fin numHeads → Fin seq → Fin dModel → Rat := fun h q i =>
+    dotIntervalLower (fun d => (heads h).wo i d) (headOutLo h q) (headOutHi h q)
+  let headHi : Fin numHeads → Fin seq → Fin dModel → Rat := fun h q i =>
+    dotIntervalUpper (fun d => (heads h).wo i d) (headOutLo h q) (headOutHi h q)
+  let headProj : Fin numHeads → Fin seq → Fin dModel → Real := fun h q j =>
+    dotProduct (fun d => ((heads h).wo j d : Real)) (fun d => headOut h q d)
+  let sumLo : Fin seq → Fin dModel → Rat := fun q i => ∑ h, headLo h q i
+  let sumHi : Fin seq → Fin dModel → Rat := fun q i => ∑ h, headHi h q i
+  have hhead_out_bounds :
+      ∀ h q d,
+        (headOutLo h q d : Real) ≤ headOut h q d ∧
+          headOut h q d ≤ (headOutHi h q d : Real) := by
+    intro h q d
+    have hlo' : ∀ k, (vLo h k d : Real) ≤ headValue h k d := fun k => (hvals h k d).1
+    have hhi' : ∀ k, headValue h k d ≤ (vHi h k d : Real) := fun k => (hvals h k d).2
+    have hlow :=
+      dotIntervalLower_le_dotProduct_real (v := fun k => weights h q k)
+        (lo := fun k => vLo h k d) (hi := fun k => vHi h k d)
+        (x := fun k => headValue h k d) hlo' hhi'
+    have hhigh :=
+      dotProduct_le_dotIntervalUpper_real (v := fun k => weights h q k)
+        (lo := fun k => vLo h k d) (hi := fun k => vHi h k d)
+        (x := fun k => headValue h k d) hlo' hhi'
+    exact ⟨hlow, hhigh⟩
+  have hproj_bounds :
+      ∀ h q i,
+        (headLo h q i : Real) ≤ headProj h q i ∧ headProj h q i ≤ (headHi h q i : Real) := by
+    intro h q i
+    have hout := hhead_out_bounds h q
+    have hlo' : ∀ d, (headOutLo h q d : Real) ≤ headOut h q d := fun d => (hout d).1
+    have hhi' : ∀ d, headOut h q d ≤ (headOutHi h q d : Real) := fun d => (hout d).2
+    have hlow :=
+      dotIntervalLower_le_dotProduct_real (v := fun d => (heads h).wo i d)
+        (lo := headOutLo h q) (hi := headOutHi h q) (x := fun d => headOut h q d) hlo' hhi'
+    have hhigh :=
+      dotProduct_le_dotIntervalUpper_real (v := fun d => (heads h).wo i d)
+        (lo := headOutLo h q) (hi := headOutHi h q) (x := fun d => headOut h q d) hlo' hhi'
+    constructor
+    · simpa [headProj, headLo] using hlow
+    · simpa [headProj, headHi] using hhigh
+  have hsum_bounds :
+      (sumLo q i : Real) ≤ ∑ h, headProj h q i ∧
+        ∑ h, headProj h q i ≤ (sumHi q i : Real) := by
+    have hlow : (sumLo q i : Real) ≤ ∑ h, headProj h q i := by
+      have hsum :=
+        Finset.sum_le_sum (s := (Finset.univ : Finset (Fin numHeads)))
+          (fun h _ => (hproj_bounds h q i).1)
+      simpa [sumLo, Linear.ratToReal_sum_univ] using hsum
+    have hhigh : ∑ h, headProj h q i ≤ (sumHi q i : Real) := by
+      have hsum :=
+        Finset.sum_le_sum (s := (Finset.univ : Finset (Fin numHeads)))
+          (fun h _ => (hproj_bounds h q i).2)
+      simpa [sumHi, Linear.ratToReal_sum_univ] using hsum
+    exact ⟨hlow, hhigh⟩
+  have hlow :
+      (sumLo q i : Real) + (attnBias i : Real) ≤
+        (∑ h, headProj h q i) + (attnBias i : Real) := by
+    simpa [add_comm] using add_le_add_left hsum_bounds.1 (attnBias i : Real)
+  have hhigh :
+      (∑ h, headProj h q i) + (attnBias i : Real) ≤
+        (sumHi q i : Real) + (attnBias i : Real) := by
+    simpa [add_comm] using add_le_add_left hsum_bounds.2 (attnBias i : Real)
+  have hreal :
+      (∑ h, headProj h q i) + (attnBias i : Real) =
+        (∑ h,
+          dotProduct (fun d => ((heads h).wo i d : Real))
+            (fun d => dotProduct (fun k => (weights h q k : Real))
+              (fun k => headValue h k d))) + (attnBias i : Real) := by
+    simp [headProj, headOut, dotProduct]
+  constructor
+  · simpa [bounds, attentionOutputBoundsWeighted, headOutLo, headOutHi, headLo, headHi,
+      sumLo, sumHi, hreal] using hlow
+  · simpa [bounds, attentionOutputBoundsWeighted, headOutLo, headOutHi, headLo, headHi,
+      sumLo, sumHi, hreal] using hhigh
+
 /-- Interval bounds for the attention residual path. -/
 def attentionResidualBounds {dModel dHead numHeads : Nat}
     (eps : Rat) (ln1Gamma ln1Beta : Fin dModel → Rat)
