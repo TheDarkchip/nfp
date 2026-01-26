@@ -9,6 +9,7 @@ public import Nfp.IO.InductionHead.ModelSlice
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.Model.InductionHead
 public import Nfp.Sound.Induction.ValueBounds
+public import Nfp.Sound.Induction.HeadOutput
 
 /-!
 Soundness bridge from model slices to value-path bounds.
@@ -306,6 +307,85 @@ theorem valsRealOfInputs_bounds_from_slices {seq : Nat}
           hModel hEps hSqrt'
       have hvals' := hvals k
       simpa [lnBounds, lnLo, lnHi, vLo, vHi, valLo, valHi, dirHead, bias, hscale] using hvals'
+
+/--
+Slice-derived weighted head-output bounds are sound for `headOutputWithWeights`.
+-/
+theorem headOutputWithWeights_bounds_from_slices {seq : Nat}
+    (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
+    (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
+    (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
+    (weights : Fin seq → Fin seq → Rat)
+    (hLn : lnSlice.dModel = valueSlice.dModel)
+    (hDir : dirSlice.dModel = valueSlice.dModel)
+    (hModel : valueSlice.dModel ≠ 0)
+    (hEps : 0 < lnSlice.lnEps)
+    (hSlack : 0 ≤ lnSlice.lnSlack)
+    (hScalePos : ∀ scale, lnSlice.lnScale? = some scale → 0 < scale)
+    (hSqrt :
+      match lnSlice.lnScale? with
+      | some scale => 0 < sqrtLowerWithScale scale lnSlice.lnEps
+      | none => 0 < sqrtLower lnSlice.lnEps) :
+    let inputs := inputsOfSlices lnSlice valueSlice dirSlice hLn hDir
+    let lnBounds : Fin seq → (Fin valueSlice.dModel → Rat) × (Fin valueSlice.dModel → Rat) :=
+      fun q =>
+        match lnSlice.lnScale? with
+        | some scale =>
+            layerNormBoundsWithScale scale lnSlice.lnEps inputs.ln1Gamma inputs.ln1Beta
+              (inputs.embed q)
+        | none =>
+            layerNormBounds lnSlice.lnEps inputs.ln1Gamma inputs.ln1Beta
+              (inputs.embed q)
+    let lnLo : Fin seq → Fin valueSlice.dModel → Rat :=
+      fun q i => (lnBounds q).1 i - lnSlice.lnSlack
+    let lnHi : Fin seq → Fin valueSlice.dModel → Rat :=
+      fun q i => (lnBounds q).2 i + lnSlice.lnSlack
+    let vLo : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+      dotIntervalLower (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let vHi : Fin seq → Fin valueSlice.headDim → Rat := fun k d =>
+      dotIntervalUpper (fun j => inputs.wv j d) (lnLo k) (lnHi k) + inputs.bv d
+    let headLo : Fin seq → Fin valueSlice.dModel → Rat := fun k i =>
+      dotIntervalLower (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    let headHi : Fin seq → Fin valueSlice.dModel → Rat := fun k i =>
+      dotIntervalUpper (fun d => inputs.wo i d) (vLo k) (vHi k) + inputs.attnBias i
+    let outLo : Fin seq → Fin valueSlice.dModel → Rat := fun q i =>
+      dotIntervalLower (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+    let outHi : Fin seq → Fin valueSlice.dModel → Rat := fun q i =>
+      dotIntervalUpper (fun k => weights q k) (fun k => headLo k i) (fun k => headHi k i)
+    ∀ q i,
+      (outLo q i : Real) ≤ Sound.headOutputWithWeights weights inputs q i ∧
+        Sound.headOutputWithWeights weights inputs q i ≤ (outHi q i : Real) := by
+  classical
+  intro inputs lnBounds lnLo lnHi vLo vHi headLo headHi outLo outHi q i
+  cases hscale : lnSlice.lnScale? with
+  | none =>
+      have hSqrt' : 0 < sqrtLower lnSlice.lnEps := by
+        simpa [hscale] using hSqrt
+      have hln :=
+        Sound.lnRealOfInputs_bounds_with_slack inputs lnSlice.lnSlack hSlack hModel hEps hSqrt'
+      have hln' : ∀ q i,
+          (lnLo q i : Real) ≤ Sound.lnRealOfInputs inputs q i ∧
+            Sound.lnRealOfInputs inputs q i ≤ (lnHi q i : Real) := by
+        simpa [lnBounds, lnLo, lnHi, hscale] using hln
+      have hhead :=
+        Sound.headOutputWithWeights_bounds_of_lnBounds weights inputs lnLo lnHi hln'
+      have hhead' := hhead q i
+      simpa [outLo, outHi, vLo, vHi, headLo, headHi, hscale] using hhead'
+  | some scale =>
+      have hSqrt' : 0 < sqrtLowerWithScale scale lnSlice.lnEps := by
+        simpa [hscale] using hSqrt
+      have hScalePos' : 0 < scale := hScalePos scale hscale
+      have hln :=
+        Sound.lnRealOfInputs_bounds_with_scale_lnSlack inputs scale hScalePos' lnSlice.lnSlack
+          hSlack hModel hEps hSqrt'
+      have hln' : ∀ q i,
+          (lnLo q i : Real) ≤ Sound.lnRealOfInputs inputs q i ∧
+            Sound.lnRealOfInputs inputs q i ≤ (lnHi q i : Real) := by
+        simpa [lnBounds, lnLo, lnHi, hscale] using hln
+      have hhead :=
+        Sound.headOutputWithWeights_bounds_of_lnBounds weights inputs lnLo lnHi hln'
+      have hhead' := hhead q i
+      simpa [outLo, outHi, vLo, vHi, headLo, headHi, hscale] using hhead'
 
 end InductionHeadCert
 
