@@ -190,6 +190,32 @@ theorem residualWithHeadOutputWithWeights_bounds
   · simpa [resLo] using hlow
   · simpa [resHi] using hhigh
 
+/-- Residual bounds from per-query input bounds and explicit weights. -/
+theorem residualWithHeadOutputWithWeights_bounds_at
+    (weights : Fin seq → Fin seq → Rat)
+    (inputs : Model.InductionHeadInputs seq dModel dHead)
+    (outLo outHi : Fin seq → Fin dModel → Rat)
+    (hout : ∀ q i,
+      (outLo q i : Real) ≤ headOutputWithWeights weights inputs q i ∧
+        headOutputWithWeights weights inputs q i ≤ (outHi q i : Real))
+    (lo hi : Fin seq → Fin dModel → Rat)
+    (hlo : ∀ q i, (lo q i : Real) ≤ inputs.embed q i)
+    (hhi : ∀ q i, inputs.embed q i ≤ (hi q i : Real)) :
+    let resLo : Fin seq → Fin dModel → Rat := fun q i => lo q i + outLo q i
+    let resHi : Fin seq → Fin dModel → Rat := fun q i => hi q i + outHi q i
+    ∀ q i,
+      (resLo q i : Real) ≤
+          inputs.embed q i + headOutputWithWeights weights inputs q i ∧
+        inputs.embed q i + headOutputWithWeights weights inputs q i ≤
+          (resHi q i : Real) := by
+  classical
+  intro resLo resHi q i
+  have hlow := add_le_add (hlo q i) (hout q i).1
+  have hhigh := add_le_add (hhi q i) (hout q i).2
+  constructor
+  · simpa [resLo] using hlow
+  · simpa [resHi] using hhigh
+
 end
 
 end Sound
