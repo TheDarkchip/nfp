@@ -471,7 +471,7 @@ theorem valuesWithinModelBounds_sound {seq : Nat}
           (v := dirHead) (lo := vLoFun) (hi := vHiFun))
     simpa [valBoundsArr, vBoundsArr, dirHeadArr, wvColsArr, lnBoundsArr, vBounds,
       vLo, vHi, valBounds, hinner, den, denLo, denHi, vLoArr', vHiArr', vLoFun, vHiFun, bias] using
-      hscaled.trans harr
+      (Prod.ext_iff.mp (hscaled.trans harr))
   have hvalLo : valLoArr = valLo := by
     funext k
     simp [valLoArr, valLo, hvalBounds]

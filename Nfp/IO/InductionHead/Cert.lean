@@ -12,6 +12,7 @@ public import Nfp.IO.InductionHead.ValueCheck
 public import Nfp.IO.InductionHead.ModelLnSlice
 public import Nfp.IO.InductionHead.LogitDiffBound
 public import Nfp.IO.InductionHead.ActiveSelection
+public import Nfp.IO.InductionHead.WeightedResidual
 public import Nfp.IO.InductionHead.TokenChecks
 public import Nfp.IO.InductionHead.ModelValueSlice
 public import Nfp.IO.Pure.InductionHead.ModelDirectionSlice
@@ -710,6 +711,8 @@ structure InductionHeadCertPayload (seq : Nat) where
   tlScoreLB? : Option Rat
   /-- Optional copy-logit matrix (may be present for `kind induction-aligned`). -/
   copyLogits? : Option (Fin seq → Fin seq → Rat)
+  /-- Whether all weight entries were present. -/
+  weightsPresent : Bool
   /-- Verified certificate payload. -/
   cert : Circuit.InductionHeadCert seq
 private def finalizeStateCore {seq : Nat} (hpos : 0 < seq) (st : ParseState seq) :
@@ -1073,6 +1076,7 @@ def parseInductionHeadCert (input : String) :
           tlExcludeCurrent? := tlExcludeCurrent?
           tlScoreLB? := tlScoreLB?
           copyLogits? := copyLogits?
+          weightsPresent := weightsPresent
           cert := cert }
       return ⟨seq, payload⟩
 /-- Load an induction-head certificate from disk. -/
@@ -1090,6 +1094,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
     (tokensPath? : Option String) (directionQ? : Option Nat)
     (minStripeMeanStr? : Option String) (minStripeTop1Str? : Option String)
     (minCoverageStr? : Option String)
+    (reportWeightedResidual : Bool)
     (timeLn : Bool) (timeScores : Bool) (timeParse : Bool) (timeStages : Bool)
     (timeValues : Bool) (timeTotal : Bool) :
     IO UInt32 := do
@@ -1136,6 +1141,7 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
           | Nat.succ n =>
               let seq := Nat.succ n; let _ : NeZero seq := ⟨by simp⟩
               let cert := payload.cert; let kind := payload.kind
+              let weightsPresent := payload.weightsPresent
               let period? := payload.period?; let copyLogits? := payload.copyLogits?
               let tlExcludeBos? := payload.tlExcludeBos?
               let tlExcludeCurrent? := payload.tlExcludeCurrent?
@@ -1417,6 +1423,10 @@ def runInductionHeadCertCheck (certPath : System.FilePath)
                 else
                   pure none
               let activeForBounds := activeOverride?.getD cert.active
+              if reportWeightedResidual then
+                InductionHeadCert.reportWeightedResidualDir
+                  modelLnSlice? modelValueSlice? modelDirectionSlice?
+                  weightsPresent cert.weights activeForBounds timeStages
               let logitDiffLB? :=
                 InductionHeadCert.logitDiffLowerBoundTightWithActive? activeForBounds cert
               match minLogitDiff? with

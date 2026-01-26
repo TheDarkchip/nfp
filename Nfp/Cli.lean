@@ -43,6 +43,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
   let minStripeMeanStr? := (p.flag? "min-stripe-mean").map (·.as! String)
   let minStripeTop1Str? := (p.flag? "min-stripe-top1").map (·.as! String)
   let minCoverageStr? := (p.flag? "min-coverage").map (·.as! String)
+  let reportWeightedResidual := p.hasFlag "report-weighted-residual"
   let timeLn := p.hasFlag "time-ln"
   let timeScores := p.hasFlag "time-scores"
   let timeParse := p.hasFlag "time-parse"
@@ -65,6 +66,7 @@ private def runInductionVerifySimple (p : Parsed) : IO UInt32 := do
         minMarginStr? maxEpsStr? tokensPath? directionQ?
         minStripeMeanStr? minStripeTop1Str?
         minCoverageStr?
+        reportWeightedResidual
         timeLn timeScores timeParse timeStages timeValues timeTotal
   | none, some batchPath, none, none =>
       IO.runInductionHeadBatchCheck batchPath
@@ -104,6 +106,8 @@ def inductionVerifySimpleCmd : Cmd := `[Cli|
     "min-coverage" : String; "Optional minimum derived active coverage \
                                (rational literal in [0,1]). Applies to induction-aligned \
                                certs and uses min-margin/max-eps thresholds."
+    "report-weighted-residual"; "Report direction·(embed+headOutput) bounds \
+                                 derived from model slices and explicit weights."
     "time-ln"; "Print the time spent in LayerNorm residual checks."
     "time-scores"; "Print the time spent recomputing scores from model slices."
     "time-parse"; "Print the time spent reading and parsing the certificate."

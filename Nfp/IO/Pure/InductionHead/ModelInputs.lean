@@ -30,7 +30,7 @@ open Nfp.Sound
 
 /-- Assemble induction-head inputs from model slices and direction metadata.
     Uses the pre-LN residual stream from the LayerNorm slice. -/
-noncomputable def inputsOfSlices {seq : Nat}
+def inputsOfSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
     (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
@@ -147,7 +147,7 @@ theorem inputsOfSlices_direction {seq : Nat}
 /-! Score-focused inputs from LayerNorm and model score slices. -/
 
 /-- Assemble induction-head inputs for score bounds from LayerNorm and model slices. -/
-noncomputable def inputsOfScoreSlices {seq : Nat}
+def inputsOfScoreSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (modelSlice : Nfp.IO.InductionHeadCert.ModelSlice seq)
     (hLn : lnSlice.dModel = modelSlice.dModel) :
@@ -376,7 +376,7 @@ theorem headOutputWithWeights_bounds_from_slices {seq : Nat}
         simpa [hscale] using hSqrt
       have hScalePos' : 0 < scale := hScalePos scale hscale
       have hln :=
-        Sound.lnRealOfInputs_bounds_with_scale_lnSlack inputs scale hScalePos' lnSlice.lnSlack
+        Sound.lnRealOfInputs_bounds_with_scale_slack inputs scale hScalePos' lnSlice.lnSlack
           hSlack hModel hEps hSqrt'
       have hln' : ∀ q i,
           (lnLo q i : Real) ≤ Sound.lnRealOfInputs inputs q i ∧
@@ -390,7 +390,7 @@ theorem headOutputWithWeights_bounds_from_slices {seq : Nat}
 /--
 Compute weighted head-output bounds from model slices.
 -/
-noncomputable def headOutputBoundsWeightedFromSlices {seq : Nat}
+def headOutputBoundsWeightedFromSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
     (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
@@ -458,7 +458,7 @@ theorem headOutputBoundsWeightedFromSlices_spec {seq : Nat}
 /--
 Compute weighted residual bounds from model slices and explicit weights.
 -/
-noncomputable def residualBoundsWeightedFromSlices {seq : Nat}
+def residualBoundsWeightedFromSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
     (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
@@ -522,7 +522,7 @@ theorem residualBoundsWeightedFromSlices_spec {seq : Nat}
 /--
 Compute weighted residual direction bounds from model slices and explicit weights.
 -/
-noncomputable def residualDirectionBoundsWeightedFromSlices {seq : Nat}
+def residualDirectionBoundsWeightedFromSlices {seq : Nat}
     (lnSlice : Nfp.IO.InductionHeadCert.ModelLnSlice seq)
     (valueSlice : Nfp.IO.InductionHeadCert.ModelValueSlice)
     (dirSlice : Nfp.IO.InductionHeadCert.ModelDirectionSlice)
