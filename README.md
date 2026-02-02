@@ -9,6 +9,10 @@ NFP stands for **Neural Formal Pathways**.
 ## Status
 The core has recently been rewritten and the API is still settling. Expect breaking changes.
 
+Due to exams, my time to work on this is limited until a bit later in February.
+
+Please check out work on the branch "tl-scan-cert" if you're curious where this project is currently heading.
+
 ## Build
 
 ```bash
